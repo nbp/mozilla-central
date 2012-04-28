@@ -333,6 +333,8 @@ class IonBuilder : public MIRGenerator
     bool jsop_setelem_typed(int arrayType);
     bool jsop_length();
     bool jsop_length_fastPath();
+    bool jsop_arguments_length();
+    bool jsop_arguments_sub(MDefinition *idx);
     bool jsop_not();
     bool jsop_getprop(HandlePropertyName name);
     bool jsop_setprop(HandlePropertyName name);

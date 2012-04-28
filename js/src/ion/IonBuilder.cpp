@@ -738,6 +738,9 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_TRUE:
         return pushConstant(BooleanValue(true));
 
+      case JSOP_ARGUMENTS:
+        return pushConstant(MagicValue(JS_OPTIMIZED_ARGUMENTS));
+
       case JSOP_NOTEARG:
         return jsop_notearg();
 
@@ -3890,6 +3893,9 @@ IonBuilder::jsop_getelem()
     MDefinition *rhs = current->pop();
     MDefinition *lhs = current->pop();
 
+    if (lhs->isConstant() && lhs->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS))
+        return jsop_arguments_sub(rhs);
+
     MInstruction *ins;
 
     // TI does not account for GETELEM with string indexes, so we have to monitor
@@ -4248,10 +4254,17 @@ IonBuilder::jsop_length_fastPath()
             MTypedArrayLength *length = MTypedArrayLength::New(obj);
             current->add(length);
             current->push(length);
-            return true;
+            return jsop_arguments_length();
         }
 
         return false;
+      }
+
+      case JSVAL_TYPE_MAGIC: {
+        MDefinition *obj = current->pop();
+        JS_ASSERT(obj->isConstant());
+        JS_ASSERT(obj->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS));
+        return jsop_arguments_length();
       }
 
       default:
@@ -4259,6 +4272,18 @@ IonBuilder::jsop_length_fastPath()
     }
 
     return false;
+}
+
+bool
+IonBuilder::jsop_arguments_length()
+{
+    return abort("NYI arguments.length");
+}
+
+bool
+IonBuilder::jsop_arguments_sub(MDefinition *idx)
+{
+    return abort("NYI arguments[]");
 }
 
 inline types::TypeSet *
@@ -4303,6 +4328,11 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
 {
     MDefinition *obj = current->pop();
     MInstruction *ins;
+
+    if (obj->isConstant() && obj->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS)) {
+        JS_ASSERT(JSOp(*pc) == JSOP_LENGTH);
+        return jsop_arguments_length();
+    }
 
     types::TypeSet *barrier = oracle->propertyReadBarrier(script, pc);
     types::TypeSet *types = oracle->propertyRead(script, pc);
