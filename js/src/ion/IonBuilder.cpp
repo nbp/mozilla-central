@@ -3894,7 +3894,7 @@ IonBuilder::jsop_getelem()
     MDefinition *lhs = current->pop();
 
     if (lhs->isConstant() && lhs->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS))
-        return jsop_arguments_sub(rhs);
+        return jsop_arguments_getelem(rhs);
 
     MInstruction *ins;
 
@@ -4099,6 +4099,9 @@ IonBuilder::jsop_setelem()
     MDefinition *index = current->pop();
     MDefinition *object = current->pop();
 
+    if (object->isConstant() && object->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS))
+        return jsop_arguments_setelem(index, value);
+
     MInstruction *ins = MCallSetElement::New(object, index, value);
     current->add(ins);
     current->push(value);
@@ -4281,9 +4284,15 @@ IonBuilder::jsop_arguments_length()
 }
 
 bool
-IonBuilder::jsop_arguments_sub(MDefinition *idx)
+IonBuilder::jsop_arguments_getelem(MDefinition *idx)
 {
     return abort("NYI arguments[]");
+}
+
+bool
+IonBuilder::jsop_arguments_setelem(MDefinition *idx, MDefinition *val)
+{
+    return abort("NYI arguments[]=");
 }
 
 inline types::TypeSet *
