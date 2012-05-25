@@ -3890,11 +3890,11 @@ IonBuilder::jsop_getelem()
     if (oracle->elementReadIsTypedArray(script, pc, &arrayType))
         return jsop_getelem_typed(arrayType);
 
+    if (oracle->elementReadMagicArguments(script, pc))
+        return jsop_arguments_getelem();
+
     MDefinition *rhs = current->pop();
     MDefinition *lhs = current->pop();
-
-    if (lhs->isConstant() && lhs->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS))
-        return jsop_arguments_getelem(rhs);
 
     MInstruction *ins;
 
@@ -4095,12 +4095,12 @@ IonBuilder::jsop_setelem()
             return jsop_setelem_typed(arrayType);
     }
 
+    if (oracle->elementWriteMagicArguments(script, pc))
+        return jsop_arguments_setelem();
+
     MDefinition *value = current->pop();
     MDefinition *index = current->pop();
     MDefinition *object = current->pop();
-
-    if (object->isConstant() && object->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS))
-        return jsop_arguments_setelem(index, value);
 
     MInstruction *ins = MCallSetElement::New(object, index, value);
     current->add(ins);
@@ -4273,18 +4273,24 @@ IonBuilder::jsop_length_fastPath()
 bool
 IonBuilder::jsop_arguments_length()
 {
+    MDefinition *obj = current->pop();
     return abort("NYI arguments.length");
 }
 
 bool
-IonBuilder::jsop_arguments_getelem(MDefinition *idx)
+IonBuilder::jsop_arguments_getelem()
 {
+    MDefinition *idx = current->pop();
+    MDefinition *obj = current->pop();
     return abort("NYI arguments[]");
 }
 
 bool
-IonBuilder::jsop_arguments_setelem(MDefinition *idx, MDefinition *val)
+IonBuilder::jsop_arguments_setelem()
 {
+    MDefinition *val = current->pop();
+    MDefinition *idx = current->pop();
+    MDefinition *obj = current->pop();
     return abort("NYI arguments[]=");
 }
 
@@ -4328,13 +4334,14 @@ IonBuilder::jsop_not()
 bool
 IonBuilder::jsop_getprop(HandlePropertyName name)
 {
+    if (oracle->propertyReadMagicArguments(script, pc)) {
+        if (JSOp(*pc) == JSOP_LENGTH)
+            return jsop_arguments_length();
+        // Can also be a callee.
+    }
+
     MDefinition *obj = current->pop();
     MInstruction *ins;
-
-    if (obj->isConstant() && obj->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS)) {
-        JS_ASSERT(JSOp(*pc) == JSOP_LENGTH);
-        return jsop_arguments_length();
-    }
 
     types::TypeSet *barrier = oracle->propertyReadBarrier(script, pc);
     types::TypeSet *types = oracle->propertyRead(script, pc);

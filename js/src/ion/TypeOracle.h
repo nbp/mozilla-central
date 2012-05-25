@@ -179,6 +179,16 @@ class TypeOracle
     virtual bool canEnterInlinedFunction(JSFunction *callee) {
         return false;
     }
+
+    virtual bool propertyReadMagicArguments(JSScript *script, jsbytecode *pc) {
+        return false;
+    }
+    virtual bool elementReadMagicArguments(JSScript *script, jsbytecode *pc) {
+        return false;
+    }
+    virtual bool elementWriteMagicArguments(JSScript *script, jsbytecode *pc) {
+        return false;
+    }
 };
 
 class DummyOracle : public TypeOracle
@@ -254,6 +264,10 @@ class TypeInferenceOracle : public TypeOracle
     bool canInlineCalls();
     bool canInlineCall(JSScript *caller, jsbytecode *pc);
     bool canEnterInlinedFunction(JSFunction *callee);
+
+    bool propertyReadMagicArguments(JSScript *script, jsbytecode *pc);
+    bool elementReadMagicArguments(JSScript *script, jsbytecode *pc);
+    bool elementWriteMagicArguments(JSScript *script, jsbytecode *pc);
 };
 
 static inline MIRType
