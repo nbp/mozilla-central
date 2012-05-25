@@ -4257,7 +4257,7 @@ IonBuilder::jsop_length_fastPath()
             MTypedArrayLength *length = MTypedArrayLength::New(obj);
             current->add(length);
             current->push(length);
-            return jsop_arguments_length();
+            return true;
         }
 
         return false;
