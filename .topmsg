@@ -1,2 +1,2 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Add JSOP_ARGUMENTS. (Bug 735406 part 1, r=)
+Subject: Add Slow Implementation of arguments.length (Bug 735406 part 2, r=)
