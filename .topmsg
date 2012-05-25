@@ -1,2 +1,2 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Add Slow Implementation of arguments.length (Bug 735406 part 2, r=)
+Subject: Handle arguments[i] (Bug 735406 part 3, r=)
