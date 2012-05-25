@@ -170,6 +170,7 @@
     _(TypedArrayLength)             \
     _(TypedArrayElements)           \
     _(StringLength)                 \
+    _(ArgumentsLength)              \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \

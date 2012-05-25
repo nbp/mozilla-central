@@ -1548,6 +1548,14 @@ LIRGenerator::visitStringLength(MStringLength *ins)
 }
 
 bool
+LIRGenerator::visitArgumentsLength(MArgumentsLength *ins)
+{
+    JS_ASSERT(ins->arguments()->type() == MIRType_Magic);
+    LArgumentsLength *lir = new LArgumentsLength();
+    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitThrow(MThrow *ins)
 {
     MDefinition *value = ins->getOperand(0);

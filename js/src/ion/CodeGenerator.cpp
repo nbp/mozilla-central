@@ -2038,6 +2038,15 @@ CodeGenerator::visitIteratorEnd(LIteratorEnd *lir)
 }
 
 bool
+CodeGenerator::visitArgumentsLength(LArgumentsLength *lir)
+{
+    typedef bool (*pf)(JSContext *, uint32_t *);
+    static const VMFunction Info = FunctionInfo<pf>(NumActualArgs);
+
+    return callVM(Info, lir);
+}
+
+bool
 CodeGenerator::generate()
 {
     JSContext *cx = gen->cx;

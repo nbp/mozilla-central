@@ -4273,8 +4273,11 @@ IonBuilder::jsop_length_fastPath()
 bool
 IonBuilder::jsop_arguments_length()
 {
-    MDefinition *obj = current->pop();
-    return abort("NYI arguments.length");
+    MDefinition *args = current->pop();
+    MInstruction *ins = MArgumentsLength::New(args);
+    current->add(ins);
+    current->push(ins);
+    return true;
 }
 
 bool

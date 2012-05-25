@@ -4271,6 +4271,40 @@ class MIteratorEnd
     }
 };
 
+class MArgumentsLength
+  : public MUnaryInstruction,
+    public ArgumentsPolicy<0>
+{
+    MArgumentsLength(MDefinition *arguments)
+      : MUnaryInstruction(arguments)
+    {
+        setResultType(MIRType_Int32);
+        setMovable();
+    }
+  public:
+    INSTRUCTION_HEADER(ArgumentsLength);
+
+    static MArgumentsLength *New(MDefinition *arguments) {
+        return new MArgumentsLength(arguments);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+
+    MDefinition *arguments() const {
+        return getOperand(0);
+    }
+    bool congruentTo(MDefinition *const &ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+    AliasSet getAliasSet() const {
+        // Arguments |length| cannot be mutated by Ion Code or any the the
+        // called functions.
+        return AliasSet::None();
+   }
+};
+
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.
 class MTypeBarrier : public MUnaryInstruction
