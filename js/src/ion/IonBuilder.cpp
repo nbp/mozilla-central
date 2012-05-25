@@ -4263,13 +4263,6 @@ IonBuilder::jsop_length_fastPath()
         return false;
       }
 
-      case JSVAL_TYPE_MAGIC: {
-        MDefinition *obj = current->pop();
-        JS_ASSERT(obj->isConstant());
-        JS_ASSERT(obj->toConstant()->value().isMagic(JS_OPTIMIZED_ARGUMENTS));
-        return jsop_arguments_length();
-      }
-
       default:
         break;
     }
