@@ -400,6 +400,8 @@ ValTypeToString(JSValueType type)
         return "boolean";
       case JSVAL_TYPE_OBJECT:
         return "object";
+      case JSVAL_TYPE_MAGIC:
+        return "magic";
       default:
         JS_NOT_REACHED("no payload");
         return "";
