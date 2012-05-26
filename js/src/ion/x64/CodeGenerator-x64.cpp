@@ -152,6 +152,9 @@ CodeGeneratorX64::visitUnbox(LUnbox *unbox)
           case MIRType_String:
             cond = masm.testString(Assembler::NotEqual, value);
             break;
+          case MIRType_Magic:
+            cond = masm.testMagic(Assembler::NotEqual, value);
+            break;
           default:
             JS_NOT_REACHED("Given MIRType cannot be unboxed.");
             return false;
@@ -172,6 +175,9 @@ CodeGeneratorX64::visitUnbox(LUnbox *unbox)
         break;
       case MIRType_String:
         masm.unboxString(value, ToRegister(result));
+        break;
+      case MIRType_Magic:
+        masm.unboxMagic(value, ToRegister(result));
         break;
       default:
         JS_NOT_REACHED("Given MIRType cannot be unboxed.");
