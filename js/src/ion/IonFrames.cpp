@@ -892,16 +892,11 @@ InlineFrameIterator::thisObject() const
 unsigned
 InlineFrameIterator::numActualArgs() const
 {
-    // Skip the current frame and look at the caller's.
-    if (more()) {
-        InlineFrameIterator parent(*this);
-        ++parent;
-
-        // In the case of a JS frame, look up the pc from the snapshot.
-        JS_ASSERT(js_CodeSpec[*parent.pc()].format & JOF_INVOKE);
-
-        return GET_ARGC(parent.pc());
-    }
+    // The number of actual arguments of inline frames is stored inside the
+    // snapshot.  The number of arguments of the outer-most frame is stored in
+    // the Ion JS frame which is on the stack.
+    if (more())
+        return si_.numActualArgs();
 
     return frame_->numActualArgs();
 }
@@ -912,26 +907,8 @@ IonFrameIterator::numActualArgs() const
     if (isScripted())
         return jsFrame()->numActualArgs();
 
-    if (isNative())
-        return exitFrame()->nativeExit()->argc();
-
-    IonFrameIterator parent(*this);
-
-    // Skip the current frame and look at the caller's.
-    do {
-        ++parent;
-    } while (!parent.done() && !parent.isScripted());
-
-    if (parent.isScripted()) {
-        // In the case of a JS frame, look up the pc from the snapshot.
-        InlineFrameIterator inlinedParent(&parent);
-        JS_ASSERT(js_CodeSpec[*inlinedParent.pc()].format & JOF_INVOKE);
-
-        return GET_ARGC(inlinedParent.pc());
-    }
-
-    JS_ASSERT(parent.done());
-    return activation_->entryfp()->numActualArgs();
+    JS_ASSERT(isNative());
+    return exitFrame()->nativeExit()->argc();
 }
 
 void
