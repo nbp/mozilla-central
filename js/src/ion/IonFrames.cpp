@@ -908,6 +908,9 @@ InlineFrameIterator::numActualArgs() const
 unsigned
 IonFrameIterator::numActualArgs() const
 {
+    if (isScripted())
+        return jsFrame()->numActualArgs();
+
     IonFrameIterator parent(*this);
 
     // Skip the current frame and look at the caller's.
