@@ -555,7 +555,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Construct the IonFramePrefix.
     uint32 descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_JS);
-    masm.Push(nargsreg);
+    masm.Push(Imm32(call->nargs()));
     masm.Push(calleereg);
     masm.Push(Imm32(descriptor));
 
