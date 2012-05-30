@@ -461,7 +461,9 @@ CodeGenerator::visitCallNative(LCallNative *call)
     masm.move32(Imm32(call->nargs()), argUintNReg);
     masm.movePtr(StackPointer, argVpReg);
 
-    // Construct exit frame.
+    masm.Push(argUintNReg);
+
+    // Construct native exit frame.
     uint32 safepointOffset = masm.buildFakeExitFrame(tempReg);
     masm.enterFakeExitFrame();
 
@@ -480,7 +482,7 @@ CodeGenerator::visitCallNative(LCallNative *call)
     masm.branchTest32(Assembler::Zero, ReturnReg, ReturnReg, &exception);
 
     // Load the outparam vp[0] into output register(s).
-    masm.loadValue(Address(StackPointer, IonExitFrameLayout::SizeWithFooter()), JSReturnOperand);
+    masm.loadValue(Address(StackPointer, IonNativeExitFrameLayout::offsetOfResult()), JSReturnOperand);
     masm.jump(&success);
 
     // Handle exception case.
@@ -493,8 +495,8 @@ CodeGenerator::visitCallNative(LCallNative *call)
     // The next instruction is removing the footer of the exit frame, so there
     // is no need for leaveFakeExitFrame.
 
-    // Move the StackPointer back to its original location, unwinding the exit frame.
-    masm.adjustStack(IonExitFrameLayout::SizeWithFooter() - unusedStack + sizeof(Value));
+    // Move the StackPointer back to its original location, unwinding the native exit frame.
+    masm.adjustStack(IonNativeExitFrameLayout::Size() - unusedStack);
     JS_ASSERT(masm.framePushed() == initialStack);
 
     return true;

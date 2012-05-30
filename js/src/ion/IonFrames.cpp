@@ -131,7 +131,7 @@ IonFrameIterator::callee() const
     }
 
     JS_ASSERT(isNative());
-    return exitFrame()->nativeVp()[0].toObject().toFunction();
+    return exitFrame()->nativeExit()->vp()[0].toObject().toFunction();
 }
 
 JSFunction *
@@ -187,7 +187,7 @@ Value *
 IonFrameIterator::nativeVp() const
 {
     JS_ASSERT(isNative());
-    return exitFrame()->nativeVp();
+    return exitFrame()->nativeExit()->vp();
 }
 
 Value *
@@ -474,9 +474,10 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
     // This correspond to the case where we have build a fake exit frame in
     // CodeGenerator.cpp which handle the case of a native function call. We
     // need to mark the argument vector of the function call.
-    if (footer->ionCode() == NULL) {
-        size_t len = frame.numActualArgs() + 2;
-        Value *vp = frame.exitFrame()->nativeVp();
+    if (frame.isNative()) {
+        IonNativeExitFrameLayout *native = frame.exitFrame()->nativeExit();
+        size_t len = native->argc() + 2;
+        Value *vp = native->vp();
         gc::MarkValueRootRange(trc, len, vp, "ion-native-args");
         return;
     }
@@ -910,6 +911,9 @@ IonFrameIterator::numActualArgs() const
 {
     if (isScripted())
         return jsFrame()->numActualArgs();
+
+    if (isNative())
+        return exitFrame()->nativeExit()->argc();
 
     IonFrameIterator parent(*this);
 

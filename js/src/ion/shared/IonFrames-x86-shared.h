@@ -161,11 +161,12 @@ class IonExitFooterFrame
     }
 };
 
+class IonNativeExitFrameLayout;
+
 class IonExitFrameLayout : public IonCommonFrameLayout
 {
     inline uint8 *top() {
-        uint8 *sp = reinterpret_cast<uint8 *>(this);
-        return sp + IonExitFrameLayout::Size();
+        return reinterpret_cast<uint8 *>(this + 1);
     }
 
   public:
@@ -188,10 +189,33 @@ class IonExitFrameLayout : public IonCommonFrameLayout
         JS_ASSERT(footer()->ionCode() != NULL);
         return top();
     }
-    inline Value *nativeVp() {
+    inline IonNativeExitFrameLayout *nativeExit() {
         // see CodeGenerator::visitCallNative
         JS_ASSERT(footer()->ionCode() == NULL);
-        return reinterpret_cast<Value *>(top());
+        return reinterpret_cast<IonNativeExitFrameLayout *>(footer());
+    }
+};
+
+class IonNativeExitFrameLayout
+{
+    IonExitFooterFrame footer_;
+    IonExitFrameLayout exit_;
+    uintptr_t argc_;
+    Value calleeResult_;
+
+  public:
+    static inline size_t Size() {
+        return sizeof(IonNativeExitFrameLayout);
+    }
+
+    static size_t offsetOfResult() {
+        return offsetof(IonNativeExitFrameLayout, calleeResult_);
+    }
+    inline Value *vp() {
+        return &calleeResult_;
+    }
+    inline uintptr_t argc() const {
+        return argc_;
     }
 };
 
