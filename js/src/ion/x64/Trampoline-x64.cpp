@@ -364,12 +364,8 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     }
 
     // Get the topmost argument.
-    masm.movq(r8, r9);
-    masm.shlq(Imm32(3), r9); // r9 <- (nargs) * sizeof(Value)
-
-    masm.movq(rbp, rcx);
-    masm.addq(Imm32(sizeof(IonRectifierFrameLayout)), rcx);
-    masm.addq(r9, rcx);
+    BaseIndex b = BaseIndex(rbp, r8, TimesEight, sizeof(IonRectifierFrameLayout));
+    masm.lea(Operand(b), rcx);
 
     // Push arguments, |nargs| + 1 times (to include |this|).
     {
