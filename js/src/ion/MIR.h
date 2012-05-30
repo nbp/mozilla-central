@@ -4369,9 +4369,9 @@ class MResumePoint : public MNode
 {
   public:
     enum Mode {
-        ResumeAt,
-        ResumeAfter,
-        Outer
+        ResumeAt,    // Resume until before the current instruction
+        ResumeAfter, // Resume after the current instruction
+        Outer        // State before inlining.
     };
 
   private:
