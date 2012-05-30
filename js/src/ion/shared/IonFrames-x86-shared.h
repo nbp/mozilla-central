@@ -80,6 +80,7 @@ class IonCommonFrameLayout
 class IonJSFrameLayout : public IonCommonFrameLayout
 {
     void *calleeToken_;
+    uintptr_t numActualArgs_;
 
   public:
     CalleeToken calleeToken() const {
@@ -91,6 +92,9 @@ class IonJSFrameLayout : public IonCommonFrameLayout
 
     static size_t offsetOfCalleeToken() {
         return offsetof(IonJSFrameLayout, calleeToken_);
+    }
+    static size_t offsetOfNumActualArgs() {
+        return offsetof(IonJSFrameLayout, numActualArgs_);
     }
 
     Value *argv() {

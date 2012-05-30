@@ -132,8 +132,11 @@ IonCompartment::generateEnterJIT(JSContext *cx)
         masm.bind(&footer);
     }
 
-    // Push the callee token. Remember on win64, there are 32 bytes of shadow
-    // stack space.
+    // Push the callee token.
+    masm.subq(Imm32(1), reg_argc);
+    masm.push(reg_argc);
+
+    // Push the callee token.
     masm.push(token);
 
     /*****************************************************************
@@ -383,11 +386,15 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
         masm.j(Assembler::NonZero, &copyLoopTop);
     }
 
+    // Copy number of actual arguments
+    masm.movq(Operand(rbp, IonJSFrameLayout::offsetOfNumActualArgs()), r8);
+
     // Construct descriptor.
     masm.subq(rsp, rbp);
     masm.makeFrameDescriptor(rbp, IonFrame_Rectifier);
 
     // Construct IonJSFrameLayout.
+    masm.push(r8);  // numActualArgs
     masm.push(rax); // calleeToken
     masm.push(rbp); // descriptor
 
@@ -403,6 +410,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.pop(rbp);            // rbp <- descriptor with FrameType.
     masm.shrq(Imm32(FRAMESIZE_SHIFT), rbp);
     masm.pop(r11);            // Discard calleeToken.
+    masm.pop(r11);            // Discard numActualArgs.
     masm.addq(rbp, rsp);      // Discard pushed arguments.
 
     masm.ret();
