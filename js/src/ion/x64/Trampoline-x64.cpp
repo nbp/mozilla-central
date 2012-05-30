@@ -344,6 +344,9 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.movzwl(Operand(rax, offsetof(JSFunction, nargs)), rcx);
     masm.subq(r8, rcx);
 
+    // Copy number of actual arguments
+    masm.movq(Operand(rsp, IonJSFrameLayout::offsetOfNumActualArgs()), rdx);
+
     masm.moveValue(UndefinedValue(), r10);
 
     masm.movq(rsp, rbp); // Save %rsp.
@@ -386,15 +389,12 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
         masm.j(Assembler::NonZero, &copyLoopTop);
     }
 
-    // Copy number of actual arguments
-    masm.movq(Operand(rbp, IonJSFrameLayout::offsetOfNumActualArgs()), r8);
-
     // Construct descriptor.
     masm.subq(rsp, rbp);
     masm.makeFrameDescriptor(rbp, IonFrame_Rectifier);
 
     // Construct IonJSFrameLayout.
-    masm.push(r8);  // numActualArgs
+    masm.push(rdx); // numActualArgs
     masm.push(rax); // calleeToken
     masm.push(rbp); // descriptor
 

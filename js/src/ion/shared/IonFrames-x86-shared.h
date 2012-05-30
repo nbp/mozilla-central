@@ -100,6 +100,9 @@ class IonJSFrameLayout : public IonCommonFrameLayout
     Value *argv() {
         return (Value *)(this + 1);
     }
+    uintptr_t numActualArgs() const {
+        return numActualArgs_;
+    }
 
     // Computes a reference to a slot, where a slot is a distance from the base
     // frame pointer (as would be used for LStackSlot).
