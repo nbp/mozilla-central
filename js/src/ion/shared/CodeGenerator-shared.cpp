@@ -208,7 +208,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     FlattenedMResumePointIter mirOperandIter(snapshot->mir());
     if (!mirOperandIter.init())
         return false;
-    
+
     uint32 startIndex = 0;
     for (MResumePoint **it = mirOperandIter.begin(), **end = mirOperandIter.end();
          it != end;
@@ -220,7 +220,10 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         JSScript *script = block->info().script();
         jsbytecode *pc = mir->pc();
         uint32 exprStack = mir->stackDepth() - block->info().ninvoke();
-        snapshots_.startFrame(fun, script, pc, exprStack);
+        uint32 numActualArgs = 0;
+        if (it + 1 != end)
+            numActualArgs = mir->numActualArgs();
+        snapshots_.startFrame(fun, script, pc, exprStack, numActualArgs);
 
 #ifdef TRACK_SNAPSHOTS
         LInstruction *ins = instruction();

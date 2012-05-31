@@ -384,9 +384,10 @@ MParameter::congruentTo(MDefinition * const &ins) const
 }
 
 MCall *
-MCall::New(JSFunction *target, size_t argc, size_t bytecodeArgc, bool construct)
+MCall::New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct)
 {
-    MCall *ins = new MCall(target, bytecodeArgc, construct);
+    JS_ASSERT(argc >= numActualArgs);
+    MCall *ins = new MCall(target, numActualArgs, construct);
     if (!ins->init(argc + NumNonArgumentOperands))
         return NULL;
     return ins;
@@ -1121,7 +1122,8 @@ MResumePoint::MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *cal
     stackDepth_(block->stackDepth()),
     pc_(pc),
     caller_(caller),
-    mode_(mode)
+    mode_(mode),
+    isFunCall_(false)
 {
 }
 

@@ -328,9 +328,12 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
     current->setCallerResumePoint(callerResumePoint);
 
     // Fill in any missing arguments with undefined.
+    const size_t numActualArgs = argv.length() - 1;
     const size_t nargs = info().nargs();
-    if (argv.length() - 1 < nargs) {
-        for (size_t i = 0, missing = nargs - (argv.length() - 1); i < missing; ++i) {
+    IonSpew(IonSpew_MIR, "Inlining with %s of arguments.",
+            (numActualArgs == nargs) ? "right number": ((numActualArgs < nargs) ? "underflow" : "overflow"));
+    if (numActualArgs < nargs) {
+        for (size_t i = 0, missing = nargs - numActualArgs; i < missing; ++i) {
             MConstant *undef = MConstant::New(UndefinedValue());
             current->add(undef);
             if (!argv.append(undef))
@@ -2317,6 +2320,9 @@ IonBuilder::jsop_loophead(jsbytecode *pc)
 {
     assertValidLoopHeadOp(pc);
     insertRecompileCheck();
+
+    current->add(MInterruptCheck::New());
+
     return true;
 }
 
@@ -2642,12 +2648,19 @@ IonBuilder::jsop_call_inline(JSFunction *callee, uint32 argc, IonBuilder &inline
     MConstant *constFun = MConstant::New(ObjectValue(*callee));
     current->add(constFun);
 
-    // This resume point collects outer variables only; it is never used to
-    // directly build a snapshot.
+    // This resume point collects outer variables only.  It is used to recover
+    // the stack state before the current bytecode.
     MResumePoint *inlineResumePoint = MResumePoint::New(top, pc, callerResumePoint_,
                                                         MResumePoint::Outer);
     if (!inlineResumePoint)
         return false;
+
+    // Make sure we can recover the actual number of arguments out of the resume
+    // point. This is used to recover overflow/underflow of arguments of inlined
+    // frames.
+    if (GET_ARGC(pc) - 1 == argc)
+        inlineResumePoint->setFunCall();
+    JS_ASSERT(argc == inlineResumePoint->numActualArgs());
 
     // Gather up the arguments and |this| to the inline function.
     // Note that we leave the callee on the simulated stack for the
