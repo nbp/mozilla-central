@@ -778,6 +778,9 @@ InlineFrameIterator::findNextFrame()
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
     pc_ = script_->code + si_.pcOffset();
+#ifdef DEBUG
+    numActualArgs_ = 0xbad;
+#endif
 
     // This unfortunately is O(n*m), because we must skip over outer frames
     // before reading inner ones.
@@ -785,8 +788,11 @@ InlineFrameIterator::findNextFrame()
     for (unsigned i = 0; i < remaining; i++) {
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 
+        // Recover the number of actual arguments stored with the next frame.
+        uint32 numActualArgs = si_.nextNumActualArgs();
+
         // Skip over non-argument slots, as well as |this|.
-        unsigned skipCount = (si_.slots() - 1) - GET_ARGC(pc_) - 1;
+        unsigned skipCount = (si_.slots() - 1) - numActualArgs - 1;
         for (unsigned j = 0; j < skipCount; j++)
             si_.skip();
 
@@ -801,6 +807,7 @@ InlineFrameIterator::findNextFrame()
         callee_ = funval.toObject().toFunction();
         script_ = callee_->script();
         pc_ = script_->code + si_.pcOffset();
+        numActualArgs_ = numActualArgs;
     }
 
     framesRead_++;
@@ -896,7 +903,7 @@ InlineFrameIterator::numActualArgs() const
     // snapshot.  The number of arguments of the outer-most frame is stored in
     // the Ion JS frame which is on the stack.
     if (more())
-        return si_.numActualArgs();
+        return numActualArgs_;
 
     return frame_->numActualArgs();
 }

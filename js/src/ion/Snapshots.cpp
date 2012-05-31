@@ -64,7 +64,7 @@ using namespace js::ion;
 // Note that the first frame doesn't have the "parent PC" field.
 //
 //   [ptr] Debug only: JSScript *
-//   [vwu] # actual args (inline frames only!)
+//   [vwu] # actual args.
 //   [vwu] pc offset
 //   [vwu] # of slots, including nargs
 // [slot*] N slot entries, where N = nargs + nfixed + stackDepth
@@ -171,8 +171,7 @@ SnapshotReader::readFrameHeader()
     script_ = u.script;
 #endif
 
-    if (framesRead_)
-        argc_ = reader_.readUnsigned();
+    argc_ = reader_.readUnsigned();
     pcOffset_ = reader_.readUnsigned();
     slotCount_ = reader_.readUnsigned();
     IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", pcOffset_, slotCount_);
@@ -342,8 +341,7 @@ SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, ui
 
     uint32 pcoff = uint32(pc - script->code);
     IonSpew(IonSpew_Snapshots, "Writing pc offset %u, nslots %u", pcoff, nslots_);
-    if (framesWritten_)
-        writer_.writeUnsigned(argc);
+    writer_.writeUnsigned(argc);
     writer_.writeUnsigned(pcoff);
     writer_.writeUnsigned(nslots_);
 }

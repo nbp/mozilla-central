@@ -229,8 +229,7 @@ class SnapshotReader
   public:
     SnapshotReader(const uint8 *buffer, const uint8 *end);
 
-    uint32 numActualArgs() const {
-        JS_ASSERT(framesRead_);
+    uint32 nextNumActualArgs() const {
         return argc_;
     }
     uint32 pcOffset() const {

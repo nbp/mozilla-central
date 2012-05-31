@@ -1122,7 +1122,8 @@ MResumePoint::MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *cal
     stackDepth_(block->stackDepth()),
     pc_(pc),
     caller_(caller),
-    mode_(mode)
+    mode_(mode),
+    isFunCall_(false)
 {
 }
 

@@ -219,7 +219,9 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         JSScript *script = block->info().script();
         jsbytecode *pc = mir->pc();
         uint32 exprStack = mir->stackDepth() - block->info().ninvoke();
-        uint32 numActualArgs = fun ? fun->nargs : 0;
+        uint32 numActualArgs = 0;
+        if (it + 1 != end)
+            numActualArgs = mir->numActualArgs();
         snapshots_.startFrame(fun, script, pc, exprStack, numActualArgs);
 
 #ifdef TRACK_SNAPSHOTS
