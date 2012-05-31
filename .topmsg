@@ -1,2 +1,2 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Add actual number of arguments on the stack.
+Subject: Store actual number of arguments on the stack/snapshots.
