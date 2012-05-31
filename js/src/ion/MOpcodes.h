@@ -147,7 +147,8 @@ namespace ion {
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
     _(Floor)                                                                \
-    _(Round)
+    _(Round)                                                                \
+    _(InterruptCheck)
 
 // Forward declarations of MIR types.
 #define FORWARD_DECLARE(op) class M##op;

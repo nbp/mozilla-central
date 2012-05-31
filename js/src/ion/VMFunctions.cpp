@@ -312,6 +312,14 @@ SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, HandleValu
 }
 
 bool
+InterruptCheck(JSContext *cx)
+{
+    gc::MaybeVerifyBarriers(cx);
+
+    return !!js_HandleExecutionInterrupt(cx);
+}
+
+bool
 NumActualArgs(JSContext *cx, uint32_t *numActualArgs)
 {
     IonActivationIterator activations(cx);
