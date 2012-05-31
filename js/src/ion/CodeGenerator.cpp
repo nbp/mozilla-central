@@ -557,7 +557,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     // Construct the IonFramePrefix.
     uint32 descriptor = MakeFrameDescriptor(masm.framePushed(), IonFrame_JS);
-    masm.Push(Imm32(call->nargs()));
+    masm.Push(Imm32(call->numActualArgs()));
     masm.Push(calleereg);
     masm.Push(Imm32(descriptor));
 
@@ -624,7 +624,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         masm.freeStack(unusedStack);
 
         pushArg(StackPointer);                 // argv.
-        pushArg(Imm32(call->bytecodeArgc()));  // argc.
+        pushArg(Imm32(call->numActualArgs())); // argc.
         pushArg(calleereg);                    // JSFunction *.
 
         if (!callVM(InvokeFunctionInfo, call))

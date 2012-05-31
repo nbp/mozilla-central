@@ -1128,19 +1128,19 @@ class MCall
     // Monomorphic cache of single target from TI, or NULL.
     CompilerRootFunction target_;
     // Original value of argc from the bytecode.
-    uint32 bytecodeArgc_;
+    uint32 numActualArgs_;
 
-    MCall(JSFunction *target, uint32 bytecodeArgc, bool construct)
+    MCall(JSFunction *target, uint32 numActualArgs, bool construct)
       : construct_(construct),
         target_(target),
-        bytecodeArgc_(bytecodeArgc)
+        numActualArgs_(numActualArgs)
     {
         setResultType(MIRType_Value);
     }
 
   public:
     INSTRUCTION_HEADER(Call);
-    static MCall *New(JSFunction *target, size_t argc, size_t bytecodeArgc, bool construct);
+    static MCall *New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct);
 
     void initPrepareCall(MDefinition *start) {
         JS_ASSERT(start->isPrepareCall());
@@ -1179,8 +1179,8 @@ class MCall
     }
 
     // Includes |this|. Does not include any callsite-added Undefined values.
-    uint32 bytecodeArgc() const {
-        return bytecodeArgc_;
+    uint32 numActualArgs() const {
+        return numActualArgs_;
     }
 
     TypePolicy *typePolicy() {
