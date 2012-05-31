@@ -986,6 +986,7 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     int argc = 0;
     Value *argv = NULL;
+    int numActualArgs = 0;
 
     void *calleeToken;
     if (fp->isFunctionFrame()) {
@@ -993,11 +994,12 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
         // discard the |scopeChain|.
         argc = CountArgSlots(fp->fun()) - 1;
         argv = fp->formalArgs() - 1;
+        numActualArgs = fp->numActualArgs();
 
         if (fp->hasOverflowArgs()) {
             int formalArgc = argc;
             Value *formalArgv = argv;
-            argc = fp->numActualArgs() + 1;
+            argc = numActualArgs + 1;
             argv = fp->actualArgs() - 1;
             // The beginning of the actual args is not updated, so we just copy
             // the formal args into the actual args to get a linear vector which
@@ -1012,7 +1014,7 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
     // Caller must construct |this| before invoking the Ion function.
     JS_ASSERT_IF(fp->isConstructing(), fp->functionThis().isObject());
 
-    Value result;
+    Value result = Int32Value(numActualArgs);
     {
         AssertCompartmentUnchanged pcc(cx);
         IonContext ictx(cx, NULL);

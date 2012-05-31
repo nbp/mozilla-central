@@ -132,8 +132,11 @@ IonCompartment::generateEnterJIT(JSContext *cx)
         masm.bind(&footer);
     }
 
-    // Push the callee token.
-    masm.subq(Imm32(1), reg_argc);
+    // Push the number of actual arguments.  |result| is used to store the
+    // actual number of arguments without adding an extra argument to the enter
+    // JIT.
+    masm.movq(result, reg_argc);
+    masm.unboxInt32(Operand(reg_argc, 0), reg_argc);
     masm.push(reg_argc);
 
     // Push the callee token.
