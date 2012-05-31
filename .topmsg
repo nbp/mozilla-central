@@ -1,2 +1,2 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Store actual number of arguments on the stack/snapshots. (Bug 758307, r=)
+Subject: Store actual number of arguments on the stack/snapshots. (Bug 759442, r=)
