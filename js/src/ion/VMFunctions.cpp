@@ -87,6 +87,11 @@ InvokeConstructorFunction(JSContext *cx, JSFunction *fun, uint32 argc, Value *ar
 bool
 ReportOverRecursed(JSContext *cx)
 {
+    JS_CHECK_RECURSION(cx, return false);
+
+    if (cx->runtime->interrupt)
+        return InterruptCheck(cx);
+
     js_ReportOverRecursed(cx);
 
     // Cause an InternalError.
