@@ -68,7 +68,8 @@ class SnapshotWriter
 
   public:
     SnapshotOffset startSnapshot(uint32 frameCount, BailoutKind kind, bool resumeAfter);
-    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack);
+    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack,
+                    uint32 argc);
 #ifdef TRACK_SNAPSHOTS
     void trackFrame(uint32 pcOpcode, uint32 mirOpcode, uint32 mirId,
                                      uint32 lirOpcode, uint32 lirId);

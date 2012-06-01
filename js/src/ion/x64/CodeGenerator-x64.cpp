@@ -152,6 +152,9 @@ CodeGeneratorX64::visitUnbox(LUnbox *unbox)
           case MIRType_String:
             cond = masm.testString(Assembler::NotEqual, value);
             break;
+          case MIRType_Magic:
+            cond = masm.testMagic(Assembler::NotEqual, value);
+            break;
           default:
             JS_NOT_REACHED("Given MIRType cannot be unboxed.");
             return false;
@@ -172,6 +175,9 @@ CodeGeneratorX64::visitUnbox(LUnbox *unbox)
         break;
       case MIRType_String:
         masm.unboxString(value, ToRegister(result));
+        break;
+      case MIRType_Magic:
+        masm.unboxMagic(value, ToRegister(result));
         break;
       default:
         JS_NOT_REACHED("Given MIRType cannot be unboxed.");
@@ -335,3 +341,22 @@ CodeGeneratorX64::visitRecompileCheck(LRecompileCheck *lir)
         return false;
     return true;
 }
+
+bool
+CodeGeneratorX64::visitInterruptCheck(LInterruptCheck *lir)
+{
+    typedef bool (*pf)(JSContext *);
+    static const VMFunction interruptCheckInfo = FunctionInfo<pf>(InterruptCheck);
+
+    OutOfLineCode *ool = oolCallVM(interruptCheckInfo, lir, (ArgList()), StoreNothing());
+    if (!ool)
+        return false;
+
+    void *interrupt = (void*)&gen->cx->runtime->interrupt;
+    masm.movq(ImmWord(interrupt), ScratchReg);
+    masm.cmpl(Operand(ScratchReg, 0), Imm32(0));
+    masm.j(Assembler::NonZero, ool->entry());
+    masm.bind(ool->rejoin());
+    return true;
+}
+

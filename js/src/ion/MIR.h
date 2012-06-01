@@ -1128,19 +1128,19 @@ class MCall
     // Monomorphic cache of single target from TI, or NULL.
     CompilerRootFunction target_;
     // Original value of argc from the bytecode.
-    uint32 bytecodeArgc_;
+    uint32 numActualArgs_;
 
-    MCall(JSFunction *target, uint32 bytecodeArgc, bool construct)
+    MCall(JSFunction *target, uint32 numActualArgs, bool construct)
       : construct_(construct),
         target_(target),
-        bytecodeArgc_(bytecodeArgc)
+        numActualArgs_(numActualArgs)
     {
         setResultType(MIRType_Value);
     }
 
   public:
     INSTRUCTION_HEADER(Call);
-    static MCall *New(JSFunction *target, size_t argc, size_t bytecodeArgc, bool construct);
+    static MCall *New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct);
 
     void initPrepareCall(MDefinition *start) {
         JS_ASSERT(start->isPrepareCall());
@@ -1179,8 +1179,8 @@ class MCall
     }
 
     // Includes |this|. Does not include any callsite-added Undefined values.
-    uint32 bytecodeArgc() const {
-        return bytecodeArgc_;
+    uint32 numActualArgs() const {
+        return numActualArgs_;
     }
 
     TypePolicy *typePolicy() {
@@ -2472,6 +2472,24 @@ class MRecompileCheck : public MNullaryInstruction
         return new MRecompileCheck();
     }
 
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+// Check whether we need to fire the interrupt handler.
+class MInterruptCheck : public MNullaryInstruction
+{
+    MInterruptCheck() {
+        setGuard();
+    }
+
+  public:
+    INSTRUCTION_HEADER(InterruptCheck);
+
+    static MInterruptCheck *New() {
+        return new MInterruptCheck();
+    }
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
@@ -4271,6 +4289,40 @@ class MIteratorEnd
     }
 };
 
+class MArgumentsLength
+  : public MUnaryInstruction,
+    public ArgumentsPolicy<0>
+{
+    MArgumentsLength(MDefinition *arguments)
+      : MUnaryInstruction(arguments)
+    {
+        setResultType(MIRType_Int32);
+        setMovable();
+    }
+  public:
+    INSTRUCTION_HEADER(ArgumentsLength);
+
+    static MArgumentsLength *New(MDefinition *arguments) {
+        return new MArgumentsLength(arguments);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+
+    MDefinition *arguments() const {
+        return getOperand(0);
+    }
+    bool congruentTo(MDefinition *const &ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+    AliasSet getAliasSet() const {
+        // Arguments |length| cannot be mutated by Ion Code or any the the
+        // called functions.
+        return AliasSet::None();
+   }
+};
+
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.
 class MTypeBarrier : public MUnaryInstruction
@@ -4353,9 +4405,9 @@ class MResumePoint : public MNode
 {
   public:
     enum Mode {
-        ResumeAt,
-        ResumeAfter,
-        Outer
+        ResumeAt,    // Resume until before the current instruction
+        ResumeAfter, // Resume after the current instruction
+        Outer        // State before inlining.
     };
 
   private:
@@ -4365,7 +4417,11 @@ class MResumePoint : public MNode
     uint32 stackDepth_;
     jsbytecode *pc_;
     MResumePoint *caller_;
-    Mode mode_;
+    Mode mode_:2;
+
+    // isFunCall remove one when set from the number of actual arguments.  This
+    // is usefull for cases where inlining matters.
+    bool isFunCall_:1;
 
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
     bool init(MBasicBlock *state);
@@ -4411,6 +4467,14 @@ class MResumePoint : public MNode
     }
     Mode mode() const {
         return mode_;
+    }
+    uint32 numActualArgs() const {
+        JS_ASSERT(mode_ == Outer && js_CodeSpec[*pc_].format & JOF_INVOKE);
+        return GET_ARGC(pc_) - (isFunCall_ ? 1 : 0);
+    }
+    void setFunCall() {
+        JS_ASSERT(!isFunCall_);
+        isFunCall_ = true;
     }
 };
 

@@ -586,12 +586,24 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void unboxInt32(const Address &src, const Register &dest) {
         unboxInt32(Operand(src), dest);
     }
+
+    void unboxMagic(const ValueOperand &src, const Register &dest) {
+        unboxInt32(src, dest);
+    }
+    void unboxMagic(const Operand &src, const Register &dest) {
+        unboxInt32(src, dest);
+    }
+    void unboxMagic(const Address &src, const Register &dest) {
+        unboxMagic(Operand(src), dest);
+    }
+
     void unboxBoolean(const ValueOperand &src, const Register &dest) {
         movl(Operand(src.valueReg()), dest);
     }
     void unboxBoolean(const Operand &src, const Register &dest) {
         movl(src, dest);
     }
+
     void unboxDouble(const ValueOperand &src, const FloatRegister &dest) {
         movqsd(src.valueReg(), dest);
     }
@@ -782,6 +794,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     }
 
     void enterOsr(Register calleeToken, Register code) {
+        push(Imm32(0)); // num actual args.
         push(calleeToken);
         push(Imm32(MakeFrameDescriptor(0, IonFrame_Osr)));
         call(code);
