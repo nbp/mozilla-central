@@ -432,8 +432,6 @@ bool SetProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, Handl
 
 bool InterruptCheck(JSContext *cx);
 
-bool NumActualArgs(JSContext *cx, uint32_t *numActualArgs);
-
 } // namespace ion
 } // namespace js
 

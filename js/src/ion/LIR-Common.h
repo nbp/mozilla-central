@@ -2568,7 +2568,7 @@ class LIteratorEnd : public LInstructionHelper<0, 1, 2>
 };
 
 // Read the number of actual arguments.
-class LArgumentsLength : public LCallInstructionHelper<1, 0, 0>
+class LArgumentsLength : public LInstructionHelper<1, 0, 0>
 {
   public:
     LIR_HEADER(ArgumentsLength);

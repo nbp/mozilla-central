@@ -1551,8 +1551,7 @@ bool
 LIRGenerator::visitArgumentsLength(MArgumentsLength *ins)
 {
     JS_ASSERT(ins->arguments()->type() == MIRType_Magic);
-    LArgumentsLength *lir = new LArgumentsLength();
-    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+    return define(new LArgumentsLength(), ins);
 }
 
 bool

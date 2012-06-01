@@ -2040,10 +2040,13 @@ CodeGenerator::visitIteratorEnd(LIteratorEnd *lir)
 bool
 CodeGenerator::visitArgumentsLength(LArgumentsLength *lir)
 {
-    typedef bool (*pf)(JSContext *, uint32_t *);
-    static const VMFunction Info = FunctionInfo<pf>(NumActualArgs);
+    // read number of actual arguments from the JS frame.
+    Register argc = ToRegister(lir->output());
+    Address ptr(StackPointer, masm.framePushed() + IonJSFrameLayout::offsetOfNumActualArgs());
 
-    return callVM(Info, lir);
+    JS_ASSERT(masm.framePushed() == frameSize());
+    masm.movePtr(ptr, argc);
+    return true;
 }
 
 bool

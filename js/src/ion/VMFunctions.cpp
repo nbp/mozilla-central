@@ -319,16 +319,5 @@ InterruptCheck(JSContext *cx)
     return !!js_HandleExecutionInterrupt(cx);
 }
 
-bool
-NumActualArgs(JSContext *cx, uint32_t *numActualArgs)
-{
-    IonActivationIterator activations(cx);
-    IonFrameIterator frames(activations);
-    ++frames; // step over the exit frame.
-    InlineFrameIterator frame(&frames);
-    *numActualArgs = frame.numActualArgs();
-    return true;
-}
-
 } // namespace ion
 } // namespace js
