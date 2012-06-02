@@ -753,6 +753,13 @@ IonBuilder::inspectOpcode(JSOp op)
         return true;
 
       case JSOP_SETARG:
+        // To handle this case, we should spill the arguments to the space where
+        // actual arguments are stored. The tricky part is that if we add a MIR
+        // to wrap the spilling action, we don't want the spilling to be
+        // captured by the GETARG and by the resume point, only by
+        // MArgumentsGet.
+        if (info().hasArguments())
+            return abort("NYI: arguments & setarg.");
         current->setArg(GET_SLOTNO(pc));
         return true;
 
@@ -4296,9 +4303,44 @@ IonBuilder::jsop_arguments_length()
 bool
 IonBuilder::jsop_arguments_getelem()
 {
+    types::TypeSet *barrier = oracle->propertyReadBarrier(script, pc);
+    types::TypeSet *types = oracle->propertyRead(script, pc);
+
     MDefinition *idx = current->pop();
-    MDefinition *obj = current->pop();
-    return abort("NYI arguments[]");
+    MDefinition *args = current->pop();
+
+    if (idx->isConstant()) {
+        do {
+            Value idxv = idx->toConstant()->value();
+            if (idxv.isInt32() && idxv.toInt32() >= 0)
+                break;
+
+            uint32 index = idxv.toInt32();
+            if (index < info().nargs()) {
+                current->pushArg(index);
+                return true;
+            }
+        } while (false);
+    }
+
+    // To ensure that we are not looking above the number of actual arguments.
+    MArgumentsLength *length = MArgumentsLength::New(args);
+    current->add(length);
+
+    // Ensure idx is an integer.
+    MToInt32 *index = MToInt32::New(idx);
+    current->add(index);
+
+    // Bailouts if we read more than the number of actual arguments.
+    MBoundsCheck *check = MBoundsCheck::New(index, length);
+    current->add(check);
+
+    // Load the argument from the actual arguments.
+    MArgumentsGet *load = MArgumentsGet::New(index);
+    current->add(load);
+    current->push(load);
+
+    return pushTypeBarrier(load, types, barrier);
 }
 
 bool

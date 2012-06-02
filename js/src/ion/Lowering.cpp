@@ -1555,6 +1555,13 @@ LIRGenerator::visitArgumentsLength(MArgumentsLength *ins)
 }
 
 bool
+LIRGenerator::visitArgumentsGet(MArgumentsGet *ins)
+{
+    LArgumentsGet *lir = new LArgumentsGet(useRegisterOrConstant(ins->index()));
+    return defineBox(lir, ins);
+}
+
+bool
 LIRGenerator::visitThrow(MThrow *ins)
 {
     MDefinition *value = ins->getOperand(0);

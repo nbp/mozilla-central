@@ -2042,10 +2042,28 @@ CodeGenerator::visitArgumentsLength(LArgumentsLength *lir)
 {
     // read number of actual arguments from the JS frame.
     Register argc = ToRegister(lir->output());
-    Address ptr(StackPointer, masm.framePushed() + IonJSFrameLayout::offsetOfNumActualArgs());
+    Address ptr(StackPointer, frameSize() + IonJSFrameLayout::offsetOfNumActualArgs());
 
-    JS_ASSERT(masm.framePushed() == frameSize());
     masm.movePtr(ptr, argc);
+    return true;
+}
+
+bool
+CodeGenerator::visitArgumentsGet(LArgumentsGet *lir)
+{
+    ValueOperand result = GetValueOutput(lir);
+    const LAllocation *index = lir->index();
+    size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
+
+    if (index->isConstant()) {
+        uint8 i = index->toConstant()->toInt32();
+        Address argPtr(StackPointer, sizeof(Value*) * i + argvOffset);
+        masm.loadValue(argPtr, result);
+    } else {
+        Register i = ToRegister(index);
+        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value*)), argvOffset);
+        masm.loadValue(argPtr, result);
+    }
     return true;
 }
 

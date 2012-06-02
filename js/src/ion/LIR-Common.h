@@ -2578,6 +2578,21 @@ class LArgumentsLength : public LInstructionHelper<1, 0, 0>
     }
 };
 
+// Load a value from a dense array's elements vector. Bail out if it's the hole value.
+class LArgumentsGet : public LInstructionHelper<BOX_PIECES, 1, 0>
+{
+  public:
+    LIR_HEADER(ArgumentsGet);
+    BOX_OUTPUT_ACCESSORS();
+
+    LArgumentsGet(const LAllocation &index) {
+        setOperand(0, index);
+    }
+    const LAllocation *index() {
+        return getOperand(0);
+    }
+};
+
 // Guard that a value is in a TypeSet.
 class LTypeBarrier : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 1>
 {

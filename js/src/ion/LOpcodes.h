@@ -171,6 +171,7 @@
     _(TypedArrayElements)           \
     _(StringLength)                 \
     _(ArgumentsLength)              \
+    _(ArgumentsGet)                 \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \
