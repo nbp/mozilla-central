@@ -352,7 +352,9 @@ ArgumentsPolicy<Op>::staticAdjustInputs(MInstruction *ins)
     if (in->type() == MIRType_Magic)
         return true;
 
-    in = boxAt(ins, in);
+    if (in->type() != MIRType_Value)
+        in = boxAt(ins, in);
+
     MUnbox *replace = MUnbox::New(in, MIRType_Magic, MUnbox::Fallible);
     ins->block()->insertBefore(ins, replace);
     ins->replaceOperand(Op, replace);
