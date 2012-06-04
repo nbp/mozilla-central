@@ -193,7 +193,7 @@ IonCompartment::mark(JSTracer *trc, JSCompartment *compartment)
     // These must be available if we could be running JIT code; they are not
     // traced as normal through IonCode or IonScript objects
     if (mustMarkEnterJIT)
-        MarkIonCodeRoot(trc, enterJIT_.unsafeGetAddress(), "enterJIT");
+        MarkIonCodeRoot(trc, enterJIT_.unsafeGet(), "enterJIT");
 
     // functionWrappers_ are not marked because this is a WeakCache of VM
     // function implementations.
@@ -202,19 +202,19 @@ IonCompartment::mark(JSTracer *trc, JSCompartment *compartment)
 void
 IonCompartment::sweep(FreeOp *fop)
 {
-    if (enterJIT_ && IsAboutToBeFinalized(enterJIT_))
+    if (enterJIT_ && !IsIonCodeMarked(enterJIT_.unsafeGet()))
         enterJIT_ = NULL;
-    if (bailoutHandler_ && IsAboutToBeFinalized(bailoutHandler_))
+    if (bailoutHandler_ && !IsIonCodeMarked(bailoutHandler_.unsafeGet()))
         bailoutHandler_ = NULL;
-    if (argumentsRectifier_ && IsAboutToBeFinalized(argumentsRectifier_))
+    if (argumentsRectifier_ && !IsIonCodeMarked(argumentsRectifier_.unsafeGet()))
         argumentsRectifier_ = NULL;
-    if (invalidator_ && IsAboutToBeFinalized(invalidator_))
+    if (invalidator_ && !IsIonCodeMarked(invalidator_.unsafeGet()))
         invalidator_ = NULL;
-    if (preBarrier_ && IsAboutToBeFinalized(preBarrier_))
+    if (preBarrier_ && !IsIonCodeMarked(preBarrier_.unsafeGet()))
         preBarrier_ = NULL;
 
     for (size_t i = 0; i < bailoutTables_.length(); i++) {
-        if (bailoutTables_[i] && IsAboutToBeFinalized(bailoutTables_[i]))
+        if (bailoutTables_[i] && !IsIonCodeMarked(bailoutTables_[i].unsafeGet()))
             bailoutTables_[i] = NULL;
     }
 
@@ -298,7 +298,6 @@ IonCode::copyFrom(MacroAssembler &masm)
     // Store the IonCode pointer right before the code buffer, so we can
     // recover the gcthing from relocation tables.
     *(IonCode **)(code_ - sizeof(IonCode *)) = this;
-
     insnSize_ = masm.instructionsSize();
     masm.executableCopy(code_);
 
@@ -307,7 +306,6 @@ IonCode::copyFrom(MacroAssembler &masm)
 
     jumpRelocTableBytes_ = masm.jumpRelocationTableBytes();
     masm.copyJumpRelocationTable(code_ + jumpRelocTableOffset());
-
     dataRelocTableBytes_ = masm.dataRelocationTableBytes();
     masm.copyDataRelocationTable(code_ + dataRelocTableOffset());
 
@@ -390,7 +388,7 @@ IonScript::IonScript()
     osrEntryOffset_(0),
     invalidateEpilogueOffset_(0),
     invalidateEpilogueDataOffset_(0),
-    forbidOsr_(false),
+    bailoutExpected_(false),
     snapshots_(0),
     snapshotsSize_(0),
     bailoutTable_(0),
@@ -408,7 +406,7 @@ IonScript::IonScript()
     refcount_(0)
 {
 }
-
+static const int DataAlignment = 4;
 IonScript *
 IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
@@ -424,13 +422,20 @@ IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snaps
     // This should not overflow on x86, because the memory is already allocated
     // *somewhere* and if their total overflowed there would be no memory left
     // at all.
-    size_t bytes = snapshotsSize +
-                   bailoutEntries * sizeof(uint32) +
-                   constants * sizeof(Value) +
-                   safepointIndices * sizeof(SafepointIndex) +
-                   osiIndices * sizeof(OsiIndex) +
-                   cacheEntries * sizeof(IonCache) +
-                   safepointsSize;
+    size_t paddedSnapshotsSize = AlignBytes(snapshotsSize, DataAlignment);
+    size_t paddedBailoutSize = AlignBytes(bailoutEntries * sizeof(uint32), DataAlignment);
+    size_t paddedConstantsSize = AlignBytes(constants * sizeof(Value), DataAlignment);
+    size_t paddedSafepointIndicesSize = AlignBytes(safepointIndices * sizeof(SafepointIndex), DataAlignment);
+    size_t paddedOsiIndicesSize = AlignBytes(osiIndices * sizeof(OsiIndex), DataAlignment);
+    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
+    size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
+    size_t bytes = paddedSnapshotsSize +
+                   paddedBailoutSize +
+                   paddedConstantsSize +
+                   paddedSafepointIndicesSize+
+                   paddedOsiIndicesSize +
+                   paddedCacheEntriesSize +
+                   paddedSafepointSize;
     uint8 *buffer = (uint8 *)cx->malloc_(sizeof(IonScript) + bytes);
     if (!buffer)
         return NULL;
@@ -442,31 +447,31 @@ IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snaps
 
     script->snapshots_ = offsetCursor;
     script->snapshotsSize_ = snapshotsSize;
-    offsetCursor += snapshotsSize;
+    offsetCursor += paddedSnapshotsSize;
 
     script->bailoutTable_ = offsetCursor;
     script->bailoutEntries_ = bailoutEntries;
-    offsetCursor += bailoutEntries * sizeof(uint32);
+    offsetCursor += paddedBailoutSize;
 
     script->constantTable_ = offsetCursor;
     script->constantEntries_ = constants;
-    offsetCursor += constants * sizeof(Value);
+    offsetCursor += paddedConstantsSize;
 
     script->safepointIndexOffset_ = offsetCursor;
     script->safepointIndexEntries_ = safepointIndices;
-    offsetCursor += safepointIndices * sizeof(SafepointIndex);
+    offsetCursor += paddedSafepointIndicesSize;
 
     script->osiIndexOffset_ = offsetCursor;
     script->osiIndexEntries_ = osiIndices;
-    offsetCursor += osiIndices * sizeof(OsiIndex);
+    offsetCursor += paddedOsiIndicesSize;
 
     script->cacheList_ = offsetCursor;
     script->cacheEntries_ = cacheEntries;
-    offsetCursor += cacheEntries * sizeof(IonCache);
+    offsetCursor += paddedCacheEntriesSize;
 
     script->safepointsStart_ = offsetCursor;
     script->safepointsSize_ = safepointsSize;
-    offsetCursor += safepointsSize;
+    offsetCursor += paddedSafepointSize;
 
     script->frameLocals_ = frameLocals;
     script->frameSize_ = frameSize;
@@ -907,8 +912,8 @@ ion::CanEnterAtBranch(JSContext *cx, JSScript *script, StackFrame *fp, jsbytecod
     if (script->ion == ION_DISABLED_SCRIPT)
         return Method_Skipped;
 
-    // Ignore OSR if the code is expected to result in a bailout.
-    if (script->ion && script->ion->isOsrForbidden())
+    // Skip if the code is expected to result in a bailout.
+    if (script->ion && script->ion->bailoutExpected())
         return Method_Skipped;
 
     // Optionally ignore on user request.
@@ -945,12 +950,16 @@ ion::CanEnter(JSContext *cx, JSScript *script, StackFrame *fp, bool newType)
     if (script->ion == ION_DISABLED_SCRIPT)
         return Method_Skipped;
 
+    // Skip if the code is expected to result in a bailout.
+    if (script->ion && script->ion->bailoutExpected())
+        return Method_Skipped;
+
     // If constructing, allocate a new |this| object before building Ion.
     // Creating |this| is done before building Ion because it may change the
     // type information and invalidate compilation results.
     if (fp->isConstructing() && fp->functionThis().isPrimitive()) {
-        RootedVarObject callee(cx, &fp->callee());
-        RootedVarObject obj(cx, js_CreateThisForFunction(cx, callee, newType));
+        RootedObject callee(cx, &fp->callee());
+        RootedObject obj(cx, js_CreateThisForFunction(cx, callee, newType));
         if (!obj)
             return Method_Skipped;
         fp->functionThis().setObject(*obj);
@@ -980,6 +989,7 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
     JS_CHECK_RECURSION(cx, return IonExec_Error);
     JS_ASSERT(ion::IsEnabled(cx));
     JS_ASSERT(CheckFrame(fp));
+    JS_ASSERT(!fp->script()->ion->bailoutExpected());
 
     EnterIonCode enter = cx->compartment->ionCompartment()->enterJITInfallible();
 
@@ -1258,3 +1268,5 @@ ion::MarkFromIon(JSCompartment *comp, Value *vp)
     gc::MarkValueUnbarriered(comp->barrierTracer(), vp, "write barrier");
 }
 
+
+int js::ion::LabelBase::id_count = 0;

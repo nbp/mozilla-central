@@ -16,7 +16,7 @@ using namespace mozilla::a11y;
 
 nsXFormsDropmarkerWidgetAccessible::
   nsXFormsDropmarkerWidgetAccessible(nsIContent* aContent,
-                                     nsDocAccessible* aDoc) :
+                                     DocAccessible* aDoc) :
   nsLeafAccessible(aContent, aDoc)
 {
 }
@@ -80,8 +80,8 @@ nsXFormsDropmarkerWidgetAccessible::DoAction(PRUint8 aIndex)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsCalendarWidgetAccessible::
-  nsXFormsCalendarWidgetAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
-  nsAccessibleWrap(aContent, aDoc)
+  nsXFormsCalendarWidgetAccessible(nsIContent* aContent, DocAccessible* aDoc) :
+  AccessibleWrap(aContent, aDoc)
 {
 }
 
@@ -98,7 +98,7 @@ nsXFormsCalendarWidgetAccessible::NativeRole()
 
 nsXFormsComboboxPopupWidgetAccessible::
   nsXFormsComboboxPopupWidgetAccessible(nsIContent* aContent,
-                                        nsDocAccessible* aDoc) :
+                                        DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -119,14 +119,18 @@ nsXFormsComboboxPopupWidgetAccessible::NativeState()
   nsresult rv = sXFormsService->IsDropmarkerOpen(DOMNode, &isOpen);
   NS_ENSURE_SUCCESS(rv, state);
 
-  state |= states::FOCUSABLE;
-
   if (isOpen)
     state = states::FLOATING;
   else
     state = states::INVISIBLE;
 
   return state;
+}
+
+PRUint64
+nsXFormsComboboxPopupWidgetAccessible::NativeInteractiveState() const
+{
+  return NativelyUnavailable() ? states::UNAVAILABLE : states::FOCUSABLE;
 }
 
 nsresult

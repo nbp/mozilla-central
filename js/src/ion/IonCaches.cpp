@@ -61,15 +61,21 @@ CodeLocationJump::repoint(IonCode *code, MacroAssembler *masm)
 {
     JS_ASSERT(!absolute);
     size_t new_off = (size_t)raw_;
+#ifdef JS_SMALL_BRANCH
+    size_t jumpTableEntryOffset = reinterpret_cast<size_t>(jumpTableEntry_);
+#endif
     if (masm != NULL) {
 #ifdef JS_CPU_X64
         JS_ASSERT((uint64_t)raw_ <= UINT32_MAX);
 #endif
         new_off = masm->actualOffset((uintptr_t)raw_);
+#ifdef JS_SMALL_BRANCH
+        jumpTableEntryOffset = masm->actualIndex(jumpTableEntryOffset);
+#endif
     }
     raw_ = code->raw() + new_off;
-#ifdef JS_CPU_X64
-    jumpTableEntry_ = Assembler::PatchableJumpAddress(code, (size_t) jumpTableEntry_);
+#ifdef JS_SMALL_BRANCH
+    jumpTableEntry_ = Assembler::PatchableJumpAddress(code, (size_t) jumpTableEntryOffset);
 #endif
     markAbsolute(true);
 }
@@ -95,6 +101,15 @@ void
 CodeOffsetLabel::fixup(MacroAssembler *masm)
 {
      offset_ = masm->actualOffset(offset_);
+}
+
+void
+CodeOffsetJump::fixup(MacroAssembler *masm)
+{
+     offset_ = masm->actualOffset(offset_);
+#ifdef JS_SMALL_BRANCH
+     jumpTableIndex_ = masm->actualIndex(jumpTableIndex_);
+#endif
 }
 
 static const size_t MAX_STUBS = 16;
@@ -138,12 +153,12 @@ struct GetNativePropertyStub
 
     void generate(JSContext *cx, MacroAssembler &masm, JSObject *obj, JSObject *holder,
                   const Shape *shape, Register object, TypedOrValueRegister output,
-                  Label *failures)
+                  RepatchLabel *failures, Label *nonRepatchFailures = NULL)
     {
         // If there's a single jump to |failures|, we can patch the shape guard
         // jump directly. Otherwise, jump to the end of the stub, so there's a
         // common point to patch.
-        bool multipleFailureJumps = failures->used();
+        bool multipleFailureJumps = (nonRepatchFailures != NULL) && nonRepatchFailures->used();
         exitOffset = masm.branchPtrWithPatch(Assembler::NotEqual,
                                              Address(object, JSObject::offsetOfShape()),
                                              ImmGCPtr(obj->lastProperty()),
@@ -197,7 +212,7 @@ struct GetNativePropertyStub
         if (restoreScratch)
             masm.pop(scratchReg);
 
-        Label rejoin_;
+        RepatchLabel rejoin_;
         rejoinOffset = masm.jumpWithPatch(&rejoin_);
         masm.bind(&rejoin_);
 
@@ -206,7 +221,9 @@ struct GetNativePropertyStub
             if (restoreScratch)
                 masm.pop(scratchReg);
             masm.bind(failures);
-            Label exit_;
+            if (multipleFailureJumps)
+                masm.bind(nonRepatchFailures);
+            RepatchLabel exit_;
             exitOffset = masm.jumpWithPatch(&exit_);
             masm.bind(&exit_);
         } else {
@@ -219,7 +236,7 @@ bool
 IonCacheGetProperty::attachNative(JSContext *cx, JSObject *obj, JSObject *holder, const Shape *shape)
 {
     MacroAssembler masm;
-    Label failures;
+    RepatchLabel failures;
 
     GetNativePropertyStub getprop;
     getprop.generate(cx, masm, obj, holder, shape, object(), output(), &failures);
@@ -229,10 +246,13 @@ IonCacheGetProperty::attachNative(JSContext *cx, JSObject *obj, JSObject *holder
     if (!code)
         return false;
 
+    getprop.rejoinOffset.fixup(&masm);
+    getprop.exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, getprop.rejoinOffset);
     CodeLocationJump exitJump(code, getprop.exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -275,14 +295,14 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Va
     IonScript *ion = topScript->ionScript();
 
     IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
-    RootedVarPropertyName name(cx, cache.name());
+    RootedPropertyName name(cx, cache.name());
 
     JSScript *script;
     jsbytecode *pc;
     cache.getScriptedLocation(&script, &pc);
 
     // Root the object.
-    RootedVarObject objRoot(cx, obj);
+    RootedObject objRoot(cx, obj);
 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, vp, topScript);
@@ -305,9 +325,14 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Va
         }
     }
 
-    RootedVarId id(cx, NameToId(name));
-    if (!obj->getGeneric(cx, obj, id, vp))
-        return false;
+    RootedId id(cx, NameToId(name));
+    if (obj->getOps()->getProperty) {
+        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), objRoot, id, vp))
+            return false;
+    } else {
+        if (!GetPropertyHelper(cx, objRoot, id, 0, vp))
+            return false;
+    }
 
 #if JS_HAS_NO_SUCH_METHOD
     // Handle objects with __noSuchMethod__.
@@ -336,7 +361,7 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, JSObject *obj, const Sh
 {
     MacroAssembler masm;
 
-    Label exit_;
+    RepatchLabel exit_;
     CodeOffsetJump exitOffset =
         masm.branchPtrWithPatch(Assembler::NotEqual,
                                 Address(object(), JSObject::offsetOfShape()),
@@ -363,7 +388,7 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, JSObject *obj, const Sh
         masm.storeConstantOrRegister(value(), addr);
     }
 
-    Label rejoin_;
+    RepatchLabel rejoin_;
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
@@ -372,10 +397,13 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, JSObject *obj, const Sh
     if (!code)
         return false;
 
+    rejoinOffset.fixup(&masm);
+    exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump exitJump(code, exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -434,7 +462,7 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, JSObject *obj, const Shap
     }
 
     /* Success. */
-    Label rejoin_;
+    RepatchLabel rejoin_;
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
@@ -443,7 +471,7 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, JSObject *obj, const Shap
     masm.pop(object());
     masm.bind(&failures);
 
-    Label exit_;
+    RepatchLabel exit_;
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
@@ -452,10 +480,13 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, JSObject *obj, const Shap
     if (!code)
         return false;
 
+    rejoinOffset.fixup(&masm);
+    exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump exitJump(code, exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -557,7 +588,7 @@ js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Ha
 {
     IonScript *ion = GetTopIonJSScript(cx)->ion;
     IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
-    RootedVarPropertyName name(cx, cache.name());
+    RootedPropertyName name(cx, cache.name());
     jsid id;
     const Shape *shape = NULL;
 
@@ -604,25 +635,29 @@ IonCacheGetElement::attachGetProp(JSContext *cx, JSObject *obj, const Value &idv
 
     JS_ASSERT(idval.isString());
 
-    Label failures;
+    RepatchLabel failures;
+    Label nonRepatchFailures;
     MacroAssembler masm;
 
     // Guard on the index value.
     ValueOperand val = index().reg().valueReg();
-    masm.branchTestValue(Assembler::NotEqual, val, idval, &failures);
+    masm.branchTestValue(Assembler::NotEqual, val, idval, &nonRepatchFailures);
 
     GetNativePropertyStub getprop;
-    getprop.generate(cx, masm, obj, holder, shape, object(), output(), &failures);
+    getprop.generate(cx, masm, obj, holder, shape, object(), output(), &failures, &nonRepatchFailures);
 
     Linker linker(masm);
     IonCode *code = linker.newCode(cx);
     if (!code)
         return false;
 
+    getprop.rejoinOffset.fixup(&masm);
+    getprop.exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, getprop.rejoinOffset);
     CodeLocationJump exitJump(code, getprop.exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -684,7 +719,7 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, JSObject *obj, const Value &
     masm.branchTestMagic(Assembler::Equal, out, &hole);
 
     masm.pop(object());
-    Label rejoin_;
+    RepatchLabel rejoin_;
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
@@ -693,7 +728,7 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, JSObject *obj, const Value &
     masm.pop(object());
     masm.bind(&failures);
 
-    Label exit_;
+    RepatchLabel exit_;
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
@@ -702,10 +737,13 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, JSObject *obj, const Value &
     if (!code)
         return false;
 
+    rejoinOffset.fixup(&masm);
+    exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump exitJump(code, exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -727,7 +765,7 @@ js::ion::GetElementCache(JSContext *cx, size_t cacheIndex, JSObject *obj, const 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, res, script);
 
-    RootedVarId id(cx);
+    RootedId id(cx);
     if (!FetchElementId(cx, obj, idval, id.address(), res))
         return false;
 
@@ -768,13 +806,13 @@ IonCacheBindName::attachGlobal(JSContext *cx, JSObject *scopeChain)
     MacroAssembler masm;
 
     // Guard on the scope chain.
-    Label exit_;
+    RepatchLabel exit_;
     CodeOffsetJump exitOffset = masm.branchPtrWithPatch(Assembler::NotEqual, scopeChainReg(),
                                                         ImmGCPtr(scopeChain), &exit_);
     masm.bind(&exit_);
     masm.movePtr(ImmGCPtr(scopeChain), outputReg());
 
-    Label rejoin_;
+    RepatchLabel rejoin_;
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
@@ -783,10 +821,13 @@ IonCacheBindName::attachGlobal(JSContext *cx, JSObject *scopeChain)
     if (!code)
         return false;
 
+    rejoinOffset.fixup(&masm);
+    exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump exitJump(code, exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);
@@ -830,7 +871,8 @@ IonCacheBindName::attachNonGlobal(JSContext *cx, JSObject *scopeChain, JSObject 
     MacroAssembler masm;
 
     // Guard on the shape of the scope chain.
-    Label failures;
+    RepatchLabel failures;
+    Label nonRepatchFailures;
     CodeOffsetJump exitOffset =
         masm.branchPtrWithPatch(Assembler::NotEqual,
                                 Address(scopeChainReg(), JSObject::offsetOfShape()),
@@ -838,20 +880,21 @@ IonCacheBindName::attachNonGlobal(JSContext *cx, JSObject *scopeChain, JSObject 
                                 &failures);
 
     if (holder != scopeChain)
-        GenerateScopeChainGuards(masm, scopeChain, holder, scopeChainReg(), outputReg(), &failures);
+        GenerateScopeChainGuards(masm, scopeChain, holder, scopeChainReg(), outputReg(), &nonRepatchFailures);
     else
         masm.movePtr(scopeChainReg(), outputReg());
 
     // At this point outputReg holds the object on which the property
     // was found, so we're done.
-    Label rejoin_;
+    RepatchLabel rejoin_;
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
     // All failures flow to here, so there is a common point to patch.
     masm.bind(&failures);
+    masm.bind(&nonRepatchFailures);
     if (holder != scopeChain) {
-        Label exit_;
+        RepatchLabel exit_;
         exitOffset = masm.jumpWithPatch(&exit_);
         masm.bind(&exit_);
     }
@@ -861,10 +904,13 @@ IonCacheBindName::attachNonGlobal(JSContext *cx, JSObject *scopeChain, JSObject 
     if (!code)
         return false;
 
+    rejoinOffset.fixup(&masm);
+    exitOffset.fixup(&masm);
+
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump exitJump(code, exitOffset);
-
-    PatchJump(lastJump(), CodeLocationLabel(code));
+    CodeLocationJump lastJump_ = lastJump();
+    PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     PatchJump(exitJump, cacheLabel());
     updateLastJump(exitJump);

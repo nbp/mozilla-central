@@ -287,7 +287,7 @@ GenerateBailoutTail(MacroAssembler &masm)
                        JSReturnReg_Data, EDtrAddr(sp, EDtrOffImm(8)));
 
         // Test for an exception
-        masm.as_cmp(r0, Imm8(Interpret_Ok));
+        masm.as_cmp(r0, Imm8(Interpret_Error));
         masm.ma_b(&exception, Assembler::Zero);
 
         masm.leaveExitFrame();
@@ -438,9 +438,6 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     // return address
     masm.ma_add(sp, Imm32(8), sp);
     masm.ma_alu(sp, lsr(r4, FRAMESIZE_SHIFT), sp, op_add);      // Discard pushed arguments.
-
-    // remove the exitCode pointer from the stack.
-    masm.ma_add(sp, Imm32(sizeof(IonCode*)), sp);
 
     masm.ret();
     Linker linker(masm);

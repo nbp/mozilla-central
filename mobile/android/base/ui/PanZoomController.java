@@ -151,7 +151,6 @@ public class PanZoomController
     }
 
     public void handleMessage(String event, JSONObject message) {
-        Log.i(LOGTAG, "Got message: " + event);
         try {
             if (MESSAGE_ZOOM_RECT.equals(event)) {
                 float x = (float)message.getDouble("x");
@@ -165,16 +164,16 @@ public class PanZoomController
                     }
                 });
             } else if (MESSAGE_ZOOM_PAGE.equals(event)) {
-                FloatSize pageSize = mController.getCssPageSize();
+                RectF cssPageRect = mController.getCssPageRect();
 
                 RectF viewableRect = mController.getCssViewport();
                 float y = viewableRect.top;
                 // attempt to keep zoom keep focused on the center of the viewport
-                float newHeight = viewableRect.height() * pageSize.width / viewableRect.width();
+                float newHeight = viewableRect.height() * cssPageRect.width() / viewableRect.width();
                 float dh = viewableRect.height() - newHeight; // increase in the height
                 final RectF r = new RectF(0.0f,
                                     y + dh/2,
-                                    pageSize.width,
+                                    cssPageRect.width(),
                                     y + dh/2 + newHeight);
                 mController.post(new Runnable() {
                     public void run() {
@@ -294,7 +293,7 @@ public class PanZoomController
     }
 
     /** This must be called on the UI thread. */
-    public void pageSizeUpdated() {
+    public void pageRectUpdated() {
         if (mState == PanZoomState.NOTHING) {
             synchronized (mController) {
                 ViewportMetrics validated = getValidViewportMetrics();
@@ -757,7 +756,6 @@ public class PanZoomController
     private void finishAnimation() {
         checkMainThread();
 
-        Log.d(LOGTAG, "Finishing animation at " + mController.getViewportMetrics());
         stopAnimationTimer();
 
         // Force a viewport synchronisation
@@ -771,11 +769,9 @@ public class PanZoomController
     }
 
     private ViewportMetrics getValidViewportMetrics(ViewportMetrics viewportMetrics) {
-        Log.d(LOGTAG, "generating valid viewport using " + viewportMetrics);
-
         /* First, we adjust the zoom factor so that we can make no overscrolled area visible. */
         float zoomFactor = viewportMetrics.getZoomFactor();
-        FloatSize pageSize = viewportMetrics.getPageSize();
+        RectF pageRect = viewportMetrics.getPageRect();
         RectF viewport = viewportMetrics.getViewport();
 
         float focusX = viewport.width() / 2.0f;
@@ -795,16 +791,16 @@ public class PanZoomController
         }
 
         // Ensure minZoomFactor keeps the page at least as big as the viewport.
-        if (pageSize.width > 0) {
-            float scaleFactor = viewport.width() / pageSize.width;
+        if (pageRect.width() > 0) {
+            float scaleFactor = viewport.width() / pageRect.width();
             minZoomFactor = Math.max(minZoomFactor, zoomFactor * scaleFactor);
-            if (viewport.width() > pageSize.width)
+            if (viewport.width() > pageRect.width())
                 focusX = 0.0f;
         }
-        if (pageSize.height > 0) {
-            float scaleFactor = viewport.height() / pageSize.height;
+        if (pageRect.height() > 0) {
+            float scaleFactor = viewport.height() / pageRect.height();
             minZoomFactor = Math.max(minZoomFactor, zoomFactor * scaleFactor);
-            if (viewport.height() > pageSize.height)
+            if (viewport.height() > pageRect.height())
                 focusY = 0.0f;
         }
 
@@ -825,7 +821,6 @@ public class PanZoomController
 
         /* Now we pan to the right origin. */
         viewportMetrics.setViewport(viewportMetrics.getClampedViewport());
-        Log.d(LOGTAG, "generated valid viewport as " + viewportMetrics);
 
         return viewportMetrics;
     }
@@ -837,7 +832,9 @@ public class PanZoomController
         @Override
         protected float getViewportLength() { return mController.getViewportSize().width; }
         @Override
-        protected float getPageLength() { return mController.getPageSize().width; }
+        protected float getPageStart() { return mController.getPageRect().left; }
+        @Override
+        protected float getPageLength() { return mController.getPageRect().width(); }
     }
 
     private class AxisY extends Axis {
@@ -847,7 +844,9 @@ public class PanZoomController
         @Override
         protected float getViewportLength() { return mController.getViewportSize().height; }
         @Override
-        protected float getPageLength() { return mController.getPageSize().height; }
+        protected float getPageStart() { return mController.getPageRect().top; }
+        @Override
+        protected float getPageLength() { return mController.getPageRect().height(); }
     }
 
     /*
@@ -855,8 +854,6 @@ public class PanZoomController
      */
     @Override
     public boolean onScaleBegin(SimpleScaleGestureDetector detector) {
-        Log.d(LOGTAG, "onScaleBegin in " + mState);
-
         if (mState == PanZoomState.ANIMATED_ZOOM)
             return false;
 
@@ -872,8 +869,6 @@ public class PanZoomController
 
     @Override
     public boolean onScale(SimpleScaleGestureDetector detector) {
-        Log.d(LOGTAG, "onScale in state " + mState);
-
         if (GeckoApp.mDOMFullScreen)
             return false;
 
@@ -940,8 +935,6 @@ public class PanZoomController
 
     @Override
     public void onScaleEnd(SimpleScaleGestureDetector detector) {
-        Log.d(LOGTAG, "onScaleEnd in " + mState);
-
         if (mState == PanZoomState.ANIMATED_ZOOM)
             return;
 

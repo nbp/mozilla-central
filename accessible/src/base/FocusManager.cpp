@@ -5,6 +5,7 @@
 #include "FocusManager.h"
 
 #include "Accessible-inl.h"
+#include "DocAccessible-inl.h"
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
 #include "Role.h"
@@ -24,7 +25,7 @@ FocusManager::~FocusManager()
 {
 }
 
-nsAccessible*
+Accessible*
 FocusManager::FocusedAccessible() const
 {
   if (mActiveItem)
@@ -32,7 +33,7 @@ FocusManager::FocusedAccessible() const
 
   nsINode* focusedNode = FocusedDOMNode();
   if (focusedNode) {
-    nsDocAccessible* doc = 
+    DocAccessible* doc = 
       GetAccService()->GetDocAccessible(focusedNode->OwnerDoc());
     return doc ? doc->GetAccessibleOrContainer(focusedNode) : nsnull;
   }
@@ -41,7 +42,7 @@ FocusManager::FocusedAccessible() const
 }
 
 bool
-FocusManager::IsFocused(const nsAccessible* aAccessible) const
+FocusManager::IsFocused(const Accessible* aAccessible) const
 {
   if (mActiveItem)
     return mActiveItem == aAccessible;
@@ -55,7 +56,7 @@ FocusManager::IsFocused(const nsAccessible* aAccessible) const
     // FocusedAccessible() method call. Make sure this issue is fixed in
     // bug 638465.
     if (focusedNode->OwnerDoc() == aAccessible->GetNode()->OwnerDoc()) {
-      nsDocAccessible* doc = 
+      DocAccessible* doc = 
         GetAccService()->GetDocAccessible(focusedNode->OwnerDoc());
       return aAccessible ==
 	(doc ? doc->GetAccessibleOrContainer(focusedNode) : nsnull);
@@ -65,9 +66,9 @@ FocusManager::IsFocused(const nsAccessible* aAccessible) const
 }
 
 bool
-FocusManager::IsFocusWithin(const nsAccessible* aContainer) const
+FocusManager::IsFocusWithin(const Accessible* aContainer) const
 {
-  nsAccessible* child = FocusedAccessible();
+  Accessible* child = FocusedAccessible();
   while (child) {
     if (child == aContainer)
       return true;
@@ -78,9 +79,9 @@ FocusManager::IsFocusWithin(const nsAccessible* aContainer) const
 }
 
 FocusManager::FocusDisposition
-FocusManager::IsInOrContainsFocus(const nsAccessible* aAccessible) const
+FocusManager::IsInOrContainsFocus(const Accessible* aAccessible) const
 {
-  nsAccessible* focus = FocusedAccessible();
+  Accessible* focus = FocusedAccessible();
   if (!focus)
     return eNone;
 
@@ -89,7 +90,7 @@ FocusManager::IsInOrContainsFocus(const nsAccessible* aAccessible) const
     return eFocused;
 
   // If contains the focus.
-  nsAccessible* child = focus->Parent();
+  Accessible* child = focus->Parent();
   while (child) {
     if (child == aAccessible)
       return eContainsFocus;
@@ -119,7 +120,7 @@ FocusManager::NotifyOfDOMFocus(nsISupports* aTarget)
 
   nsCOMPtr<nsINode> targetNode(do_QueryInterface(aTarget));
   if (targetNode) {
-    nsDocAccessible* document =
+    DocAccessible* document =
       GetAccService()->GetDocAccessible(targetNode->OwnerDoc());
     if (document) {
       // Set selection listener for focused element.
@@ -148,7 +149,7 @@ FocusManager::NotifyOfDOMBlur(nsISupports* aTarget)
   nsCOMPtr<nsINode> targetNode(do_QueryInterface(aTarget));
   if (targetNode && targetNode->OwnerDoc() == FocusedDOMDocument()) {
     nsIDocument* DOMDoc = targetNode->OwnerDoc();
-    nsDocAccessible* document =
+    DocAccessible* document =
       GetAccService()->GetDocAccessible(DOMDoc);
     if (document) {
       document->HandleNotification<FocusManager, nsINode>
@@ -158,7 +159,7 @@ FocusManager::NotifyOfDOMBlur(nsISupports* aTarget)
 }
 
 void
-FocusManager::ActiveItemChanged(nsAccessible* aItem, bool aCheckIfActive)
+FocusManager::ActiveItemChanged(Accessible* aItem, bool aCheckIfActive)
 {
   A11YDEBUG_FOCUS_NOTIFICATION_ACCTARGET("active item changed",
                                          "Active item", aItem)
@@ -170,7 +171,7 @@ FocusManager::ActiveItemChanged(nsAccessible* aItem, bool aCheckIfActive)
   mActiveItem = nsnull;
 
   if (aItem && aCheckIfActive) {
-    nsAccessible* widget = aItem->ContainerWidget();
+    Accessible* widget = aItem->ContainerWidget();
     A11YDEBUG_FOCUS_LOG_WIDGET("Active item widget", widget)
     if (!widget || !widget->IsActiveWidget() || !widget->AreItemsOperable())
       return;
@@ -180,7 +181,7 @@ FocusManager::ActiveItemChanged(nsAccessible* aItem, bool aCheckIfActive)
   // If active item is changed then fire accessible focus event on it, otherwise
   // if there's no an active item then fire focus event to accessible having
   // DOM focus.
-  nsAccessible* target = FocusedAccessible();
+  Accessible* target = FocusedAccessible();
   if (target)
     DispatchFocusEvent(target->Document(), target);
 }
@@ -190,7 +191,7 @@ FocusManager::ForceFocusEvent()
 {
   nsINode* focusedNode = FocusedDOMNode();
   if (focusedNode) {
-    nsDocAccessible* document =
+    DocAccessible* document =
       GetAccService()->GetDocAccessible(focusedNode->OwnerDoc());
     if (document) {
       document->HandleNotification<FocusManager, nsINode>
@@ -200,8 +201,8 @@ FocusManager::ForceFocusEvent()
 }
 
 void
-FocusManager::DispatchFocusEvent(nsDocAccessible* aDocument,
-                                 nsAccessible* aTarget)
+FocusManager::DispatchFocusEvent(DocAccessible* aDocument,
+                                 Accessible* aTarget)
 {
   NS_PRECONDITION(aDocument, "No document for focused accessible!");
   if (aDocument) {
@@ -220,19 +221,19 @@ FocusManager::ProcessDOMFocus(nsINode* aTarget)
   A11YDEBUG_FOCUS_NOTIFICATION_DOMTARGET("Process DOM focus",
                                          "Notification target", aTarget)
 
-  nsDocAccessible* document =
+  DocAccessible* document =
     GetAccService()->GetDocAccessible(aTarget->OwnerDoc());
 
-  nsAccessible* target = document->GetAccessibleOrContainer(aTarget);
+  Accessible* target = document->GetAccessibleOrContainer(aTarget);
   if (target && document) {
     // Check if still focused. Otherwise we can end up with storing the active
     // item for control that isn't focused anymore.
-    nsAccessible* DOMFocus =
+    Accessible* DOMFocus =
       document->GetAccessibleOrContainer(FocusedDOMNode());
     if (target != DOMFocus)
       return;
 
-    nsAccessible* activeItem = target->CurrentItem();
+    Accessible* activeItem = target->CurrentItem();
     if (activeItem) {
       mActiveItem = activeItem;
       target = activeItem;
@@ -253,18 +254,18 @@ FocusManager::ProcessFocusEvent(AccEvent* aEvent)
 
   // Emit focus event if event target is the active item. Otherwise then check
   // if it's still focused and then update active item and emit focus event.
-  nsAccessible* target = aEvent->GetAccessible();
+  Accessible* target = aEvent->GetAccessible();
   if (target != mActiveItem) {
 
     // Check if still focused. Otherwise we can end up with storing the active
     // item for control that isn't focused anymore.
-    nsDocAccessible* document = aEvent->GetDocAccessible();
-    nsAccessible* DOMFocus = document->GetAccessibleOrContainer(FocusedDOMNode());
+    DocAccessible* document = aEvent->GetDocAccessible();
+    Accessible* DOMFocus = document->GetAccessibleOrContainer(FocusedDOMNode());
 
     if (target != DOMFocus)
       return;
 
-    nsAccessible* activeItem = target->CurrentItem();
+    Accessible* activeItem = target->CurrentItem();
     if (activeItem) {
       mActiveItem = activeItem;
       target = activeItem;
@@ -274,7 +275,7 @@ FocusManager::ProcessFocusEvent(AccEvent* aEvent)
   // Fire menu start/end events for ARIA menus.
   if (target->ARIARole() == roles::MENUITEM) {
     // The focus was moved into menu.
-    nsAccessible* ARIAMenubar =
+    Accessible* ARIAMenubar =
       nsAccUtils::GetAncestorWithRole(target, roles::MENUBAR);
 
     if (ARIAMenubar != mActiveARIAMenubar) {
@@ -316,8 +317,8 @@ FocusManager::ProcessFocusEvent(AccEvent* aEvent)
   // Fire scrolling_start event when the document receives the focus if it has
   // an anchor jump. If an accessible within the document receive the focus
   // then null out the anchor jump because it no longer applies.
-  nsDocAccessible* targetDocument = target->Document();
-  nsAccessible* anchorJump = targetDocument->AnchorJump();
+  DocAccessible* targetDocument = target->Document();
+  Accessible* anchorJump = targetDocument->AnchorJump();
   if (anchorJump) {
     if (target == targetDocument) {
       // XXX: bug 625699, note in some cases the node could go away before we

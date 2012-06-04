@@ -117,7 +117,7 @@ Bindings::add(JSContext *cx, HandleAtom name, BindingKind kind)
         slot += nargs + nvars;
     }
 
-    RootedVarId id(cx);
+    RootedId id(cx);
     if (!name) {
         JS_ASSERT(kind == ARGUMENT); /* destructuring */
         id = INT_TO_JSID(nargs);
@@ -174,7 +174,7 @@ Bindings::callObjectShape(JSContext *cx) const
     /*
      * Now build the Shape without duplicate properties.
      */
-    RootedVarShape shape(cx);
+    RootedShape shape(cx);
     shape = initialShape(cx);
     for (int i = shapes.length() - 1; i >= 0; --i) {
         shape = shape->getChildBinding(cx, shapes[i]);
@@ -418,7 +418,7 @@ js::XDRScript(XDRState<mode> *xdr, JSScript **scriptp, JSScript *parentScript)
     JS_ASSERT(nvars != Bindings::BINDING_COUNT_LIMIT);
 
     Bindings bindings(cx);
-    Bindings::StackRoot bindingsRoot(cx, &bindings);
+    Bindings::AutoRooter bindingsRoot(cx, &bindings);
 
     uint32_t nameCount = nargs + nvars;
     if (nameCount > 0) {
@@ -468,7 +468,7 @@ js::XDRScript(XDRState<mode> *xdr, JSScript **scriptp, JSScript *parentScript)
                 continue;
             }
 
-            RootedVarAtom name(cx);
+            RootedAtom name(cx);
             if (mode == XDR_ENCODE)
                 name = names[i].maybeAtom;
             if (!XDRAtom(xdr, name.address()))
@@ -1214,7 +1214,7 @@ JSScript *
 JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
 {
     uint32_t mainLength, prologLength, nfixed;
-    RootedVar<JSScript*> script(cx);
+    Rooted<JSScript*> script(cx);
     const char *filename;
     JSFunction *fun;
 
@@ -1247,7 +1247,7 @@ JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
     script->mainOffset = prologLength;
     PodCopy<jsbytecode>(script->code, bce->prologBase(), prologLength);
     PodCopy<jsbytecode>(script->main(), bce->base(), mainLength);
-    nfixed = bce->sc->inFunction ? bce->sc->bindings.numVars() : 0;
+    nfixed = bce->sc->inFunction() ? bce->sc->bindings.numVars() : 0;
     JS_ASSERT(nfixed < SLOTNO_LIMIT);
     script->nfixed = uint16_t(nfixed);
     InitAtomMap(cx, bce->atomIndices.getMap(), script->atoms);
@@ -1310,7 +1310,7 @@ JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
         script->debugMode = true;
 #endif
 
-    if (bce->sc->inFunction) {
+    if (bce->sc->inFunction()) {
         if (bce->sc->funArgumentsHasLocalBinding()) {
             // This must precede the script->bindings.transfer() call below.
             script->setArgumentsHasLocalBinding(bce->sc->argumentsLocalSlot());
@@ -1319,9 +1319,6 @@ JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
         } else {
             JS_ASSERT(!bce->sc->funDefinitelyNeedsArgsObj());
         }
-    } else {
-        JS_ASSERT(!bce->sc->funArgumentsHasLocalBinding());
-        JS_ASSERT(!bce->sc->funDefinitelyNeedsArgsObj());
     }
 
     if (nClosedArgs)
@@ -1332,7 +1329,7 @@ JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
     script->bindings.transfer(cx, &bce->sc->bindings);
 
     fun = NULL;
-    if (bce->sc->inFunction) {
+    if (bce->sc->inFunction()) {
         JS_ASSERT(!bce->noScriptRval);
         JS_ASSERT(!bce->needScriptGlobal);
 
@@ -1363,10 +1360,6 @@ JSScript::NewScriptFromEmitter(JSContext *cx, BytecodeEmitter *bce)
         script->globalObject = fun->getParent() ? &fun->getParent()->global() : NULL;
 
     } else {
-        // It'd be nice to JS_ASSERT(!bce->sc->funIsHeavyweight()) here, but
-        // Parser.cpp is sloppy and sometimes applies it to non-functions.
-        JS_ASSERT(!bce->sc->funIsGenerator());
-
         /*
          * Initialize script->object, if necessary, so that the debugger has a
          * valid holder object.
@@ -1725,7 +1718,7 @@ js::CloneScript(JSContext *cx, JSScript *src)
 
     for (unsigned i = 0; i < names.length(); ++i) {
         if (JSAtom *atom = names[i].maybeAtom) {
-            if (!bindings.add(cx, RootedVarAtom(cx, atom), names[i].kind))
+            if (!bindings.add(cx, RootedAtom(cx, atom), names[i].kind))
                 return NULL;
         } else {
             uint16_t _;
@@ -1947,7 +1940,7 @@ void
 JSScript::recompileForStepMode(FreeOp *fop)
 {
 #ifdef JS_METHODJIT
-    if (hasJITCode()) {
+    if (hasJITInfo()) {
         mjit::Recompiler::clearStackReferences(fop, this);
         mjit::ReleaseScriptCode(fop, this);
     }
@@ -2161,7 +2154,7 @@ JSScript::setNeedsArgsObj(bool needsArgsObj)
 /* static */ bool
 JSScript::applySpeculationFailed(JSContext *cx, JSScript *script_)
 {
-    RootedVar<JSScript*> script(cx, script_);
+    Rooted<JSScript*> script(cx, script_);
 
     JS_ASSERT(script->analyzedArgsUsage());
     JS_ASSERT(script->argumentsHasLocalBinding());
@@ -2214,7 +2207,7 @@ JSScript::applySpeculationFailed(JSContext *cx, JSScript *script_)
     }
 
 #ifdef JS_METHODJIT
-    if (script->hasJITCode()) {
+    if (script->hasJITInfo()) {
         mjit::Recompiler::clearStackReferences(cx->runtime->defaultFreeOp(), script);
         mjit::ReleaseScriptCode(cx->runtime->defaultFreeOp(), script);
     }

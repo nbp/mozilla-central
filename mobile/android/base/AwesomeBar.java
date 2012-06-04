@@ -11,11 +11,11 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.ContentResolver;
 import android.content.Context;
-import android.content.res.Resources;
 import android.content.res.Configuration;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.Spanned;
@@ -102,22 +102,6 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
             }
         });
 
-        Resources resources = getResources();
-        
-        int padding[] = { mText.getPaddingLeft(),
-                          mText.getPaddingTop(),
-                          mText.getPaddingRight(),
-                          mText.getPaddingBottom() };
-
-        GeckoStateListDrawable states = new GeckoStateListDrawable();
-        states.initializeFilter(GeckoApp.mBrowserToolbar.getHighlightColor());
-        states.addState(new int[] { android.R.attr.state_focused }, resources.getDrawable(R.drawable.address_bar_url_pressed));
-        states.addState(new int[] { android.R.attr.state_pressed }, resources.getDrawable(R.drawable.address_bar_url_pressed));
-        states.addState(new int[] { }, resources.getDrawable(R.drawable.address_bar_url_default));
-        mText.setBackgroundDrawable(states);
-
-        mText.setPadding(padding[0], padding[1], padding[2], padding[3]);
-
         Intent intent = getIntent();
         String currentUrl = intent.getStringExtra(CURRENT_URL_KEY);
         mType = intent.getStringExtra(TYPE_KEY);
@@ -198,15 +182,6 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
                     return true;
                 } else {
                     return false;
-                }
-            }
-        });
-
-        mText.setOnFocusChangeListener(new View.OnFocusChangeListener() {
-            public void onFocusChange(View v, boolean hasFocus) {
-                if (!hasFocus) {
-                    InputMethodManager imm = (InputMethodManager) getSystemService(Context.INPUT_METHOD_SERVICE);
-                    imm.hideSoftInputFromWindow(v.getWindowToken(), 0);
                 }
             }
         });
@@ -595,7 +570,14 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
                 break;
             }
             case R.id.remove_bookmark: {
-                (new GeckoAsyncTask<Void, Void, Void>() {
+                (new AsyncTask<Void, Void, Void>() {
+                    private boolean mInReadingList;
+
+                    @Override
+                    public void onPreExecute() {
+                        mInReadingList = mAwesomeTabs.isInReadingList();
+                    }
+
                     @Override
                     public Void doInBackground(Void... params) {
                         BrowserDB.removeBookmark(mResolver, id);
@@ -604,7 +586,11 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
 
                     @Override
                     public void onPostExecute(Void result) {
-                        Toast.makeText(AwesomeBar.this, R.string.bookmark_removed, Toast.LENGTH_SHORT).show();
+                        int messageId = R.string.bookmark_removed;
+                        if (mInReadingList)
+                            messageId = R.string.reading_list_removed;
+
+                        Toast.makeText(AwesomeBar.this, messageId, Toast.LENGTH_SHORT).show();
                     }
                 }).execute();
                 break;

@@ -9,7 +9,9 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cu = Components.utils;
 
+const FRAME_STEP_CACHE_DURATION = 100; // ms
 const DBG_STRINGS_URI = "chrome://browser/locale/devtools/debugger.properties";
+const SYNTAX_HIGHLIGHT_MAX_FILE_SIZE = 1048576; // 1 MB in bytes
 
 Cu.import("resource:///modules/source-editor.jsm");
 Cu.import("resource://gre/modules/devtools/dbg-server.jsm");
@@ -47,6 +49,7 @@ let DebuggerController = {
     this._isInitialized = true;
     window.removeEventListener("DOMContentLoaded", this._startupDebugger, true);
 
+    DebuggerView.initializePanes();
     DebuggerView.initializeEditor();
     DebuggerView.StackFrames.initialize();
     DebuggerView.Properties.initialize();
@@ -68,11 +71,13 @@ let DebuggerController = {
     this._isDestroyed = true;
     window.removeEventListener("unload", this._shutdownDebugger, true);
 
+    DebuggerView.destroyPanes();
     DebuggerView.destroyEditor();
     DebuggerView.Scripts.destroy();
     DebuggerView.StackFrames.destroy();
     DebuggerView.Properties.destroy();
 
+    DebuggerController.Breakpoints.destroy();
     DebuggerController.SourceScripts.disconnect();
     DebuggerController.StackFrames.disconnect();
     DebuggerController.ThreadState.disconnect();
@@ -102,7 +107,9 @@ let DebuggerController = {
     if (!Prefs.remoteAutoConnect) {
       let prompt = new RemoteDebuggerPrompt();
       let result = prompt.show(!!this._remoteConnectionTimeout);
-      if (!result) {
+      // If the connection was not established before the user canceled the
+      // prompt, close the remote debugger.
+      if (!result && !DebuggerController.activeThread) {
         this.dispatchEvent("Debugger:Close");
         return false;
       }
@@ -341,6 +348,7 @@ function StackFrames() {
   this._onResume = this._onResume.bind(this);
   this._onFrames = this._onFrames.bind(this);
   this._onFramesCleared = this._onFramesCleared.bind(this);
+  this._afterFramesCleared = this._afterFramesCleared.bind(this);
 }
 
 StackFrames.prototype = {
@@ -356,6 +364,12 @@ StackFrames.prototype = {
   selectedFrame: null,
 
   /**
+   * A flag that defines whether the debuggee will pause whenever an exception
+   * is thrown.
+   */
+  pauseOnExceptions: false,
+
+  /**
    * Gets the current thread the client has connected to.
    */
   get activeThread() {
@@ -369,12 +383,16 @@ StackFrames.prototype = {
    *        The next function in the initialization sequence.
    */
   connect: function SF_connect(aCallback) {
+    window.addEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
+
+    this._onFramesCleared();
+
     this.activeThread.addListener("paused", this._onPaused);
     this.activeThread.addListener("resumed", this._onResume);
     this.activeThread.addListener("framesadded", this._onFrames);
     this.activeThread.addListener("framescleared", this._onFramesCleared);
 
-    this._onFramesCleared();
+    this.updatePauseOnExceptions(this.pauseOnExceptions);
 
     aCallback && aCallback();
   },
@@ -383,6 +401,8 @@ StackFrames.prototype = {
    * Disconnect from the client.
    */
   disconnect: function SF_disconnect() {
+    window.removeEventListener("Debugger:FetchedVariables", this._onFetchedVars, false);
+
     if (!this.activeThread) {
       return;
     }
@@ -394,8 +414,17 @@ StackFrames.prototype = {
 
   /**
    * Handler for the thread client's paused notification.
+   *
+   * @param string aEvent
+   *        The name of the notification ("paused" in this case).
+   * @param object aPacket
+   *        The response packet.
    */
-  _onPaused: function SF__onPaused() {
+  _onPaused: function SF__onPaused(aEvent, aPacket) {
+    // In case the pause was caused by an exception, store the exception value.
+    if (aPacket.why.type == "exception") {
+      this.exception = aPacket.why.exception;
+    }
     this.activeThread.fillFrames(this.pageSize);
   },
 
@@ -412,9 +441,11 @@ StackFrames.prototype = {
   _onFrames: function SF__onFrames() {
     if (!this.activeThread.cachedFrames.length) {
       DebuggerView.StackFrames.emptyText();
+      DebuggerView.Properties.emptyText();
       return;
     }
     DebuggerView.StackFrames.empty();
+    DebuggerView.Properties.empty();
 
     for each (let frame in this.activeThread.cachedFrames) {
       this._addFrame(frame);
@@ -431,12 +462,24 @@ StackFrames.prototype = {
    * Handler for the thread client's framescleared notification.
    */
   _onFramesCleared: function SF__onFramesCleared() {
-    DebuggerView.StackFrames.emptyText();
     this.selectedFrame = null;
+    this.exception = null;
+    // After each frame step (in, over, out), framescleared is fired, which
+    // forces the UI to be emptied and rebuilt on framesadded. Most of the times
+    // this is not necessary, and will result in a brief redraw flicker.
+    // To avoid it, invalidate the UI only after a short time if necessary.
+    window.setTimeout(this._afterFramesCleared, FRAME_STEP_CACHE_DURATION);
+  },
 
-    // Clear the properties as well.
-    DebuggerView.Properties.localScope.empty();
-    DebuggerView.Properties.globalScope.empty();
+  /**
+   * Called soon after the thread client's framescleared notification.
+   */
+  _afterFramesCleared: function SF__afterFramesCleared() {
+    if (!this.activeThread.cachedFrames.length) {
+      DebuggerView.StackFrames.emptyText();
+      DebuggerView.Properties.emptyText();
+      DebuggerController.dispatchEvent("Debugger:AfterFramesCleared");
+    }
   },
 
   /**
@@ -459,6 +502,18 @@ StackFrames.prototype = {
     } else {
       editor.setDebugLocation(-1);
     }
+  },
+
+  /**
+   * Inform the debugger client whether the debuggee should be paused whenever
+   * an exception is thrown.
+   *
+   * @param boolean aFlag
+   *        The new value of the flag: true for pausing, false otherwise.
+   */
+  updatePauseOnExceptions: function SF_updatePauseOnExceptions(aFlag) {
+    this.pauseOnExceptions = aFlag;
+    this.activeThread.pauseOnExceptions(this.pauseOnExceptions);
   },
 
   /**
@@ -500,43 +555,134 @@ StackFrames.prototype = {
       editor.setDebugLocation(-1);
     }
 
-    // Display the local variables.
-    let localScope = DebuggerView.Properties.localScope;
-    localScope.empty();
+    // Start recording any added variables or properties in any scope.
+    DebuggerView.Properties.createHierarchyStore();
 
-    // Add "this".
-    if (frame.this) {
-      let thisVar = localScope.addVar("this");
-      thisVar.setGrip({
-        type: frame.this.type,
-        class: frame.this.class
-      });
-      this._addExpander(thisVar, frame.this);
-    }
+    // Clear existing scopes and create each one dynamically.
+    DebuggerView.Properties.empty();
 
     if (frame.environment) {
-      // Add nodes for every argument.
-      let variables = frame.environment.bindings.arguments;
-      for each (let variable in variables) {
-        let name = Object.getOwnPropertyNames(variable)[0];
-        let paramVar = localScope.addVar(name);
-        let paramVal = variable[name].value;
-        paramVar.setGrip(paramVal);
-        this._addExpander(paramVar, paramVal);
-      }
+      let env = frame.environment;
+      do {
+        // Construct the scope name.
+        let name = env.type.charAt(0).toUpperCase() + env.type.slice(1);
+        // Call the outermost scope Global.
+        if (!env.parent) {
+          name = L10N.getStr("globalScopeLabel");
+        }
+        let label = L10N.getFormatStr("scopeLabel", [name]);
+        switch (env.type) {
+          case "with":
+          case "object":
+            label += " [" + env.object.class + "]";
+            break;
+          case "function":
+            if (env.functionName) {
+              label += " [" + env.functionName + "]";
+            }
+            break;
+          default:
+            break;
+        }
 
-      // Add nodes for every other variable in scope.
-      variables = frame.environment.bindings.variables;
-      for (let variable in variables) {
-        let paramVar = localScope.addVar(variable);
-        let paramVal = variables[variable].value;
-        paramVar.setGrip(paramVal);
-        this._addExpander(paramVar, paramVal);
-      }
+        let scope = DebuggerView.Properties.addScope(label);
+
+        // Special additions to the innermost scope.
+        if (env == frame.environment) {
+          // Add any thrown exception.
+          if (aDepth == 0 && this.exception) {
+            let excVar = scope.addVar("<exception>");
+            if (typeof this.exception == "object") {
+              excVar.setGrip({
+                type: this.exception.type,
+                class: this.exception.class
+              });
+              this._addExpander(excVar, this.exception);
+            } else {
+              excVar.setGrip(this.exception);
+            }
+          }
+
+          // Add "this".
+          if (frame.this) {
+            let thisVar = scope.addVar("this");
+            thisVar.setGrip({
+              type: frame.this.type,
+              class: frame.this.class
+            });
+            this._addExpander(thisVar, frame.this);
+          }
+
+          // Expand the innermost scope by default.
+          scope.expand(true);
+          scope.addToHierarchy();
+        }
+
+        switch (env.type) {
+          case "with":
+          case "object":
+            let objClient = this.activeThread.pauseGrip(env.object);
+            objClient.getPrototypeAndProperties(function SF_getProps(aResponse) {
+              this._addScopeVariables(aResponse.ownProperties, scope);
+              // Signal that variables have been fetched.
+              DebuggerController.dispatchEvent("Debugger:FetchedVariables");
+            }.bind(this));
+            break;
+          case "block":
+          case "function":
+            // Add nodes for every argument.
+            let variables = env.bindings.arguments;
+            for each (let variable in variables) {
+              let name = Object.getOwnPropertyNames(variable)[0];
+              let paramVar = scope.addVar(name, variable[name]);
+              let paramVal = variable[name].value;
+              paramVar.setGrip(paramVal);
+              this._addExpander(paramVar, paramVal);
+            }
+            // Add nodes for every other variable in scope.
+            this._addScopeVariables(env.bindings.variables, scope);
+            break;
+          default:
+            Cu.reportError("Unknown Debugger.Environment type: " + env.type);
+            break;
+        }
+      } while (env = env.parent);
     }
 
     // Signal that variables have been fetched.
     DebuggerController.dispatchEvent("Debugger:FetchedVariables");
+  },
+
+  /**
+   * Called afters variables have been fetched after a frame was selected.
+   */
+  _onFetchedVars: function SF__onFetchedVars() {
+    DebuggerView.Properties.commitHierarchy();
+  },
+
+  /**
+   * Add nodes for every variable in scope.
+   *
+   * @param object aVariables
+   *        The map of names to variables, as specified in the Remote
+   *        Debugging Protocol.
+   * @param object aScope
+   *        The scope where the nodes will be placed into.
+   */
+  _addScopeVariables: function SF_addScopeVariables(aVariables, aScope) {
+    // Sort all of the variables before adding them, for better UX.
+    let variables = {};
+    for each (let prop in Object.keys(aVariables).sort()) {
+      variables[prop] = aVariables[prop];
+    }
+
+    // Add the sorted variables to the specified scope.
+    for (let variable in variables) {
+      let paramVar = aScope.addVar(variable, variables[variable]);
+      let paramVal = variables[variable].value;
+      paramVar.setGrip(paramVal);
+      this._addExpander(paramVar, paramVal);
+    }
   },
 
   /**
@@ -567,15 +713,6 @@ StackFrames.prototype = {
 
     let objClient = this.activeThread.pauseGrip(aObject);
     objClient.getPrototypeAndProperties(function SF_onProtoAndProps(aResponse) {
-      // Add __proto__.
-      if (aResponse.prototype.type !== "null") {
-        let properties = { "__proto__ ": { value: aResponse.prototype } };
-        aVar.addProperties(properties);
-
-        // Expansion handlers must be set after the properties are added.
-        this._addExpander(aVar["__proto__ "], aResponse.prototype);
-      }
-
       // Sort all of the properties before adding them, for better UX.
       let properties = {};
       for each (let prop in Object.keys(aResponse.ownProperties).sort()) {
@@ -588,6 +725,14 @@ StackFrames.prototype = {
         this._addExpander(aVar[prop], aResponse.ownProperties[prop].value);
       }
 
+      // Add __proto__.
+      if (aResponse.prototype.type !== "null") {
+        let properties = { "__proto__ ": { value: aResponse.prototype } };
+        aVar.addProperties(properties);
+
+        // Expansion handlers must be set after the properties are added.
+        this._addExpander(aVar["__proto__ "], aResponse.prototype);
+      }
       aVar.fetched = true;
     }.bind(this));
   },
@@ -631,6 +776,18 @@ StackFrames.prototype = {
       return aFrame["calleeName"] ? aFrame["calleeName"] : "(anonymous)";
     }
     return "(" + aFrame.type + ")";
+  },
+
+  /**
+   * Evaluate an expression in the context of the selected frame. This is used
+   * for modifying the value of variables in scope.
+   *
+   * @param string aExpression
+   *        The expression to evaluate.
+   */
+  evaluate: function SF_evaluate(aExpression) {
+    let frame = this.activeThread.cachedFrames[this.selectedFrame];
+    this.activeThread.eval(frame.actor, aExpression);
   }
 };
 
@@ -709,7 +866,18 @@ SourceScripts.prototype = {
    * Handler for the debugger client's unsolicited newScript notification.
    */
   _onNewScript: function SS__onNewScript(aNotification, aPacket) {
+    // Ignore scripts generated from 'clientEvaluate' packets.
+    if (aPacket.url == "debugger eval code") {
+      return;
+    }
+
     this._addScript({ url: aPacket.url, startLine: aPacket.startLine }, true);
+    // If there are any stored breakpoints for this script, display them again.
+    for (let bp of DebuggerController.Breakpoints.store) {
+      if (bp.location.url == aPacket.url) {
+        DebuggerController.Breakpoints.displayBreakpoint(bp.location);
+      }
+    }
   },
 
   /**
@@ -757,14 +925,17 @@ SourceScripts.prototype = {
   },
 
   /**
-   * Trims the query part of a url string, if necessary.
+   * Trims the id selector or query part of a url string, if necessary.
    *
    * @param string aUrl
    *        The script url.
    * @return string
    */
   _trimUrlQuery: function SS__trimUrlQuery(aUrl) {
-    let q = aUrl.indexOf('?');
+    let q = aUrl.indexOf('#');
+    if (q === -1) q = aUrl.indexOf('?');
+    if (q === -1) q = aUrl.indexOf('&');
+
     if (q > -1) {
       return aUrl.slice(0, q);
     }
@@ -896,7 +1067,9 @@ SourceScripts.prototype = {
   _onShowScript: function SS__onShowScript(aScript, aOptions) {
     aOptions = aOptions || {};
 
-    this._setEditorMode(aScript.url, aScript.contentType);
+    if (aScript.text.length < SYNTAX_HIGHLIGHT_MAX_FILE_SIZE) {
+      this._setEditorMode(aScript.url, aScript.contentType);
+    }
 
     let editor = DebuggerView.editor;
     editor.setText(aScript.text);
@@ -1048,7 +1221,7 @@ Breakpoints.prototype = {
 
   /**
    * The list of breakpoints in the debugger as tracked by the current
-   * debugger instance. This an object where the values are BreakpointActor
+   * debugger instance. This is an object where the values are BreakpointActor
    * objects received from the client, while the keys are actor names, for
    * example "conn0.breakpoint3".
    *
@@ -1120,14 +1293,7 @@ Breakpoints.prototype = {
 
     let line = aBreakpoint.line + 1;
 
-    let callback = function(aClient, aError) {
-      if (aError) {
-        this._skipEditorBreakpointChange = true;
-        let result = this.editor.removeBreakpoint(aBreakpoint.line);
-        this._skipEditorBreakpointChange = false;
-      }
-    }.bind(this);
-    this.addBreakpoint({ url: url, line: line }, callback, true);
+    this.addBreakpoint({ url: url, line: line }, null, true);
   },
 
   /**
@@ -1198,21 +1364,33 @@ Breakpoints.prototype = {
     }
 
     this.activeThread.setBreakpoint(aLocation, function(aResponse, aBpClient) {
-      if (!aResponse.error) {
-        this.store[aBpClient.actor] = aBpClient;
-
-        if (!aNoEditorUpdate) {
-          let url = DebuggerView.Scripts.selected;
-          if (url == aLocation.url) {
-            this._skipEditorBreakpointChange = true;
-            this.editor.addBreakpoint(aLocation.line - 1);
-            this._skipEditorBreakpointChange = false;
-          }
-        }
-      }
-
+      this.store[aBpClient.actor] = aBpClient;
+      this.displayBreakpoint(aLocation, aNoEditorUpdate);
       aCallback && aCallback(aBpClient, aResponse.error);
     }.bind(this));
+  },
+
+  /**
+   * Update the editor to display the specified breakpoint in the gutter.
+   *
+   * @param object aLocation
+   *        The location where you want the breakpoint. This object must have
+   *        two properties:
+   *          - url - the URL of the script.
+   *          - line - the line number (starting from 1).
+   * @param boolean [aNoEditorUpdate=false]
+   *        Tells if you want to skip editor updates. Typically the editor is
+   *        updated to visually indicate that a breakpoint has been added.
+   */
+  displayBreakpoint: function BP_displayBreakpoint(aLocation, aNoEditorUpdate) {
+    if (!aNoEditorUpdate) {
+      let url = DebuggerView.Scripts.selected;
+      if (url == aLocation.url) {
+        this._skipEditorBreakpointChange = true;
+        this.editor.addBreakpoint(aLocation.line - 1);
+        this._skipEditorBreakpointChange = false;
+      }
+    }
   },
 
   /**
@@ -1306,6 +1484,46 @@ XPCOMUtils.defineLazyGetter(L10N, "stringBundle", function() {
  * Shortcuts for accessing various debugger preferences.
  */
 let Prefs = {
+
+  /**
+   * Gets the preferred stackframes pane width.
+   * @return number
+   */
+  get stackframesWidth() {
+    if (this._sfrmWidth === undefined) {
+      this._sfrmWidth = Services.prefs.getIntPref("devtools.debugger.ui.stackframes-width");
+    }
+    return this._sfrmWidth;
+  },
+
+  /**
+   * Sets the preferred stackframes pane width.
+   * @return number
+   */
+  set stackframesWidth(value) {
+    Services.prefs.setIntPref("devtools.debugger.ui.stackframes-width", value);
+    this._sfrmWidth = value;
+  },
+
+  /**
+   * Gets the preferred variables pane width.
+   * @return number
+   */
+  get variablesWidth() {
+    if (this._varsWidth === undefined) {
+      this._varsWidth = Services.prefs.getIntPref("devtools.debugger.ui.variables-width");
+    }
+    return this._varsWidth;
+  },
+
+  /**
+   * Sets the preferred variables pane width.
+   * @return number
+   */
+  set variablesWidth(value) {
+    Services.prefs.setIntPref("devtools.debugger.ui.variables-width", value);
+    this._varsWidth = value;
+  },
 
   /**
    * Gets a flag specifying if the the debugger should automatically connect to
