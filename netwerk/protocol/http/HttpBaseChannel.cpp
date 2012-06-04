@@ -17,6 +17,7 @@
 #include "nsIEncodedChannel.h"
 #include "nsIResumableChannel.h"
 #include "nsIApplicationCacheChannel.h"
+#include "nsILoadContext.h"
 #include "nsEscape.h"
 #include "nsStreamListenerWrapper.h"
 
@@ -26,7 +27,8 @@ namespace mozilla {
 namespace net {
 
 HttpBaseChannel::HttpBaseChannel()
-  : mStartPos(LL_MAXUINT)
+  : PrivateBrowsingConsumer(this)
+  , mStartPos(LL_MAXUINT)
   , mStatus(NS_OK)
   , mLoadFlags(LOAD_NORMAL)
   , mPriority(PRIORITY_NORMAL)
@@ -48,7 +50,6 @@ HttpBaseChannel::HttpBaseChannel()
   , mTimingEnabled(false)
   , mAllowSpdy(true)
   , mSuspendCount(0)
-  , mRedirectedCachekeys(nsnull)
 {
   LOG(("Creating HttpBaseChannel @%x\n", this));
 
@@ -139,17 +140,18 @@ HttpBaseChannel::Init(nsIURI *aURI,
 // HttpBaseChannel::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_ISUPPORTS_INHERITED9(HttpBaseChannel,
-                             nsHashPropertyBag, 
-                             nsIRequest,
-                             nsIChannel,
-                             nsIEncodedChannel,
-                             nsIHttpChannel,
-                             nsIHttpChannelInternal,
-                             nsIUploadChannel,
-                             nsIUploadChannel2,
-                             nsISupportsPriority,
-                             nsITraceableChannel)
+NS_IMPL_ISUPPORTS_INHERITED10(HttpBaseChannel,
+                              nsHashPropertyBag, 
+                              nsIRequest,
+                              nsIChannel,
+                              nsIEncodedChannel,
+                              nsIHttpChannel,
+                              nsIHttpChannelInternal,
+                              nsIUploadChannel,
+                              nsIUploadChannel2,
+                              nsISupportsPriority,
+                              nsITraceableChannel,
+                              nsIPrivateBrowsingConsumer)
 
 //-----------------------------------------------------------------------------
 // HttpBaseChannel::nsIRequest
@@ -1623,8 +1625,7 @@ HttpBaseChannel::SetupReplacementChannel(nsIURI       *newURI,
     if (mRedirectedCachekeys) {
         LOG(("HttpBaseChannel::SetupReplacementChannel "
              "[this=%p] transferring chain of redirect cache-keys", this));
-        httpInternal->SetCacheKeysRedirectChain(mRedirectedCachekeys);
-        mRedirectedCachekeys = nsnull;
+        httpInternal->SetCacheKeysRedirectChain(mRedirectedCachekeys.forget());
     }
   }
   

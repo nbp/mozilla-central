@@ -972,7 +972,7 @@ GLContextGLX::CreateTextureImage(const nsIntSize& aSize,
 
     Display *display = DefaultXDisplay();
     int xscreen = DefaultScreen(display);
-    gfxASurface::gfxImageFormat imageFormat = gfxASurface::FormatFromContent(aContentType);
+    gfxASurface::gfxImageFormat imageFormat = gfxPlatform::GetPlatform()->OptimalFormatForContent(aContentType);
 
     XRenderPictFormat* xrenderFormat =
         gfxXlibSurface::FindRenderFormat(display, imageFormat);
@@ -1355,7 +1355,7 @@ GLContextProviderGLX::CreateForNativePixmapSurface(gfxASurface *aSurface)
 static nsRefPtr<GLContext> gGlobalContext;
 
 GLContext *
-GLContextProviderGLX::GetGlobalContext()
+GLContextProviderGLX::GetGlobalContext(const ContextFlags)
 {
     static bool triedToCreateContext = false;
     if (!triedToCreateContext && !gGlobalContext) {

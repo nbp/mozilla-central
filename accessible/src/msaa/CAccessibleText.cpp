@@ -10,7 +10,7 @@
 #include "Accessible2.h"
 #include "AccessibleText_i.c"
 
-#include "nsHyperTextAccessible.h"
+#include "HyperTextAccessible.h"
 
 #include "nsIPersistentProperties2.h"
 
@@ -40,7 +40,7 @@ STDMETHODIMP
 CAccessibleText::addSelection(long aStartOffset, long aEndOffset)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -63,7 +63,7 @@ __try {
   *aEndOffset = 0;
   *aTextAttributes = NULL;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -75,8 +75,8 @@ __try {
   if (NS_FAILED(rv))
     return GetHRESULT(rv);
   
-  HRESULT hr = nsAccessibleWrap::ConvertToIA2Attributes(attributes,
-                                                        aTextAttributes);
+  HRESULT hr = AccessibleWrap::ConvertToIA2Attributes(attributes,
+                                                      aTextAttributes);
   if (FAILED(hr))
     return hr;
 
@@ -95,7 +95,7 @@ CAccessibleText::get_caretOffset(long *aOffset)
 __try {
   *aOffset = -1;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -123,7 +123,7 @@ __try {
   *aWidth = 0;
   *aHeight = 0;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -153,7 +153,7 @@ CAccessibleText::get_nSelections(long *aNSelections)
 __try {
   *aNSelections = 0;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -177,7 +177,7 @@ CAccessibleText::get_offsetAtPoint(long aX, long aY,
 __try {
   *aOffset = 0;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -205,7 +205,7 @@ __try {
   *aStartOffset = 0;
   *aEndOffset = 0;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -229,7 +229,7 @@ CAccessibleText::get_text(long aStartOffset, long aEndOffset, BSTR *aText)
 __try {
   *aText = NULL;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -259,7 +259,7 @@ __try {
   *aEndOffset = 0;
   *aText = NULL;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -272,7 +272,7 @@ __try {
     endOffset = textAcc->CharacterCount();
     rv = textAcc->GetText(startOffset, endOffset, text);
   } else {
-    nsAccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
+    AccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
     if (boundaryType == -1)
       return S_FALSE;
     rv = textAcc->GetTextBeforeOffset(aOffset, boundaryType,
@@ -306,7 +306,7 @@ __try {
   *aEndOffset = 0;
   *aText = NULL;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -319,7 +319,7 @@ __try {
     endOffset = textAcc->CharacterCount();
     rv = textAcc->GetText(startOffset, endOffset, text);
   } else {
-    nsAccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
+    AccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
     if (boundaryType == -1)
       return S_FALSE;
     rv = textAcc->GetTextAfterOffset(aOffset, boundaryType,
@@ -353,7 +353,7 @@ __try {
   *aEndOffset = 0;
   *aText = NULL;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -366,7 +366,7 @@ __try {
     endOffset = textAcc->CharacterCount();
     rv = textAcc->GetText(startOffset, endOffset, text);
   } else {
-    nsAccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
+    AccessibleTextBoundary boundaryType = GetGeckoTextBoundary(aBoundaryType);
     if (boundaryType == -1)
       return S_FALSE;
     rv = textAcc->GetTextAtOffset(aOffset, boundaryType,
@@ -393,7 +393,7 @@ STDMETHODIMP
 CAccessibleText::removeSelection(long aSelectionIndex)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -408,7 +408,7 @@ STDMETHODIMP
 CAccessibleText::setCaretOffset(long aOffset)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -424,7 +424,7 @@ CAccessibleText::setSelection(long aSelectionIndex, long aStartOffset,
                               long aEndOffset)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -442,7 +442,7 @@ CAccessibleText::get_nCharacters(long *aNCharacters)
 __try {
   *aNCharacters = 0;
 
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -458,7 +458,7 @@ CAccessibleText::scrollSubstringTo(long aStartIndex, long aEndIndex,
                                    enum IA2ScrollType aScrollType)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -475,7 +475,7 @@ CAccessibleText::scrollSubstringToPoint(long aStartIndex, long aEndIndex,
                                         long aX, long aY)
 {
 __try {
-  nsRefPtr<nsHyperTextAccessible> textAcc(do_QueryObject(this));
+  nsRefPtr<HyperTextAccessible> textAcc(do_QueryObject(this));
   if (textAcc->IsDefunct())
     return CO_E_OBJNOTCONNECTED;
 
@@ -535,7 +535,7 @@ CAccessibleText::GetModifiedText(bool aGetInsertedText,
   return aText->text ? S_OK : E_OUTOFMEMORY;
 }
 
-nsAccessibleTextBoundary
+AccessibleTextBoundary
 CAccessibleText::GetGeckoTextBoundary(enum IA2TextBoundaryType aBoundaryType)
 {
   switch (aBoundaryType) {

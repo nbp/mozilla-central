@@ -38,12 +38,15 @@
 #include "Connection.h"
 #include "MobileConnection.h"
 
+#ifdef MOZ_MEDIA_NAVIGATOR
+#include "MediaManager.h"
+#endif
 #ifdef MOZ_B2G_RIL
 #include "TelephonyFactory.h"
 #endif
 #ifdef MOZ_B2G_BT
-#include "nsIDOMBluetoothAdapter.h"
-#include "BluetoothAdapter.h"
+#include "nsIDOMBluetoothManager.h"
+#include "BluetoothManager.h"
 #endif
 
 // This should not be in the namespace.
@@ -95,6 +98,9 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorBattery)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
+#ifdef MOZ_MEDIA_NAVIGATOR
+  NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
+#endif
 #ifdef MOZ_B2G_RIL
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorTelephony)
 #endif
@@ -636,10 +642,10 @@ VibrateWindowListener::RemoveListener()
  */
 bool
 GetVibrationDurationFromJsval(const jsval& aJSVal, JSContext* cx,
-                              PRInt32 *aOut)
+                              int32_t* aOut)
 {
   return JS_ValueToInt32(cx, aJSVal, aOut) &&
-         *aOut >= 0 && static_cast<PRUint32>(*aOut) <= sMaxVibrateMS;
+         *aOut >= 0 && static_cast<uint32_t>(*aOut) <= sMaxVibrateMS;
 }
 
 } // anonymous namespace
@@ -660,7 +666,7 @@ Navigator::MozVibrate(const jsval& aPattern, JSContext* cx)
     return NS_OK;
   }
 
-  nsAutoTArray<PRUint32, 8> pattern;
+  nsAutoTArray<uint32_t, 8> pattern;
 
   // null or undefined pattern is an error.
   if (JSVAL_IS_NULL(aPattern) || JSVAL_IS_VOID(aPattern)) {
@@ -668,7 +674,7 @@ Navigator::MozVibrate(const jsval& aPattern, JSContext* cx)
   }
 
   if (JSVAL_IS_PRIMITIVE(aPattern)) {
-    PRInt32 p;
+    int32_t p;
     if (GetVibrationDurationFromJsval(aPattern, cx, &p)) {
       pattern.AppendElement(p);
     }
@@ -686,7 +692,7 @@ Navigator::MozVibrate(const jsval& aPattern, JSContext* cx)
 
     for (PRUint32 i = 0; i < length; ++i) {
       jsval v;
-      PRInt32 pv;
+      int32_t pv;
       if (JS_GetElement(cx, obj, i, &v) &&
           GetVibrationDurationFromJsval(v, cx, &pv)) {
         pattern[i] = pv;
@@ -898,6 +904,31 @@ NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
   NS_ADDREF(*_retval = mGeolocation);
   return NS_OK;
 }
+
+//*****************************************************************************
+//    Navigator::nsIDOMNavigatorUserMedia (mozGetUserMedia)
+//*****************************************************************************
+#ifdef MOZ_MEDIA_NAVIGATOR
+NS_IMETHODIMP
+Navigator::MozGetUserMedia(nsIMediaStreamOptions* aParams,
+                           nsIDOMGetUserMediaSuccessCallback* onSuccess,
+                           nsIDOMGetUserMediaErrorCallback* onError)
+{
+  if (!Preferences::GetBool("media.navigator.enabled", false)) {
+    return NS_OK;
+  }
+
+  MediaManager *manager = MediaManager::Get();
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
+
+  if (!win || !win->GetOuterWindow() ||
+      win->GetOuterWindow()->GetCurrentInnerWindow() != win) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  return manager->GetUserMedia(win->WindowID(), aParams, onSuccess, onError);
+}
+#endif
 
 //*****************************************************************************
 //    Navigator::nsIDOMNavigatorDesktopNotification
@@ -1161,15 +1192,16 @@ Navigator::GetMozMobileConnection(nsIDOMMozMobileConnection** aMobileConnection)
 //*****************************************************************************
 
 NS_IMETHODIMP
-Navigator::GetMozBluetooth(nsIDOMBluetoothAdapter** aBluetooth)
+Navigator::GetMozBluetooth(nsIDOMBluetoothManager** aBluetooth)
 {
-  nsCOMPtr<nsIDOMBluetoothAdapter> bluetooth = mBluetooth;
+  nsCOMPtr<nsIDOMBluetoothManager> bluetooth = mBluetooth;
 
   if (!bluetooth) {
     nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
     NS_ENSURE_TRUE(window, NS_ERROR_FAILURE);
 
-    mBluetooth = new bluetooth::BluetoothAdapter(window);
+    nsresult rv = NS_NewBluetoothManager(window, getter_AddRefs(mBluetooth));
+    NS_ENSURE_SUCCESS(rv, rv);
 
     bluetooth = mBluetooth;
   }
@@ -1198,6 +1230,17 @@ Navigator::SetWindow(nsPIDOMWindow *aInnerWindow)
   NS_ASSERTION(aInnerWindow->IsInnerWindow(),
                "Navigator must get an inner window!");
   mWindow = do_GetWeakReference(aInnerWindow);
+}
+
+void
+Navigator::OnNavigation()
+{
+  // Inform MediaManager in case there are live streams or pending callbacks.
+#ifdef MOZ_MEDIA_NAVIGATOR
+  MediaManager *manager = MediaManager::Get();
+  nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
+  return manager->OnNavigation(win->WindowID());
+#endif
 }
 
 } // namespace dom

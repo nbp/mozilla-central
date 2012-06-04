@@ -6,24 +6,25 @@
 #ifndef _nsXULColorPickerAccessible_H_
 #define _nsXULColorPickerAccessible_H_
 
-#include "nsAccessibleWrap.h"
+#include "AccessibleWrap.h"
 
 /**
  * Used for color button in colorpicker palette.
  */
-class nsXULColorPickerTileAccessible : public nsAccessibleWrap
+class nsXULColorPickerTileAccessible : public AccessibleWrap
 {
 public:
   nsXULColorPickerTileAccessible(nsIContent* aContent,
-                                 nsDocAccessible* aDoc);
+                                 DocAccessible* aDoc);
 
-  // nsAccessible
+  // Accessible
   virtual void Value(nsString& aValue);
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
+  virtual PRUint64 NativeInteractiveState() const;
 
   // Widgets
-  virtual nsAccessible* ContainerWidget() const;
+  virtual Accessible* ContainerWidget() const;
 };
 
 
@@ -33,9 +34,9 @@ public:
 class nsXULColorPickerAccessible : public nsXULColorPickerTileAccessible
 {
 public:
-  nsXULColorPickerAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULColorPickerAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
-  // nsAccessible
+  // Accessible
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
 
@@ -46,7 +47,7 @@ public:
 
 protected:
 
-  // nsAccessible
+  // Accessible
   virtual void CacheChildren();
 };
 

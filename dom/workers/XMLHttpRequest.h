@@ -12,6 +12,8 @@
 // Need this for XMLHttpRequestResponseType.
 #include "mozilla/dom/XMLHttpRequestBinding.h"
 
+#include "mozilla/dom/TypedArray.h"
+
 BEGIN_WORKERS_NAMESPACE
 
 class Proxy;
@@ -78,13 +80,13 @@ public:
 
 #define IMPL_GETTER_AND_SETTER(_type)                                          \
   JSObject*                                                                    \
-  GetOn##_type(ErrorResult& aRv)                                               \
+  GetOn##_type(JSContext* /* unused */, ErrorResult& aRv)                      \
   {                                                                            \
     return GetEventListener(NS_LITERAL_STRING(#_type), aRv);                   \
   }                                                                            \
                                                                                \
   void                                                                         \
-  SetOn##_type(JSObject* aListener, ErrorResult& aRv)                          \
+  SetOn##_type(JSContext* /* unused */, JSObject* aListener, ErrorResult& aRv) \
   {                                                                            \
     SetEventListener(NS_LITERAL_STRING(#_type), aListener, aRv);               \
   }
@@ -101,7 +103,8 @@ public:
 
   void
   Open(const nsAString& aMethod, const nsAString& aUrl, bool aAsync,
-       const nsAString& aUser, const nsAString& aPassword, ErrorResult& aRv);
+       const Optional<nsAString>& aUser, const Optional<nsAString>& aPassword,
+       ErrorResult& aRv);
 
   void
   SetRequestHeader(const nsAString& aHeader, const nsAString& aValue,
@@ -156,6 +159,11 @@ public:
   Send(JSObject* aBody, ErrorResult& aRv);
 
   void
+  Send(ArrayBuffer& aBody, ErrorResult& aRv) {
+    return Send(aBody.mObj, aRv);
+  }
+
+  void
   SendAsBinary(const nsAString& aBody, ErrorResult& aRv);
 
   void
@@ -194,7 +202,7 @@ public:
   SetResponseType(XMLHttpRequestResponseType aResponseType, ErrorResult& aRv);
 
   jsval
-  GetResponse(ErrorResult& aRv);
+  GetResponse(JSContext* /* unused */, ErrorResult& aRv);
 
   void
   GetResponseText(nsAString& aResponseText, ErrorResult& aRv);
@@ -212,7 +220,7 @@ public:
   }
 
   JS::Value
-  GetInterface(JSObject* aIID, ErrorResult& aRv)
+  GetInterface(JSContext* cx, JSObject* aIID, ErrorResult& aRv)
   {
     aRv.Throw(NS_ERROR_FAILURE);
     return JSVAL_NULL;

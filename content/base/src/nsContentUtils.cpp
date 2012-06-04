@@ -73,7 +73,6 @@
 #include "nsIObserverService.h"
 #include "nsContentPolicyUtils.h"
 #include "nsNodeInfoManager.h"
-#include "nsIXBLService.h"
 #include "nsCRT.h"
 #include "nsIDOMEvent.h"
 #include "nsIDOMEventTarget.h"
@@ -179,6 +178,10 @@ static NS_DEFINE_CID(kXTFServiceCID, NS_XTFSERVICE_CID);
 #include "nsIDOMDocumentType.h"
 #include "nsCharSeparatedTokenizer.h"
 
+#include "nsICharsetDetector.h"
+#include "nsICharsetDetectionObserver.h"
+#include "nsIPlatformCharset.h"
+
 extern "C" int MOZ_XMLTranslateEntity(const char* ptr, const char* end,
                                       const char** next, PRUnichar* result);
 extern "C" int MOZ_XMLCheckQName(const char* ptr, const char* end,
@@ -190,21 +193,6 @@ using namespace mozilla::widget;
 using namespace mozilla;
 
 const char kLoadAsData[] = "loadAsData";
-
-/**
- * Default values for the ViewportInfo structure.
- */
-static const float    kViewportMinScale = 0.0;
-static const float    kViewportMaxScale = 10.0;
-static const PRUint32 kViewportMinWidth = 200;
-static const PRUint32 kViewportMaxWidth = 10000;
-static const PRUint32 kViewportMinHeight = 223;
-static const PRUint32 kViewportMaxHeight = 10000;
-static const PRInt32  kViewportDefaultScreenWidth = 980;
-
-static const char kJSStackContractID[] = "@mozilla.org/js/xpc/ContextStack;1";
-static NS_DEFINE_CID(kParserServiceCID, NS_PARSERSERVICE_CID);
-static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
 
 nsIDOMScriptObjectFactory *nsContentUtils::sDOMScriptObjectFactory = nsnull;
 nsIXPConnect *nsContentUtils::sXPConnect;
@@ -261,6 +249,23 @@ nsIParser* nsContentUtils::sXMLFragmentParser = nsnull;
 nsIFragmentContentSink* nsContentUtils::sXMLFragmentSink = nsnull;
 bool nsContentUtils::sFragmentParsingActive = false;
 
+namespace {
+
+/**
+ * Default values for the ViewportInfo structure.
+ */
+static const float    kViewportMinScale = 0.0;
+static const float    kViewportMaxScale = 10.0;
+static const PRUint32 kViewportMinWidth = 200;
+static const PRUint32 kViewportMaxWidth = 10000;
+static const PRUint32 kViewportMinHeight = 223;
+static const PRUint32 kViewportMaxHeight = 10000;
+static const PRInt32  kViewportDefaultScreenWidth = 980;
+
+static const char kJSStackContractID[] = "@mozilla.org/js/xpc/ContextStack;1";
+static NS_DEFINE_CID(kParserServiceCID, NS_PARSERSERVICE_CID);
+static NS_DEFINE_CID(kCParserCID, NS_PARSER_CID);
+
 static PLDHashTable sEventListenerManagersHash;
 
 class EventListenerManagerMapEntry : public PLDHashEntryHdr
@@ -302,13 +307,35 @@ EventListenerManagerHashClearEntry(PLDHashTable *table, PLDHashEntryHdr *entry)
   lm->~EventListenerManagerMapEntry();
 }
 
-class nsSameOriginChecker : public nsIChannelEventSink,
-                            public nsIInterfaceRequestor
+class SameOriginChecker : public nsIChannelEventSink,
+                          public nsIInterfaceRequestor
 {
   NS_DECL_ISUPPORTS
   NS_DECL_NSICHANNELEVENTSINK
   NS_DECL_NSIINTERFACEREQUESTOR
 };
+
+class CharsetDetectionObserver : public nsICharsetDetectionObserver
+{
+public:
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD Notify(const char *aCharset, nsDetectionConfident aConf)
+  {
+    mCharset = aCharset;
+    return NS_OK;
+  }
+
+  const nsACString& GetResult() const
+  {
+    return mCharset;
+  }
+
+private:
+  nsCString mCharset;
+};
+
+} // anonymous namespace
 
 /* static */
 TimeDuration
@@ -3537,6 +3564,89 @@ nsContentUtils::CheckForBOM(const unsigned char* aBuffer, PRUint32 aLength,
   return found;
 }
 
+NS_IMPL_ISUPPORTS1(CharsetDetectionObserver,
+                   nsICharsetDetectionObserver)
+
+/* static */
+nsresult
+nsContentUtils::GuessCharset(const char *aData, PRUint32 aDataLen,
+                             nsACString &aCharset)
+{
+  // First try the universal charset detector
+  nsCOMPtr<nsICharsetDetector> detector =
+    do_CreateInstance(NS_CHARSET_DETECTOR_CONTRACTID_BASE
+                      "universal_charset_detector");
+  if (!detector) {
+    // No universal charset detector, try the default charset detector
+    const nsAdoptingCString& detectorName =
+      Preferences::GetLocalizedCString("intl.charset.detector");
+    if (!detectorName.IsEmpty()) {
+      nsCAutoString detectorContractID;
+      detectorContractID.AssignLiteral(NS_CHARSET_DETECTOR_CONTRACTID_BASE);
+      detectorContractID += detectorName;
+      detector = do_CreateInstance(detectorContractID.get());
+    }
+  }
+
+  nsresult rv;
+
+  // The charset detector doesn't work for empty (null) aData. Testing
+  // aDataLen instead of aData so that we catch potential errors.
+  if (detector && aDataLen) {
+    nsRefPtr<CharsetDetectionObserver> observer =
+      new CharsetDetectionObserver();
+
+    rv = detector->Init(observer);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    bool dummy;
+    rv = detector->DoIt(aData, aDataLen, &dummy);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = detector->Done();
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    aCharset = observer->GetResult();
+  } else {
+    // no charset detector available, check the BOM
+    unsigned char sniffBuf[3];
+    PRUint32 numRead =
+      (aDataLen >= sizeof(sniffBuf) ? sizeof(sniffBuf) : aDataLen);
+    memcpy(sniffBuf, aData, numRead);
+
+    bool bigEndian;
+    if (CheckForBOM(sniffBuf, numRead, aCharset, &bigEndian) &&
+        aCharset.EqualsLiteral("UTF-16")) {
+      if (bigEndian) {
+        aCharset.AppendLiteral("BE");
+      }
+      else {
+        aCharset.AppendLiteral("LE");
+      }
+    }
+  }
+
+  if (aCharset.IsEmpty()) {
+    // no charset detected, default to the system charset
+    nsCOMPtr<nsIPlatformCharset> platformCharset =
+      do_GetService(NS_PLATFORMCHARSET_CONTRACTID, &rv);
+    if (NS_SUCCEEDED(rv)) {
+      rv = platformCharset->GetCharset(kPlatformCharsetSel_PlainTextInFile,
+                                       aCharset);
+      if (NS_FAILED(rv)) {
+        NS_WARNING("Failed to get the system charset!");
+      }
+    }
+  }
+
+  if (aCharset.IsEmpty()) {
+    // no sniffed or default charset, assume UTF-8
+    aCharset.AssignLiteral("UTF-8");
+  }
+
+  return NS_OK;
+}
+
 /* static */
 void
 nsContentUtils::RegisterShutdownObserver(nsIObserver* aObserver)
@@ -4487,6 +4597,19 @@ nsContentUtils::TriggerLink(nsIContent *aContent, nsPresContext *aPresContext,
   if (NS_SUCCEEDED(proceed)) {
     handler->OnLinkClick(aContent, aLinkURI, aTargetSpec.get(), nsnull, nsnull,
                          aIsTrusted);
+  }
+}
+
+/* static */
+void
+nsContentUtils::GetLinkLocation(Element* aElement, nsString& aLocationString)
+{
+  nsCOMPtr<nsIURI> hrefURI = aElement->GetHrefURI();
+  if (hrefURI) {
+    nsCAutoString specUTF8;
+    nsresult rv = hrefURI->GetSpec(specUTF8);
+    if (NS_SUCCEEDED(rv))
+      CopyUTF8toUTF16(specUTF8, aLocationString);
   }
 }
 
@@ -5505,7 +5628,7 @@ nsIInterfaceRequestor*
 nsContentUtils::GetSameOriginChecker()
 {
   if (!sSameOriginChecker) {
-    sSameOriginChecker = new nsSameOriginChecker();
+    sSameOriginChecker = new SameOriginChecker();
     NS_IF_ADDREF(sSameOriginChecker);
   }
   return sSameOriginChecker;
@@ -5537,15 +5660,15 @@ nsContentUtils::CheckSameOrigin(nsIChannel *aOldChannel, nsIChannel *aNewChannel
   return rv;
 }
 
-NS_IMPL_ISUPPORTS2(nsSameOriginChecker,
+NS_IMPL_ISUPPORTS2(SameOriginChecker,
                    nsIChannelEventSink,
                    nsIInterfaceRequestor)
 
 NS_IMETHODIMP
-nsSameOriginChecker::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
-                                            nsIChannel *aNewChannel,
-                                            PRUint32 aFlags,
-                                            nsIAsyncVerifyRedirectCallback *cb)
+SameOriginChecker::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
+                                          nsIChannel *aNewChannel,
+                                          PRUint32 aFlags,
+                                          nsIAsyncVerifyRedirectCallback *cb)
 {
   NS_PRECONDITION(aNewChannel, "Redirecting to null channel?");
 
@@ -5558,7 +5681,7 @@ nsSameOriginChecker::AsyncOnChannelRedirect(nsIChannel *aOldChannel,
 }
 
 NS_IMETHODIMP
-nsSameOriginChecker::GetInterface(const nsIID & aIID, void **aResult)
+SameOriginChecker::GetInterface(const nsIID & aIID, void **aResult)
 {
   return QueryInterface(aIID, aResult);
 }
@@ -6664,5 +6787,79 @@ nsContentUtils::JSArrayToAtomArray(JSContext* aCx, const JS::Value& aJSArray,
     }
     aRetVal.AppendObject(a);
   }
+  return NS_OK;
+}
+
+// static
+nsresult
+nsContentUtils::IsOnPrefWhitelist(nsPIDOMWindow* aWindow,
+                                  const char* aPrefURL, bool* aAllowed)
+{
+  // Make sure we're dealing with an inner window.
+  nsPIDOMWindow* innerWindow = aWindow->IsInnerWindow() ?
+    aWindow :
+    aWindow->GetCurrentInnerWindow();
+  NS_ENSURE_TRUE(innerWindow, NS_ERROR_FAILURE);
+
+  // Make sure we're being called from a window that we have permission to
+  // access.
+  if (!nsContentUtils::CanCallerAccess(innerWindow)) {
+    return NS_ERROR_DOM_SECURITY_ERR;
+  }
+
+  // Need the document in order to make security decisions.
+  nsCOMPtr<nsIDocument> document =
+    do_QueryInterface(innerWindow->GetExtantDocument());
+  NS_ENSURE_TRUE(document, NS_NOINTERFACE);
+
+  // Do security checks. We assume that chrome is always allowed.
+  if (nsContentUtils::IsSystemPrincipal(document->NodePrincipal())) {
+    *aAllowed = true;
+    return NS_OK;    
+  }
+
+  // We also allow a comma seperated list of pages specified by
+  // preferences.  
+  nsCOMPtr<nsIURI> originalURI;
+  nsresult rv =
+    document->NodePrincipal()->GetURI(getter_AddRefs(originalURI));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIURI> documentURI;
+  rv = originalURI->Clone(getter_AddRefs(documentURI));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Strip the query string (if there is one) before comparing.
+  nsCOMPtr<nsIURL> documentURL = do_QueryInterface(documentURI);
+  if (documentURL) {
+    rv = documentURL->SetQuery(EmptyCString());
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  bool allowed = false;
+
+  // The pref may not exist but in that case we deny access just as we do if
+  // the url doesn't match.
+  nsCString whitelist;
+  if (NS_SUCCEEDED(Preferences::GetCString(aPrefURL,
+                                           &whitelist))) {
+    nsCOMPtr<nsIIOService> ios = do_GetIOService();
+    NS_ENSURE_TRUE(ios, NS_ERROR_FAILURE);
+
+    nsCCharSeparatedTokenizer tokenizer(whitelist, ',');
+    while (tokenizer.hasMoreTokens()) {
+      nsCOMPtr<nsIURI> uri;
+      if (NS_SUCCEEDED(NS_NewURI(getter_AddRefs(uri), tokenizer.nextToken(),
+                                 nsnull, nsnull, ios))) {
+        rv = documentURI->EqualsExceptRef(uri, &allowed);
+        NS_ENSURE_SUCCESS(rv, rv);
+
+        if (allowed) {
+          break;
+        }
+      }
+    }
+  }
+  *aAllowed = allowed;
   return NS_OK;
 }

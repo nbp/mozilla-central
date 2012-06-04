@@ -160,6 +160,12 @@
                     type="checkbox"
                     command="Tools:Inspect"
                     key="key_inspect"/>
+          <menuitem id="appmenu_responsiveUI"
+                    hidden="true"
+                    label="&responsiveUI.label;"
+                    type="checkbox"
+                    command="Tools:ResponsiveUI"
+                    key="key_responsiveUI"/>
           <menuitem id="appmenu_debugger"
                     hidden="true"
                     type="checkbox"
@@ -375,7 +381,7 @@
 #endif
                  oncommand="openPreferences();">
           <menupopup id="appmenu_customizeMenu"
-                     onpopupshowing="onViewToolbarsPopupShowing(event, document.getElementById('appmenu_toggleTabsOnTop').previousSibling);">
+                     onpopupshowing="onViewToolbarsPopupShowing(event, document.getElementById('appmenu_toggleToolbarsSeparator'));">
             <menuitem id="appmenu_preferences"
 #ifdef XP_UNIX
                       label="&preferencesCmdUnix.label;"
@@ -384,7 +390,7 @@
 #endif
                       oncommand="openPreferences();"/>
             <menuseparator/>
-            <menuseparator/>
+            <menuseparator id="appmenu_toggleToolbarsSeparator"/>
             <menuitem id="appmenu_toggleTabsOnTop"
                       label="&viewTabsOnTop.label;"
                       type="checkbox"
