@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "gfxSharedImageSurface.h"
+#include "gfxPlatform.h"
 
 #include "mozilla/ipc/SharedMemorySysV.h"
 #include "mozilla/layers/PLayerChild.h"
@@ -342,25 +343,27 @@ ShadowLayerForwarder::EndTransaction(InfallibleTArray<EditReply>* aReplies)
   return true;
 }
 
-static gfxASurface::gfxImageFormat
-OptimalFormatFor(gfxASurface::gfxContentType aContent)
-{
-  switch (aContent) {
-  case gfxASurface::CONTENT_COLOR:
-#ifdef MOZ_GFX_OPTIMIZE_MOBILE
-    return gfxASurface::ImageFormatRGB16_565;
-#else
-    return gfxASurface::ImageFormatRGB24;
-#endif
-  case gfxASurface::CONTENT_ALPHA:
-    return gfxASurface::ImageFormatA8;
-  case gfxASurface::CONTENT_COLOR_ALPHA:
-    return gfxASurface::ImageFormatARGB32;
-  default:
-    NS_NOTREACHED("unknown gfxContentType");
-    return gfxASurface::ImageFormatARGB32;
+bool
+ShadowLayerForwarder::ShadowDrawToTarget(gfxContext* aTarget) {
+
+  SurfaceDescriptor descriptorIn, descriptorOut;
+  AllocBuffer(aTarget->OriginalSurface()->GetSize(),
+              aTarget->OriginalSurface()->GetContentType(),
+              &descriptorIn);
+  if (!mShadowManager->SendDrawToSurface(descriptorIn, &descriptorOut)) {
+    return false;
   }
+
+  nsRefPtr<gfxASurface> surface = OpenDescriptor(descriptorOut);
+  aTarget->SetOperator(gfxContext::OPERATOR_SOURCE);
+  aTarget->DrawSurface(surface, surface->GetSize());
+
+  surface = nsnull;
+  DestroySharedSurface(&descriptorOut);
+
+  return true;
 }
+
 
 static SharedMemory::SharedMemoryType
 OptimalShmemType()
@@ -400,8 +403,8 @@ ShadowLayerForwarder::AllocBuffer(const gfxIntSize& aSize,
 {
   NS_ABORT_IF_FALSE(HasShadowManager(), "no manager to forward to");
 
-  gfxASurface::gfxImageFormat format = OptimalFormatFor(aContent);
   SharedMemory::SharedMemoryType shmemType = OptimalShmemType();
+  gfxASurface::gfxImageFormat format = gfxPlatform::GetPlatform()->OptimalFormatForContent(aContent);
 
   nsRefPtr<gfxSharedImageSurface> back =
     gfxSharedImageSurface::CreateUnsafe(mShadowManager, aSize, format, shmemType);

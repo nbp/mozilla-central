@@ -24,6 +24,7 @@
 #include "uachelper.h"
 #include "updatehelper.h"
 #include "errors.h"
+#include "prefetch.h"
 
 // Wait 15 minutes for an update operation to run at most.
 // Updates usually take less than a minute so this seems like a 
@@ -238,6 +239,7 @@ StartUpdateProcess(int argc,
     if (updateWasSuccessful && argc > 2) {
       LPCWSTR installationDir = argv[2];
       LPCWSTR updateInfoDir = argv[1];
+      bool backgroundUpdate = (argc == 4 && !wcscmp(argv[3], L"-1"));
 
       // Launch the PostProcess with admin access in session 0.  This is
       // actually launching the post update process but it takes in the 
@@ -246,9 +248,14 @@ StartUpdateProcess(int argc,
       // the unelevated updater.exe after the update process is complete
       // from the service.  We don't know here which session to start
       // the user PostUpdate process from.
-      LOG(("Launching post update process as the service in session 0.\n"));
-      if (!LaunchWinPostProcess(installationDir, updateInfoDir, true, NULL)) {
-        LOG(("The post update process could not be launched.\n"));
+      // Note that we don't need to do this if we're just staging the
+      // update in the background, as the PostUpdate step runs when
+      // performing the replacing in that case.
+      if (!backgroundUpdate) {
+        LOG(("Launching post update process as the service in session 0.\n"));
+        if (!LaunchWinPostProcess(installationDir, updateInfoDir, true, NULL)) {
+          LOG(("The post update process could not be launched.\n"));
+        }
       }
     }
   }
@@ -408,7 +415,7 @@ ProcessSoftwareUpdateCommand(DWORD argc, LPWSTR *argv)
 
       // We might not execute code after StartServiceUpdate because
       // the service installer will stop the service if it is running.
-      StartServiceUpdate(argc, argv);
+      StartServiceUpdate(installDir);
     } else {
       result = FALSE;
       LOG(("Error running update process. Updating update.status"
@@ -482,6 +489,8 @@ ExecuteServiceCommand(int argc, LPWSTR *argv)
     // because the service self updates itself and the service
     // installer will stop the service.
     LOG(("Service command %ls complete.\n", argv[2]));
+  } else if (!lstrcmpi(argv[2], L"clear-prefetch")) {
+    result = ClearKnownPrefetch();
   } else {
     LOG(("Service command not recognized: %ls.\n", argv[2]));
     // result is already set to FALSE

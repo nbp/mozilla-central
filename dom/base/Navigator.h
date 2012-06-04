@@ -25,6 +25,10 @@ class nsDesktopNotificationCenter;
 class nsPIDOMWindow;
 class nsIDOMMozConnection;
 
+#ifdef MOZ_MEDIA_NAVIGATOR
+#include "nsIDOMNavigatorUserMedia.h"
+#endif
+
 #ifdef MOZ_B2G_RIL
 #include "nsIDOMNavigatorTelephony.h"
 class nsIDOMTelephony;
@@ -34,7 +38,6 @@ class nsIDOMTelephony;
 #include "nsIDOMNavigatorBluetooth.h"
 #endif
 
-class nsIDOMAdapter;
 //*****************************************************************************
 // Navigator: Script "navigator" object
 //*****************************************************************************
@@ -66,6 +69,9 @@ class Navigator : public nsIDOMNavigator
                 , public nsIDOMNavigatorDesktopNotification
                 , public nsIDOMMozNavigatorBattery
                 , public nsIDOMMozNavigatorSms
+#ifdef MOZ_MEDIA_NAVIGATOR
+                , public nsIDOMNavigatorUserMedia
+#endif
 #ifdef MOZ_B2G_RIL
                 , public nsIDOMNavigatorTelephony
 #endif
@@ -73,6 +79,7 @@ class Navigator : public nsIDOMNavigator
 #ifdef MOZ_B2G_BT
                 , public nsIDOMNavigatorBluetooth
 #endif
+
 {
 public:
   Navigator(nsPIDOMWindow *aInnerWindow);
@@ -86,6 +93,9 @@ public:
   NS_DECL_NSIDOMNAVIGATORDESKTOPNOTIFICATION
   NS_DECL_NSIDOMMOZNAVIGATORBATTERY
   NS_DECL_NSIDOMMOZNAVIGATORSMS
+#ifdef MOZ_MEDIA_NAVIGATOR
+  NS_DECL_NSIDOMNAVIGATORUSERMEDIA
+#endif
 #ifdef MOZ_B2G_RIL
   NS_DECL_NSIDOMNAVIGATORTELEPHONY
 #endif
@@ -111,6 +121,11 @@ public:
    */
   void SetWindow(nsPIDOMWindow *aInnerWindow);
 
+  /**
+   * Called when the inner window navigates to a new page.
+   */
+  void OnNavigation();
+
 private:
   bool IsSmsAllowed() const;
   bool IsSmsSupported() const;
@@ -128,7 +143,7 @@ private:
   nsRefPtr<network::Connection> mConnection;
   nsRefPtr<network::MobileConnection> mMobileConnection;
 #ifdef MOZ_B2G_BT
-  nsCOMPtr<nsIDOMBluetoothAdapter> mBluetooth;
+  nsCOMPtr<nsIDOMBluetoothManager> mBluetooth;
 #endif
   nsWeakPtr mWindow;
 };

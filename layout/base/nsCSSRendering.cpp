@@ -1363,7 +1363,7 @@ nsCSSRendering::PaintBackground(nsPresContext* aPresContext,
 static bool
 IsOpaqueBorderEdge(const nsStyleBorder& aBorder, mozilla::css::Side aSide)
 {
-  if (aBorder.GetActualBorder().Side(aSide) == 0)
+  if (aBorder.GetComputedBorder().Side(aSide) == 0)
     return true;
   switch (aBorder.GetBorderStyle(aSide)) {
   case NS_STYLE_BORDER_STYLE_SOLID:
@@ -2605,7 +2605,7 @@ DrawBorderImage(nsPresContext*       aPresContext,
       value = imgDimension;
     slice.Side(s) = NS_lround(value);
 
-    nsMargin borderWidths(aStyleBorder.GetActualBorder());
+    nsMargin borderWidths(aStyleBorder.GetComputedBorder());
     coord = aStyleBorder.mBorderImageWidth.Get(s);
     switch (coord.GetUnit()) {
       case eStyleUnit_Coord: // absolute dimension
@@ -4141,12 +4141,12 @@ nsContextBoxBlur::Init(const nsRect& aRect, nscoord aSpreadRadius,
   gfxFloat scaleX = 1;
   gfxFloat scaleY = 1;
 
-  // Do blurs in device space when possible
-  // If the scale is not uniform we fall back to transforming on paint.
+  // Do blurs in device space when possible.
   // Chrome/Skia always does the blurs in device space
   // and will sometimes get incorrect results (e.g. rotated blurs)
   gfxMatrix transform = aDestinationCtx->CurrentMatrix();
-  if (transform.HasNonAxisAlignedTransform()) {
+  // XXX: we could probably handle negative scales but for now it's easier just to fallback
+  if (transform.HasNonAxisAlignedTransform() || transform.xx <= 0.0 || transform.yy <= 0.0) {
     transform = gfxMatrix();
   } else {
     scaleX = transform.xx;

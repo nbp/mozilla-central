@@ -403,6 +403,22 @@ MarkCalleeToken(JSTracer *trc, CalleeToken token)
     }
 }
 
+static inline uintptr_t
+ReadAllocation(const IonFrameIterator &frame, const LAllocation *a)
+{
+    if (a->isGeneralReg()) {
+        Register reg = a->toGeneralReg()->reg();
+        return frame.machineState().read(reg);
+    }
+    if (a->isStackSlot()) {
+        uint32 slot = a->toStackSlot()->slot();
+        return *frame.jsFrame()->slotRef(slot);
+    }
+    uint32 index = a->toArgument()->index();
+    uint8 *argv = reinterpret_cast<uint8 *>(frame.jsFrame()->argv());
+    return *reinterpret_cast<uintptr_t *>(argv + index);
+}
+
 static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
@@ -457,6 +473,19 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
         if (gcRegs.has(*iter))
             gc::MarkThingOrValueRoot(trc, spill, "ion-gc-spill");
     }
+
+#ifdef JS_NUNBOX32
+    LAllocation type, payload;
+    while (safepoint.getNunboxSlot(&type, &payload)) {
+        jsval_layout layout;
+        layout.s.tag = (JSValueTag)ReadAllocation(frame, &type);
+        layout.s.payload.uintptr = ReadAllocation(frame, &payload);
+
+        Value v = IMPL_TO_JSVAL(layout);
+        gc::MarkValueRoot(trc, &v, "ion-torn-value");
+        JS_ASSERT(v == IMPL_TO_JSVAL(layout));
+    }
+#endif
 }
 
 static void
@@ -494,9 +523,13 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
         switch (f->argRootType(explicitArg)) {
           case VMFunction::RootNone:
             break;
-          case VMFunction::RootObject:
-            gc::MarkObjectRoot(trc, reinterpret_cast<JSObject**>(argBase), "ion-vm-args");
+          case VMFunction::RootObject: {
+            // Sometimes we can bake in HandleObjects to NULL.
+            JSObject **pobj = reinterpret_cast<JSObject **>(argBase);
+            if (*pobj)
+                gc::MarkObjectRoot(trc, pobj, "ion-vm-args");
             break;
+          }
           case VMFunction::RootString:
           case VMFunction::RootPropertyName:
             gc::MarkStringRoot(trc, reinterpret_cast<JSString**>(argBase), "ion-vm-args");

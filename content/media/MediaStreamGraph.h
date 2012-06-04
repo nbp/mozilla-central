@@ -83,6 +83,10 @@ class MediaStreamGraph;
  * reentry into media graph methods is possible, although very much discouraged!
  * You should do something non-blocking and non-reentrant (e.g. dispatch an
  * event to some thread) and return.
+ *
+ * When a listener is first attached, we guarantee to send a NotifyBlockingChanged
+ * callback to notify of the initial blocking state. Also, if a listener is
+ * attached to a stream that has already finished, we'll call NotifyFinished.
  */
 class MediaStreamListener {
 public:
@@ -90,12 +94,24 @@ public:
 
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaStreamListener)
 
+  enum Consumption {
+    CONSUMED,
+    NOT_CONSUMED
+  };
+  /**
+   * Notify that the stream is hooked up and we'd like to start or stop receiving
+   * data on it. Only fires on SourceMediaStreams.
+   * The initial state is assumed to be NOT_CONSUMED.
+   */
+  virtual void NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming) {}
+
   enum Blocking {
     BLOCKED,
     UNBLOCKED
   };
   /**
-   * Notify that the blocking status of the stream changed.
+   * Notify that the blocking status of the stream changed. The initial state
+   * is assumed to be BLOCKED.
    */
   virtual void NotifyBlockingChanged(MediaStreamGraph* aGraph, Blocking aBlocked) {}
 
@@ -263,10 +279,7 @@ public:
   {
     mExplicitBlockerCount.SetAtAndAfter(aTime, mExplicitBlockerCount.GetAt(aTime) + aDelta);
   }
-  void AddListenerImpl(already_AddRefed<MediaStreamListener> aListener)
-  {
-    *mListeners.AppendElement() = aListener;
-  }
+  void AddListenerImpl(already_AddRefed<MediaStreamListener> aListener);
   void RemoveListenerImpl(MediaStreamListener* aListener)
   {
     mListeners.RemoveElement(aListener);
@@ -370,11 +383,17 @@ protected:
 class SourceMediaStream : public MediaStream {
 public:
   SourceMediaStream(nsDOMMediaStream* aWrapper) :
-    MediaStream(aWrapper), mMutex("mozilla::media::SourceMediaStream"),
-    mUpdateKnownTracksTime(0), mUpdateFinished(false)
+    MediaStream(aWrapper),
+    mLastConsumptionState(MediaStreamListener::NOT_CONSUMED),
+    mMutex("mozilla::media::SourceMediaStream"),
+    mUpdateKnownTracksTime(0),
+    mUpdateFinished(false), mDestroyed(false)
   {}
 
   virtual SourceMediaStream* AsSourceStream() { return this; }
+
+  // Media graph thread only
+  virtual void DestroyImpl();
 
   // Call these on any thread.
   /**
@@ -467,11 +486,17 @@ protected:
     return nsnull;
   }
 
+  // Media stream graph thread only
+  MediaStreamListener::Consumption mLastConsumptionState;
+
+  // This must be acquired *before* MediaStreamGraphImpl's lock, if they are
+  // held together.
   Mutex mMutex;
   // protected by mMutex
   StreamTime mUpdateKnownTracksTime;
   nsTArray<TrackData> mUpdateTracks;
   bool mUpdateFinished;
+  bool mDestroyed;
 };
 
 /**

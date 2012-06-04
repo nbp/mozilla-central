@@ -16,7 +16,8 @@
  *
  * @param aHooks object
  *        An object with preNest and postNest methods for calling when entering
- *        and exiting a nested event loop.
+ *        and exiting a nested event loop, as well as addToBreakpointPool and
+ *        removeFromBreakpointPool methods for handling breakpoint lifetime.
  */
 function ThreadActor(aHooks)
 {
@@ -41,14 +42,7 @@ ThreadActor.prototype = {
     return this._threadLifetimePool;
   },
 
-  _breakpointPool: null,
-  get breakpointActorPool() {
-    if (!this._breakpointPool) {
-      this._breakpointPool = new ActorPool(this.conn);
-      this.conn.addActorPool(this._breakpointPool);
-    }
-    return this._breakpointPool;
-  },
+  _breakpointStore: {},
 
   _scripts: {},
 
@@ -97,8 +91,6 @@ ThreadActor.prototype = {
     }
     this.conn.removeActorPool(this._threadLifetimePool || undefined);
     this._threadLifetimePool = null;
-    this.conn.removeActorPool(this._breakpointPool);
-    this._breakpointPool = null;
     // Unless we carefully take apart the scripts table this way, we end up
     // leaking documents. It would be nice to track this down carefully, once
     // we have the appropriate tools.
@@ -267,6 +259,10 @@ ThreadActor.prototype = {
                    message: "Unknown resumeLimit type" };
       }
     }
+
+    if (aRequest && aRequest.pauseOnExceptions) {
+      this.dbg.onExceptionUnwind = this.onExceptionUnwind.bind(this);
+    }
     let packet = this._resumed();
     DebuggerServer.xpcInspector.exitNestedEventLoop();
     return packet;
@@ -377,19 +373,43 @@ ThreadActor.prototype = {
     }
 
     let location = aRequest.location;
-    if (!this._scripts[location.url] || location.line < 0) {
+    let line = location.line;
+    if (!this._scripts[location.url] || line < 0) {
       return { error: "noScript" };
     }
+
+    // Add the breakpoint to the store for later reuse, in case it belongs to a
+    // script that hasn't appeared yet.
+    if (!this._breakpointStore[location.url]) {
+      this._breakpointStore[location.url] = [];
+    }
+    let scriptBreakpoints = this._breakpointStore[location.url];
+    scriptBreakpoints[line] = {
+      url: location.url,
+      line: line,
+      column: location.column
+    };
+
+    return this._setBreakpoint(location);
+  },
+
+  /**
+   * Set a breakpoint using the jsdbg2 API.
+   *
+   * @param object aLocation
+   *        The location of the breakpoint as specified in the protocol.
+   */
+  _setBreakpoint: function TA__setBreakpoint(aLocation) {
     // Fetch the list of scripts in that url.
-    let scripts = this._scripts[location.url];
+    let scripts = this._scripts[aLocation.url];
     // Fetch the specified script in that list.
     let script = null;
-    for (let i = location.line; i >= 0; i--) {
+    for (let i = aLocation.line; i >= 0; i--) {
       // Stop when the first script that contains this location is found.
       if (scripts[i]) {
         // If that first script does not contain the line specified, it's no
         // good.
-        if (i + scripts[i].lineCount < location.line) {
+        if (i + scripts[i].lineCount < aLocation.line) {
           continue;
         }
         script = scripts[i];
@@ -397,15 +417,27 @@ ThreadActor.prototype = {
       }
     }
 
-    if (!script) {
-      return { error: "noScript" };
+    let location = { url: aLocation.url, line: aLocation.line };
+    let bpActor;
+    if (this._breakpointStore[location.url] &&
+        this._breakpointStore[location.url][location.line] &&
+        this._breakpointStore[location.url][location.line].actor) {
+      bpActor = this._breakpointStore[location.url][location.line].actor;
+    }
+    if (!bpActor) {
+      bpActor = new BreakpointActor(this, location);
+      this._hooks.addToBreakpointPool(bpActor);
+      this._breakpointStore[location.url][location.line].actor = bpActor;
     }
 
-    script = this._getInnermostContainer(script, location.line);
-    let bpActor = new BreakpointActor(script, this);
-    this.breakpointActorPool.addActor(bpActor);
+    if (!script) {
+      return { error: "noScript", actor: bpActor.actorID };
+    }
 
-    let offsets = script.getLineOffsets(location.line);
+    script = this._getInnermostContainer(script, aLocation.line);
+    bpActor.addScript(script, this);
+
+    let offsets = script.getLineOffsets(aLocation.line);
     let codeFound = false;
     for (let i = 0; i < offsets.length; i++) {
       script.setBreakpoint(offsets[i], bpActor);
@@ -416,21 +448,21 @@ ThreadActor.prototype = {
     if (offsets.length == 0) {
       // No code at that line in any script, skipping forward.
       let lines = script.getAllOffsets();
-      for (let line = location.line; line < lines.length; ++line) {
+      for (let line = aLocation.line; line < lines.length; ++line) {
         if (lines[line]) {
           for (let i = 0; i < lines[line].length; i++) {
             script.setBreakpoint(lines[line][i], bpActor);
             codeFound = true;
           }
-          actualLocation = location;
+          actualLocation = aLocation;
           actualLocation.line = line;
+          bpActor.location = actualLocation;
           break;
         }
       }
     }
     if (!codeFound) {
-      bpActor.onDelete();
-      return  { error: "noCodeAtLineColumn" };
+      return  { error: "noCodeAtLineColumn", actor: bpActor.actorID };
     }
 
     return { actor: bpActor.actorID, actualLocation: actualLocation };
@@ -561,6 +593,7 @@ ThreadActor.prototype = {
 
     // Clear stepping hooks.
     this.dbg.onEnterFrame = undefined;
+    this.dbg.onExceptionUnwind = undefined;
     if (aFrame) {
       aFrame.onStep = undefined;
       aFrame.onPop = undefined;
@@ -828,6 +861,33 @@ ThreadActor.prototype = {
   },
 
   /**
+   * A function that the engine calls when an exception has been thrown and has
+   * propagated to the specified frame.
+   *
+   * @param aFrame Debugger.Frame
+   *        The youngest remaining stack frame.
+   * @param aValue object
+   *        The exception that was thrown.
+   */
+  onExceptionUnwind: function TA_onExceptionUnwind(aFrame, aValue) {
+    try {
+      let packet = this._paused(aFrame);
+      if (!packet) {
+        return undefined;
+      }
+
+      packet.why = { type: "exception",
+                     exception: this.createValueGrip(aValue) };
+      this.conn.send(packet);
+      return this._nest();
+    } catch(e) {
+      Cu.reportError("Got an exception during TA_onExceptionUnwind: " + e +
+                     ": " + e.stack);
+      return undefined;
+    }
+  },
+
+  /**
    * A function that the engine calls when a new script has been loaded into the
    * scope of the specified debuggee global.
    *
@@ -839,8 +899,13 @@ ThreadActor.prototype = {
   onNewScript: function TA_onNewScript(aScript, aGlobal) {
     this._addScript(aScript);
     // Notify the client.
-    this.conn.send({ from: this.actorID, type: "newScript",
-                     url: aScript.url, startLine: aScript.startLine });
+    this.conn.send({
+      from: this.actorID,
+      type: "newScript",
+      url: aScript.url,
+      startLine: aScript.startLine,
+      lineCount: aScript.lineCount
+    });
   },
 
   /**
@@ -856,6 +921,16 @@ ThreadActor.prototype = {
       this._scripts[aScript.url] = [];
     }
     this._scripts[aScript.url][aScript.startLine] = aScript;
+
+    // Set any stored breakpoints.
+    let existing = this._breakpointStore[aScript.url];
+    if (existing) {
+      for (let bp of existing) {
+        if (bp) {
+          this._setBreakpoint(bp);
+        }
+      }
+    }
   }
 
 };
@@ -1078,6 +1153,10 @@ ObjectActor.prototype = {
                message: "cannot access the environment of this function." };
     }
 
+    // XXX: the following call of env.form() won't work until bug 747514 lands.
+    // We can't get to the frame that defined this function's environment,
+    // neither here, nor during ObjectActor's construction. Luckily, we don't
+    // use the 'scope' request in the debugger frontend.
     return { name: this.obj.name || null,
              scope: envActor.form(this.obj) };
   },
@@ -1197,14 +1276,7 @@ FrameActor.prototype = {
                  type: this.frame.type };
     if (this.frame.type === "call") {
       form.callee = this.threadActor.createValueGrip(this.frame.callee);
-      if (this.frame.callee.name) {
-        form.calleeName = this.frame.callee.name;
-      } else {
-        let desc = this.frame.callee.getOwnPropertyDescriptor("displayName");
-        if (desc && desc.value && typeof desc.value == "string") {
-          form.calleeName = desc.value;
-        }
-      }
+      form.calleeName = getFunctionName(this.frame.callee);
     }
 
     let envActor = this.threadActor
@@ -1268,19 +1340,34 @@ FrameActor.prototype.requestTypes = {
  * containing thread and are responsible for deleting breakpoints, handling
  * breakpoint hits and associating breakpoints with scripts.
  *
- * @param Debugger.Script aScript
- *        The script this breakpoint is set on.
  * @param ThreadActor aThreadActor
  *        The parent thread actor that contains this breakpoint.
+ * @param object aLocation
+ *        The location of the breakpoint as specified in the protocol.
  */
-function BreakpointActor(aScript, aThreadActor)
+function BreakpointActor(aThreadActor, aLocation)
 {
-  this.script = aScript;
+  this.scripts = [];
   this.threadActor = aThreadActor;
+  this.location = aLocation;
 }
 
 BreakpointActor.prototype = {
   actorPrefix: "breakpoint",
+
+  /**
+   * Called when this same breakpoint is added to another Debugger.Script
+   * instance, in the case of a page reload.
+   *
+   * @param aScript Debugger.Script
+   *        The new source script on which the breakpoint has been set.
+   * @param ThreadActor aThreadActor
+   *        The parent thread actor that contains this breakpoint.
+   */
+  addScript: function BA_addScript(aScript, aThreadActor) {
+    this.threadActor = aThreadActor;
+    this.scripts.push(aScript);
+  },
 
   /**
    * A function that the engine calls when a breakpoint has been hit.
@@ -1301,9 +1388,15 @@ BreakpointActor.prototype = {
    *        The protocol request object.
    */
   onDelete: function BA_onDelete(aRequest) {
-    this.threadActor.breakpointActorPool.removeActor(this.actorID);
-    this.script.clearBreakpoint(this);
-    this.script = null;
+    // Remove from the breakpoint store.
+    let scriptBreakpoints = this.threadActor._breakpointStore[this.location.url];
+    delete scriptBreakpoints[this.location.line];
+    // Remove the actual breakpoint.
+    this.threadActor._hooks.removeFromBreakpointPool(this.actorID);
+    for (let script of this.scripts) {
+      script.clearBreakpoint(this);
+    }
+    this.scripts = null;
 
     return { from: this.actorID };
   }
@@ -1335,13 +1428,13 @@ EnvironmentActor.prototype = {
 
   /**
    * Returns an environment form for use in a protocol message. Note that the
-   * requirement of passing the frame or function as a parameter is only
-   * temporary, since when bug 747514 lands, the environment will have a callee
-   * property that will contain it.
+   * requirement of passing the frame as a parameter is only temporary, since
+   * when bug 747514 lands, the environment will have a callee property that
+   * will contain it.
    *
-   * @param object aObject
-   *        The stack frame or function object whose environment bindings are
-   *        being generated.
+   * @param Debugger.Frame aObject
+   *        The stack frame object whose environment bindings are being
+   *        generated.
    */
   form: function EA_form(aObject) {
     // Debugger.Frame might be dead by the time we get here, which will cause
@@ -1353,24 +1446,29 @@ EnvironmentActor.prototype = {
     let parent;
     if (this.obj.parent) {
       let thread = this.threadActor;
-      parent = thread.createEnvironmentActor(this.obj.parent.environment,
+      parent = thread.createEnvironmentActor(this.obj.parent,
                                              this.registeredPool);
     }
+    // Deduce the frame that created the parent scope in order to pass it to
+    // parent.form(). TODO: this can be removed after bug 747514 is done.
+    let parentFrame = aObject;
+    if (this.obj.type == "declarative" && aObject.older) {
+      parentFrame = aObject.older;
+    }
     let form = { actor: this.actorID,
-                 parent: parent ? parent.form(this.obj.parent) : parent };
+                 parent: parent ? parent.form(parentFrame) : parent };
 
-    if (aObject.type == "object") {
-      if (this.obj.parent) {
-        form.type = "with";
-      } else {
-        form.type = "object";
-      }
-      form.object = this.threadActor.createValueGrip(aObject.object);
-    } else {
-      if (aObject.class == "Function") {
+    if (this.obj.type == "with") {
+      form.type = "with";
+      form.object = this.threadActor.createValueGrip(this.obj.object);
+    } else if (this.obj.type == "object") {
+      form.type = "object";
+      form.object = this.threadActor.createValueGrip(this.obj.object);
+    } else { // this.obj.type == "declarative"
+      if (aObject.callee) {
         form.type = "function";
-        form.function = this.threadActor.createValueGrip(aObject);
-        form.functionName = aObject.name;
+        form.function = this.threadActor.createValueGrip(aObject.callee);
+        form.functionName = getFunctionName(aObject.callee);
       } else {
         form.type = "block";
       }
@@ -1382,14 +1480,14 @@ EnvironmentActor.prototype = {
 
   /**
    * Return the identifier bindings object as required by the remote protocol
-   * specification. Note that the requirement of passing the frame or function
-   * as a parameter is only temporary, since when bug 747514 lands, the
-   * environment will have a callee property that will contain it.
+   * specification. Note that the requirement of passing the frame as a
+   * parameter is only temporary, since when bug 747514 lands, the environment
+   * will have a callee property that will contain it.
    *
-   * @param object aObject [optional]
-   *        The stack frame or function object whose environment bindings are
-   *        being generated. When left unspecified, the bindings do not contain
-   *        an 'arguments' property.
+   * @param Debugger.Frame aObject [optional]
+   *        The stack frame whose environment bindings are being generated. When
+   *        left unspecified, the bindings do not contain an 'arguments'
+   *        property.
    */
   _bindings: function EA_bindings(aObject) {
     let bindings = { arguments: [], variables: {} };
@@ -1473,13 +1571,15 @@ EnvironmentActor.prototype = {
    *        The protocol request object.
    */
   onAssign: function EA_onAssign(aRequest) {
-    let desc = this.obj.getVariableDescriptor(aRequest.name);
+    // TODO: enable the commented-out part when getVariableDescriptor lands
+    // (bug 725815).
+    /*let desc = this.obj.getVariableDescriptor(aRequest.name);
 
     if (!desc.writable) {
       return { error: "immutableBinding",
                message: "Changing the value of an immutable binding is not " +
                         "allowed" };
-    }
+    }*/
 
     try {
       this.obj.setVariable(aRequest.name, aRequest.value);
@@ -1512,3 +1612,22 @@ EnvironmentActor.prototype.requestTypes = {
   "assign": EnvironmentActor.prototype.onAssign,
   "bindings": EnvironmentActor.prototype.onBindings
 };
+
+/**
+ * Helper function to deduce the name of the provided function.
+ *
+ * @param Debugger.Object aFunction
+ *        The function whose name will be returned.
+ */
+function getFunctionName(aFunction) {
+  let name;
+  if (aFunction.name) {
+    name = aFunction.name;
+  } else {
+    let desc = aFunction.getOwnPropertyDescriptor("displayName");
+    if (desc && desc.value && typeof desc.value == "string") {
+      name = desc.value;
+    }
+  }
+  return name;
+}

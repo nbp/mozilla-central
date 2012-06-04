@@ -115,6 +115,9 @@ class MacroAssemblerARM : public Assembler
     void ma_mvn(Register src1, Register dest,
                 SetCond_ sc = NoSetCond, Condition c = Always);
 
+    // Negate (dest <- -src) implemented as rsb dest, src, 0
+    void ma_neg(Register src, Register dest,
+                SetCond_ sc = NoSetCond, Condition c = Always);
 
     // and
     void ma_and(Register src, Register dest,
@@ -281,7 +284,6 @@ class MacroAssemblerARM : public Assembler
     // this is almost NEVER necessary, we'll basically never be calling a label
     // except, possibly in the crazy bailout-table case.
     void ma_bl(Label *dest, Condition c = Always);
-
 
     //VFP/ALU
     void ma_vadd(FloatRegister src1, FloatRegister src2, FloatRegister dst);
@@ -472,8 +474,24 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void push(const Register &reg) {
         ma_push(reg);
     }
+    void pushWithPadding(const Register &reg, const Imm32 extraSpace) {
+        Imm32 totSpace = Imm32(extraSpace.value + 4);
+        ma_dtr(IsStore, sp, totSpace, reg, PreIndex);
+    }
+    void pushWithPadding(const Imm32 &imm, const Imm32 extraSpace) {
+        Imm32 totSpace = Imm32(extraSpace.value + 4);
+        // need to use lr, since ma_dtr may need the scratch register to adjust the stack.
+        ma_mov(imm, lr);
+        ma_dtr(IsStore, sp, totSpace, lr, PreIndex);
+    }
+
     void pop(const Register &reg) {
         ma_pop(reg);
+    }
+
+    void popN(const Register &reg, Imm32 extraSpace) {
+        Imm32 totSpace = Imm32(extraSpace.value + 4);
+        ma_dtr(IsLoad, sp, totSpace, reg, PostIndex);
     }
 
     CodeOffsetLabel pushWithPatch(ImmWord imm) {
@@ -680,20 +698,14 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     }
     void moveValue(const Value &val, Register type, Register data);
 
-    CodeOffsetJump jumpWithPatch(Label *label) {
-        CodeOffsetJump ret(nextOffset().getOffset());
-        jump(label);
-        return ret;
-    }
+    CodeOffsetJump jumpWithPatch(RepatchLabel *label, Condition cond = Always);
     template <typename T>
-    CodeOffsetJump branchPtrWithPatch(Condition cond, Register reg, T ptr, Label *label) {
+    CodeOffsetJump branchPtrWithPatch(Condition cond, Register reg, T ptr, RepatchLabel *label) {
         ma_cmp(reg, ptr);
-        CodeOffsetJump ret(nextOffset().getOffset());
-        ma_b(label, cond);
-        return ret;
+        return jumpWithPatch(label, cond);
     }
     template <typename T>
-    CodeOffsetJump branchPtrWithPatch(Condition cond, Address addr, T ptr, Label *label) {
+    CodeOffsetJump branchPtrWithPatch(Condition cond, Address addr, T ptr, RepatchLabel *label) {
         // if (compare(*addr, ptr) == cond) goto label
         // with only one temp reg, this is downright PAINFUL.
         // HAXHAXHAXHAXHAX I've reserved lr for private use until I figure out how
@@ -705,9 +717,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         // See also branchPtr.
         ma_ldr(addr, lr);
         ma_cmp(lr, ptr);
-        CodeOffsetJump ret(nextOffset().getOffset());
-        ma_b(label, cond);
-        return ret;
+        return jumpWithPatch(label, cond);
     }
     void branchPtr(Condition cond, Address addr, ImmGCPtr ptr, Label *label) {
         // See the comment in branchPtrWithPatch.
@@ -852,6 +862,16 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     CodeOffsetLabel PushWithPatch(const ImmWord &word) {
         framePushed_ += sizeof(word.value);
         return pushWithPatch(word);
+    }
+
+
+    void PushWithPadding(const Register &reg, const Imm32 extraSpace) {
+        pushWithPadding(reg, extraSpace);
+        adjustFrame(STACK_SLOT_SIZE + extraSpace.value);
+    }
+    void PushWithPadding(const Imm32 imm, const Imm32 extraSpace) {
+        pushWithPadding(imm, extraSpace);
+        adjustFrame(STACK_SLOT_SIZE + extraSpace.value);
     }
 
     void Pop(const Register &reg) {

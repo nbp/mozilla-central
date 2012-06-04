@@ -539,7 +539,7 @@ nsHTMLTextAreaElement::SetValueInternal(const nsAString& aValue,
   // nsTextControlFrame::UpdateValueDisplay retrieves the correct value
   // if needed.
   SetValueChanged(true);
-  mState.SetValue(aValue, aUserInput);
+  mState.SetValue(aValue, aUserInput, true);
 
   return NS_OK;
 }
@@ -713,7 +713,7 @@ nsHTMLTextAreaElement::FireChangeEventIfNeeded()
   mFocusedValue = value;
   nsContentUtils::DispatchTrustedEvent(OwnerDoc(),
                                        static_cast<nsIContent*>(this),
-                                       NS_LITERAL_STRING("change"), true, 
+                                       NS_LITERAL_STRING("change"), true,
                                        false);
 }
 
@@ -1146,7 +1146,6 @@ nsHTMLTextAreaElement::IntrinsicState() const
   }
 
   if (HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder) &&
-      !nsContentUtils::IsFocusedContent((nsIContent*)(this)) &&
       IsValueEmpty()) {
     state |= NS_EVENT_STATE_MOZ_PLACEHOLDER;
   }
@@ -1515,8 +1514,7 @@ nsHTMLTextAreaElement::OnValueChanged(bool aNotify)
   UpdateValueMissingValidityState();
 
   if (validBefore != IsValid() ||
-      (HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder)
-       && !nsContentUtils::IsFocusedContent((nsIContent*)(this)))) {
+      HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder)) {
     UpdateState(aNotify);
   }
 }
