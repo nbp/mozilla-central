@@ -41,6 +41,7 @@
 #include "mozilla/dom/XMLHttpRequestUploadBinding.h"
 
 #include "mozilla/Assertions.h"
+#include "mozilla/dom/TypedArray.h"
 
 class nsILoadGroup;
 class AsyncVerifyRedirectCallbackForwarder;
@@ -48,7 +49,7 @@ class nsIUnicodeDecoder;
 class nsIDOMFormData;
 
 #define IMPL_EVENT_HANDLER(_lowercase, _capitalized)                    \
-  JSObject* GetOn##_lowercase()                                         \
+  JSObject* GetOn##_lowercase(JSContext* /* unused */ )                 \
   {                                                                     \
     return GetListenerAsJSObject(mOn##_capitalized##Listener);          \
   }                                                                     \
@@ -251,7 +252,9 @@ public:
 
   // request
   void Open(const nsAString& aMethod, const nsAString& aUrl, bool aAsync,
-            const nsAString& aUser, const nsAString& aPassword, ErrorResult& aRv)
+            const mozilla::dom::Optional<nsAString>& aUser,
+            const mozilla::dom::Optional<nsAString>& aPassword,
+            ErrorResult& aRv)
   {
     aRv = Open(NS_ConvertUTF16toUTF8(aMethod), NS_ConvertUTF16toUTF8(aUrl),
                aAsync, aUser, aPassword);
@@ -278,7 +281,7 @@ private:
     RequestBody() : mType(Uninitialized)
     {
     }
-    RequestBody(JSObject* aArrayBuffer) : mType(ArrayBuffer)
+    RequestBody(mozilla::dom::ArrayBuffer* aArrayBuffer) : mType(ArrayBuffer)
     {
       mValue.mArrayBuffer = aArrayBuffer;
     }
@@ -313,7 +316,7 @@ private:
       InputStream
     };
     union Value {
-      JSObject* mArrayBuffer;
+      mozilla::dom::ArrayBuffer* mArrayBuffer;
       nsIDOMBlob* mBlob;
       nsIDocument* mDocument;
       const nsAString* mString;
@@ -344,6 +347,8 @@ private:
                                  nsACString& aContentType,
                                  nsACString& aCharset);
 
+  // XXXbz once the nsIVariant bits here go away, we can remove the
+  // implicitJSContext bits in Bindings.conf.
   nsresult Send(JSContext *aCx, nsIVariant* aVariant, const Nullable<RequestBody>& aBody);
   nsresult Send(JSContext *aCx, const Nullable<RequestBody>& aBody)
   {
@@ -359,10 +364,9 @@ public:
   {
     aRv = Send(aCx, Nullable<RequestBody>());
   }
-  void Send(JSContext *aCx, JSObject* aArrayBuffer, ErrorResult& aRv)
+  void Send(JSContext *aCx, mozilla::dom::ArrayBuffer& aArrayBuffer, ErrorResult& aRv)
   {
-    NS_ASSERTION(aArrayBuffer, "Null should go to string version");
-    aRv = Send(aCx, RequestBody(aArrayBuffer));
+    aRv = Send(aCx, RequestBody(&aArrayBuffer));
   }
   void Send(JSContext *aCx, nsIDOMBlob* aBlob, ErrorResult& aRv)
   {
@@ -536,7 +540,8 @@ protected:
   void OnRedirectVerifyCallback(nsresult result);
 
   nsresult Open(const nsACString& method, const nsACString& url, bool async,
-                const nsAString& user, const nsAString& password);
+                const mozilla::dom::Optional<nsAString>& user,
+                const mozilla::dom::Optional<nsAString>& password);
 
   nsCOMPtr<nsISupports> mContext;
   nsCOMPtr<nsIPrincipal> mPrincipal;
@@ -611,7 +616,7 @@ protected:
   // Non-null only when we are able to get a os-file representation of the
   // response, i.e. when loading from a file, or when the http-stream
   // caches into a file or is reading from a cached file.
-  nsRefPtr<nsDOMFileBase> mDOMFile;
+  nsRefPtr<nsDOMFile> mDOMFile;
   // We stream data to mBuilder when response type is "blob" or "moz-blob"
   // and mDOMFile is null.
   nsRefPtr<nsDOMBlobBuilder> mBuilder;

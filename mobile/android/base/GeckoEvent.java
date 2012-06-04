@@ -23,6 +23,7 @@ import android.text.format.Time;
 import android.os.SystemClock;
 import java.lang.Math;
 import java.lang.System;
+import java.nio.ByteBuffer;
 
 import android.util.Log;
 
@@ -115,6 +116,8 @@ public class GeckoEvent {
     public int mNativeWindow;
 
     public short mScreenOrientation;
+
+    public ByteBuffer mBuffer;
 
     private GeckoEvent(int evType) {
         mType = evType;
@@ -252,8 +255,7 @@ public class GeckoEvent {
                 }
             } else {
                 float size = event.getSize(eventIndex);
-                DisplayMetrics displaymetrics = new DisplayMetrics();
-                GeckoApp.mAppContext.getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
+                DisplayMetrics displaymetrics = GeckoApp.mAppContext.getDisplayMetrics();
                 size = size*Math.min(displaymetrics.heightPixels, displaymetrics.widthPixels);
                 mPointRadii[index] = new Point((int)size,(int)size);
                 mOrientations[index] = 0;
@@ -457,15 +459,17 @@ public class GeckoEvent {
         return event;
     }
 
-    public static GeckoEvent createScreenshotEvent(int tabId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int token) {
+    public static GeckoEvent createScreenshotEvent(int tabId, int sx, int sy, int sw, int sh, int dx, int dy, int dw, int dh, int bw, int bh, int token, ByteBuffer buffer) {
         GeckoEvent event = new GeckoEvent(SCREENSHOT);
-        event.mPoints = new Point[4];
+        event.mPoints = new Point[5];
         event.mPoints[0] = new Point(sx, sy);
         event.mPoints[1] = new Point(sw, sh);
         event.mPoints[2] = new Point(dx, dy);
         event.mPoints[3] = new Point(dw, dh);
+        event.mPoints[4] = new Point(bw, bh);
         event.mMetaState = tabId;
         event.mFlags = token;
+        event.mBuffer = buffer;
         return event;
     }
 

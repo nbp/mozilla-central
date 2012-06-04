@@ -42,7 +42,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 /**
  * The layer renderer implements the rendering logic for a layer view.
  */
-public class LayerRenderer implements GLSurfaceView.Renderer {
+public class LayerRenderer {
     private static final String LOGTAG = "GeckoLayerRenderer";
     private static final String PROFTAG = "GeckoLayerRendererProf";
 
@@ -91,9 +91,6 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
     private int mSampleHandle;
     private int mTMatrixHandle;
 
-    private int mSurfaceWidth;
-    private int mSurfaceHeight;
-
     // column-major matrix applied to each vertex to shift the viewport from
     // one ranging from (-1, -1),(1,1) to (0,0),(1,1) and to scale all sizes by
     // a factor of 2 to fill up the screen
@@ -108,6 +105,11 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
 
     // The shaders run on the GPU directly, the vertex shader is only applying the
     // matrix transform detailed above
+
+    // Note we flip the y-coordinate in the vertex shader from a
+    // coordinate system with (0,0) in the top left to one with (0,0) in
+    // the bottom left.
+
     public static final String DEFAULT_VERTEX_SHADER =
         "uniform mat4 uTMatrix;\n" +
         "attribute vec4 vPosition;\n" +
@@ -115,26 +117,28 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
         "varying vec2 vTexCoord;\n" +
         "void main() {\n" +
         "    gl_Position = uTMatrix * vPosition;\n" +
-        "    vTexCoord = aTexCoord;\n" +
+        "    vTexCoord.x = aTexCoord.x;\n" +
+        "    vTexCoord.y = 1.0 - aTexCoord.y;\n" +
         "}\n";
 
-    // Note we flip the y-coordinate in the fragment shader from a
-    // coordinate system with (0,0) in the top left to one with (0,0) in
-    // the bottom left.
+    // We use highp because the screenshot textures
+    // we use are large and we stretch them alot
+    // so we need all the precision we can get.
+    // Unfortunately, highp is not required by ES 2.0
+    // so on GPU's like Mali we end up getting mediump
     public static final String DEFAULT_FRAGMENT_SHADER =
-        "precision mediump float;\n" +
+        "precision highp float;\n" +
         "varying vec2 vTexCoord;\n" +
         "uniform sampler2D sTexture;\n" +
         "void main() {\n" +
-        "    gl_FragColor = texture2D(sTexture, vec2(vTexCoord.x, 1.0 - vTexCoord.y));\n" +
+        "    gl_FragColor = texture2D(sTexture, vTexCoord);\n" +
         "}\n";
 
-    public void setCheckerboardBitmap(Bitmap bitmap, float pageWidth, float pageHeight) {
-        mCheckerboardLayer.setBitmap(bitmap);
+    public void setCheckerboardBitmap(ByteBuffer data, int width, int height, RectF pageRect) {
+        mCheckerboardLayer.setBitmap(data, width, height);
         mCheckerboardLayer.beginTransaction();
         try {
-            mCheckerboardLayer.setPosition(new Rect(0, 0, Math.round(pageWidth),
-                                                    Math.round(pageHeight)));
+            mCheckerboardLayer.setPosition(RectUtils.round(pageRect));
             mCheckerboardLayer.invalidate();
         } finally {
             mCheckerboardLayer.endTransaction();
@@ -143,12 +147,11 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
 
     public void updateCheckerboardBitmap(Bitmap bitmap, float x, float y,
                                          float width, float height,
-                                         float pageWidth, float pageHeight) {
+                                         RectF pageRect) {
         mCheckerboardLayer.updateBitmap(bitmap, x, y, width, height);
         mCheckerboardLayer.beginTransaction();
         try {
-            mCheckerboardLayer.setPosition(new Rect(0, 0, Math.round(pageWidth),
-                                                    Math.round(pageHeight)));
+            mCheckerboardLayer.setPosition(RectUtils.round(pageRect));
             mCheckerboardLayer.invalidate();
         } finally {
             mCheckerboardLayer.endTransaction();
@@ -199,7 +202,7 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
         }
     }
 
-    public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+    void onSurfaceCreated(EGLConfig config) {
         checkMonitoringEnabled();
         createDefaultProgram();
         activateDefaultProgram();
@@ -271,23 +274,6 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
         }
     }
 
-    /**
-     * Called whenever a new frame is about to be drawn.
-     */
-    public void onDrawFrame(GL10 gl) {
-	/* This code is causing crashes when the surface changes. (bug 738188)
-	 * I'm not sure if it actually works, so I'm disabling it now to avoid the crash.
-        Frame frame = createFrame(mView.getController().getViewportMetrics());
-        synchronized (mView.getController()) {
-            frame.beginDrawing();
-            frame.drawBackground();
-            frame.drawRootLayer();
-            frame.drawForeground();
-            frame.endDrawing();
-        }
-	*/
-    }
-
     private void printCheckerboardStats() {
         Log.d(PROFTAG, "Frames rendered over last 1000ms: " + mCompleteFramesRendered + "/" + mFramesRendered);
         mFramesRendered = 0;
@@ -311,41 +297,20 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
 
     private RenderContext createScreenContext(ImmutableViewportMetrics metrics) {
         RectF viewport = new RectF(0.0f, 0.0f, metrics.getWidth(), metrics.getHeight());
-        FloatSize pageSize = new FloatSize(metrics.getPageSize());
-        return createContext(viewport, pageSize, 1.0f);
+        RectF pageRect = new RectF(metrics.getPageRect());
+        return createContext(viewport, pageRect, 1.0f);
     }
 
     private RenderContext createPageContext(ImmutableViewportMetrics metrics) {
         Rect viewport = RectUtils.round(metrics.getViewport());
-        FloatSize pageSize = metrics.getPageSize();
+        RectF pageRect = metrics.getPageRect();
         float zoomFactor = metrics.zoomFactor;
-        return createContext(new RectF(viewport), pageSize, zoomFactor);
+        return createContext(new RectF(viewport), pageRect, zoomFactor);
     }
 
-    private RenderContext createContext(RectF viewport, FloatSize pageSize, float zoomFactor) {
-        return new RenderContext(viewport, pageSize, new IntSize(mSurfaceWidth, mSurfaceHeight), zoomFactor, mPositionHandle, mTextureHandle,
+    private RenderContext createContext(RectF viewport, RectF pageRect, float zoomFactor) {
+        return new RenderContext(viewport, pageRect, zoomFactor, mPositionHandle, mTextureHandle,
                                  mCoordBuffer);
-    }
-
-    public void onSurfaceChanged(GL10 gl, final int width, final int height) {
-        mSurfaceWidth = width;
-        mSurfaceHeight = height;
-
-        GLES20.glViewport(0, 0, width, height);
-
-        if (mFrameRateLayer != null) {
-            moveFrameRateLayer(width, height);
-        }
-
-        // updating the state in the view/controller/client should be
-        // done on the main UI thread, not the GL renderer thread
-        mView.post(new Runnable() {
-            public void run() {
-                mView.setViewportSize(new IntSize(width, height));
-            }
-        });
-
-        /* TODO: Throw away tile images? */
     }
 
     private void updateDroppedFrames(long frameStartTime) {
@@ -490,12 +455,9 @@ public class LayerRenderer implements GLSurfaceView.Renderer {
 
         private Rect getPageRect() {
             Point origin = PointUtils.round(mFrameMetrics.getOrigin());
-            IntSize pageSize = new IntSize(mFrameMetrics.getPageSize());
-
-            origin.negate();
-
-            return new Rect(origin.x, origin.y,
-                            origin.x + pageSize.width, origin.y + pageSize.height);
+            Rect pageRect = RectUtils.round(mFrameMetrics.getPageRect());
+            pageRect.offset(-origin.x, -origin.y);
+            return pageRect;
         }
 
         /** This function is invoked via JNI; be careful when modifying signature. */

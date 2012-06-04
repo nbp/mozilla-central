@@ -1825,7 +1825,7 @@ Transform3D(gfxASurface* aSource, gfxContext* aDest,
 {
   nsRefPtr<gfxImageSurface> sourceImage = aSource->GetAsImageSurface();
   if (!sourceImage) {
-    sourceImage = new gfxImageSurface(gfxIntSize(aBounds.width, aBounds.height), gfxASurface::FormatFromContent(aSource->GetContentType()));
+    sourceImage = new gfxImageSurface(gfxIntSize(aBounds.width, aBounds.height), gfxPlatform::GetPlatform()->OptimalFormatForContent(aSource->GetContentType()));
     nsRefPtr<gfxContext> ctx = new gfxContext(sourceImage);
 
     aSource->SetDeviceOffset(gfxPoint(0, 0));
@@ -1976,7 +1976,8 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
 
   nsRefPtr<gfxContext> groupTarget;
   nsRefPtr<gfxASurface> untransformedSurface;
-  if (!is2D) {
+  bool clipIsEmpty = !aTarget || aTarget->GetClipExtents().IsEmpty();
+  if (!is2D && !clipIsEmpty) {
     untransformedSurface = 
       gfxPlatform::GetPlatform()->CreateOffscreenSurface(gfxIntSize(bounds.width, bounds.height), 
                                                          gfxASurface::CONTENT_COLOR_ALPHA);
@@ -1994,7 +1995,7 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
     }
     untransformedSurface->SetDeviceOffset(gfxPoint(-bounds.x, -bounds.y));
     groupTarget = new gfxContext(untransformedSurface);
-  } else if (needsGroup) {
+  } else if (needsGroup && !clipIsEmpty) {
     groupTarget = PushGroupForLayer(aTarget, aLayer, aLayer->GetEffectiveVisibleRegion(),
                                     &needsClipToVisibleRegion);
   } else {
@@ -2046,14 +2047,11 @@ BasicLayerManager::PaintLayer(gfxContext* aTarget,
     if (is2D) {
       PopGroupToSourceWithCachedSurface(aTarget, groupTarget);
     } else {
-      NS_ABORT_IF_FALSE(untransformedSurface, 
-                        "We should always allocate an untransformed surface with 3d transforms!");
-
       // Temporary fast fix for bug 725886
       // Revert these changes when 725886 is ready
-      gfxRect clipExtents;
-      clipExtents = aTarget->GetClipExtents();
-      if (!clipExtents.IsEmpty()) {
+      if (!clipIsEmpty) {
+        NS_ABORT_IF_FALSE(untransformedSurface, 
+                          "We should always allocate an untransformed surface with 3d transforms!");
         gfxPoint offset;
         bool dontBlit = needsClipToVisibleRegion || mTransactionIncomplete ||
                           aLayer->GetEffectiveOpacity() != 1.0f;
@@ -3511,11 +3509,26 @@ void
 BasicShadowLayerManager::BeginTransactionWithTarget(gfxContext* aTarget)
 {
   NS_ABORT_IF_FALSE(mKeepAlive.IsEmpty(), "uncommitted txn?");
+  nsRefPtr<gfxContext> targetContext = aTarget;
+
   // If the last transaction was incomplete (a failed DoEmptyTransaction),
   // don't signal a new transaction to ShadowLayerForwarder. Carry on adding
   // to the previous transaction.
   if (HasShadowManager()) {
     ShadowLayerForwarder::BeginTransaction();
+
+    // If we have a non-default target, we need to let our shadow manager draw
+    // to it. This will happen at the end of the transaction.
+    if (aTarget && (aTarget != mDefaultTarget)) {
+      mShadowTarget = aTarget;
+
+      // Create a temporary target for ourselves, so that mShadowTarget is only
+      // drawn to by our shadow manager.
+      nsRefPtr<gfxASurface> targetSurface = gfxPlatform::GetPlatform()->
+        CreateOffscreenSurface(aTarget->OriginalSurface()->GetSize(),
+                               aTarget->OriginalSurface()->GetContentType());
+      targetContext = new gfxContext(targetSurface);
+    }
   }
   BasicLayerManager::BeginTransactionWithTarget(aTarget);
 }
@@ -3527,6 +3540,10 @@ BasicShadowLayerManager::EndTransaction(DrawThebesLayerCallback aCallback,
 {
   BasicLayerManager::EndTransaction(aCallback, aCallbackData, aFlags);
   ForwardTransaction();
+  if (mShadowTarget) {
+    ShadowLayerForwarder::ShadowDrawToTarget(mShadowTarget);
+    mShadowTarget = nsnull;
+  }
 }
 
 bool

@@ -6,17 +6,17 @@
 #ifndef _nsXULSliderAccessible_H_
 #define _nsXULSliderAccessible_H_
 
-#include "nsAccessibleWrap.h"
+#include "AccessibleWrap.h"
 
 #include "nsIDOMElement.h"
 
 /**
  * Used for XUL slider and scale elements.
  */
-class nsXULSliderAccessible : public nsAccessibleWrap
+class nsXULSliderAccessible : public AccessibleWrap
 {
 public:
-  nsXULSliderAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULSliderAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
@@ -28,17 +28,21 @@ public:
   // nsIAccessibleValue
   NS_DECL_NSIACCESSIBLEVALUE
 
-  // nsAccessible
+  // Accessible
   virtual void Value(nsString& aValue);
   virtual mozilla::a11y::role NativeRole();
-  virtual PRUint64 NativeState();
+  virtual PRUint64 NativeInteractiveState() const;
+  virtual bool NativelyUnavailable() const;
   virtual bool CanHaveAnonChildren();
 
   // ActionAccessible
   virtual PRUint8 ActionCount();
 
 protected:
-  already_AddRefed<nsIContent> GetSliderNode();
+  /**
+   * Return anonymous slider element.
+   */
+  nsIContent* GetSliderElement() const;
 
   nsresult GetSliderAttr(nsIAtom *aName, nsAString& aValue);
   nsresult SetSliderAttr(nsIAtom *aName, const nsAString& aValue);
@@ -47,19 +51,19 @@ protected:
   nsresult SetSliderAttr(nsIAtom *aName, double aValue);
 
 private:
-  nsCOMPtr<nsIDOMElement> mSliderNode;
+  mutable nsCOMPtr<nsIContent> mSliderNode;
 };
 
 
 /**
  * Used for slider's thumb element.
  */
-class nsXULThumbAccessible : public nsAccessibleWrap
+class nsXULThumbAccessible : public AccessibleWrap
 {
 public:
-  nsXULThumbAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULThumbAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
-  // nsAccessible
+  // Accessible
   virtual mozilla::a11y::role NativeRole();
 };
 

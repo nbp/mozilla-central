@@ -33,8 +33,8 @@ class ContextFlags {
 
     // This function/global/eval code body contained a Use Strict Directive.
     // Treat certain strict warnings as errors, and forbid the use of 'with'.
-    // See also TSF_STRICT_MODE_CODE, JSScript::strictModeCode, and
-    // JSREPORT_STRICT_ERROR.
+    // See also StrictModeGetter, JSScript::strictModeCode,
+    // JSREPORT_STRICT_ERROR, and JSOPTION_STRICT_MODE.
     //
     bool            inStrictMode:1;
 
@@ -60,10 +60,6 @@ class ContextFlags {
     // should be tested (see JSScript::argIsAlised).
     //
     bool            bindingsAccessedDynamically:1;
-
-    // The |fun*| flags are only relevant if |inFunction| is true.  Due to
-    // sloppiness, however, some are set in cases where |inFunction| is
-    // false.
 
     // The function needs Call object per call.
     bool            funIsHeavyweight:1;
@@ -139,73 +135,67 @@ struct SharedContext {
 
     StmtInfo        *topStmt;       /* top of statement info stack */
     StmtInfo        *topScopeStmt;  /* top lexical scope statement */
-    RootedVar<StaticBlockObject *> blockChain;
+    Rooted<StaticBlockObject *> blockChain;
                                     /* compile time block scope chain (NB: one
                                        deeper than the topScopeStmt/downScope
                                        chain when in head of let block/expr) */
 
   private:
-    RootedVarFunction fun_;         /* function to store argument and variable
-                                       names when inFunction is set */
-    RootedVarObject   scopeChain_;  /* scope chain object for the script */
+    const RootedFunction fun_;      /* function to store argument and variable
+                                       names when it's a function's context */
+    FunctionBox *const funbox_;     /* null or box for function we're compiling
+                                       if inFunction() is true and not in
+                                       js::frontend::CompileFunctionBody */
+
+    const RootedObject scopeChain_; /* scope chain object for the script */
 
   public:
     unsigned        staticLevel;    /* static compilation unit nesting level */
 
-    FunctionBox     *funbox;        /* null or box for function we're compiling
-                                       if inFunction is set and not in
-                                       js::frontend::CompileFunctionBody */
-    FunctionBox     *functionList;
-
     Bindings        bindings;       /* bindings in this code, including
                                        arguments if we're compiling a function */
-    Bindings::StackRoot bindingsRoot; /* root for stack allocated bindings. */
-
-    const bool      inFunction:1;   /* parsing/emitting inside function body */
-
-    bool            inForInit:1;    /* parsing/emitting init expr of for; exclude 'in' */
+    Bindings::AutoRooter bindingsRoot; /* root for stack allocated bindings. */
 
     ContextFlags    cxFlags;
 
-    inline SharedContext(JSContext *cx, bool inFunction);
+    // If it's function code, fun must be non-NULL and scopeChain must be NULL.
+    // If it's global code, fun and funbox must be NULL.
+    inline SharedContext(JSContext *cx, JSObject *scopeChain, JSFunction *fun, FunctionBox *funbox);
 
-    bool inStrictMode()                const { return cxFlags.inStrictMode; }
-    bool bindingsAccessedDynamically() const { return cxFlags.bindingsAccessedDynamically; }
-    bool funIsHeavyweight()            const { return cxFlags.funIsHeavyweight; }
-    bool funIsGenerator()              const { return cxFlags.funIsGenerator; }
-    bool funMightAliasLocals()         const { return cxFlags.funMightAliasLocals; }
-    bool funHasExtensibleScope()       const { return cxFlags.funHasExtensibleScope; }
-    bool funArgumentsHasLocalBinding() const { return cxFlags.funArgumentsHasLocalBinding; }
-    bool funDefinitelyNeedsArgsObj()   const { return cxFlags.funDefinitelyNeedsArgsObj; }
+    // In theory, |fun*| flags are only relevant if |inFunction()| is true.
+    // However, we get and set in some cases where |inFunction()| is false,
+    // which is why |INFUNC| doesn't appear in all of the fun* and setFun*
+    // functions below.
+#define INFUNC JS_ASSERT(inFunction())
 
-    void setInStrictMode()                  { cxFlags.inStrictMode                = true; }
-    void setBindingsAccessedDynamically()   { cxFlags.bindingsAccessedDynamically = true; }
-    void setFunIsHeavyweight()              { cxFlags.funIsHeavyweight            = true; }
-    void setFunIsGenerator()                { cxFlags.funIsGenerator              = true; }
-    void setFunMightAliasLocals()           { cxFlags.funMightAliasLocals         = true; }
-    void setFunHasExtensibleScope()         { cxFlags.funHasExtensibleScope       = true; }
-    void setFunArgumentsHasLocalBinding()   { cxFlags.funArgumentsHasLocalBinding = true; }
+    bool inStrictMode()                const {         return cxFlags.inStrictMode; }
+    bool bindingsAccessedDynamically() const {         return cxFlags.bindingsAccessedDynamically; }
+    bool funIsHeavyweight()            const { INFUNC; return cxFlags.funIsHeavyweight; }
+    bool funIsGenerator()              const { INFUNC; return cxFlags.funIsGenerator; }
+    bool funMightAliasLocals()         const {         return cxFlags.funMightAliasLocals; }
+    bool funHasExtensibleScope()       const {         return cxFlags.funHasExtensibleScope; }
+    bool funArgumentsHasLocalBinding() const { INFUNC; return cxFlags.funArgumentsHasLocalBinding; }
+    bool funDefinitelyNeedsArgsObj()   const { INFUNC; return cxFlags.funDefinitelyNeedsArgsObj; }
+
+    void setInStrictMode()                  {         cxFlags.inStrictMode                = true; }
+    void setBindingsAccessedDynamically()   {         cxFlags.bindingsAccessedDynamically = true; }
+    void setFunIsHeavyweight()              {         cxFlags.funIsHeavyweight            = true; }
+    void setFunIsGenerator()                { INFUNC; cxFlags.funIsGenerator              = true; }
+    void setFunMightAliasLocals()           {         cxFlags.funMightAliasLocals         = true; }
+    void setFunHasExtensibleScope()         {         cxFlags.funHasExtensibleScope       = true; }
+    void setFunArgumentsHasLocalBinding()   { INFUNC; cxFlags.funArgumentsHasLocalBinding = true; }
     void setFunDefinitelyNeedsArgsObj()     { JS_ASSERT(cxFlags.funArgumentsHasLocalBinding);
-                                              cxFlags.funDefinitelyNeedsArgsObj   = true; }
+                                              INFUNC; cxFlags.funDefinitelyNeedsArgsObj   = true; }
+
+#undef INFUNC
 
     unsigned argumentsLocalSlot() const;
 
-    JSFunction *fun() const {
-        JS_ASSERT(inFunction);
-        return fun_;
-    }
-    void setFunction(JSFunction *fun) {
-        JS_ASSERT(inFunction);
-        fun_ = fun;
-    }
-    JSObject *scopeChain() const {
-        JS_ASSERT(!inFunction);
-        return scopeChain_;
-    }
-    void setScopeChain(JSObject *scopeChain) {
-        JS_ASSERT(!inFunction);
-        scopeChain_ = scopeChain;
-    }
+    bool inFunction() const { return !!fun_; }
+
+    JSFunction *fun()      const { JS_ASSERT(inFunction());  return fun_; }
+    FunctionBox *funbox()  const { JS_ASSERT(inFunction());  return funbox_; }
+    JSObject *scopeChain() const { JS_ASSERT(!inFunction()); return scopeChain_; }
 
     unsigned blockid();
 
@@ -239,6 +229,7 @@ struct TreeContext {                /* tree context for semantic checks */
     ParseNode       *yieldNode;     /* parse node for a yield expression that might
                                        be an error if we turn out to be inside a
                                        generator expression */
+    FunctionBox     *functionList;
 
   private:
     TreeContext     **parserTC;     /* this points to the Parser's active tc
@@ -262,6 +253,8 @@ struct TreeContext {                /* tree context for semantic checks */
      */
     bool            hasReturnExpr:1; /* function has 'return <expr>;' */
     bool            hasReturnVoid:1; /* function has 'return;' */
+
+    bool            inForInit:1;    /* parsing init expr of for; exclude 'in' */
 
     // Set when parsing a declaration-like destructuring pattern.  This flag
     // causes PrimaryExpr to create PN_NAME parse nodes for variable references
@@ -360,8 +353,8 @@ struct StmtInfo {
     ptrdiff_t       update;         /* loop update offset (top if none) */
     ptrdiff_t       breaks;         /* offset of last break in loop */
     ptrdiff_t       continues;      /* offset of last continue in loop */
-    RootedVarAtom   label;          /* name of LABEL */
-    RootedVar<StaticBlockObject *> blockObj; /* block scope object */
+    RootedAtom      label;          /* name of LABEL */
+    Rooted<StaticBlockObject *> blockObj; /* block scope object */
     StmtInfo        *down;          /* info for enclosing statement */
     StmtInfo        *downScope;     /* next enclosing lexical scope */
 

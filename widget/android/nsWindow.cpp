@@ -132,7 +132,7 @@ nsWindow::LogWindow(nsWindow *win, int index, int indent)
 {
     char spaces[] = "                    ";
     spaces[indent < 20 ? indent : 20] = 0;
-    ALOG("%s [% 2d] 0x%08x [parent 0x%08x] [% 3d,% 3d % 3dx% 3d] vis %d type %d",
+    ALOG("%s [% 2d] 0x%08x [parent 0x%08x] [% 3d,% 3dx% 3d,% 3d] vis %d type %d",
          spaces, index, (intptr_t)win, (intptr_t)win->mParent,
          win->mBounds.x, win->mBounds.y,
          win->mBounds.width, win->mBounds.height,
@@ -241,10 +241,10 @@ nsWindow::Destroy(void)
 {
     nsBaseWidget::mOnDestroyCalled = true;
 
-    for (PRUint32 i = 0; i < mChildren.Length(); ++i) {
+    while (mChildren.Length()) {
         // why do we still have children?
-        ALOG("### Warning: Destroying window %p and reparenting child %p to null!", (void*)this, (void*)mChildren[i]);
-        mChildren[i]->SetParent(nsnull);
+        ALOG("### Warning: Destroying window %p and reparenting child %p to null!", (void*)this, (void*)mChildren[0]);
+        mChildren[0]->SetParent(nsnull);
     }
 
     if (IsTopLevel())
@@ -288,9 +288,7 @@ nsWindow::SetParent(nsIWidget *aNewParent)
         return NS_OK;
 
     // If we had a parent before, remove ourselves from its list of
-    // children.  If we didn't have a parent, then remove ourselves
-    // from the list of toplevel windows if we're about to get a
-    // parent.
+    // children.
     if (mParent)
         mParent->mChildren.RemoveElement(this);
 
@@ -691,6 +689,9 @@ nsWindow::GetLayerManager(PLayersChild*, LayersBackend, LayerManagerPersistence,
         mLayerManager = CreateBasicLayerManager();
         return mLayerManager;
     }
+
+    mUseAcceleratedRendering = GetShouldAccelerate();
+
 #ifdef MOZ_JAVA_COMPOSITOR
     bool useCompositor = UseOffMainThreadCompositing();
 
@@ -705,7 +706,6 @@ nsWindow::GetLayerManager(PLayersChild*, LayersBackend, LayerManagerPersistence,
         sFailedToCreateGLContext = true;
     }
 #endif
-    mUseAcceleratedRendering = GetShouldAccelerate();
 
     if (!mUseAcceleratedRendering ||
         sFailedToCreateGLContext)
@@ -1310,6 +1310,8 @@ nsWindow::OnMotionEvent(AndroidGeckoEvent *ae)
             return;
     }
 
+    nsRefPtr<nsWindow> kungFuDeathGrip(this);
+
 send_again:
 
     nsMouseEvent event(true,
@@ -1343,6 +1345,8 @@ getDistance(const nsIntPoint &p1, const nsIntPoint &p2)
 
 bool nsWindow::OnMultitouchEvent(AndroidGeckoEvent *ae)
 {
+    nsRefPtr<nsWindow> kungFuDeathGrip(this);
+
     // This is set to true once we have called SetPreventPanning() exactly
     // once for a given sequence of touch events. It is reset on the start
     // of the next sequence.
@@ -1878,6 +1882,9 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
     case AndroidGeckoEvent::IME_COMPOSITION_END:
         {
             ALOGIME("IME: IME_COMPOSITION_END");
+            MOZ_ASSERT(mIMEComposing,
+                       "IME_COMPOSITION_END when we are not composing?!");
+
             nsCompositionEvent event(true, NS_COMPOSITION_END, this);
             InitEvent(event, nsnull);
             event.data = mIMELastDispatchedComposingText;
@@ -1888,6 +1895,9 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
     case AndroidGeckoEvent::IME_COMPOSITION_BEGIN:
         {
             ALOGIME("IME: IME_COMPOSITION_BEGIN");
+            MOZ_ASSERT(!mIMEComposing,
+                       "IME_COMPOSITION_BEGIN when we are already composing?!");
+
             mIMELastDispatchedComposingText.Truncate();
             nsCompositionEvent event(true, NS_COMPOSITION_START, this);
             InitEvent(event, nsnull);
@@ -1896,11 +1906,16 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
         return;
     case AndroidGeckoEvent::IME_ADD_RANGE:
         {
+            NS_ASSERTION(mIMEComposing,
+                         "IME_ADD_RANGE when we are not composing?!");
             OnIMEAddRange(ae);
         }
         return;
     case AndroidGeckoEvent::IME_SET_TEXT:
         {
+            NS_ASSERTION(mIMEComposing,
+                         "IME_SET_TEXT when we are not composing?!");
+
             OnIMEAddRange(ae);
 
             nsTextEvent event(true, NS_TEXT_TEXT, this);
@@ -1923,8 +1938,12 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                     return;
             }
 
-            ALOGIME("IME: IME_SET_TEXT: l=%u, r=%u",
-                event.theText.Length(), mIMERanges.Length());
+#ifdef DEBUG_ANDROID_IME
+            const NS_ConvertUTF16toUTF8 theText8(event.theText);
+            const char* text = theText8.get();
+            ALOGIME("IME: IME_SET_TEXT: text=\"%s\", length=%u, range=%u",
+                    text, event.theText.Length(), mIMERanges.Length());
+#endif // DEBUG_ANDROID_IME
 
             DispatchEvent(&event);
             mIMERanges.Clear();
@@ -1951,12 +1970,14 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
                     event.mReply.mString.get(), 
                     event.mReply.mString.Length(), 0, 0);
             }
-            //ALOGIME("IME:     -> l=%u", event.mReply.mString.Length());
         }
         return;
     case AndroidGeckoEvent::IME_DELETE_TEXT:
         {
             ALOGIME("IME: IME_DELETE_TEXT");
+            NS_ASSERTION(mIMEComposing,
+                         "IME_DELETE_TEXT when we are not composing?!");
+
             nsKeyEvent event(true, NS_KEY_PRESS, this);
             ANPEvent pluginEvent;
             InitKeyEvent(event, *ae, &pluginEvent);
@@ -2084,7 +2105,16 @@ nsWindow::SetInputContext(const InputContext& aContext,
         return;
     }
 
-    AndroidBridge::NotifyIMEEnabled(int(aContext.mIMEState.mEnabled),
+    int enabled = int(aContext.mIMEState.mEnabled);
+
+    // Only show the virtual keyboard for plugins if mOpen is set appropriately.
+    // This avoids showing it whenever a plugin is focused. Bug 747492
+    if (aContext.mIMEState.mEnabled == IMEState::PLUGIN &&
+        aContext.mIMEState.mOpen != IMEState::OPEN) {
+        enabled = int(IMEState::DISABLED);
+    }
+
+    AndroidBridge::NotifyIMEEnabled(enabled,
                                     aContext.mHTMLInputType,
                                     aContext.mActionHint);
 }

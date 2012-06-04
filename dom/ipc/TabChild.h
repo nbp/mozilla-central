@@ -152,6 +152,7 @@ public:
     NS_DECL_NSIINTERFACEREQUESTOR
     NS_DECL_NSIWINDOWPROVIDER
     NS_DECL_NSIDIALOGCREATOR
+    NS_DECL_NSITABCHILD
 
     virtual bool RecvLoadURL(const nsCString& uri);
     virtual bool RecvShow(const nsIntSize& size);
@@ -233,6 +234,11 @@ protected:
     virtual bool RecvDestroy();
 
     bool DispatchWidgetEvent(nsGUIEvent& event);
+
+    virtual PIndexedDBChild* AllocPIndexedDB(const nsCString& aASCIIOrigin,
+                                             bool* /* aAllowed */);
+
+    virtual bool DeallocPIndexedDB(PIndexedDBChild* actor);
 
 private:
     void ActorDestroy(ActorDestroyReason why);

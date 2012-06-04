@@ -84,6 +84,10 @@
 #ifdef MOZ_GSTREAMER
 #include "nsGStreamerDecoder.h"
 #endif
+#ifdef MOZ_MEDIA_PLUGINS
+#include "nsMediaPluginHost.h"
+#include "nsMediaPluginDecoder.h"
+#endif
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gMediaElementLog;
@@ -450,7 +454,7 @@ nsHTMLMediaElement::GetSrc(JSContext* aCtx, jsval *aParams)
 NS_IMETHODIMP
 nsHTMLMediaElement::SetSrc(JSContext* aCtx, const jsval & aParams)
 {
-  if (aParams.isObject()) { // not JSVAL_IS_OBJECT() because a null object is still an object
+  if (aParams.isObject()) {
     nsCOMPtr<nsIDOMMediaStream> stream;
     stream = do_QueryInterface(nsContentUtils::XPConnect()->
         GetNativeOfWrapper(aCtx, JSVAL_TO_OBJECT(aParams)));
@@ -593,7 +597,8 @@ void nsHTMLMediaElement::AbortExistingLoads()
   mSuspendedAfterFirstFrame = false;
   mAllowSuspendAfterFirstFrame = true;
   mHaveQueuedSelectResource = false;
-  mLoadIsSuspended = false;
+  mSuspendedForPreloadNone = false;
+  mDownloadSuspendedByCache = false;
   mSourcePointer = nsnull;
 
   // TODO: The playback rate must be set to the default playback rate.
@@ -905,7 +910,7 @@ void nsHTMLMediaElement::LoadFromSourceChildren()
 
 void nsHTMLMediaElement::SuspendLoad()
 {
-  mLoadIsSuspended = true;
+  mSuspendedForPreloadNone = true;
   mNetworkState = nsIDOMHTMLMediaElement::NETWORK_IDLE;
   DispatchAsyncEvent(NS_LITERAL_STRING("suspend"));
   ChangeDelayLoadStatus(false);
@@ -913,8 +918,9 @@ void nsHTMLMediaElement::SuspendLoad()
 
 void nsHTMLMediaElement::ResumeLoad(PreloadAction aAction)
 {
-  NS_ASSERTION(mLoadIsSuspended, "Can only resume preload if halted for one");
-  mLoadIsSuspended = false;
+  NS_ASSERTION(mSuspendedForPreloadNone,
+    "Must be halted for preload:none to resume from preload:none suspended load.");
+  mSuspendedForPreloadNone = false;
   mPreloadAction = aAction;
   ChangeDelayLoadStatus(true);
   mNetworkState = nsIDOMHTMLMediaElement::NETWORK_LOADING;
@@ -987,7 +993,7 @@ void nsHTMLMediaElement::UpdatePreloadAction()
 
   mPreloadAction = nextAction;
   if (nextAction == nsHTMLMediaElement::PRELOAD_ENOUGH) {
-    if (mLoadIsSuspended) {
+    if (mSuspendedForPreloadNone) {
       // Our load was previouly suspended due to the media having preload
       // value "none". The preload value has changed to preload:auto, so
       // resume the load.
@@ -1001,7 +1007,7 @@ void nsHTMLMediaElement::UpdatePreloadAction()
   } else if (nextAction == nsHTMLMediaElement::PRELOAD_METADATA) {
     // Ensure that the video can be suspended after first frame.
     mAllowSuspendAfterFirstFrame = true;
-    if (mLoadIsSuspended) {
+    if (mSuspendedForPreloadNone) {
       // Our load was previouly suspended due to the media having preload
       // value "none". The preload value has changed to preload:metadata, so
       // resume the load. We'll pause the load again after we've read the
@@ -1650,10 +1656,11 @@ nsHTMLMediaElement::nsHTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     mHasPlayedOrSeeked(false),
     mHasSelfReference(false),
     mShuttingDown(false),
-    mLoadIsSuspended(false),
+    mSuspendedForPreloadNone(false),
     mMediaSecurityVerified(false),
     mCORSMode(CORS_NONE),
-    mHasAudio(false)
+    mHasAudio(false),
+    mDownloadSuspendedByCache(false)
 {
 #ifdef PR_LOGGING
   if (!gMediaElementLog) {
@@ -1733,7 +1740,7 @@ NS_IMETHODIMP nsHTMLMediaElement::Play()
     nsresult rv = Load();
     NS_ENSURE_SUCCESS(rv, rv);
   }
-  if (mLoadIsSuspended) {
+  if (mSuspendedForPreloadNone) {
     ResumeLoad(PRELOAD_ENOUGH);
   }
   // Even if we just did Load() or ResumeLoad(), we could already have a decoder
@@ -2108,6 +2115,14 @@ nsHTMLMediaElement::IsH264Type(const nsACString& aType)
 }
 #endif
 
+#ifdef MOZ_MEDIA_PLUGINS
+bool
+nsHTMLMediaElement::IsMediaPluginsEnabled()
+{
+  return Preferences::GetBool("media.plugins.enabled");
+}
+#endif
+
 /* static */
 nsHTMLMediaElement::CanPlayStatus 
 nsHTMLMediaElement::CanHandleMediaType(const char* aMIMEType,
@@ -2144,6 +2159,10 @@ nsHTMLMediaElement::CanHandleMediaType(const char* aMIMEType,
     return CANPLAY_YES;
   }
 #endif
+#ifdef MOZ_MEDIA_PLUGINS
+  if (GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), aCodecList))
+    return CANPLAY_MAYBE;
+#endif
   return CANPLAY_NO;
 }
 
@@ -2164,6 +2183,10 @@ bool nsHTMLMediaElement::ShouldHandleMediaType(const char* aMIMEType)
 #endif
 #ifdef MOZ_GSTREAMER
   if (IsH264Type(nsDependentCString(aMIMEType)))
+    return true;
+#endif
+#ifdef MOZ_MEDIA_PLUGINS
+  if (GetMediaPluginHost()->FindDecoder(nsDependentCString(aMIMEType), NULL))
     return true;
 #endif
   // We should not return true for Wave types, since there are some
@@ -2273,6 +2296,14 @@ nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
 #ifdef MOZ_WAVE
   if (IsWaveType(aType)) {
     nsRefPtr<nsWaveDecoder> decoder = new nsWaveDecoder();
+    if (decoder->Init(this)) {
+      return decoder.forget();
+    }
+  }
+#endif
+#ifdef MOZ_MEDIA_PLUGINS
+  if (GetMediaPluginHost()->FindDecoder(aType, NULL)) {
+    nsRefPtr<nsMediaPluginDecoder> decoder = new nsMediaPluginDecoder(aType);
     if (decoder->Init(this)) {
       return decoder.forget();
     }
@@ -2636,6 +2667,20 @@ void nsHTMLMediaElement::FirstFrameLoaded(bool aResourceFullyLoaded)
       mPreloadAction == nsHTMLMediaElement::PRELOAD_METADATA) {
     mSuspendedAfterFirstFrame = true;
     mDecoder->Suspend();
+  } else if (mLoadedFirstFrame &&
+             mDownloadSuspendedByCache && 
+             mDecoder &&
+             !mDecoder->IsEnded()) {
+    // We've already loaded the first frame, and the decoder has signalled
+    // that the download has been suspended by the media cache. So move
+    // readyState into HAVE_ENOUGH_DATA, in case there's script waiting
+    // for a "canplaythrough" event; without this forced transition, we will
+    // never fire the "canplaythrough" event if the media cache is so small
+    // that the download was suspended before the first frame was loaded.
+    // Don't force this transition if the decoder is in ended state; the
+    // readyState should remain at HAVE_CURRENT_DATA in this case.
+    ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
+    return;
   }
 }
 
@@ -2645,7 +2690,11 @@ void nsHTMLMediaElement::ResourceLoaded()
   mNetworkState = nsIDOMHTMLMediaElement::NETWORK_IDLE;
   AddRemoveSelfReference();
   if (mReadyState >= nsIDOMHTMLMediaElement::HAVE_METADATA) {
-    ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
+    // MediaStream sources are put into HAVE_CURRENT_DATA state here on setup. If the
+    // stream is not blocked, we will receive a notification that will put it
+    // into HAVE_ENOUGH_DATA state.
+    ChangeReadyState(mStream ? nsIDOMHTMLMediaElement::HAVE_CURRENT_DATA
+                     : nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
   }
   // Ensure a progress event is dispatched at the end of download.
   DispatchAsyncEvent(NS_LITERAL_STRING("progress"));
@@ -2730,6 +2779,7 @@ void nsHTMLMediaElement::PlaybackEnded()
 void nsHTMLMediaElement::SeekStarted()
 {
   DispatchAsyncEvent(NS_LITERAL_STRING("seeking"));
+  ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_METADATA);
   FireTimeUpdate(false);
 }
 
@@ -2742,6 +2792,11 @@ void nsHTMLMediaElement::SeekCompleted()
   AddRemoveSelfReference();
 }
 
+void nsHTMLMediaElement::NotifySuspendedByCache(bool aIsSuspended)
+{
+  mDownloadSuspendedByCache = aIsSuspended;
+}
+
 void nsHTMLMediaElement::DownloadSuspended()
 {
   DispatchAsyncEvent(NS_LITERAL_STRING("progress"));
@@ -2752,9 +2807,9 @@ void nsHTMLMediaElement::DownloadSuspended()
   }
 }
 
-void nsHTMLMediaElement::DownloadResumed()
+void nsHTMLMediaElement::DownloadResumed(bool aForceNetworkLoading)
 {
-  if (mBegun) {
+  if (mBegun || aForceNetworkLoading) {
     mNetworkState = nsIDOMHTMLMediaElement::NETWORK_LOADING;
     AddRemoveSelfReference();
   }
@@ -2779,6 +2834,21 @@ void nsHTMLMediaElement::UpdateReadyStateForData(NextFrameStatus aNextFrame)
     // on its own thread before ResourceLoaded or MetadataLoaded gets
     // a chance to run.
     // The arrival of more data can't change us out of this readyState.
+    return;
+  }
+
+  if (mReadyState > nsIDOMHTMLMediaElement::HAVE_METADATA &&
+      mDownloadSuspendedByCache &&
+      mDecoder &&
+      !mDecoder->IsEnded()) {
+    // The decoder has signalled that the download has been suspended by the
+    // media cache. So move readyState into HAVE_ENOUGH_DATA, in case there's
+    // script waiting for a "canplaythrough" event; without this forced
+    // transition, we will never fire the "canplaythrough" event if the
+    // media cache is too small, and scripts are bound to fail. Don't force
+    // this transition if the decoder is in ended state; the readyState
+    // should remain at HAVE_CURRENT_DATA in this case.
+    ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_ENOUGH_DATA);
     return;
   }
 

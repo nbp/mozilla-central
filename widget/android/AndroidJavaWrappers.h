@@ -13,6 +13,7 @@
 #include "nsPoint.h"
 #include "nsRect.h"
 #include "nsString.h"
+#include "mozilla/gfx/Rect.h"
 
 //#define FORCE_ALOG 1
 
@@ -39,6 +40,27 @@ void InitAndroidJavaWrappers(JNIEnv *jEnv);
  * If this is needed, WrappedJavaObject can be extended to
  * handle it.
  */
+
+class RefCountedJavaObject {
+public:
+    RefCountedJavaObject(JNIEnv* env, jobject obj) : mObject(env->NewGlobalRef(obj)) {}
+
+    ~RefCountedJavaObject();
+
+    PRInt32 AddRef() { return ++mRefCnt; }
+
+    PRInt32 Release() {
+        PRInt32 refcnt = --mRefCnt;
+        if (refcnt == 0)
+            delete this;
+        return refcnt;
+    }
+
+    jobject GetObject() { return mObject; }
+private:
+    PRInt32 mRefCnt;
+    jobject mObject;
+};
 
 class WrappedJavaObject {
 public:
@@ -171,9 +193,8 @@ public:
     AndroidGeckoLayerClient() {}
     AndroidGeckoLayerClient(jobject jobj) { Init(jobj); }
 
-    void SetFirstPaintViewport(float aOffsetX, float aOffsetY, float aZoom, float aPageWidth, float aPageHeight,
-                               float aCssPageWidth, float aCssPageHeight);
-    void SetPageSize(float aZoom, float aPageWidth, float aPageHeight, float aCssPageWidth, float aCssPageHeight);
+    void SetFirstPaintViewport(const nsIntPoint& aOffset, float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect);
+    void SetPageRect(float aZoom, const nsIntRect& aPageRect, const gfx::Rect& aCssPageRect);
     void SyncViewportInfo(const nsIntRect& aDisplayPort, float aDisplayResolution, bool aLayersUpdated,
                           nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY);
     bool CreateFrame(AutoLocalJNIFrame *jniFrame, AndroidLayerRendererFrame& aFrame);
@@ -183,7 +204,7 @@ public:
 protected:
     static jclass jGeckoLayerClientClass;
     static jmethodID jSetFirstPaintViewport;
-    static jmethodID jSetPageSize;
+    static jmethodID jSetPageRect;
     static jmethodID jSyncViewportInfoMethod;
     static jmethodID jCreateFrameMethod;
     static jmethodID jActivateProgramMethod;
@@ -576,6 +597,7 @@ public:
     double Bandwidth() { return mBandwidth; }
     bool CanBeMetered() { return mCanBeMetered; }
     short ScreenOrientation() { return mScreenOrientation; }
+    RefCountedJavaObject* ByteBuffer() { return mByteBuffer; }
 
 protected:
     int mAction;
@@ -600,6 +622,7 @@ protected:
     double mBandwidth;
     bool mCanBeMetered;
     short mScreenOrientation;
+    nsRefPtr<RefCountedJavaObject> mByteBuffer;
 
     void ReadIntArray(nsTArray<int> &aVals,
                       JNIEnv *jenv,
@@ -653,6 +676,7 @@ protected:
     static jfieldID jCanBeMeteredField;
 
     static jfieldID jScreenOrientationField;
+    static jfieldID jByteBufferField;
 
 public:
     enum {

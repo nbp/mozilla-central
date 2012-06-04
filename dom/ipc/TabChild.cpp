@@ -59,12 +59,14 @@
 #include "nsEventListenerManager.h"
 #include "PCOMContentPermissionRequestChild.h"
 #include "xpcpublic.h"
+#include "IndexedDBChild.h"
 
 using namespace mozilla::dom;
 using namespace mozilla::ipc;
 using namespace mozilla::layers;
 using namespace mozilla::layout;
 using namespace mozilla::docshell;
+using namespace mozilla::dom::indexedDB;
 
 NS_IMPL_ISUPPORTS1(ContentListener, nsIDOMEventListener)
 
@@ -937,6 +939,31 @@ TabChild::SetBackgroundColor(const nscolor& aColor)
     mLastBackgroundColor = aColor;
     SendSetBackgroundColor(mLastBackgroundColor);
   }
+}
+
+NS_IMETHODIMP
+TabChild::GetMessageManager(nsIContentFrameMessageManager** aResult)
+{
+  if (mTabChildGlobal) {
+    NS_ADDREF(*aResult = mTabChildGlobal);
+    return NS_OK;
+  }
+  *aResult = nsnull;
+  return NS_ERROR_FAILURE;
+}
+
+PIndexedDBChild*
+TabChild::AllocPIndexedDB(const nsCString& aASCIIOrigin, bool* /* aAllowed */)
+{
+  NS_NOTREACHED("Should never get here!");
+  return NULL;
+}
+
+bool
+TabChild::DeallocPIndexedDB(PIndexedDBChild* aActor)
+{
+  delete aActor;
+  return true;
 }
 
 static bool

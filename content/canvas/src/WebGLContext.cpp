@@ -38,7 +38,7 @@
 #include "mozilla/Telemetry.h"
 
 #include "nsIObserverService.h"
-
+#include "mozilla/dom/WebGLRenderingContextBinding.h"
 
 using namespace mozilla;
 using namespace mozilla::gl;
@@ -75,12 +75,12 @@ WebGLContext::WebGLContext()
     : mCanvasElement(nsnull),
       gl(nsnull)
 {
+    SetIsDOMBinding();
     mEnabledExtensions.SetLength(WebGLExtensionID_Max);
 
     mGeneration = 0;
     mInvalidated = false;
     mResetLayer = true;
-    mVerbose = false;
     mOptionsFrozen = false;
 
     mActiveTexture = 0;
@@ -153,6 +153,8 @@ WebGLContext::WebGLContext()
     mContextRestorer = do_CreateInstance("@mozilla.org/timer;1");
     mContextStatus = ContextStable;
     mContextLostErrorSet = false;
+
+    mAlreadyGeneratedWarnings = 0;
 }
 
 WebGLContext::~WebGLContext()
@@ -161,6 +163,14 @@ WebGLContext::~WebGLContext()
     WebGLMemoryMultiReporterWrapper::RemoveWebGLContext(this);
     TerminateContextLossTimer();
     mContextRestorer = nsnull;
+}
+
+JSObject*
+WebGLContext::WrapObject(JSContext *cx, JSObject *scope,
+                         bool *triedToWrap)
+{
+    return dom::WebGLRenderingContextBinding::Wrap(cx, scope, this,
+                                                   triedToWrap);
 }
 
 void
@@ -191,20 +201,18 @@ WebGLContext::DestroyResourcesAndContext()
 
     mAttribBuffers.Clear();
 
-    while (mTextures.Length())
-        mTextures.Last()->DeleteOnce();
-    while (mBuffers.Length())
-        mBuffers.Last()->DeleteOnce();
-    while (mRenderbuffers.Length())
-        mRenderbuffers.Last()->DeleteOnce();
-    while (mFramebuffers.Length())
-        mFramebuffers.Last()->DeleteOnce();
-    while (mShaders.Length())
-        mShaders.Last()->DeleteOnce();
-    while (mPrograms.Length())
-        mPrograms.Last()->DeleteOnce();
-    while (mUniformLocations.Length())
-        mUniformLocations.Last()->DeleteOnce();
+    while (!mTextures.isEmpty())
+        mTextures.getLast()->DeleteOnce();
+    while (!mBuffers.isEmpty())
+        mBuffers.getLast()->DeleteOnce();
+    while (!mRenderbuffers.isEmpty())
+        mRenderbuffers.getLast()->DeleteOnce();
+    while (!mFramebuffers.isEmpty())
+        mFramebuffers.getLast()->DeleteOnce();
+    while (!mShaders.isEmpty())
+        mShaders.getLast()->DeleteOnce();
+    while (!mPrograms.isEmpty())
+        mPrograms.getLast()->DeleteOnce();
 
     if (mBlackTexturesAreInitialized) {
         gl->fDeleteTextures(1, &mBlackTexture2D);
@@ -298,7 +306,7 @@ WebGLContext::SetContextOptions(nsIPropertyBag *aOptions)
     newOpts.depth |= newOpts.stencil;
 
 #if 0
-    LogMessage("aaHint: %d stencil: %d depth: %d alpha: %d premult: %d preserve: %d\n",
+    GenerateWarning("aaHint: %d stencil: %d depth: %d alpha: %d premult: %d preserve: %d\n",
                newOpts.antialias ? 1 : 0,
                newOpts.stencil ? 1 : 0,
                newOpts.depth ? 1 : 0,
@@ -371,17 +379,15 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
 #endif
     bool forceEnabled =
         Preferences::GetBool("webgl.force-enabled", false);
+    bool useMesaLlvmPipe =
+        Preferences::GetBool("gfx.prefer-mesa-llvmpipe", false);
     bool disabled =
         Preferences::GetBool("webgl.disabled", false);
-    bool verbose =
-        Preferences::GetBool("webgl.verbose", false);
 
     ScopedGfxFeatureReporter reporter("WebGL", forceEnabled);
 
     if (disabled)
         return NS_ERROR_FAILURE;
-
-    mVerbose = verbose;
 
     // We're going to create an entirely new context.  If our
     // generation is not 0 right now (that is, if this isn't the first
@@ -460,45 +466,10 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
 
 #ifdef XP_WIN
     // allow forcing GL and not EGL/ANGLE
-    if (PR_GetEnv("MOZ_WEBGL_FORCE_OPENGL")) {
+    if (useMesaLlvmPipe || PR_GetEnv("MOZ_WEBGL_FORCE_OPENGL")) {
         preferEGL = false;
         useANGLE = false;
         useOpenGL = true;
-    }
-#endif
-
-
-#ifdef ANDROID
-    // bug 736123, blacklist WebGL on Adreno
-    //
-    // The Adreno driver in WebGL context creation, specifically in the first MakeCurrent
-    // call on the newly created OpenGL context.
-    //
-    // Notice that we can't rely on GfxInfo for this blacklisting,
-    // as GfxInfo on Android currently doesn't know the GL strings, which are,
-    // AFAIK, the only way to identify Adreno GPUs.
-    //
-    // Somehow, the Layers' OpenGL context creation doesn't crash, and neither does
-    // the global GL context creation. So we currently use the Renderer() id from the
-    // global context. This is not future-proof, as the plan is to get rid of the global
-    // context soon with OMTC. We need to replace this by getting the renderer id from
-    // the Layers' GL context, but as with OMTC the LayerManager lives on a different
-    // thread, this will have to involve some message-passing.
-    if (!forceEnabled) {
-        GLContext *globalContext = GLContextProvider::GetGlobalContext();
-        if (!globalContext) {
-            // make sure that we don't forget to update this code once the globalContext
-            // is removed
-            NS_RUNTIMEABORT("No global context anymore? Then you need to update "
-                            "this code, or force-enable WebGL.");
-        }
-        int renderer = globalContext->Renderer();
-        if (renderer == gl::GLContext::RendererAdreno200 ||
-            renderer == gl::GLContext::RendererAdreno205)
-        {
-            LogMessage("WebGL blocked on this Adreno driver!");
-            return NS_ERROR_FAILURE;
-        }
     }
 #endif
 
@@ -506,10 +477,10 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
     if (forceOSMesa) {
         gl = gl::GLContextProviderOSMesa::CreateOffscreen(gfxIntSize(width, height), format);
         if (!gl || !InitAndValidateGL()) {
-            LogMessage("OSMesa forced, but creating context failed -- aborting!");
+            GenerateWarning("OSMesa forced, but creating context failed -- aborting!");
             return NS_ERROR_FAILURE;
         }
-        LogMessage("Using software rendering via OSMesa (THIS WILL BE SLOW)");
+        GenerateWarning("Using software rendering via OSMesa (THIS WILL BE SLOW)");
     }
 
 #ifdef XP_WIN
@@ -517,7 +488,7 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
     if (!gl && (preferEGL || useANGLE) && !preferOpenGL) {
         gl = gl::GLContextProviderEGL::CreateOffscreen(gfxIntSize(width, height), format);
         if (!gl || !InitAndValidateGL()) {
-            LogMessage("Error during ANGLE OpenGL ES initialization");
+            GenerateWarning("Error during ANGLE OpenGL ES initialization");
             return NS_ERROR_FAILURE;
         }
     }
@@ -525,9 +496,14 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
 
     // try the default provider, whatever that is
     if (!gl && useOpenGL) {
-        gl = gl::GLContextProvider::CreateOffscreen(gfxIntSize(width, height), format);
+        GLContext::ContextFlags flag = useMesaLlvmPipe 
+                                       ? GLContext::ContextFlagsMesaLLVMPipe
+                                       : GLContext::ContextFlagsNone;
+        gl = gl::GLContextProvider::CreateOffscreen(gfxIntSize(width, height), 
+                                                               format, flag);
         if (gl && !InitAndValidateGL()) {
-            LogMessage("Error during OpenGL initialization");
+            GenerateWarning("Error during %s initialization", 
+                            useMesaLlvmPipe ? "Mesa LLVMpipe" : "OpenGL");
             return NS_ERROR_FAILURE;
         }
     }
@@ -537,16 +513,16 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
         gl = gl::GLContextProviderOSMesa::CreateOffscreen(gfxIntSize(width, height), format);
         if (gl) {
             if (!InitAndValidateGL()) {
-                LogMessage("Error during OSMesa initialization");
+                GenerateWarning("Error during OSMesa initialization");
                 return NS_ERROR_FAILURE;
             } else {
-                LogMessage("Using software rendering via OSMesa (THIS WILL BE SLOW)");
+                GenerateWarning("Using software rendering via OSMesa (THIS WILL BE SLOW)");
             }
         }
     }
 
     if (!gl) {
-        LogMessage("Can't get a usable WebGL context");
+        GenerateWarning("Can't get a usable WebGL context");
         return NS_ERROR_FAILURE;
     }
 
@@ -916,25 +892,27 @@ WebGLContext::GetExtension(const nsAString& aName)
         return nsnull;
     }
 
-    // handle simple extensions that don't need custom objects first
+    nsString lowerCaseName(aName);
+    ToLowerCase(lowerCaseName);
+
     WebGLExtensionID ei = WebGLExtensionID_Max;
-    if (aName.EqualsLiteral("OES_texture_float")) {
+    if (lowerCaseName.EqualsLiteral("oes_texture_float")) {
         if (IsExtensionSupported(WebGL_OES_texture_float))
             ei = WebGL_OES_texture_float;
     }
-    else if (aName.EqualsLiteral("OES_standard_derivatives")) {
+    else if (lowerCaseName.EqualsLiteral("oes_standard_derivatives")) {
         if (IsExtensionSupported(WebGL_OES_standard_derivatives))
             ei = WebGL_OES_standard_derivatives;
     }
-    else if (aName.EqualsLiteral("MOZ_EXT_texture_filter_anisotropic")) {
+    else if (lowerCaseName.EqualsLiteral("moz_ext_texture_filter_anisotropic")) {
         if (IsExtensionSupported(WebGL_EXT_texture_filter_anisotropic))
             ei = WebGL_EXT_texture_filter_anisotropic;
     }
-    else if (aName.EqualsLiteral("MOZ_WEBGL_lose_context")) {
+    else if (lowerCaseName.EqualsLiteral("moz_webgl_lose_context")) {
         if (IsExtensionSupported(WebGL_WEBGL_lose_context))
             ei = WebGL_WEBGL_lose_context;
     }
-    else if (aName.EqualsLiteral("MOZ_WEBGL_compressed_texture_s3tc")) {
+    else if (lowerCaseName.EqualsLiteral("moz_webgl_compressed_texture_s3tc")) {
         if (IsExtensionSupported(WebGL_WEBGL_compressed_texture_s3tc))
             ei = WebGL_WEBGL_compressed_texture_s3tc;
     }

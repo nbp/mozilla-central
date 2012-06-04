@@ -10,17 +10,13 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsRefreshDriver.h"
 
-class nsAccessible;
-class nsDocAccessible;
-class nsIContent;
-
-// Uncomment to log notifications processing.
-//#define DEBUG_NOTIFICATIONS
-
-#ifdef DEBUG_NOTIFICATIONS
-#define DEBUG_CONTENTMUTATION
-#define DEBUG_TEXTCHANGE
+#ifdef DEBUG
+#include "Logging.h"
 #endif
+
+class Accessible;
+class DocAccessible;
+class nsIContent;
 
 /**
  * Notification interface.
@@ -87,7 +83,7 @@ private:
 class NotificationController : public nsARefreshObserver
 {
 public:
-  NotificationController(nsDocAccessible* aDocument, nsIPresShell* aPresShell);
+  NotificationController(DocAccessible* aDocument, nsIPresShell* aPresShell);
   virtual ~NotificationController();
 
   NS_IMETHOD_(nsrefcnt) AddRef(void);
@@ -108,7 +104,7 @@ public:
   /**
    * Schedule binding the child document to the tree of this document.
    */
-  void ScheduleChildDocBinding(nsDocAccessible* aDocument);
+  void ScheduleChildDocBinding(DocAccessible* aDocument);
 
   /**
    * Schedule the accessible tree update because of rendered text changes.
@@ -122,7 +118,7 @@ public:
   /**
    * Pend accessible tree update for content insertion.
    */
-  void ScheduleContentInsertion(nsAccessible* aContainer,
+  void ScheduleContentInsertion(Accessible* aContainer,
                                 nsIContent* aStartChildNode,
                                 nsIContent* aEndChildNode);
 
@@ -140,8 +136,9 @@ public:
                                  Arg* aArg)
   {
     if (!IsUpdatePending()) {
-#ifdef DEBUG_NOTIFICATIONS
-      printf("\nsync notification processing\n");
+#ifdef DEBUG
+      if (mozilla::a11y::logging::IsEnabled(mozilla::a11y::logging::eNotifications))
+        mozilla::a11y::logging::Text("sync notification processing");
 #endif
       (aInstance->*aMethod)(aArg);
       return;
@@ -254,7 +251,7 @@ private:
   /**
    * The document accessible reference owning this queue.
    */
-  nsRefPtr<nsDocAccessible> mDocument;
+  nsRefPtr<DocAccessible> mDocument;
 
   /**
    * The presshell of the document accessible.
@@ -264,7 +261,7 @@ private:
   /**
    * Child documents that needs to be bound to the tree.
    */
-  nsTArray<nsRefPtr<nsDocAccessible> > mHangingChildDocuments;
+  nsTArray<nsRefPtr<DocAccessible> > mHangingChildDocuments;
 
   /**
    * Storage for content inserted notification information.
@@ -272,7 +269,7 @@ private:
   class ContentInsertion
   {
   public:
-    ContentInsertion(nsDocAccessible* aDocument, nsAccessible* aContainer);
+    ContentInsertion(DocAccessible* aDocument, Accessible* aContainer);
     virtual ~ContentInsertion() { mDocument = nsnull; }
 
     NS_INLINE_DECL_REFCOUNTING(ContentInsertion)
@@ -289,10 +286,10 @@ private:
     // The document used to process content insertion, matched to document of
     // the notification controller that this notification belongs to, therefore
     // it's ok to keep it as weak ref.
-    nsDocAccessible* mDocument;
+    DocAccessible* mDocument;
 
     // The container accessible that content insertion occurs within.
-    nsRefPtr<nsAccessible> mContainer;
+    nsRefPtr<Accessible> mContainer;
 
     // Array of inserted contents.
     nsTArray<nsCOMPtr<nsIContent> > mInsertedContent;

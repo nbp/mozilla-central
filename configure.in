@@ -74,7 +74,7 @@ GCONF_VERSION=1.2.1
 GIO_VERSION=2.18
 STARTUP_NOTIFICATION_VERSION=0.8
 DBUS_VERSION=0.60
-SQLITE_VERSION=3.7.11
+SQLITE_VERSION=3.7.12.1
 LIBNOTIFY_VERSION=0.4
 
 MSMANIFEST_TOOL=
@@ -239,7 +239,7 @@ if test -n "$gonkdir" ; then
         ;;
     esac
 
-    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/hardware/libhardware_legacy/include -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/frameworks/base/include -I$gonkdir/external/dbus $CPPFLAGS -I$gonkdir/frameworks/base/services/sensorservice"
+    CPPFLAGS="-DANDROID -isystem $gonkdir/bionic/libc/$ARCH_DIR/include -isystem $gonkdir/bionic/libc/include/ -isystem $gonkdir/bionic/libc/kernel/common -isystem $gonkdir/bionic/libc/kernel/$ARCH_DIR -isystem $gonkdir/bionic/libm/include -I$gonkdir/frameworks/base/opengl/include -I$gonkdir/frameworks/base/native/include -I$gonkdir/hardware/libhardware/include -I$gonkdir/hardware/libhardware_legacy/include -I$gonkdir/system -I$gonkdir/system/core/include -isystem $gonkdir/bionic -I$gonkdir/frameworks/base/include -I$gonkdir/external/dbus $CPPFLAGS -I$gonkdir/frameworks/base/services/sensorservice"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
     CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions $CXXFLAGS $STLPORT_CPPFLAGS"
     LIBS="$LIBS $STLPORT_LIBS"
@@ -368,7 +368,8 @@ case "$target" in
 
     CPPFLAGS="-isystem $android_platform/usr/include $CPPFLAGS"
     CFLAGS="-mandroid -fno-short-enums -fno-exceptions $CFLAGS"
-    CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions $CXXFLAGS"
+    CXXFLAGS="-mandroid -fno-short-enums -fno-exceptions -Wno-psabi $CXXFLAGS"
+    ASFLAGS="-isystem $android_platform/usr/include -DANDROID $ASFLAGS"
 
     dnl Add -llog by default, since we use it all over the place.
     dnl Add --allow-shlib-undefined, because libGLESv2 links to an
@@ -399,9 +400,6 @@ case "$target" in
     if test -z "$ANDROID_PACKAGE_NAME" ; then
         ANDROID_PACKAGE_NAME='org.mozilla.$(MOZ_APP_NAME)'
     fi
-    if test -z "$MOZ_MOBILE_COMPAT" ; then
-        MOZ_MOBILE_COMPAT='All'
-    fi
 
     AC_DEFINE(ANDROID)
     AC_DEFINE_UNQUOTED(ANDROID_VERSION, $android_version)
@@ -419,11 +417,11 @@ fi
 
 AC_SUBST(ANDROID_NDK)
 AC_SUBST(ANDROID_TOOLCHAIN)
+AC_SUBST(ANDROID_SOURCE)
 AC_SUBST(ANDROID_PLATFORM)
 AC_SUBST(ANDROID_SDK)
 AC_SUBST(ANDROID_PLATFORM_TOOLS)
 AC_SUBST(ANDROID_PACKAGE_NAME)
-AC_SUBST(MOZ_MOBILE_COMPAT)
 AC_SUBST(OBJCOPY)
 
 dnl ========================================================
@@ -513,7 +511,7 @@ else
     case "$target" in
     *-mingw*)
       # Work around the conftest.exe access problem on Windows
-      sleep 1
+      sleep 2
     esac
     AC_PROG_CXX
     AC_PROG_RANLIB
@@ -1266,6 +1264,10 @@ if test "$GMAKE" = ":"; then
 fi
 AC_SUBST(GMAKE)
 
+if test -z "$MAKE"; then
+  MAKE=$GMAKE
+fi
+
 if test "$COMPILE_ENVIRONMENT"; then
 
 AC_PATH_XTRA
@@ -1706,6 +1708,17 @@ if test "$GNU_CC"; then
                   LDFLAGS=$_SAVE_LDFLAGS)
     _MOZ_RTTI_FLAGS_ON=-frtti
     _MOZ_RTTI_FLAGS_OFF=-fno-rtti
+
+    # Check for -mssse3 on $CC
+    AC_MSG_CHECKING([for -mssse3 option to $CC])
+    HAVE_COMPILER_FLAG_MSSSE3=
+    _SAVE_CFLAGS=$CFLAGS
+    CFLAGS="$CFLAGS -mssse3"
+    AC_TRY_COMPILE(,,AC_MSG_RESULT([yes])
+                     [HAVE_COMPILER_FLAG_MSSSE3=1],
+                     AC_MSG_RESULT([no]))
+    CFLAGS=$_SAVE_CFLAGS
+    AC_SUBST(HAVE_COMPILER_FLAG_MSSSE3)
 
     # Turn on GNU-specific warnings:
     # -Wall - turn on a lot of warnings
@@ -2267,6 +2280,22 @@ case "$target" in
 
         LDFLAGS=$_SAVE_LDFLAGS
     fi
+
+    dnl With newer linkers we need to pass -allow_heap_execute because of
+    dnl Microsoft Silverlight (5.1.10411.0 at least).
+    AC_MSG_CHECKING([for -allow_heap_execute option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,-allow_heap_execute"
+    AC_TRY_LINK(,[return 0;],_HAVE_ALLOW_HEAP_EXECUTE=1,
+                _HAVE_ALLOW_HEAP_EXECUTE=)
+    if test -n "$_HAVE_ALLOW_HEAP_EXECUTE" ; then
+        AC_MSG_RESULT([yes])
+        MOZ_ALLOW_HEAP_EXECUTE_FLAGS="-Wl,-allow_heap_execute"
+    else
+        AC_MSG_RESULT([no])
+    fi
+    LDFLAGS=$_SAVE_LDFLAGS
+
     MOZ_FIX_LINK_PATHS='-Wl,-executable_path,$(LIBXUL_DIST)/bin'
     ;;
 
@@ -4514,6 +4543,9 @@ MOZ_WAVE=1
 MOZ_MEDIA=
 MOZ_OPUS=1
 MOZ_WEBM=1
+MOZ_MEDIA_PLUGINS=
+MOZ_MEDIA_NAVIGATOR=
+MOZ_OMX_PLUGIN=
 MOZ_VP8_ERROR_CONCEALMENT=
 MOZ_VP8_ENCODER=
 VPX_AS=
@@ -4781,8 +4813,8 @@ cairo-qt)
 cairo-os2)
     MOZ_WIDGET_TOOLKIT=os2
     USE_FC_FREETYPE=1
-    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
-    TK_LIBS='$(MOZ_CAIRO_LIBS)'
+    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS) $(MOZ_PIXMAN_CFLAGS)'
+    TK_LIBS='$(MOZ_CAIRO_LIBS) $(MOZ_PIXMAN_LIBS)'
     MOZ_PDF_PRINTING=1
     ;;
 
@@ -4817,8 +4849,8 @@ cairo-uikit)
 cairo-android)
     AC_DEFINE(MOZ_WIDGET_ANDROID)
     MOZ_WIDGET_TOOLKIT=android
-    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
-    TK_LIBS='$(MOZ_CAIRO_LIBS)'
+    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS) $(MOZ_PIXMAN_CFLAGS)'
+    TK_LIBS='$(MOZ_CAIRO_LIBS) $(MOZ_PIXMAN_LIBS)'
     MOZ_WEBGL=1
     MOZ_PDF_PRINTING=1
     MOZ_INSTRUMENT_EVENT_LOOP=1
@@ -4831,8 +4863,8 @@ cairo-gonk)
     AC_DEFINE(MOZ_WIDGET_GONK)
     AC_DEFINE(MOZ_TOUCH)
     MOZ_WIDGET_TOOLKIT=gonk
-    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS)'
-    TK_LIBS='$(MOZ_CAIRO_LIBS)'
+    TK_CFLAGS='$(MOZ_CAIRO_CFLAGS) $(MOZ_PIXMAN_CFLAGS)'
+    TK_LIBS='$(MOZ_CAIRO_LIBS) $(MOZ_PIXMAN_LIBS)'
     MOZ_WEBGL=1
     MOZ_PDF_PRINTING=1
     MOZ_TOUCH=1
@@ -5591,6 +5623,48 @@ MOZ_ARG_DISABLE_BOOL(webm,
     MOZ_WEBM=,
     MOZ_WEBM=1)
 
+dnl ========================================================
+dnl = Disable media plugin support
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(media-plugins,
+[  --enable-media-plugins  Enable support for media plugins],
+    MOZ_MEDIA_PLUGINS=1,
+    MOZ_MEDIA_PLUGINS=)
+
+if test -n "$MOZ_MEDIA_PLUGINS"; then
+  AC_DEFINE(MOZ_MEDIA_PLUGINS)
+fi
+
+dnl ========================================================
+dnl = Enable getUserMedia support
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(media-navigator,
+[  --enable-media-navigator  Enable support for getUserMedia],
+    MOZ_MEDIA_NAVIGATOR=1,
+    MOZ_MEDIA_NAVIGATOR=)
+
+if test -n "$MOZ_MEDIA_NAVIGATOR"; then
+  AC_DEFINE(MOZ_MEDIA_NAVIGATOR)
+fi
+
+dnl ========================================================
+dnl = Enable building OMX media plugin (B2G)
+dnl ========================================================
+MOZ_ARG_ENABLE_BOOL(omx-plugin,
+[  --enable-omx-plugin      Enable building OMX plugin (B2G)],
+    MOZ_OMX_PLUGIN=1,
+    MOZ_OMX_PLUGIN=)
+
+if test -n "$MOZ_OMX_PLUGIN"; then
+    if test "$OS_TARGET" = "Android" -a -n "$gonkdir"; then
+        dnl Only allow building OMX plugin on Gonk (B2G)
+        AC_DEFINE(MOZ_OMX_PLUGIN)
+    else
+       dnl fail if we're not building on Gonk
+       AC_MSG_ERROR([OMX media plugin can only be built on B2G])
+    fi
+fi
+
 dnl system libvpx Support
 dnl ========================================================
 MOZ_ARG_WITH_BOOL(system-libvpx,
@@ -5763,6 +5837,9 @@ if test -n "$MOZ_CUBEB"; then
         AC_DEFINE(MOZ_CUBEB)
         ;;
     *-mingw*)
+        AC_DEFINE(MOZ_CUBEB)
+        ;;
+    *-openbsd*)
         AC_DEFINE(MOZ_CUBEB)
         ;;
     *)
@@ -6332,6 +6409,9 @@ MOZ_ARG_DISABLE_BOOL(webapp-runtime,
 [  --disable-webapp-runtime  Disable Web App Runtime],
     MOZ_WEBAPP_RUNTIME=,
     MOZ_WEBAPP_RUNTIME=1)
+if test "$MOZ_WIDGET_TOOLKIT" != "windows" -a "$MOZ_WIDGET_TOOLKIT" != "cocoa" -a "$MOZ_WIDGET_TOOLKIT" != "gtk2"; then
+    MOZ_WEBAPP_RUNTIME=
+fi
 if test "$OS_ARCH" = "WINNT" -a -z "$MAKENSISU" -a -n "$CROSS_COMPILE"; then
     MOZ_WEBAPP_RUNTIME=
 fi
@@ -7014,6 +7094,7 @@ AC_SUBST(MOZ_OPTIMIZE)
 AC_SUBST(MOZ_FRAMEPTR_FLAGS)
 AC_SUBST(MOZ_OPTIMIZE_FLAGS)
 AC_SUBST(MOZ_OPTIMIZE_LDFLAGS)
+AC_SUBST(MOZ_ALLOW_HEAP_EXECUTE_FLAGS)
 AC_SUBST(MOZ_OPTIMIZE_SIZE_TWEAK)
 AC_SUBST(MOZ_PGO_OPTIMIZE_FLAGS)
 
@@ -7273,6 +7354,10 @@ if test -n "$_WRAP_MALLOC"; then
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=__builtin_new,--wrap=__builtin_vec_new,--wrap=__builtin_delete,--wrap=__builtin_vec_delete"
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=strdup,--wrap=strndup"
         WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=posix_memalign,--wrap=malloc_usable_size"
+        dnl Wrap operator new and operator delete on Android.
+        if test "$OS_TARGET" = "Android"; then
+            WRAP_LDFLAGS="${WRAP_LDFLAGS} -Wl,--wrap=_Znwj,--wrap=_Znaj,--wrap=_ZdlPv,--wrap=_ZdaPv"
+        fi
     else
         AC_MSG_ERROR([--enable-wrap-malloc is not supported for non-GNU toolchains])
     fi
@@ -7920,10 +8005,9 @@ else
     fi
     AC_SUBST(CL_INCLUDES_PREFIX)
     rm -f dummy-hello.c
-    _topsrcdirwin=`cd \`dirname $0\`; pwd -W`
     dnl cl.py provides dependency generation for MSVC
-    CC_WRAPPER="$PYTHON -O $_topsrcdirwin/build/cl.py"
-    CXX_WRAPPER="$PYTHON -O $_topsrcdirwin/build/cl.py"
+    CC_WRAPPER='$(PYTHON) -O $(topsrcdir)/build/cl.py'
+    CXX_WRAPPER='$(PYTHON) -O $(topsrcdir)/build/cl.py'
     COMPILER_DEPEND=1
   fi
 fi
@@ -8011,9 +8095,8 @@ MOZ_ENABLE_SKIA=1,
 MOZ_ENABLE_SKIA=)
 
 dnl ========================================================
-dnl Check for cairo
+dnl Check for pixman and cairo
 dnl ========================================================
-MOZ_CAIRO_CFLAGS='-I$(LIBXUL_DIST)/include/cairo'
 
 MOZ_TREE_CAIRO=1
 MOZ_ARG_ENABLE_BOOL(system-cairo,
@@ -8025,12 +8108,37 @@ MOZ_TREE_PIXMAN=1
 MOZ_ARG_ENABLE_BOOL(system-pixman,
 [ --enable-system-pixman Use system pixman (located with pkgconfig)],
 MOZ_TREE_PIXMAN=,
+MOZ_TREE_PIXMAN=force,
 MOZ_TREE_PIXMAN=1 )
+
+# System cairo depends on system pixman
+if test "$MOZ_TREE_PIXMAN" = "force"; then
+    if test -z "$MOZ_TREE_CAIRO"; then
+        AC_MSG_ERROR([--disable-system-pixman is incompatible with --enable-system-cairo.])
+    else
+        MOZ_TREE_PIXMAN=1
+    fi
+elif test -z "$MOZ_TREE_CAIRO"; then
+    MOZ_TREE_PIXMAN=
+fi
+
+if test "$MOZ_TREE_PIXMAN"; then
+    AC_DEFINE(MOZ_TREE_PIXMAN)
+    MOZ_PIXMAN_CFLAGS=""
+    MOZ_PIXMAN_LIBS='$(call EXPAND_LIBNAME_PATH,mozlibpixman,$(DEPTH)/gfx/cairo/libpixman/src)'
+else
+    PKG_CHECK_MODULES(PIXMAN, pixman-1 >= 0.19.2)
+    MOZ_PIXMAN_CFLAGS="$PIXMAN_CFLAGS"
+    MOZ_PIXMAN_LIBS="$PIXMAN_LIBS"
+fi
+AC_SUBST(MOZ_PIXMAN_CFLAGS)
+AC_SUBST(MOZ_PIXMAN_LIBS)
 
 # Check for headers defining standard int types.
 MOZ_CHECK_HEADERS(stdint.h inttypes.h sys/int_types.h)
 
 if test "$MOZ_TREE_CAIRO"; then
+    MOZ_CAIRO_CFLAGS='-I$(LIBXUL_DIST)/include/cairo'
     AC_DEFINE(MOZ_TREE_CAIRO)
 
     # For now we assume that we will have a uint64_t available through
@@ -8118,15 +8226,6 @@ if test "$MOZ_TREE_CAIRO"; then
     MOZ_CAIRO_LIBS='$(call EXPAND_LIBNAME_PATH,mozcairo,$(DEPTH)/gfx/cairo/cairo/src)'" $CAIRO_FT_LIBS"
     MOZ_CAIRO_OSLIBS='${CAIRO_FT_OSLIBS}'
 
-    if test "$MOZ_TREE_PIXMAN"; then
-        AC_DEFINE(MOZ_TREE_PIXMAN)
-        MOZ_CAIRO_LIBS="$MOZ_CAIRO_LIBS"' $(call EXPAND_LIBNAME_PATH,mozlibpixman,$(DEPTH)/gfx/cairo/libpixman/src)'
-    else
-        PKG_CHECK_MODULES(PIXMAN, pixman-1 >= 0.19.2)
-        MOZ_CAIRO_CFLAGS="$MOZ_CAIRO_CFLAGS $PIXMAN_CFLAGS"
-        MOZ_CAIRO_LIBS="$MOZ_CAIRO_LIBS $PIXMAN_LIBS"
-    fi
-
     if test "$MOZ_X11"; then
         MOZ_CAIRO_OSLIBS="$MOZ_CAIRO_OSLIBS $XLDFLAGS -lXrender -lfreetype -lfontconfig"
     fi
@@ -8135,15 +8234,16 @@ if test "$MOZ_TREE_CAIRO"; then
     mv -f $CAIRO_FEATURES_H "$CAIRO_FEATURES_H".orig 2> /dev/null
 
 else
-   PKG_CHECK_MODULES(CAIRO, cairo >= $CAIRO_VERSION pixman-1 freetype2 fontconfig)
-   MOZ_CAIRO_CFLAGS=$CAIRO_CFLAGS
-   MOZ_CAIRO_LIBS=$CAIRO_LIBS
-   PKG_CHECK_MODULES(CAIRO_TEE, cairo-tee >= $CAIRO_VERSION)
-   if test "$MOZ_X11"; then
+    PKG_CHECK_MODULES(CAIRO, cairo >= $CAIRO_VERSION)
+    MOZ_CAIRO_CFLAGS="$CAIRO_CFLAGS"
+    MOZ_CAIRO_LIBS="$CAIRO_LIBS"
+    PKG_CHECK_MODULES(CAIRO_TEE, cairo-tee >= $CAIRO_VERSION)
+    if test "$MOZ_X11"; then
         PKG_CHECK_MODULES(CAIRO_XRENDER, cairo-xlib-xrender >= $CAIRO_VERSION)
         MOZ_CAIRO_LIBS="$MOZ_CAIRO_LIBS $XLDFLAGS $CAIRO_XRENDER_LIBS"
+        MOZ_CAIRO_OSLIBS="$MOZ_CAIRO_LIBS"
         MOZ_CAIRO_CFLAGS="$MOZ_CAIRO_CFLAGS $CAIRO_XRENDER_CFLAGS"
-   fi
+    fi
 fi
 
 AC_SUBST(MOZ_TREE_CAIRO)
@@ -8565,7 +8665,6 @@ AC_SUBST(MOZ_MAPINFO)
 AC_SUBST(MOZ_BROWSE_INFO)
 AC_SUBST(MOZ_TOOLS_DIR)
 AC_SUBST(WIN32_REDIST_DIR)
-AC_SUBST(PYTHON)
 AC_SUBST(MAKENSISU)
 
 dnl Echo the CFLAGS to remove extra whitespace.
@@ -8699,6 +8798,8 @@ AC_SUBST(MOZ_VORBIS)
 AC_SUBST(MOZ_TREMOR)
 AC_SUBST(MOZ_OPUS)
 AC_SUBST(MOZ_WEBM)
+AC_SUBST(MOZ_MEDIA_PLUGINS)
+AC_SUBST(MOZ_OMX_PLUGIN)
 AC_SUBST(MOZ_VP8_ERROR_CONCEALMENT)
 AC_SUBST(MOZ_VP8_ENCODER)
 AC_SUBST(MOZ_OGG)
@@ -8947,6 +9048,22 @@ AC_SUBST(MOZ_DEFINES)
 rm -f confdefs.h
 mv confdefs.h.save confdefs.h
 
+dnl Create a virtualenv where we can install local Python packages
+AC_MSG_RESULT([Creating Python virtualenv])
+rm -rf _virtualenv
+mkdir -p _virtualenv
+MACOSX_DEPLOYMENT_TARGET= PYTHONDONTWRITEBYTECODE= $PYTHON $_topsrcdir/other-licenses/virtualenv/virtualenv.py --system-site-packages ./_virtualenv
+case "$host_os" in
+mingw*)
+    PYTHON=`pwd`/_virtualenv/Scripts/python.exe
+    ;;
+*)
+    PYTHON=`pwd`/_virtualenv/bin/python
+    ;;
+esac
+
+AC_SUBST(PYTHON)
+
 dnl Load the list of Makefiles to generate.
 dnl   To add new Makefiles, edit allmakefiles.sh.
 dnl   allmakefiles.sh sets the variable, MAKEFILES.
@@ -8969,6 +9086,10 @@ echo $MAKEFILES > unallmakefiles
 mv -f config/autoconf.mk config/autoconf.mk.orig 2> /dev/null
 
 AC_OUTPUT($MAKEFILES)
+
+# Populate the virtualenv
+AC_MSG_RESULT([Populating Python virtualenv])
+$MAKE -C build/virtualenv MACOSX_DEPLOYMENT_TARGET=  || exit 1
 
 # Generate a JSON config file for unittest harnesses etc to read
 # build configuration details from in a standardized way.

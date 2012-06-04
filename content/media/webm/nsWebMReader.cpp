@@ -11,7 +11,6 @@
 #include "nsWebMBufferedParser.h"
 #include "VideoUtils.h"
 #include "nsTimeRanges.h"
-#include "mozilla/Preferences.h"
 
 #define VPX_DONT_DEFINE_STDINT_TYPES
 #include "vpx/vp8dx.h"
@@ -108,17 +107,10 @@ nsWebMReader::nsWebMReader(nsBuiltinDecoder* aDecoder)
   mAudioTrack(0),
   mAudioStartUsec(-1),
   mAudioFrames(0),
-  mForceStereoMode(0),
   mHasVideo(false),
-  mHasAudio(false),
-  mStereoModeForced(false)
+  mHasAudio(false)
 {
   MOZ_COUNT_CTOR(nsWebMReader);
-
-  mStereoModeForced =
-    NS_SUCCEEDED(Preferences::GetInt(
-          "media.webm.force_stereo_mode",
-          &mForceStereoMode));
 }
 
 nsWebMReader::~nsWebMReader()
@@ -283,26 +275,6 @@ nsresult nsWebMReader::ReadMetadata(nsVideoInfo* aInfo)
       case NESTEGG_VIDEO_STEREO_RIGHT_LEFT:
         mInfo.mStereoMode = STEREO_MODE_RIGHT_LEFT;
         break;
-      }
-
-      // Switch only when stereo mode is explicitly set.
-      if (mStereoModeForced) {
-        switch (mForceStereoMode) {
-        case 1:
-          mInfo.mStereoMode = STEREO_MODE_LEFT_RIGHT;
-          break;
-        case 2:
-          mInfo.mStereoMode = STEREO_MODE_RIGHT_LEFT;
-          break;
-        case 3:
-          mInfo.mStereoMode = STEREO_MODE_TOP_BOTTOM;
-          break;
-        case 4:
-          mInfo.mStereoMode = STEREO_MODE_BOTTOM_TOP;
-          break;
-        default:
-          mInfo.mStereoMode = STEREO_MODE_MONO;
-        }
       }
     }
     else if (!mHasAudio && type == NESTEGG_TRACK_AUDIO) {
@@ -685,16 +657,19 @@ bool nsWebMReader::DecodeVideoFrame(bool &aKeyframeSkip,
       b.mPlanes[0].mStride = img->stride[0];
       b.mPlanes[0].mHeight = img->d_h;
       b.mPlanes[0].mWidth = img->d_w;
+      b.mPlanes[0].mOffset = b.mPlanes[0].mSkip = 0;
 
       b.mPlanes[1].mData = img->planes[1];
       b.mPlanes[1].mStride = img->stride[1];
       b.mPlanes[1].mHeight = img->d_h >> img->y_chroma_shift;
       b.mPlanes[1].mWidth = img->d_w >> img->x_chroma_shift;
+      b.mPlanes[1].mOffset = b.mPlanes[1].mSkip = 0;
  
       b.mPlanes[2].mData = img->planes[2];
       b.mPlanes[2].mStride = img->stride[2];
       b.mPlanes[2].mHeight = img->d_h >> img->y_chroma_shift;
       b.mPlanes[2].mWidth = img->d_w >> img->x_chroma_shift;
+      b.mPlanes[2].mOffset = b.mPlanes[2].mSkip = 0;
   
       nsIntRect picture = mPicture;
       if (img->d_w != static_cast<PRUint32>(mInitialFrame.width) ||

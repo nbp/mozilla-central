@@ -11,4 +11,12 @@ webidl_files = \
   XMLHttpRequest.webidl \
   XMLHttpRequestEventTarget.webidl \
   XMLHttpRequestUpload.webidl \
+  WebGLRenderingContext.webidl \
   $(NULL)
+
+ifdef ENABLE_TESTS
+test_webidl_files := TestCodeGen.webidl
+else
+test_webidl_files := $(NULL)
+endif
+

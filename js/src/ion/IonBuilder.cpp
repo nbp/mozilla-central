@@ -302,7 +302,44 @@ IonBuilder::build()
     if (!traverseBytecode())
         return false;
 
+    if (!processIterators())
+        return false;
+
     JS_ASSERT(loopDepth_ == 0);
+    return true;
+}
+
+bool
+IonBuilder::processIterators()
+{
+    // Find phis that must directly hold an iterator live.
+    Vector<MPhi *, 0, SystemAllocPolicy> worklist;
+    for (size_t i = 0; i < iterators_.length(); i++) {
+        MInstruction *ins = iterators_[i];
+        for (MUseDefIterator iter(ins); iter; iter++) {
+            if (iter.def()->isPhi()) {
+                if (!worklist.append(iter.def()->toPhi()))
+                    return false;
+            }
+        }
+    }
+
+    // Propagate the iterator and live status of phis to all other connected
+    // phis.
+    while (!worklist.empty()) {
+        MPhi *phi = worklist.popCopy();
+        phi->setIterator();
+        phi->setHasBytecodeUses();
+
+        for (MUseDefIterator iter(phi); iter; iter++) {
+            if (iter.def()->isPhi()) {
+                MPhi *other = iter.def()->toPhi();
+                if (!other->isIterator() && !worklist.append(other))
+                    return false;
+            }
+        }
+    }
+
     return true;
 }
 
@@ -773,7 +810,7 @@ IonBuilder::inspectOpcode(JSOp op)
       {
         if (GET_UINT8(pc) == JSProto_Array)
             return jsop_newarray(0);
-        RootedVarObject baseObj(cx, NULL);
+        RootedObject baseObj(cx, NULL);
         return jsop_newobject(baseObj);
       }
 
@@ -782,7 +819,7 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_NEWOBJECT:
       {
-        RootedVarObject baseObj(cx, info().getObject(pc));
+        RootedObject baseObj(cx, info().getObject(pc));
         return jsop_newobject(baseObj);
       }
 
@@ -791,7 +828,7 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_INITPROP:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_initprop(name);
       }
 
@@ -815,7 +852,7 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_GETGNAME:
       case JSOP_CALLGNAME:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_getgname(name);
       }
 
@@ -824,14 +861,14 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_SETGNAME:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_setgname(name);
       }
 
       case JSOP_NAME:
       case JSOP_CALLNAME:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_getname(name);
       }
 
@@ -883,14 +920,14 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_GETPROP:
       case JSOP_CALLPROP:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_getprop(name);
       }
 
       case JSOP_SETPROP:
       case JSOP_SETNAME:
       {
-        RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+        RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
         return jsop_setprop(name);
       }
 
@@ -1786,7 +1823,7 @@ IonBuilder::doWhileLoop(JSOp op, jssrcnote *sn)
 
     jsbytecode *loopEntry = GetNextPc(loopHead);
     if (info().hasOsrAt(loopEntry)) {
-        MBasicBlock *preheader = newOsrPreheader(current, loopHead, loopEntry);
+        MBasicBlock *preheader = newOsrPreheader(current, loopEntry);
         if (!preheader)
             return ControlStatus_Error;
         current->end(MGoto::New(preheader));
@@ -1834,13 +1871,12 @@ IonBuilder::whileOrForInLoop(JSOp op, jssrcnote *sn)
     JS_ASSERT(ifne > pc);
 
     // Verify that the IFNE goes back to a loophead op.
-    jsbytecode *loopHead = GetNextPc(pc);
-    JS_ASSERT(JSOp(*loopHead) == JSOP_LOOPHEAD);
-    JS_ASSERT(loopHead == ifne + GetJumpOffset(ifne));
+    JS_ASSERT(JSOp(*GetNextPc(pc)) == JSOP_LOOPHEAD);
+    JS_ASSERT(GetNextPc(pc) == ifne + GetJumpOffset(ifne));
 
     jsbytecode *loopEntry = pc + GetJumpOffset(pc);
     if (info().hasOsrAt(loopEntry)) {
-        MBasicBlock *preheader = newOsrPreheader(current, loopHead, loopEntry);
+        MBasicBlock *preheader = newOsrPreheader(current, loopEntry);
         if (!preheader)
             return ControlStatus_Error;
         current->end(MGoto::New(preheader));
@@ -1917,7 +1953,7 @@ IonBuilder::forLoop(JSOp op, jssrcnote *sn)
     bodyStart = GetNextPc(bodyStart);
 
     if (info().hasOsrAt(loopEntry)) {
-        MBasicBlock *preheader = newOsrPreheader(current, loopHead, loopEntry);
+        MBasicBlock *preheader = newOsrPreheader(current, loopEntry);
         if (!preheader)
             return ControlStatus_Error;
         current->end(MGoto::New(preheader));
@@ -2803,7 +2839,7 @@ IonBuilder::inlineScriptedCall(JSFunction *target, uint32 argc)
     if (!oracle.init(cx, target->script()))
         return false;
 
-    RootedVarObject scopeChain(NULL);
+    RootedObject scopeChain(NULL);
 
     IonBuilder inlineBuilder(cx, scopeChain, temp(), graph(), &oracle,
                              *info, inliningDepth + 1, loopDepth_);
@@ -2826,7 +2862,7 @@ IonBuilder::createThisScripted(MDefinition *callee)
     // This instruction MUST be idempotent: since it does not correspond to an
     // explicit operation in the bytecode, we cannot use resumeAfter(). But
     // calling GetProperty can trigger a GC, and thus invalidation.
-    RootedVarPropertyName name(cx, cx->runtime->atomState.classPrototypeAtom);
+    RootedPropertyName name(cx, cx->runtime->atomState.classPrototypeAtom);
     MCallGetProperty *getProto = MCallGetProperty::New(callee, name);
 
     // Getters may not override |prototype| fetching, so this is repeatable.
@@ -2866,7 +2902,7 @@ IonBuilder::createThisScriptedSingleton(HandleFunction target, HandleObject prot
     if (!types::TypeScript::ThisTypes(target->script())->hasType(types::Type::ObjectType(type)))
         return NULL;
 
-    RootedVarObject templateObject(cx, js_CreateThisForFunctionWithProto(cx, target, proto));
+    RootedObject templateObject(cx, js_CreateThisForFunctionWithProto(cx, target, proto));
     if (!templateObject)
         return NULL;
 
@@ -2893,7 +2929,7 @@ IonBuilder::createThis(HandleFunction target, MDefinition *callee)
     }
 
     MDefinition *createThis = NULL;
-    RootedVarObject proto(cx, getSingletonPrototype(target));
+    RootedObject proto(cx, getSingletonPrototype(target));
 
     // Try baking in the prototype.
     if (proto)
@@ -2917,14 +2953,14 @@ IonBuilder::jsop_funcall(uint32 argc)
     // argc+2: The native 'call' function.
 
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
-    RootedVarFunction native(cx, getSingleCallTarget(argc, pc));
+    RootedFunction native(cx, getSingleCallTarget(argc, pc));
     if (!native || !native->isNative() || native->native() != &js_fun_call)
         return makeCall(native, argc, false);
 
     // Extract call target.
     types::TypeSet *funTypes = oracle->getCallArg(script, argc, 0, pc);
-    RootedVarObject funobj(cx, (funTypes) ? funTypes->getSingleton(cx, false) : NULL);
-    RootedVarFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
+    RootedObject funobj(cx, (funTypes) ? funTypes->getSingleton(cx, false) : NULL);
+    RootedFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
 
     // Unwrap the (JSFunction *) parameter.
     int funcDepth = -((int)argc + 1);
@@ -2959,7 +2995,7 @@ bool
 IonBuilder::jsop_call(uint32 argc, bool constructing)
 {
     // Acquire known call target if existent.
-    RootedVarFunction target(cx, getSingleCallTarget(argc, pc));
+    RootedFunction target(cx, getSingleCallTarget(argc, pc));
 
     // Attempt to inline native and scripted functions.
     if (inliningEnabled() && target) {
@@ -3206,7 +3242,7 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
     MDefinition *value = current->pop();
     MDefinition *obj = current->peek(-1);
 
-    RootedVarObject baseObj(cx, obj->toNewObject()->baseObj());
+    RootedObject baseObj(cx, obj->toNewObject()->baseObj());
 
     if (!oracle->propertyWriteCanSpecialize(script, pc)) {
         // This should only happen for a few names like __proto__.
@@ -3222,7 +3258,7 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
 
     JSObject *holder;
     JSProperty *prop = NULL;
-    RootedVarId id(cx, NameToId(name));
+    RootedId id(cx, NameToId(name));
     DebugOnly<bool> res = LookupPropertyWithFlags(cx, baseObj, id,
                                                   JSRESOLVE_QUALIFIED, &holder, &prop);
     JS_ASSERT(res && prop && holder == baseObj);
@@ -3278,9 +3314,8 @@ IonBuilder::newBlock(MBasicBlock *predecessor, jsbytecode *pc, uint32 loopDepth)
 }
 
 MBasicBlock *
-IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopHead, jsbytecode *loopEntry)
+IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopEntry)
 {
-    JS_ASSERT((JSOp)*loopHead == JSOP_LOOPHEAD);
     JS_ASSERT((JSOp)*loopEntry == JSOP_LOOPENTRY);
     JS_ASSERT(loopEntry == info().osrPc());
 
@@ -3373,10 +3408,11 @@ IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopHead, jsby
 
     // Fill slotTypes with the types of the predecessor block.
     for (uint32 i = 0; i < osrBlock->stackDepth(); i++)
-        slotTypes[i] = predecessor->getSlot(i)->type();
+        slotTypes[i] = MIRType_Value;
 
     // Update slotTypes for slots that may have a different type at this join point.
-    oracle->getNewTypesAtJoinPoint(script, loopHead, slotTypes);
+    if (!oracle->getOsrTypes(loopEntry, slotTypes))
+        return NULL;
 
     for (uint32 i = 1; i < osrBlock->stackDepth(); i++) {
         MIRType type = slotTypes[i];
@@ -3384,7 +3420,7 @@ IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopHead, jsby
         if (type != MIRType_Value && type != MIRType_Undefined && type != MIRType_Null) {
             MDefinition *def = osrBlock->getSlot(i);
             JS_ASSERT(def->type() == MIRType_Value);
-            MInstruction *actual = MUnbox::New(def, slotTypes[i], MUnbox::Fallible);
+            MInstruction *actual = MUnbox::New(def, slotTypes[i], MUnbox::Infallible);
             osrBlock->add(actual);
             osrBlock->rewriteSlot(i, actual);
         }
@@ -3512,12 +3548,12 @@ TestSingletonProperty(JSContext *cx, JSObject *obj, HandleId id, bool *isKnownCo
         return true;
 
     Shape *shape = (Shape *)prop;
-    if (shape->hasDefaultGetter()) {
-        if (!shape->hasSlot())
-            return true;
-        if (holder->getSlot(shape->slot()).isUndefined())
-            return true;
-    }
+    if (!shape->hasDefaultGetter())
+        return true;
+    if (!shape->hasSlot())
+        return true;
+    if (holder->getSlot(shape->slot()).isUndefined())
+        return true;
 
     *isKnownConstant = true;
     return true;
@@ -3709,7 +3745,7 @@ IonBuilder::jsop_getgname(HandlePropertyName name)
     JSObject *globalObj = script->global();
     JS_ASSERT(globalObj->isNative());
 
-    RootedVarId id(cx, NameToId(name));
+    RootedId id(cx, NameToId(name));
 
     // For the fastest path, the property must be found, and it must be found
     // as a normal data property on exactly the global object.
@@ -3777,17 +3813,17 @@ IonBuilder::jsop_getgname(HandlePropertyName name)
 bool
 IonBuilder::jsop_setgname(HandlePropertyName name)
 {
-    RootedVarId id(cx, NameToId(name));
+    RootedObject globalObj(cx, script->global());
+    RootedId id(cx, NameToId(name));
+
+    JS_ASSERT(globalObj->isNative());
 
     bool canSpecialize;
     types::TypeSet *propertyTypes = oracle->globalPropertyWrite(script, pc, id, &canSpecialize);
 
     // This should only happen for a few names like __proto__.
-    if (!canSpecialize)
+    if (!canSpecialize || globalObj->watched())
         return jsop_setprop(name);
-
-    JSObject *globalObj = script->global();
-    JS_ASSERT(globalObj->isNative());
 
     // For the fastest path, the property must be found, and it must be found
     // as a normal data property on exactly the global object.
@@ -4229,7 +4265,7 @@ IonBuilder::jsop_length()
     if (jsop_length_fastPath())
         return true;
 
-    RootedVarPropertyName name(cx, info().getAtom(pc)->asPropertyName());
+    RootedPropertyName name(cx, info().getAtom(pc)->asPropertyName());
     return jsop_getprop(name);
 }
 
@@ -4368,8 +4404,8 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
     JSObject *singleton = types ? types->getSingleton(cx) : NULL;
     if (singleton && !barrier) {
         bool isKnownConstant, testObject;
-        RootedVarId id(cx, NameToId(name));
-        RootedVarObject global(cx, script->global());
+        RootedId id(cx, NameToId(name));
+        RootedObject global(cx, script->global());
         if (!TestSingletonPropertyTypes(cx, unaryTypes.inTypes,
                                         global, id,
                                         &isKnownConstant, &testObject))
@@ -4450,7 +4486,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
     } else {
         ins = MSetPropertyCache::New(obj, value, name, script->strictModeCode);
 
-        RootedVarId id(cx, NameToId(name));
+        RootedId id(cx, NameToId(name));
         if (cx->compartment->needsBarrier() &&
             (!binaryTypes.lhsTypes || binaryTypes.lhsTypes->propertyNeedsBarrier(cx, id))) {
             ins->setNeedsBarrier();
@@ -4532,8 +4568,7 @@ IonBuilder::jsop_defvar(uint32 index)
     PropertyName *name = script->getName(index);
 
     // Bake in attrs.
-    unsigned attrs = JSPROP_ENUMERATE;
-    // isEvalFrame() requires  attrs |= JSPROP_PERMANENT.
+    unsigned attrs = JSPROP_ENUMERATE | JSPROP_PERMANENT;
     if (JSOp(*pc) == JSOP_DEFCONST)
         attrs |= JSPROP_READONLY;
 
@@ -4610,6 +4645,9 @@ IonBuilder::jsop_iter(uint8 flags)
 {
     MDefinition *obj = current->pop();
     MInstruction *ins = MIteratorStart::New(obj, flags);
+
+    if (!iterators_.append(ins))
+        return false;
 
     current->add(ins);
     current->push(ins);
