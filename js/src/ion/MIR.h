@@ -621,8 +621,8 @@ class MOsrEntry : public MNullaryInstruction
 class MConstant : public MNullaryInstruction
 {
     js::Value value_;
-    uint32 constantPoolIndex_;
 
+  protected:
     MConstant(const Value &v);
 
   public:
@@ -634,16 +634,6 @@ class MConstant : public MNullaryInstruction
     }
     const js::Value *vp() const {
         return &value_;
-    }
-    void setConstantPoolIndex(uint32 index) {
-        constantPoolIndex_ = index;
-    }
-    uint32 constantPoolIndex() const {
-        JS_ASSERT(hasConstantPoolIndex());
-        return constantPoolIndex_;
-    }
-    bool hasConstantPoolIndex() const {
-        return !!constantPoolIndex_;
     }
 
     void printOpcode(FILE *fp);
@@ -1406,8 +1396,7 @@ class MUnbox : public MUnaryInstruction
                   type == MIRType_Double  || 
                   type == MIRType_String  ||
                   type == MIRType_Object  ||
-                  // For JS_OPTIMIZED_ARGUMENTS.
-                  type == MIRType_Magic);
+                  type == MIRType_ArgObj);
 
         setResultType(type);
         setMovable();
@@ -4294,6 +4283,25 @@ class MIteratorEnd
     }
     MDefinition *iterator() const {
         return getOperand(0);
+    }
+};
+
+// This is just a fake MIR Instruction wrapping a MConstant which has a
+// different MIRType than the Value type. This is used to prevent magic
+// unboxing.
+class MLazyArguments : public MConstant
+{
+    MLazyArguments()
+      : MConstant(MagicValue(JS_OPTIMIZED_ARGUMENTS))
+    {
+        setResultType(MIRType_ArgObj);
+    }
+
+  public:
+    // No INSTRUCTION_HEADER because this is a wrapper.
+
+    static MLazyArguments *New() {
+        return new MLazyArguments();
     }
 };
 
