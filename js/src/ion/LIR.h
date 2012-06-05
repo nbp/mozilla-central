@@ -564,8 +564,7 @@ class LDefinition
             return LDefinition::GENERAL;
           case MIRType_StackFrame:
             return LDefinition::GENERAL;
-            // For JS_OPTIMIZED_ARGUMENTS.
-          case MIRType_Magic:
+          case MIRType_ArgObj:
             return LDefinition::GENERAL;
           default:
             JS_NOT_REACHED("unexpected type");
