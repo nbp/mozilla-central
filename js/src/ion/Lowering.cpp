@@ -1550,7 +1550,7 @@ LIRGenerator::visitStringLength(MStringLength *ins)
 bool
 LIRGenerator::visitArgumentsLength(MArgumentsLength *ins)
 {
-    JS_ASSERT(ins->arguments()->type() == MIRType_Magic);
+    JS_ASSERT(ins->arguments()->type() == MIRType_ArgObj);
     return define(new LArgumentsLength(), ins);
 }
 
