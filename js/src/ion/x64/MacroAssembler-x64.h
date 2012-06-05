@@ -305,6 +305,12 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         return testPrimitive(cond, ScratchReg);
     }
 
+    Condition isMagic(Condition cond, const ValueOperand &src, JSWhyMagic why) {
+        uint64_t magic = MagicValue(why).asRawBits();
+        cmpPtr(src.valueReg(), ImmWord(magic));
+        return cond;
+    }
+
     void cmpPtr(const Register &lhs, const ImmWord rhs) {
         JS_ASSERT(lhs != ScratchReg);
         movq(rhs, ScratchReg);
@@ -587,14 +593,14 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         unboxInt32(Operand(src), dest);
     }
 
-    void unboxMagic(const ValueOperand &src, const Register &dest) {
-        unboxInt32(src, dest);
+    void unboxArgObjMagic(const ValueOperand &src, const Register &dest) {
+        unboxArgObjMagic(Operand(src.valueReg()), dest);
     }
-    void unboxMagic(const Operand &src, const Register &dest) {
-        unboxInt32(src, dest);
+    void unboxArgObjMagic(const Operand &src, const Register &dest) {
+        xorq(dest, dest);
     }
-    void unboxMagic(const Address &src, const Register &dest) {
-        unboxMagic(Operand(src), dest);
+    void unboxArgObjMagic(const Address &src, const Register &dest) {
+        unboxArgObjMagic(Operand(src), dest);
     }
 
     void unboxBoolean(const ValueOperand &src, const Register &dest) {
