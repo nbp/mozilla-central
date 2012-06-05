@@ -2954,8 +2954,14 @@ IonBuilder::jsop_funcall(uint32 argc)
 
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
     RootedFunction native(cx, getSingleCallTarget(argc, pc));
-    if (!native || !native->isNative() || native->native() != &js_fun_call)
+    if (native && native->isNative()) {
+        if (native->native() == &js_fun_apply)
+            return abort("NYI: fun.apply with arguments.");
+        if (native->native() != &js_fun_call)
+            return makeCall(native, argc, false);
+    } else {
         return makeCall(native, argc, false);
+    }
 
     // Extract call target.
     types::TypeSet *funTypes = oracle->getCallArg(script, argc, 0, pc);
