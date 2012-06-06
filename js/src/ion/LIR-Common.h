@@ -2578,7 +2578,7 @@ class LArgumentsLength : public LInstructionHelper<1, 0, 0>
     }
 };
 
-// Load a value from a dense array's elements vector. Bail out if it's the hole value.
+// Load a value from the actual arguments.
 class LArgumentsGet : public LInstructionHelper<BOX_PIECES, 1, 0>
 {
   public:
