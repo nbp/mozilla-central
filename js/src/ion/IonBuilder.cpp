@@ -2671,6 +2671,10 @@ IonBuilder::jsop_notearg()
     MDefinition *def = current->pop();
     MPassArg *arg = MPassArg::New(def);
 
+    // We do not support giving the argument object as argument yet.
+    if (def->type() == MIRType_ArgObj)
+        return abort("NYI: escaping of the argument object.");
+
     current->add(arg);
     current->push(arg);
     return true;
@@ -2961,14 +2965,8 @@ IonBuilder::jsop_funcall(uint32 argc)
 
     // If |Function.prototype.call| may be overridden, don't optimize callsite.
     RootedFunction native(cx, getSingleCallTarget(argc, pc));
-    if (native && native->isNative()) {
-        if (native->native() == &js_fun_apply)
-            return abort("NYI: fun.apply with arguments.");
-        if (native->native() != &js_fun_call)
-            return makeCall(native, argc, false);
-    } else {
+    if (!native || !native->isNative() || native->native() != &js_fun_call)
         return makeCall(native, argc, false);
-    }
 
     // Extract call target.
     types::TypeSet *funTypes = oracle->getCallArg(script, argc, 0, pc);
