@@ -4395,10 +4395,27 @@ IonBuilder::jsop_arguments_getelem()
 bool
 IonBuilder::jsop_arguments_setelem()
 {
-    MDefinition *val = current->pop();
+    MDefinition *value = current->pop();
     MDefinition *idx = current->pop();
-    MDefinition *obj = current->pop();
-    return abort("NYI arguments[]=");
+    MDefinition *args = current->pop();
+
+    // To ensure that we are not looking above the number of actual arguments.
+    MArgumentsLength *length = MArgumentsLength::New(args);
+    current->add(length);
+
+    // Ensure idx is an integer.
+    MToInt32 *index = MToInt32::New(idx);
+    current->add(index);
+
+    // Bailouts if we read more than the number of actual arguments.
+    MBoundsCheck *check = MBoundsCheck::New(index, length);
+    current->add(check);
+
+    MArgumentsSet *ins = MArgumentsSet::New(index, value);
+    current->add(ins);
+    current->push(value);
+
+    return resumeAfter(ins);
 }
 
 inline types::TypeSet *

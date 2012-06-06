@@ -4373,6 +4373,43 @@ class MArgumentsGet
    }
 };
 
+// This MIR instruction is used to get an argument from the actual arguments.
+class MArgumentsSet
+  : public MAryInstruction<2>,
+    public MixPolicy<IntPolicy<0>, BoxPolicy<1> >
+{
+    MArgumentsSet(MDefinition *index, MDefinition *value)
+    {
+        initOperand(0, index);
+        initOperand(1, value);
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(ArgumentsSet);
+
+    static MArgumentsSet *New(MDefinition *index, MDefinition *value) {
+        return new MArgumentsSet(index, value);
+    }
+
+    MDefinition *index() const {
+        return getOperand(0);
+    }
+    MDefinition *value() const {
+        return getOperand(1);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    bool congruentTo(MDefinition *const &ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::Store(AliasSet::ActualArgs);
+   }
+};
+
 // Given a value, guard that the value is in a particular TypeSet, then returns
 // that value.
 class MTypeBarrier : public MUnaryInstruction

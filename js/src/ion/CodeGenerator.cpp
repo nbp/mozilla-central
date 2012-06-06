@@ -2068,6 +2068,25 @@ CodeGenerator::visitArgumentsGet(LArgumentsGet *lir)
 }
 
 bool
+CodeGenerator::visitArgumentsSet(LArgumentsSet *lir)
+{
+    ValueOperand operand = ToValue(lir, LArgumentsSet::Value);
+    const LAllocation *index = lir->index();
+    size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
+
+    if (index->isConstant()) {
+        uint8 i = index->toConstant()->toInt32();
+        Address argPtr(StackPointer, sizeof(Value*) * i + argvOffset);
+        masm.storeValue(operand, argPtr);
+    } else {
+        Register i = ToRegister(index);
+        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value*)), argvOffset);
+        masm.storeValue(operand, argPtr);
+    }
+    return true;
+}
+
+bool
 CodeGenerator::generate()
 {
     JSContext *cx = gen->cx;

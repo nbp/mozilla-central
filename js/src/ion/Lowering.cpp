@@ -1570,6 +1570,17 @@ LIRGenerator::visitArgumentsGet(MArgumentsGet *ins)
 }
 
 bool
+LIRGenerator::visitArgumentsSet(MArgumentsSet *ins)
+{
+    LArgumentsSet *lir = new LArgumentsSet(useRegisterOrConstant(ins->index()));
+    if (!useBox(lir, LArgumentsSet::Value, ins->value()))
+        return false;
+    if (!add(lir, ins))
+        return false;
+    return assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitThrow(MThrow *ins)
 {
     MDefinition *value = ins->getOperand(0);

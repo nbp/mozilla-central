@@ -147,6 +147,7 @@ namespace ion {
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
     _(ArgumentsGet)                                                         \
+    _(ArgumentsSet)                                                         \
     _(Floor)                                                                \
     _(Round)                                                                \
     _(InterruptCheck)

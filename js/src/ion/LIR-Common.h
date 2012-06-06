@@ -2593,6 +2593,22 @@ class LArgumentsGet : public LInstructionHelper<BOX_PIECES, 1, 0>
     }
 };
 
+// Store a value in the actual arguments.
+class LArgumentsSet : public LInstructionHelper<0, 1 + BOX_PIECES, 0>
+{
+  public:
+    LIR_HEADER(ArgumentsSet);
+
+    LArgumentsSet(const LAllocation &index) {
+        setOperand(0, index);
+    }
+
+    static const size_t Value = 1;
+    const LAllocation *index() {
+        return getOperand(0);
+    }
+};
+
 // Guard that a value is in a TypeSet.
 class LTypeBarrier : public LInstructionHelper<BOX_PIECES, BOX_PIECES, 1>
 {

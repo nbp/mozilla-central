@@ -172,6 +172,7 @@
     _(StringLength)                 \
     _(ArgumentsLength)              \
     _(ArgumentsGet)                 \
+    _(ArgumentsSet)                 \
     _(TypeOfV)                      \
     _(ToIdV)                        \
     _(Floor)                        \

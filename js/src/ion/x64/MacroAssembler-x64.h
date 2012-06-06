@@ -124,6 +124,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void storeValue(ValueOperand val, const Address &dest) {
         storeValue(val, Operand(dest));
     }
+    void storeValue(ValueOperand val, const BaseIndex &dest) {
+        storeValue(val, Operand(dest));
+    }
     template <typename T>
     void storeValue(JSValueType type, Register reg, const T &dest) {
         boxValue((JSValueShiftedTag)JSVAL_TYPE_TO_SHIFTED_TAG(type),
@@ -136,9 +139,6 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         movq(ImmWord(jv.asBits), ScratchReg);
         writeDataRelocation(val);
         movq(ScratchReg, Operand(dest));
-    }
-    void storeValue(ValueOperand val, BaseIndex dest) {
-        storeValue(val, Operand(dest));
     }
     void loadValue(Operand src, ValueOperand val) {
         movq(src, val.valueReg());
