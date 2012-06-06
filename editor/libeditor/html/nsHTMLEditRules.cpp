@@ -514,20 +514,17 @@ nsHTMLEditRules::AfterEditInner(nsEditor::OperationID action,
 }
 
 
-NS_IMETHODIMP 
-nsHTMLEditRules::WillDoAction(nsISelection *aSelection, 
-                              nsRulesInfo *aInfo, 
-                              bool *aCancel, 
-                              bool *aHandled)
+NS_IMETHODIMP
+nsHTMLEditRules::WillDoAction(nsTypedSelection* aSelection,
+                              nsRulesInfo* aInfo,
+                              bool* aCancel,
+                              bool* aHandled)
 {
-  NS_ENSURE_TRUE(aInfo && aCancel && aHandled, NS_ERROR_NULL_POINTER);
-#if defined(DEBUG_ftang)
-  printf("nsHTMLEditRules::WillDoAction action = %d\n", aInfo->action);
-#endif
+  MOZ_ASSERT(aInfo && aCancel && aHandled);
 
   *aCancel = false;
   *aHandled = false;
-    
+
   // my kingdom for dynamic cast
   nsTextRulesInfo *info = static_cast<nsTextRulesInfo*>(aInfo);
 
@@ -539,56 +536,39 @@ nsHTMLEditRules::WillDoAction(nsISelection *aSelection,
     return nsTextEditRules::WillDoAction(aSelection, aInfo, aCancel, aHandled);
   }
 
-  nsCOMPtr<nsIDOMRange> domRange;
-  nsresult rv = aSelection->GetRangeAt(0, getter_AddRefs(domRange));
-  NS_ENSURE_SUCCESS(rv, rv);
+  // Nothing to do if there's no selection to act on
+  if (!aSelection) {
+    return NS_OK;
+  }
+  NS_ENSURE_TRUE(aSelection->GetRangeCount(), NS_OK);
 
-  nsCOMPtr<nsIDOMNode> selStartNode;
-  rv = domRange->GetStartContainer(getter_AddRefs(selStartNode));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<nsRange> range = aSelection->GetRangeAt(0);
+  nsCOMPtr<nsINode> selStartNode = range->GetStartParent();
 
-  if (!mHTMLEditor->IsModifiableNode(selStartNode))
-  {
+  if (!mHTMLEditor->IsModifiableNode(selStartNode)) {
     *aCancel = true;
-
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDOMNode> selEndNode;
-  rv = domRange->GetEndContainer(getter_AddRefs(selEndNode));
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsCOMPtr<nsINode> selEndNode = range->GetEndParent();
 
-  if (selStartNode != selEndNode)
-  {
-    if (!mHTMLEditor->IsModifiableNode(selEndNode))
-    {
+  if (selStartNode != selEndNode) {
+    if (!mHTMLEditor->IsModifiableNode(selEndNode)) {
       *aCancel = true;
-
       return NS_OK;
     }
 
-    nsRange* range = static_cast<nsRange*>(domRange.get());
-    nsCOMPtr<nsIDOMNode> ancestor =
-      do_QueryInterface(range->GetCommonAncestor());
-    if (!mHTMLEditor->IsModifiableNode(ancestor))
-    {
+    if (!mHTMLEditor->IsModifiableNode(range->GetCommonAncestor())) {
       *aCancel = true;
-
       return NS_OK;
     }
   }
 
-  switch (info->action)
-  {
+  switch (info->action) {
     case nsEditor::kOpInsertText:
     case nsEditor::kOpInsertIMEText:
-      return WillInsertText(info->action,
-                            aSelection, 
-                            aCancel, 
-                            aHandled,
-                            info->inString,
-                            info->outString,
-                            info->maxLength);
+      return WillInsertText(info->action, aSelection, aCancel, aHandled,
+                            info->inString, info->outString, info->maxLength);
     case nsEditor::kOpLoadHTML:
       return WillLoadHTML(aSelection, aCancel);
     case nsEditor::kOpInsertBreak:
@@ -597,7 +577,8 @@ nsHTMLEditRules::WillDoAction(nsISelection *aSelection,
       return WillDeleteSelection(aSelection, info->collapsedAction,
                                  info->stripWrappers, aCancel, aHandled);
     case nsEditor::kOpMakeList:
-      return WillMakeList(aSelection, info->blockType, info->entireList, info->bulletType, aCancel, aHandled);
+      return WillMakeList(aSelection, info->blockType, info->entireList,
+                          info->bulletType, aCancel, aHandled);
     case nsEditor::kOpIndent:
       return WillIndent(aSelection, aCancel, aHandled);
     case nsEditor::kOpOutdent:
@@ -613,7 +594,8 @@ nsHTMLEditRules::WillDoAction(nsISelection *aSelection,
     case nsEditor::kOpRemoveList:
       return WillRemoveList(aSelection, info->bOrdered, aCancel, aHandled);
     case nsEditor::kOpMakeDefListItem:
-      return WillMakeDefListItem(aSelection, info->blockType, info->entireList, aCancel, aHandled);
+      return WillMakeDefListItem(aSelection, info->blockType, info->entireList,
+                                 aCancel, aHandled);
     case nsEditor::kOpInsertElement:
       return WillInsert(aSelection, aCancel);
     case nsEditor::kOpDecreaseZIndex:
@@ -621,11 +603,12 @@ nsHTMLEditRules::WillDoAction(nsISelection *aSelection,
     case nsEditor::kOpIncreaseZIndex:
       return WillRelativeChangeZIndex(aSelection, 1, aCancel, aHandled);
     default:
-      return nsTextEditRules::WillDoAction(aSelection, aInfo, aCancel, aHandled);
+      return nsTextEditRules::WillDoAction(aSelection, aInfo,
+                                           aCancel, aHandled);
   }
 }
-  
-  
+
+
 NS_IMETHODIMP 
 nsHTMLEditRules::DidDoAction(nsISelection *aSelection,
                              nsRulesInfo *aInfo, nsresult aResult)
@@ -7229,51 +7212,60 @@ nsHTMLEditRules::CacheInlineStyles(nsIDOMNode *aNode)
 }
 
 
-nsresult 
+nsresult
 nsHTMLEditRules::ReapplyCachedStyles()
 {
-  // The idea here is to examine our cached list of styles
-  // and see if any have been removed.  If so, add typeinstate
-  // for them, so that they will be reinserted when new 
-  // content is added.
+  // The idea here is to examine our cached list of styles and see if any have
+  // been removed.  If so, add typeinstate for them, so that they will be
+  // reinserted when new content is added.
 
   // remember if we are in css mode
   bool useCSS = mHTMLEditor->IsCSSEnabled();
 
-  // get selection point
-  nsCOMPtr<nsISelection>selection;
-  nsresult res = mHTMLEditor->GetSelection(getter_AddRefs(selection));
-  NS_ENSURE_SUCCESS(res, res);
-  nsCOMPtr<nsIDOMNode> selNode;
-  PRInt32 selOffset;
-  res = mHTMLEditor->GetStartNodeAndOffset(selection, getter_AddRefs(selNode), &selOffset);
-  NS_ENSURE_SUCCESS(res, res);
+  // get selection point; if it doesn't exist, we have nothing to do
+  nsRefPtr<nsTypedSelection> selection = mHTMLEditor->GetTypedSelection();
+  MOZ_ASSERT(selection);
+  if (!selection->GetRangeCount()) {
+    // Nothing to do
+    return NS_OK;
+  }
+  nsCOMPtr<nsIContent> selNode =
+    do_QueryInterface(selection->GetRangeAt(0)->GetStartParent());
+  if (!selNode) {
+    // Nothing to do
+    return NS_OK;
+  }
 
-  for (PRInt32 j = 0; j < SIZE_STYLE_TABLE; ++j)
-  {
-    if (mCachedStyles[j].mPresent)
-    {
+  for (PRInt32 i = 0; i < SIZE_STYLE_TABLE; ++i) {
+    if (mCachedStyles[i].mPresent) {
       bool bFirst, bAny, bAll;
       bFirst = bAny = bAll = false;
-      
+
       nsAutoString curValue;
-      if (useCSS) // check computed style first in css case
-      {
-        mHTMLEditor->mHTMLCSSUtils->IsCSSEquivalentToHTMLInlineStyleSet(selNode, mCachedStyles[j].tag, &(mCachedStyles[j].attr),
-                                                    bAny, curValue, COMPUTED_STYLE_TYPE);
+      if (useCSS) {
+        // check computed style first in css case
+        bAny = mHTMLEditor->mHTMLCSSUtils->IsCSSEquivalentToHTMLInlineStyleSet(
+          selNode, mCachedStyles[i].tag, &(mCachedStyles[i].attr), curValue,
+          COMPUTED_STYLE_TYPE);
       }
-      if (!bAny) // then check typeinstate and html style
-      {
-        res = mHTMLEditor->GetInlinePropertyBase(mCachedStyles[j].tag, &(mCachedStyles[j].attr), &(mCachedStyles[j].value), 
-                                                        &bFirst, &bAny, &bAll, &curValue, false);
+      if (!bAny) {
+        // then check typeinstate and html style
+        nsresult res = mHTMLEditor->GetInlinePropertyBase(mCachedStyles[i].tag,
+                                                     &(mCachedStyles[i].attr),
+                                                     &(mCachedStyles[i].value),
+                                                     &bFirst, &bAny, &bAll,
+                                                     &curValue, false);
         NS_ENSURE_SUCCESS(res, res);
       }
-      // this style has disappeared through deletion.  Add it onto our typeinstate:
+      // this style has disappeared through deletion.  Add to our typeinstate:
       if (!bAny || IsStyleCachePreservingAction(mTheAction)) {
-        mHTMLEditor->mTypeInState->SetProp(mCachedStyles[j].tag, mCachedStyles[j].attr, mCachedStyles[j].value);
+        mHTMLEditor->mTypeInState->SetProp(mCachedStyles[i].tag,
+                                           mCachedStyles[i].attr,
+                                           mCachedStyles[i].value);
       }
     }
   }
+
   return NS_OK;
 }
 

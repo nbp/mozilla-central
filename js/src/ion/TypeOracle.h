@@ -67,7 +67,8 @@ enum MIRType
     MIRType_Slots,      // A slots vector
     MIRType_Elements,   // An elements vector
     MIRType_UpvarSlots, // Flat closure upvar slots
-    MIRType_StackFrame  // StackFrame pointer for OSR.
+    MIRType_StackFrame, // StackFrame pointer for OSR.
+    MIRType_ArgObj      // Argument object (0 is used to mark lazy args).
 };
 
 class TypeOracle
@@ -100,7 +101,7 @@ class TypeOracle
     virtual Unary unaryOp(JSScript *script, jsbytecode *pc) = 0;
     virtual Binary binaryOp(JSScript *script, jsbytecode *pc) = 0;
     virtual types::TypeSet *thisTypeSet(JSScript *script) { return NULL; }
-    virtual void getNewTypesAtJoinPoint(JSScript *script, jsbytecode *pc, Vector<MIRType> &slotTypes) { }
+    virtual bool getOsrTypes(jsbytecode *osrPc, Vector<MIRType> &slotTypes) { return true; }
     virtual types::TypeSet *parameterTypeSet(JSScript *script, size_t index) { return NULL; }
     virtual types::TypeSet *globalPropertyTypeSet(JSScript *script, jsbytecode *pc, jsid id) {
         return NULL;
@@ -239,7 +240,7 @@ class TypeInferenceOracle : public TypeOracle
     Unary unaryOp(JSScript *script, jsbytecode *pc);
     Binary binaryOp(JSScript *script, jsbytecode *pc);
     types::TypeSet *thisTypeSet(JSScript *script);
-    void getNewTypesAtJoinPoint(JSScript *script, jsbytecode *pc, Vector<MIRType> &slotTypes);
+    bool getOsrTypes(jsbytecode *osrPc, Vector<MIRType> &slotTypes);
     types::TypeSet *parameterTypeSet(JSScript *script, size_t index);
     types::TypeSet *globalPropertyTypeSet(JSScript *script, jsbytecode *pc, jsid id);
     types::TypeSet *propertyRead(JSScript *script, jsbytecode *pc);
@@ -362,6 +363,8 @@ StringFromMIRType(MIRType type)
       return "UpvarSlots";
     case MIRType_StackFrame:
       return "StackFrame";
+    case MIRType_ArgObj:
+      return "ArgumentsObject";
     default:
       JS_NOT_REACHED("Unknown MIRType.");
       return "";

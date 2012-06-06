@@ -419,8 +419,8 @@ class LCallGeneric : public LCallInstructionHelper<BOX_PIECES, 1, 2>
         JS_ASSERT(mir()->argc() >= 1);
         return mir()->argc() - 1; // |this| is not a formal argument.
     }
-    uint32 bytecodeArgc() const {
-        return mir()->bytecodeArgc();
+    uint32 numActualArgs() const {
+        return mir()->numActualArgs();
     }
 
     bool hasSingleTarget() const {
@@ -2564,6 +2564,32 @@ class LIteratorEnd : public LInstructionHelper<0, 1, 2>
     }
     MIteratorEnd *mir() const {
         return mir_->toIteratorEnd();
+    }
+};
+
+// Read the number of actual arguments.
+class LArgumentsLength : public LInstructionHelper<1, 0, 0>
+{
+  public:
+    LIR_HEADER(ArgumentsLength);
+
+    const LDefinition *output() {
+        return getDef(0);
+    }
+};
+
+// Load a value from a dense array's elements vector. Bail out if it's the hole value.
+class LArgumentsGet : public LInstructionHelper<BOX_PIECES, 1, 0>
+{
+  public:
+    LIR_HEADER(ArgumentsGet);
+    BOX_OUTPUT_ACCESSORS();
+
+    LArgumentsGet(const LAllocation &index) {
+        setOperand(0, index);
+    }
+    const LAllocation *index() {
+        return getOperand(0);
     }
 };
 

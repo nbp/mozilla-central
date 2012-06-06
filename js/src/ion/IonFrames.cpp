@@ -131,7 +131,7 @@ IonFrameIterator::callee() const
     }
 
     JS_ASSERT(isNative());
-    return exitFrame()->nativeVp()[0].toObject().toFunction();
+    return exitFrame()->nativeExit()->vp()[0].toObject().toFunction();
 }
 
 JSFunction *
@@ -187,7 +187,7 @@ Value *
 IonFrameIterator::nativeVp() const
 {
     JS_ASSERT(isNative());
-    return exitFrame()->nativeVp();
+    return exitFrame()->nativeExit()->vp();
 }
 
 Value *
@@ -403,6 +403,22 @@ MarkCalleeToken(JSTracer *trc, CalleeToken token)
     }
 }
 
+static inline uintptr_t
+ReadAllocation(const IonFrameIterator &frame, const LAllocation *a)
+{
+    if (a->isGeneralReg()) {
+        Register reg = a->toGeneralReg()->reg();
+        return frame.machineState().read(reg);
+    }
+    if (a->isStackSlot()) {
+        uint32 slot = a->toStackSlot()->slot();
+        return *frame.jsFrame()->slotRef(slot);
+    }
+    uint32 index = a->toArgument()->index();
+    uint8 *argv = reinterpret_cast<uint8 *>(frame.jsFrame()->argv());
+    return *reinterpret_cast<uintptr_t *>(argv + index);
+}
+
 static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
@@ -457,6 +473,19 @@ MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
         if (gcRegs.has(*iter))
             gc::MarkThingOrValueRoot(trc, spill, "ion-gc-spill");
     }
+
+#ifdef JS_NUNBOX32
+    LAllocation type, payload;
+    while (safepoint.getNunboxSlot(&type, &payload)) {
+        jsval_layout layout;
+        layout.s.tag = (JSValueTag)ReadAllocation(frame, &type);
+        layout.s.payload.uintptr = ReadAllocation(frame, &payload);
+
+        Value v = IMPL_TO_JSVAL(layout);
+        gc::MarkValueRoot(trc, &v, "ion-torn-value");
+        JS_ASSERT(v == IMPL_TO_JSVAL(layout));
+    }
+#endif
 }
 
 static void
@@ -474,9 +503,10 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
     // This correspond to the case where we have build a fake exit frame in
     // CodeGenerator.cpp which handle the case of a native function call. We
     // need to mark the argument vector of the function call.
-    if (footer->ionCode() == NULL) {
-        size_t len = frame.numActualArgs() + 2;
-        Value *vp = frame.exitFrame()->nativeVp();
+    if (frame.isNative()) {
+        IonNativeExitFrameLayout *native = frame.exitFrame()->nativeExit();
+        size_t len = native->argc() + 2;
+        Value *vp = native->vp();
         gc::MarkValueRootRange(trc, len, vp, "ion-native-args");
         return;
     }
@@ -493,9 +523,13 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
         switch (f->argRootType(explicitArg)) {
           case VMFunction::RootNone:
             break;
-          case VMFunction::RootObject:
-            gc::MarkObjectRoot(trc, reinterpret_cast<JSObject**>(argBase), "ion-vm-args");
+          case VMFunction::RootObject: {
+            // Sometimes we can bake in HandleObjects to NULL.
+            JSObject **pobj = reinterpret_cast<JSObject **>(argBase);
+            if (*pobj)
+                gc::MarkObjectRoot(trc, pobj, "ion-vm-args");
             break;
+          }
           case VMFunction::RootString:
           case VMFunction::RootPropertyName:
             gc::MarkStringRoot(trc, reinterpret_cast<JSString**>(argBase), "ion-vm-args");
@@ -652,6 +686,11 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
         return StringValue(reinterpret_cast<JSString *>(payload));
       case JSVAL_TYPE_OBJECT:
         return ObjectValue(*reinterpret_cast<JSObject *>(payload));
+      case JSVAL_TYPE_MAGIC:
+        // This is an argument object.
+        if (payload == 0)
+            return MagicValue(JS_OPTIMIZED_ARGUMENTS);
+        return ObjectValue(*reinterpret_cast<JSObject *>(payload));
       default:
         JS_NOT_REACHED("unexpected type - needs payload");
         return UndefinedValue();
@@ -777,6 +816,9 @@ InlineFrameIterator::findNextFrame()
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
     pc_ = script_->code + si_.pcOffset();
+#ifdef DEBUG
+    numActualArgs_ = 0xbad;
+#endif
 
     // This unfortunately is O(n*m), because we must skip over outer frames
     // before reading inner ones.
@@ -784,8 +826,11 @@ InlineFrameIterator::findNextFrame()
     for (unsigned i = 0; i < remaining; i++) {
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 
+        // Recover the number of actual arguments stored with the next frame.
+        uint32 numActualArgs = si_.nextNumActualArgs();
+
         // Skip over non-argument slots, as well as |this|.
-        unsigned skipCount = (si_.slots() - 1) - GET_ARGC(pc_) - 1;
+        unsigned skipCount = (si_.slots() - 1) - numActualArgs - 1;
         for (unsigned j = 0; j < skipCount; j++)
             si_.skip();
 
@@ -800,6 +845,7 @@ InlineFrameIterator::findNextFrame()
         callee_ = funval.toObject().toFunction();
         script_ = callee_->script();
         pc_ = script_->code + si_.pcOffset();
+        numActualArgs_ = numActualArgs;
     }
 
     framesRead_++;
@@ -891,16 +937,11 @@ InlineFrameIterator::thisObject() const
 unsigned
 InlineFrameIterator::numActualArgs() const
 {
-    // Skip the current frame and look at the caller's.
-    if (more()) {
-        InlineFrameIterator parent(*this);
-        ++parent;
-
-        // In the case of a JS frame, look up the pc from the snapshot.
-        JS_ASSERT(js_CodeSpec[*parent.pc()].format & JOF_INVOKE);
-
-        return GET_ARGC(parent.pc());
-    }
+    // The number of actual arguments of inline frames is stored inside the
+    // snapshot.  The number of arguments of the outer-most frame is stored in
+    // the Ion JS frame which is on the stack.
+    if (more())
+        return numActualArgs_;
 
     return frame_->numActualArgs();
 }
@@ -908,23 +949,11 @@ InlineFrameIterator::numActualArgs() const
 unsigned
 IonFrameIterator::numActualArgs() const
 {
-    IonFrameIterator parent(*this);
+    if (isScripted())
+        return jsFrame()->numActualArgs();
 
-    // Skip the current frame and look at the caller's.
-    do {
-        ++parent;
-    } while (!parent.done() && !parent.isScripted());
-
-    if (parent.isScripted()) {
-        // In the case of a JS frame, look up the pc from the snapshot.
-        InlineFrameIterator inlinedParent(&parent);
-        JS_ASSERT(js_CodeSpec[*inlinedParent.pc()].format & JOF_INVOKE);
-
-        return GET_ARGC(inlinedParent.pc());
-    }
-
-    JS_ASSERT(parent.done());
-    return activation_->entryfp()->numActualArgs();
+    JS_ASSERT(isNative());
+    return exitFrame()->nativeExit()->argc();
 }
 
 void

@@ -296,8 +296,7 @@ MConstant::New(const Value &v)
 }
 
 MConstant::MConstant(const js::Value &vp)
-  : value_(vp),
-    constantPoolIndex_(0)
+  : value_(vp)
 {
     setResultType(MIRTypeFromValue(vp));
     setMovable();
@@ -346,8 +345,8 @@ MConstant::printOpcode(FILE *fp)
       case MIRType_String:
         fprintf(fp, "string %p", (void *)value().toString());
         break;
-      case MIRType_Magic:
-        fprintf(fp, "magic");
+      case MIRType_ArgObj:
+        fprintf(fp, "lazy arguments");
         break;
       default:
         JS_NOT_REACHED("unexpected type");
@@ -384,9 +383,10 @@ MParameter::congruentTo(MDefinition * const &ins) const
 }
 
 MCall *
-MCall::New(JSFunction *target, size_t argc, size_t bytecodeArgc, bool construct)
+MCall::New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct)
 {
-    MCall *ins = new MCall(target, bytecodeArgc, construct);
+    JS_ASSERT(argc >= numActualArgs);
+    MCall *ins = new MCall(target, numActualArgs, construct);
     if (!ins->init(argc + NumNonArgumentOperands))
         return NULL;
     return ins;
@@ -1121,7 +1121,8 @@ MResumePoint::MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *cal
     stackDepth_(block->stackDepth()),
     pc_(pc),
     caller_(caller),
-    mode_(mode)
+    mode_(mode),
+    isFunCall_(false)
 {
 }
 

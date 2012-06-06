@@ -78,14 +78,14 @@ class JS_FRIEND_API(AbstractWrapper) : public IndirectProxyHandler
 };
 
 /* No-op wrapper handler base class. */
-class JS_FRIEND_API(Wrapper) : public AbstractWrapper
+class JS_FRIEND_API(DirectWrapper) : public AbstractWrapper
 {
   public:
-    explicit Wrapper(unsigned flags);
+    explicit DirectWrapper(unsigned flags);
 
     typedef enum { PermitObjectAccess, PermitPropertyAccess, DenyAccess } Permission;
 
-    virtual ~Wrapper();
+    virtual ~DirectWrapper();
 
     /* ES5 Harmony derived wrapper traps. */
     virtual bool has(JSContext *cx, JSObject *wrapper, jsid id, bool *bp) MOZ_OVERRIDE;
@@ -106,10 +106,10 @@ class JS_FRIEND_API(Wrapper) : public AbstractWrapper
 
     using AbstractWrapper::Action;
 
-    static Wrapper singleton;
+    static DirectWrapper singleton;
 
     static JSObject *New(JSContext *cx, JSObject *obj, JSObject *proto, JSObject *parent,
-                         Wrapper *handler);
+                         DirectWrapper *handler);
 
     using AbstractWrapper::wrappedObject;
     using AbstractWrapper::wrapperHandler;
@@ -122,8 +122,14 @@ class JS_FRIEND_API(Wrapper) : public AbstractWrapper
     static void *getWrapperFamily();
 };
 
+/* 
+ * This typedef is only here to avoid code churn in xpconnect. It will be
+ * removed as soon as the Wrapper base class lands.
+ */
+typedef DirectWrapper Wrapper;
+
 /* Base class for all cross compartment wrapper handlers. */
-class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
+class JS_FRIEND_API(CrossCompartmentWrapper) : public DirectWrapper
 {
   public:
     CrossCompartmentWrapper(unsigned flags);
@@ -159,7 +165,6 @@ class JS_FRIEND_API(CrossCompartmentWrapper) : public Wrapper
     virtual JSString *fun_toString(JSContext *cx, JSObject *wrapper, unsigned indent) MOZ_OVERRIDE;
     virtual bool defaultValue(JSContext *cx, JSObject *wrapper, JSType hint, Value *vp) MOZ_OVERRIDE;
     virtual bool iteratorNext(JSContext *cx, JSObject *wrapper, Value *vp);
-    virtual void trace(JSTracer *trc, JSObject *wrapper) MOZ_OVERRIDE;
 
     static CrossCompartmentWrapper singleton;
 };
@@ -184,7 +189,7 @@ class JS_FRIEND_API(SecurityWrapper) : public Base
     virtual bool regexp_toShared(JSContext *cx, JSObject *proxy, RegExpGuard *g) MOZ_OVERRIDE;
 };
 
-typedef SecurityWrapper<Wrapper> SameCompartmentSecurityWrapper;
+typedef SecurityWrapper<DirectWrapper> SameCompartmentSecurityWrapper;
 typedef SecurityWrapper<CrossCompartmentWrapper> CrossCompartmentSecurityWrapper;
 
 /*
@@ -233,7 +238,7 @@ UnwrapObject(JSObject *obj, bool stopAtOuter = true, unsigned *flagsp = NULL);
 JS_FRIEND_API(JSObject *)
 UnwrapObjectChecked(JSContext *cx, JSObject *obj);
 
-bool
+JS_FRIEND_API(bool)
 IsCrossCompartmentWrapper(const JSObject *obj);
 
 void

@@ -305,6 +305,12 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         return testPrimitive(cond, ScratchReg);
     }
 
+    Condition isMagic(Condition cond, const ValueOperand &src, JSWhyMagic why) {
+        uint64_t magic = MagicValue(why).asRawBits();
+        cmpPtr(src.valueReg(), ImmWord(magic));
+        return cond;
+    }
+
     void cmpPtr(const Register &lhs, const ImmWord rhs) {
         JS_ASSERT(lhs != ScratchReg);
         movq(rhs, ScratchReg);
@@ -382,12 +388,12 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         j(cond, label);
     }
 
-    CodeOffsetJump jumpWithPatch(Label *label) {
+    CodeOffsetJump jumpWithPatch(RepatchLabel *label) {
         JmpSrc src = jmpSrc(label);
         return CodeOffsetJump(size(), addPatchableJump(src, Relocation::HARDCODED));
     }
     template <typename S, typename T>
-    CodeOffsetJump branchPtrWithPatch(Condition cond, S lhs, T ptr, Label *label) {
+    CodeOffsetJump branchPtrWithPatch(Condition cond, S lhs, T ptr, RepatchLabel *label) {
         cmpPtr(lhs, ptr);
         JmpSrc src = jSrc(cond, label);
         return CodeOffsetJump(size(), addPatchableJump(src, Relocation::HARDCODED));
@@ -586,12 +592,24 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void unboxInt32(const Address &src, const Register &dest) {
         unboxInt32(Operand(src), dest);
     }
+
+    void unboxArgObjMagic(const ValueOperand &src, const Register &dest) {
+        unboxArgObjMagic(Operand(src.valueReg()), dest);
+    }
+    void unboxArgObjMagic(const Operand &src, const Register &dest) {
+        xorq(dest, dest);
+    }
+    void unboxArgObjMagic(const Address &src, const Register &dest) {
+        unboxArgObjMagic(Operand(src), dest);
+    }
+
     void unboxBoolean(const ValueOperand &src, const Register &dest) {
         movl(Operand(src.valueReg()), dest);
     }
     void unboxBoolean(const Operand &src, const Register &dest) {
         movl(src, dest);
     }
+
     void unboxDouble(const ValueOperand &src, const FloatRegister &dest) {
         movqsd(src.valueReg(), dest);
     }
@@ -782,6 +800,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     }
 
     void enterOsr(Register calleeToken, Register code) {
+        push(Imm32(0)); // num actual args.
         push(calleeToken);
         push(Imm32(MakeFrameDescriptor(0, IonFrame_Osr)));
         call(code);

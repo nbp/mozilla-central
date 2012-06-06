@@ -6,8 +6,7 @@
 #ifndef __nsCaretAccessible_h__
 #define __nsCaretAccessible_h__
 
-#include "NotificationController.h"
-#include "nsHyperTextAccessible.h"
+#include "HyperTextAccessible.h"
 
 #include "nsISelectionListener.h"
 
@@ -28,7 +27,7 @@
  * The caret accessible is owned by the RootAccessible for the top level window that it's in.
  * The RootAccessible needs to tell the nsCaretAccessible about focus changes via
  * setControlSelectionListener().
- * Each nsDocAccessible needs to tell the nsCaretAccessible owned by the root to
+ * Each DocAccessible needs to tell the nsCaretAccessible owned by the root to
  * listen for selection events via addDocSelectionListener() and then needs to remove the 
  * selection listener when the doc goes away via removeDocSelectionListener().
  */
@@ -118,7 +117,7 @@ private:
   // If it was on a control, then its control's selection. Otherwise, it's for
   // a document where the selection changed.
   nsCOMPtr<nsIWeakReference> mLastUsedSelection; // Weak ref to nsISelection
-  nsRefPtr<nsHyperTextAccessible> mLastTextAccessible;
+  nsRefPtr<HyperTextAccessible> mLastTextAccessible;
   PRInt32 mLastCaretOffset;
 
   mozilla::a11y::RootAccessible* mRootAccessible;

@@ -174,6 +174,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitIteratorNext(LIteratorNext *lir);
     bool visitIteratorMore(LIteratorMore *lir);
     bool visitIteratorEnd(LIteratorEnd *lir);
+    bool visitArgumentsLength(LArgumentsLength *lir);
+    bool visitArgumentsGet(LArgumentsGet *lir);
     bool visitCallSetProperty(LCallSetProperty *ins);
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);

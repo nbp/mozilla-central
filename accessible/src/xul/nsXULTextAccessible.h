@@ -6,18 +6,18 @@
 #ifndef _nsXULTextAccessible_H_
 #define _nsXULTextAccessible_H_
 
+#include "HyperTextAccessibleWrap.h"
 #include "nsBaseWidgetAccessible.h"
-#include "nsHyperTextAccessibleWrap.h"
 
 /**
  * Used for XUL description and label elements.
  */
-class nsXULTextAccessible : public nsHyperTextAccessibleWrap
+class nsXULTextAccessible : public HyperTextAccessibleWrap
 {
 public:
-  nsXULTextAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULTextAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
-  // nsAccessible
+  // Accessible
   virtual nsresult GetNameInternal(nsAString& aName);
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
@@ -31,18 +31,18 @@ class nsXULTooltipAccessible : public nsLeafAccessible
 {
 
 public:
-  nsXULTooltipAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULTooltipAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
-  // nsAccessible
+  // Accessible
   virtual mozilla::a11y::role NativeRole();
   virtual PRUint64 NativeState();
 };
 
-class nsXULLinkAccessible : public nsHyperTextAccessibleWrap
+class nsXULLinkAccessible : public HyperTextAccessibleWrap
 {
 
 public:
-  nsXULLinkAccessible(nsIContent* aContent, nsDocAccessible* aDoc);
+  nsXULLinkAccessible(nsIContent* aContent, DocAccessible* aDoc);
 
   NS_DECL_ISUPPORTS_INHERITED
 
@@ -50,7 +50,7 @@ public:
   NS_IMETHOD GetActionName(PRUint8 aIndex, nsAString& aName);
   NS_IMETHOD DoAction(PRUint8 aIndex);
 
-  // nsAccessible
+  // Accessible
   virtual void Value(nsString& aValue);
   virtual nsresult GetNameInternal(nsAString& aName);
   virtual mozilla::a11y::role NativeRole();

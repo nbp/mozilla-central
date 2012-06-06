@@ -1350,7 +1350,7 @@ nsHTMLInputElement::SetValueInternal(const nsAString& aValue,
         SetValueChanged(true);
       }
 
-      mInputData.mState->SetValue(value, aUserInput);
+      mInputData.mState->SetValue(value, aUserInput, aSetValueChanged);
 
       // This call might be useless in some situations because if the element is
       // a single line text control, nsTextEditorState::SetValue will call
@@ -3203,7 +3203,6 @@ nsHTMLInputElement::IntrinsicState() const
   }
 
   if (PlaceholderApplies() && HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder) &&
-      !nsContentUtils::IsFocusedContent((nsIContent*)(this)) &&
       IsValueEmpty()) {
     state |= NS_EVENT_STATE_MOZ_PLACEHOLDER;
   }
@@ -4075,8 +4074,7 @@ nsHTMLInputElement::OnValueChanged(bool aNotify)
   // :-moz-placeholder pseudo-class may change when the value changes.
   // However, we don't want to waste cycles if the state doesn't apply.
   if (PlaceholderApplies() &&
-      HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder) &&
-      !nsContentUtils::IsFocusedContent(this)) {
+      HasAttr(kNameSpaceID_None, nsGkAtoms::placeholder)) {
     UpdateState(aNotify);
   }
 }

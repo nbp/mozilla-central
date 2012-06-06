@@ -5,7 +5,20 @@
 #ifndef nsDOMQS_h__
 #define nsDOMQS_h__
 
+#include "mozilla/dom/ImageData.h"
 #include "nsDOMClassInfoID.h"
+#include "nsGenericHTMLElement.h"
+#include "nsHTMLCanvasElement.h"
+#include "nsHTMLImageElement.h"
+#include "nsHTMLVideoElement.h"
+#include "nsHTMLDocument.h"
+#include "nsICSSDeclaration.h"
+#include "nsIDOMWebGLRenderingContext.h"
+#include "nsSVGStylableElement.h"
+#include "WebGLContext.h"
+// WebGLContext pulls in windows.h, which defines random crap, so nuke
+// those defines.
+#include "qsWinUndefs.h"
 
 #define DEFINE_UNWRAP_CAST(_interface, _base, _bit)                           \
 template <>                                                                   \
@@ -117,6 +130,60 @@ xpc_qsUnwrapArg<nsGenericElement>(JSContext *cx,
     return rv;
 }
 
+inline nsresult
+xpc_qsUnwrapArg_HTMLElement(JSContext *cx,
+                            jsval v,
+                            nsIAtom *aTag,
+                            nsIContent **ppArg,
+                            nsISupports **ppArgRef,
+                            jsval *vp)
+{
+    nsIContent *elem;
+    jsval val;
+    nsresult rv = xpc_qsUnwrapArg<nsIContent>(cx, v, &elem, ppArgRef, &val);
+    if (NS_SUCCEEDED(rv)) {
+        if (elem->IsHTML(aTag)) {
+            *ppArg = elem;
+            *vp = val;
+        } else {
+            rv = NS_ERROR_XPC_BAD_CONVERT_JS;
+        }
+    }
+    return rv;
+}
+
+#define DEFINE_UNWRAP_CAST_HTML(_tag, _clazz)                                 \
+template <>                                                                   \
+inline nsresult                                                               \
+xpc_qsUnwrapArg<_clazz>(JSContext *cx,                                        \
+                        jsval v,                                              \
+                        _clazz **ppArg,                                       \
+                        nsISupports **ppArgRef,                               \
+                        jsval *vp)                                            \
+{                                                                             \
+    nsIContent *elem;                                                         \
+    nsresult rv = xpc_qsUnwrapArg_HTMLElement(cx, v, nsGkAtoms::_tag, &elem,  \
+                                              ppArgRef, vp);                  \
+    if (NS_SUCCEEDED(rv))                                                     \
+        *ppArg = static_cast<_clazz*>(elem);                                  \
+    return rv;                                                                \
+}                                                                             \
+                                                                              \
+template <>                                                                   \
+inline nsresult                                                               \
+xpc_qsUnwrapArg<_clazz>(JSContext *cx, jsval v, _clazz **ppArg,               \
+                        _clazz **ppArgRef, jsval *vp)                         \
+{                                                                             \
+    nsISupports* argRef = static_cast<nsIContent*>(*ppArgRef);                \
+    nsresult rv = xpc_qsUnwrapArg<_clazz>(cx, v, ppArg, &argRef, vp);         \
+    *ppArgRef = static_cast<_clazz*>(static_cast<nsIContent*>(argRef));       \
+    return rv;                                                                \
+}
+
+DEFINE_UNWRAP_CAST_HTML(canvas, nsHTMLCanvasElement)
+DEFINE_UNWRAP_CAST_HTML(img, nsHTMLImageElement)
+DEFINE_UNWRAP_CAST_HTML(video, nsHTMLVideoElement)
+
 inline nsISupports*
 ToSupports(nsContentList *p)
 {
@@ -127,6 +194,12 @@ inline nsISupports*
 ToCanonicalSupports(nsINode* p)
 {
     return p;
+}
+
+inline nsISupports*
+ToSupports(nsINode* p)
+{
+  return p;
 }
 
 inline nsISupports*

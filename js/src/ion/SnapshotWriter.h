@@ -68,7 +68,8 @@ class SnapshotWriter
 
   public:
     SnapshotOffset startSnapshot(uint32 frameCount, BailoutKind kind, bool resumeAfter);
-    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack);
+    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack,
+                    uint32 argc);
 #ifdef TRACK_SNAPSHOTS
     void trackFrame(uint32 pcOpcode, uint32 mirOpcode, uint32 mirId,
                                      uint32 lirOpcode, uint32 lirId);
@@ -82,6 +83,8 @@ class SnapshotWriter
     void addNullSlot();
     void addInt32Slot(int32 value);
     void addConstantPoolSlot(uint32 index);
+    void addArgObjSlot(const Register &reg);
+    void addArgObjSlot(int32 stackIndex);
 #if defined(JS_NUNBOX32)
     void addSlot(const Register &type, const Register &payload);
     void addSlot(const Register &type, int32 payloadStackIndex);

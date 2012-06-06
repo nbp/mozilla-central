@@ -7,15 +7,43 @@
 
 #ifdef ANDROID
 #define wrap(a) __wrap_ ## a
-#endif
-
-#if defined(XP_WIN) || defined(XP_MACOSX)
+#elif defined(XP_WIN) || defined(XP_MACOSX)
 #define wrap(a) je_ ## a
 #endif
 
 #ifdef wrap
 void *wrap(malloc)(size_t);
+void wrap(free)(void *);
+#endif
 
+#ifdef ANDROID
+/* operator new(unsigned int) */
+MOZ_EXPORT_API(void *)
+wrap(_Znwj)(unsigned int size)
+{
+  return wrap(malloc)(size);
+}
+/* operator new[](unsigned int) */
+MOZ_EXPORT_API(void *)
+wrap(_Znaj)(unsigned int size)
+{
+  return wrap(malloc)(size);
+}
+/* operator delete(void*) */
+MOZ_EXPORT_API(void)
+wrap(_ZdlPv)(void *ptr)
+{
+  wrap(free)(ptr);
+}
+/* operator delete[](void*) */
+MOZ_EXPORT_API(void)
+wrap(_ZdaPv)(void *ptr)
+{
+  wrap(free)(ptr);
+}
+#endif
+
+#ifdef wrap
 MOZ_EXPORT_API(char *)
 wrap(strndup)(const char *src, size_t len)
 {

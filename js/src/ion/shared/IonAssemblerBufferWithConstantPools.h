@@ -43,10 +43,10 @@
 #define jsion_ion_assembler_buffer_with_constant_pools_h__
 #include "ion/shared/IonAssemblerBuffer.h"
 #include "assembler/wtf/SegmentedVector.h"
-
+#include "ion/IonSpewer.h"
 namespace js {
 namespace ion {
-typedef SegmentedVector<BufferOffset, 512> LoadOffsets;
+typedef Vector<BufferOffset, 512, IonAllocPolicy> LoadOffsets;
 
 struct Pool {
     const int maxOffset;
@@ -60,6 +60,7 @@ struct Pool {
   public:
     const bool isBackref;
     const bool canDedup;
+    // "other" is the backwards half of this pool, it is held in another pool structure
     Pool *other;
     uint8 *poolData;
     uint32 numEntries;
@@ -84,7 +85,7 @@ struct Pool {
           bias(bias_), alignment(alignment_),
           isBackref(isBackref_), canDedup(canDedup_), other(other_),
           poolData(static_cast<uint8 *>(malloc(8*immSize))), numEntries(0),
-          buffSize(8), limitingUser(), limitingUsee(INT_MIN)
+          buffSize(8), limitingUser(), limitingUsee(INT_MIN), loadOffsets()
     {
     }
     static const int garbage=0xa5a5a5a5;
@@ -127,7 +128,11 @@ struct Pool {
     bool checkFullBackref(int poolOffset, int codeOffset) {
         if (!limitingUser.assigned())
             return false;
-        if (signed(limitingUser.getOffset() + bias - codeOffset + poolOffset + (numEntries - limitingUsee) * immSize) >= maxOffset)
+        signed int distance =
+            limitingUser.getOffset() + bias
+            - codeOffset + poolOffset +
+            (numEntries - limitingUsee + 1) * immSize;
+        if (distance >= maxOffset)
             return true;
         return false;
     }
@@ -216,7 +221,11 @@ struct Pool {
         start += immSize * numEntries;
         return start;
     }
+    uint32 getPoolSize() {
+        return immSize * numEntries;
+    }
 };
+
 
 template <int SliceSize, int InstBaseSize>
 struct BufferSliceTail : public BufferSlice<SliceSize> {
@@ -259,8 +268,43 @@ struct BufferSliceTail : public BufferSlice<SliceSize> {
 // Previously, This was all handled by the assembler, since the location
 // and size of pools were always known as soon as its location had been reached.
 
-template <int SliceSize, int InstBaseSize, class Inst, class Asm>
+// A class for indexing into constant pools.
+// Each time a pool entry is added, one of these is generated.
+// This can be supplied to read and write that entry after the fact.
+// And it can be used to get the address of the entry once the buffer
+// has been finalized, and an executable copy allocated.
+template <int SliceSize, int InstBaseSize, class Inst, class Asm, int poolKindBits>
 struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst> {
+  private:
+    int entryCount[1 << poolKindBits];
+    static const int offsetBits = 32 - poolKindBits;
+  public:
+    class PoolEntry {
+        template <int ss, int ibs, class i, class a, int pkb>
+        friend struct AssemblerBufferWithConstantPool;
+        uint32 offset_ : offsetBits;
+        uint32 kind_ : poolKindBits;
+        PoolEntry(int offset, int kind) : kind_(kind), offset_(offset) {
+        }
+      public:
+        uint32 encode() {
+            uint32 ret;
+            memcpy(&ret, this, sizeof(uint32));
+            return ret;
+        }
+        PoolEntry(uint32 bits) : offset_((1 << offsetBits) - 1 & bits),
+                                 kind_(bits >> offsetBits) {
+        }
+        PoolEntry() : offset_(-1), kind_(-1) {
+        }
+
+        uint32 poolKind() const {
+            return kind_;
+        }
+        uint32 offset() const {
+            return offset_;
+        }
+    };
   private:
     typedef BufferSliceTail<SliceSize, InstBaseSize> BufferSlice;
     typedef AssemblerBuffer<SliceSize, Inst> Parent;
@@ -272,7 +316,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
     // The size of a footer that is put in a pool after it is full.
     const int footerSize;
     // the number of sub-pools that we can allocate into.
-    const int numPoolKinds;
+    static const int numPoolKinds = 1 << poolKindBits;
 
     Pool *pools;
 
@@ -285,6 +329,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         int offset; // the number of instructions before the start of the pool
         int size;   // the size of the pool, including padding
         int finalPos; // the end of the buffer, in bytes from the beginning of the buffer
+        BufferSlice *slice;
     };
     PoolInfo *poolInfo;
     // we need to keep track of how large the pools are, so we can allocate
@@ -317,15 +362,18 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         return tmp;
     }
   public:
-    AssemblerBufferWithConstantPool(int guardSize_, int headerSize_, int footerSize_, int numPoolKinds_, Pool *pools_, int instBufferAlign_)
+    AssemblerBufferWithConstantPool(int guardSize_, int headerSize_, int footerSize_, Pool *pools_, int instBufferAlign_)
         : guardSize(guardSize_), headerSize(headerSize_),
-          footerSize(footerSize_), numPoolKinds(numPoolKinds_),
+          footerSize(footerSize_),
           pools(pools_),
           instBufferAlign(instBufferAlign_), numDumps(0),
           poolInfo(static_cast<PoolInfo*>(calloc(sizeof(PoolInfo), 1 << logBasePoolInfo))),
           poolSize(0), canNotPlacePool(0), inBackref(false),
           perforatedNode(NULL)
     {
+        for (int idx = 0; idx < numPoolKinds; idx++) {
+            entryCount[idx] = 0;
+        }
     }
     const PoolInfo & getInfo(int x) const {
         static const PoolInfo nil = {0,0,0};
@@ -390,9 +438,9 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         }
     }
 
-    void insertEntry(uint32 instSize, uint8 *inst, Pool *p, uint8 *data) {
+    BufferOffset insertEntry(uint32 instSize, uint8 *inst, Pool *p, uint8 *data, PoolEntry *pe = NULL) {
         if (this->oom())
-            return;
+            return BufferOffset();
         int token;
         // insert the pool value
         if (inBackref)
@@ -400,10 +448,21 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         else
             token = insertEntryForwards(instSize, inst, p, data);
         // now to get an instruction to write
-        if (p != NULL)
+        PoolEntry retPE;
+        if (p != NULL) {
+            int poolId = p - pools;
+            IonSpew(IonSpew_Pools, "Inserting entry (token %d) into pool %d", token, poolId);
             Asm::insertTokenIntoTag(instSize, inst, token);
+            JS_ASSERT(poolId < (1 << poolKindBits));
+            JS_ASSERT(poolId >= 0);
+            // Figure out the offset within like-kinded pool entries
+            retPE = PoolEntry(entryCount[poolId], poolId);
+            entryCount[poolId]++;
+        }
         // Now inst is a valid thing to insert into the instruction stream
-        this->putBlob(instSize, inst);
+        if (pe != NULL)
+            *pe = retPE;
+        return this->putBlob(instSize, inst);
     }
 
     uint32 insertEntryBackwards(uint32 instSize, uint8 *inst, Pool *p, uint8 *data) {
@@ -496,8 +555,8 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         }
         return p->insertEntry(data, this->nextOffset());
     }
-    void putInt(uint32 value) {
-        insertEntry(sizeof(uint32) / sizeof(uint8), (uint8*)&value, NULL, NULL);
+    BufferOffset putInt(uint32 value) {
+        return insertEntry(sizeof(uint32) / sizeof(uint8), (uint8*)&value, NULL, NULL);
     }
     // Mark the current section as an area where we can
     // later go to dump a pool
@@ -521,6 +580,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         perforatedNode = *getTail();
         perforation = this->nextOffset();
         Parent::perforate();
+        IonSpew(IonSpew_Pools, "Adding a perforation at offset %d", perforation.getOffset());
     }
 
     // After a pool is finished, no more elements may be added to it. During this phase, we
@@ -564,6 +624,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         ret.offset = perfOffset;
         ret.size = finOffset - initOffset;
         ret.finalPos = finOffset;
+        ret.slice = perforatedNode;
         return ret;
     }
     void finishPool() {
@@ -571,6 +632,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         // is being filled in. The backwards half of the pool is always in a state
         // where it is sane. Everything that needs to be done here is for "sanity's sake".
         // The per-buffer pools need to be reset, and we need to record the size of the pool.
+        IonSpew(IonSpew_Pools, "Finishing pool %d", numDumps);
         JS_ASSERT(inBackref);
         PoolInfo newPoolInfo = getPoolData();
         if (newPoolInfo.size == 0) {
@@ -579,6 +641,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             new (&perforation) BufferOffset();
             perforatedNode = NULL;
             inBackref = false;
+            IonSpew(IonSpew_Pools, "Aborting because the pool is empty");
             // Bail out early, since we don't want to even pretend these pools exist.
             return;
         }
@@ -591,9 +654,6 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
                 return;
             }
         }
-        poolInfo[numDumps] = newPoolInfo;
-        poolSize += poolInfo[numDumps].size;
-        numDumps++;
 
         // In order to figure out how to fix up the loads for the second half of the pool
         // we need to find where the bits of the pool that have been implemented end.
@@ -605,12 +665,20 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             poolOffset=pools[poolIdx].align(poolOffset);
             poolOffset+=pools[poolIdx].numEntries * pools[poolIdx].immSize;
         }
+        LoadOffsets outcasts[1 << poolKindBits];
+        uint8 *outcastEntries[1 << poolKindBits];
         // All of the pool loads referred to by this code are going to
         // need fixing up here.
+        int skippedBytes = 0;
         for (int poolIdx = numPoolKinds-1; poolIdx >= 0; poolIdx--) {
             Pool *p =  pools[poolIdx].other;
             JS_ASSERT(p != NULL);
-            int idx = 0;
+            int idx = p->numEntries-1;
+            // Allocate space for tracking information that needs to be propagated to the next pool
+            // as well as space for quickly updating the pool entries in the current pool to remove
+            // the entries that don't actually fit.  I probably should change this over to a vector
+            outcastEntries[poolIdx] = new uint8[p->getPoolSize()];
+            bool *preservedEntries = new bool[p->numEntries];
             // Hacks on top of Hacks!
             // the patching code takes in the address of the instruction to be patched,
             // and the "address" of the element in the pool that we want to load.
@@ -623,23 +691,57 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             // eventually. We will want to provide the fixup function with a method to
             // convert from a 'token' into a pool offset.
             poolOffset = p->align(poolOffset);
+            int numSkips = 0;
             int fakePoolOffset = poolOffset - pools[poolIdx].numEntries * pools[poolIdx].immSize;
-            for (LoadOffsets::Iterator iter = p->loadOffsets.begin();
-                 iter != p->loadOffsets.end(); ++iter, ++idx)
+            for (BufferOffset *iter = p->loadOffsets.end()-1;
+                 iter != p->loadOffsets.begin()-1; --iter, --idx)
             {
+
+                IonSpew(IonSpew_Pools, "Linking entry %d in pool %d", idx, poolIdx);
                 JS_ASSERT(iter->getOffset() >= perforation.getOffset());
                 // Everything here is known, we can safely do the necessary substitutions
                 Inst * inst = this->getInst(*iter);
                 // Manually compute the offset, including a possible bias.
                 // Also take into account the whole size of the pool that is being placed.
-                int codeOffset = fakePoolOffset - iter->getOffset() - newPoolInfo.size;
+                int codeOffset = fakePoolOffset - iter->getOffset() - newPoolInfo.size + numSkips * p->immSize - skippedBytes;
                 // That is, patchConstantPoolLoad wants to be handed the address of the
                 // pool entry that is being loaded.  We need to do a non-trivial amount
                 // of math here, since the pool that we've made does not actually reside there
                 // in memory.
-                Asm::patchConstantPoolLoad(inst, (uint8*)inst + codeOffset - magicAlign);
+                IonSpew(IonSpew_Pools, "Fixing offset to %d", codeOffset - magicAlign);
+                if (!Asm::patchConstantPoolLoad(inst, (uint8*)inst + codeOffset - magicAlign)) {
+                    // NOTE: if removing this entry happens to change the alignment of the next
+                    // block, chances are you will have a bad time.
+                    // ADDENDUM: this CANNOT happen on ARM, because the only elements that
+                    // fall into this case are doubles loaded via vfp, but they will also be
+                    // the last pool, which means it cannot affect the alignment of any other
+                    // Sub Pools.
+                    IonSpew(IonSpew_Pools, "***Offset was still out of range!***", codeOffset - magicAlign);
+                    outcasts[poolIdx].append(iter->getOffset());
+                    memcpy(&outcastEntries[poolIdx][numSkips * p->immSize], &p->poolData[idx * p->immSize], p->immSize);
+                    numSkips++;
+                } else {
+                    preservedEntries[idx] = true;
+                }
+            }
+            // remove the elements of the pool that should not be there (YAY, MEMCPY)
+            int idxDest;
+            // If no elements were skipped, no expensive copy is necessary.
+            if (numSkips != 0) {
+                for (idx = 0; idx < p->numEntries; idx++) {
+                    if (preservedEntries[idx]) {
+                        if (idx != idxDest) {
+                            memcpy(&p->poolData[idxDest * p->immSize],
+                                   &p->poolData[idx * p->immSize],
+                                   p->immSize);
+                        }
+                        idxDest++;
+                    }
+                }
+                p->numEntries -= numSkips;
             }
             poolOffset += p->numEntries * p->immSize;
+            delete[] preservedEntries;
         }
         // bind the current pool to the perforation point.
         Pool **tmp = &perforatedNode->data;
@@ -648,6 +750,13 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             this->fail_oom();
             return;
         }
+        // The above operations may have changed the size of pools!
+        // recalibrate the size of the pool.
+        newPoolInfo = getPoolData();
+        poolInfo[numDumps] = newPoolInfo;
+        poolSize += poolInfo[numDumps].size;
+        numDumps++;
+
         memcpy(*tmp, pools, sizeof(Pool) * numPoolKinds);
 
         // reset everything to the state that it was in when we started
@@ -660,17 +769,61 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         new (&perforation) BufferOffset();
         perforatedNode = NULL;
         inBackref = false;
+
+        // Now that the backwards pool has been emptied, and a new forward pool
+        // has been allocated, it is time to populate the new forward pool with
+        // any entries that couldn't fit in the backwards pool.
+        for (int poolIdx = 0; poolIdx < numPoolKinds; poolIdx++) {
+            // Technically, the innermost pool will never have this issue, but it is easier
+            // to just handle this case.
+            // Since the pool entry was filled back-to-front, and in the next buffer, the elements
+            // should be front-to-back, this insertion also needs to proceed backwards
+            int idx = outcasts[poolIdx].length();
+            for (BufferOffset *iter = outcasts[poolIdx].end()-1;
+                 iter != outcasts[poolIdx].begin()-1;
+                 --iter, --idx) {
+                pools[poolIdx].updateLimiter(*iter);
+                Inst *inst = this->getInst(*iter);
+                Asm::insertTokenIntoTag(pools[poolIdx].instSize, (uint8*)inst, outcasts[poolIdx].end()-1-iter);
+                pools[poolIdx].insertEntry(&outcastEntries[poolIdx][idx*pools[poolIdx].immSize], *iter);
+            }
+            delete[] outcastEntries[poolIdx];
+        }
+        // this (*2) is not technically kosher, but I want to get this bug fixed.
+        // It should actually be guardSize + the size of the instruction that we're attempting
+        // to insert. Unfortunately that vaue is never passed in.  On ARM, these instructions
+        // are always 4 bytes, so guardSize is legit to use.
+        poolOffset = this->size() + guardSize * 2;
+        poolOffset += headerSize;
+        for (int poolIdx = 0; poolIdx < numPoolKinds; poolIdx++) {
+            // There can still be an awkward situation where the element that triggered the
+            // initial dump didn't fit into the pool backwards, and now, still does not fit into
+            // this pool.  Now it is necessary to go and dump this pool (note: this is almost
+            // certainly being called from dumpPool()).
+            poolOffset = pools[poolIdx].align(poolOffset);
+            if (pools[poolIdx].checkFull(poolOffset)) {
+                // ONCE AGAIN, UH-OH, TIME TO BAIL
+                dumpPool();
+                break;
+            }
+            poolOffset += pools[poolIdx].getPoolSize();
+        }
     }
 
     void dumpPool() {
         JS_ASSERT(!inBackref);
+        IonSpew(IonSpew_Pools, "Attempting to dump the pool");
         PoolInfo newPoolInfo = getPoolData();
         if (newPoolInfo.size == 0) {
             // If there is no data in the pool being dumped, don't dump anything.
             inBackref = true;
+            IonSpew(IonSpew_Pools, "Abort, no pool data");
             return;
         }
+
+        IonSpew(IonSpew_Pools, "Dumping %d bytes", newPoolInfo.size);
         if (!perforation.assigned()) {
+            IonSpew(IonSpew_Pools, "No Perforation point selected, generating a new one");
             // There isn't a perforation here, we need to dump the pool with a guard.
             BufferOffset branch = this->nextOffset();
             this->markNextAsBranch();
@@ -697,10 +850,11 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             // Any entries that happened to be after the place we put our pool will need to be
             // switched from the forward-referenced pool to the backward-refrenced pool.
             int idx = 0;
-            for (LoadOffsets::Iterator iter = p->loadOffsets.begin();
+            for (BufferOffset *iter = p->loadOffsets.begin();
                  iter != p->loadOffsets.end(); ++iter, ++idx)
             {
                 if (iter->getOffset() >= perforation.getOffset()) {
+                    IonSpew(IonSpew_Pools, "Pushing entry %d in pool %d into the backwards section.", idx, poolIdx);
                     // insert this into the rear part of the pool.
                     int offset = idx * p->immSize;
                     p->other->insertEntry(&p->poolData[offset], BufferOffset(*iter));
@@ -710,6 +864,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
                     beforePool = false;
                 } else {
                     JS_ASSERT(beforePool);
+                    IonSpew(IonSpew_Pools, "Entry %d in pool %d is before the pool.", idx, poolIdx);
                     // Everything here is known, we can safely do the necessary substitutions
                     Inst * inst = this->getInst(*iter);
                     // We need to manually compute the offset, including a possible bias.
@@ -718,6 +873,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
                     // pool entry that is being loaded.  We need to do a non-trivial amount
                     // of math here, since the pool that we've made does not actually reside there
                     // in memory.
+                    IonSpew(IonSpew_Pools, "Fixing offset to %d", codeOffset - magicAlign);
                     Asm::patchConstantPoolLoad(inst, (uint8*)inst + codeOffset - magicAlign);
                 }
             }
@@ -739,6 +895,9 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
     void patchBranch(Inst *i, int curpool, BufferOffset branch) {
         const Inst *ci = i;
         ptrdiff_t offset = Asm::getBranchOffset(ci);
+        // If the offset is 0, then there is nothing to do.
+        if (offset == 0)
+            return;
         int destOffset = branch.getOffset() + offset;
         if (offset > 0) {
             while (poolInfo[curpool].offset <= destOffset && curpool < numDumps) {
@@ -754,7 +913,7 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             }
             // Can't assert anything here, since the first pool may be after the target.
         }
-        Asm::retargetBranch(i, offset);
+        Asm::retargetNearBranch(i, offset);
     }
 
     // Mark the next instruction as a valid guard.  This means we can place a pool here.
@@ -770,15 +929,40 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
         perforate();
     }
     void enterNoPool() {
-        if (canNotPlacePool) {
-            // mark the last instruction, in case a sane dump site does not exist, and
-            // we believe we need to dump the pool in the middle of a no-pool zone.
+        if (!canNotPlacePool && !perforation.assigned()) {
+            // Embarassing mode: The Assembler requests the start of a no pool section
+            // and there have been no valid places that a pool could be dumped thusfar.
+            // If a pool were to fill up before this no-pool section ends, we need to go back
+            // in the stream and enter a pool guard after the fact.  This is feasable, but
+            // for now, it is easier to just allocate a junk instruction, default it to a nop, and
+            // finally, if the pool *is* needed, patch the nop to  apool guard.
+            // What the assembler requests:
+
+            // #request no-pool zone
+            // push pc
+            // blx r12
+            // #end no-pool zone
+
+            // however, if we would need to insert a pool, and there is no perforation point...
+            // so, actual generated code:
+
+            // b next; <= perforation point
+            // next:
+            // #beginning of no pool zone
+            // push pc
+            // blx r12
+
+            BufferOffset branch = this->nextOffset();
+            this->markNextAsBranch();
+            this->putBlob(guardSize, NULL);
+            BufferOffset afterPool = this->nextOffset();
+            Asm::writePoolGuard(branch, this->getInst(branch), afterPool);
+            markGuard();
         }
         canNotPlacePool++;
     }
     void leaveNoPool() {
         canNotPlacePool--;
-
     }
     int size() const {
         return uncheckedSize();
@@ -813,6 +997,92 @@ struct AssemblerBufferWithConstantPool : public AssemblerBuffer<SliceSize, Inst>
             return 0;
         return poolInfo[cur-1].finalPos - poolInfo[cur-1].offset;
     }
+
+  private:
+    void getPEPool(PoolEntry pe, Pool **retP, int32 * retOffset, int32 *poolNum) const {
+        int poolKind = pe.poolKind();
+        Pool *p = NULL;
+        uint32 offset = pe.offset() * pools[poolKind].immSize;
+        int idx;
+        for (idx = 0; idx < numDumps; idx++) {
+            p = &poolInfo[idx].slice->data[poolKind];
+            if (p->getPoolSize() > offset)
+                break;
+            offset -= p->getPoolSize();
+            p = p->other;
+            if (p->getPoolSize() > offset)
+                break;
+            offset -= p->getPoolSize();
+            p = NULL;
+        }
+        if (poolNum != NULL)
+            *poolNum = idx;
+        // If this offset is contained in any finished pool, forward or backwards, p now
+        // points to that pool, if it is not in any pool (should be in the currently building pool)
+        // then p is NULL.
+        if (p == NULL) {
+            p = &pools[poolKind];
+            if (offset >= p->getPoolSize()) {
+                p = p->other;
+                offset -= p->getPoolSize();
+            }
+        }
+        JS_ASSERT(p != NULL);
+        JS_ASSERT(offset < p->getPoolSize());
+        *retP = p;
+        *retOffset = offset;
+    }
+    uint8 *getPoolEntry(PoolEntry pe) {
+        Pool *p;
+        int32 offset;
+        getPEPool(pe, &p, &offset, NULL);
+        return &p->poolData[offset];
+    }
+    size_t getPoolEntrySize(PoolEntry pe) {
+        int idx = pe.poolKind();
+        return pools[idx].immSize;
+    }
+
+  public:
+    uint32 poolEntryOffset(PoolEntry pe) const {
+        Pool *realPool;
+        // offset is in bytes, not entries.
+        int32 offset;
+        int32 poolNum;
+        getPEPool(pe, &realPool, &offset, &poolNum);
+        PoolInfo *pi = &poolInfo[poolNum];
+        Pool *poolGroup = pi->slice->data;
+        uint32 start = pi->finalPos - pi->size + headerSize;
+        /// The order of the pools is:
+        // A B C C_Rev B_Rev A_Rev, so in the initial pass,
+        // go through the pools forwards, and in the second pass
+        // go through them in reverse order.
+        for (int idx = 0; idx < numPoolKinds; idx++) {
+            if (&poolGroup[idx] == realPool) {
+                return start + offset;
+            }
+            start = poolGroup[idx].addPoolSize(start);
+        }
+        for (int idx = numPoolKinds-1; idx >= 0; idx--) {
+            if (poolGroup[idx].other == realPool) {
+                return start + offset;
+            }
+            start = poolGroup[idx].other->addPoolSize(start);
+        }
+        JS_NOT_REACHED("Entry is not in a pool");
+        return -1;
+    }
+    void writePoolEntry(PoolEntry pe, uint8 *buff) {
+        size_t size = getPoolEntrySize(pe);
+        uint8 *entry = getPoolEntry(pe);
+        memcpy(entry, buff, size);
+    }
+    void readPoolEntry(PoolEntry pe, uint8 *buff) {
+        size_t size = getPoolEntrySize(pe);
+        uint8 *entry = getPoolEntry(pe);
+        memcpy(buff, entry, size);
+    }
+
 };
 } // ion
 } // js

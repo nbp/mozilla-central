@@ -6,7 +6,7 @@
 
 #include "HTMLListAccessible.h"
 
-#include "nsDocAccessible.h"
+#include "DocAccessible.h"
 #include "Role.h"
 #include "States.h"
 
@@ -20,7 +20,7 @@ using namespace mozilla::a11y;
 // HTMLListAccessible
 ////////////////////////////////////////////////////////////////////////////////
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLListAccessible, nsHyperTextAccessible)
+NS_IMPL_ISUPPORTS_INHERITED0(HTMLListAccessible, HyperTextAccessible)
 
 role
 HTMLListAccessible::NativeRole()
@@ -34,7 +34,7 @@ HTMLListAccessible::NativeRole()
 PRUint64
 HTMLListAccessible::NativeState()
 {
-  return nsHyperTextAccessibleWrap::NativeState() | states::READONLY;
+  return HyperTextAccessibleWrap::NativeState() | states::READONLY;
 }
 
 
@@ -43,8 +43,8 @@ HTMLListAccessible::NativeState()
 ////////////////////////////////////////////////////////////////////////////////
 
 HTMLLIAccessible::
-  HTMLLIAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
-  nsHyperTextAccessibleWrap(aContent, aDoc), mBullet(nsnull)
+  HTMLLIAccessible(nsIContent* aContent, DocAccessible* aDoc) :
+  HyperTextAccessibleWrap(aContent, aDoc), mBullet(nsnull)
 {
   mFlags |= eHTMLListItemAccessible;
 
@@ -56,14 +56,14 @@ HTMLLIAccessible::
   }
 }
 
-NS_IMPL_ISUPPORTS_INHERITED0(HTMLLIAccessible, nsHyperTextAccessible)
+NS_IMPL_ISUPPORTS_INHERITED0(HTMLLIAccessible, HyperTextAccessible)
 
 void
 HTMLLIAccessible::Shutdown()
 {
   mBullet = nsnull;
 
-  nsHyperTextAccessibleWrap::Shutdown();
+  HyperTextAccessibleWrap::Shutdown();
 }
 
 role
@@ -78,14 +78,14 @@ HTMLLIAccessible::NativeRole()
 PRUint64
 HTMLLIAccessible::NativeState()
 {
-  return nsHyperTextAccessibleWrap::NativeState() | states::READONLY;
+  return HyperTextAccessibleWrap::NativeState() | states::READONLY;
 }
 
 NS_IMETHODIMP
 HTMLLIAccessible::GetBounds(PRInt32* aX, PRInt32* aY,
                             PRInt32* aWidth, PRInt32* aHeight)
 {
-  nsresult rv = nsAccessibleWrap::GetBounds(aX, aY, aWidth, aHeight);
+  nsresult rv = AccessibleWrap::GetBounds(aX, aY, aWidth, aHeight);
   if (NS_FAILED(rv) || !mBullet || mBullet->IsInside())
     return rv;
 
@@ -109,7 +109,7 @@ HTMLLIAccessible::UpdateBullet(bool aHasBullet)
     return;
   }
 
-  nsDocAccessible* document = Document();
+  DocAccessible* document = Document();
   if (aHasBullet) {
     mBullet = new HTMLListBulletAccessible(mContent, mDoc);
     if (document->BindToDocument(mBullet, nsnull)) {
@@ -126,7 +126,7 @@ HTMLLIAccessible::UpdateBullet(bool aHasBullet)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// HTMLLIAccessible: nsAccessible protected
+// HTMLLIAccessible: Accessible protected
 
 void
 HTMLLIAccessible::CacheChildren()
@@ -135,7 +135,7 @@ HTMLLIAccessible::CacheChildren()
     AppendChild(mBullet);
 
   // Cache children from subtree.
-  nsAccessibleWrap::CacheChildren();
+  AccessibleWrap::CacheChildren();
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -159,7 +159,7 @@ HTMLListBulletAccessible::IsPrimaryForNode() const
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// HTMLListBulletAccessible: nsAccessible
+// HTMLListBulletAccessible: Accessible
 
 ENameValueFlag
 HTMLListBulletAccessible::Name(nsString &aName)
@@ -188,11 +188,7 @@ HTMLListBulletAccessible::NativeRole()
 PRUint64
 HTMLListBulletAccessible::NativeState()
 {
-  PRUint64 state = nsLeafAccessible::NativeState();
-
-  state &= ~states::FOCUSABLE;
-  state |= states::READONLY;
-  return state;
+  return nsLeafAccessible::NativeState() | states::READONLY;
 }
 
 void

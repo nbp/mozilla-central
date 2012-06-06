@@ -184,7 +184,6 @@
                               type="checkbox"
                               label="&viewTabsOnTop.label;"
                               accesskey="&viewTabsOnTop.accesskey;"/>
-                    <menuseparator/>
                     <menuitem id="menu_customizeToolbars"
                               label="&viewCustomizeToolbar.label;"
                               accesskey="&viewCustomizeToolbar.accesskey;"
@@ -536,6 +535,13 @@
                             accesskey="&inspectMenu.accesskey;"
                             key="key_inspect"
                             command="Tools:Inspect"/>
+                  <menuitem id="menu_responsiveUI"
+                            type="checkbox"
+                            hidden="true"
+                            label="&responsiveUI.label;"
+                            accesskey="&responsiveUI.accesskey;"
+                            key="key_responsiveUI"
+                            command="Tools:ResponsiveUI"/>
                   <menuitem id="menu_debugger"
                             hidden="true"
                             type="checkbox"

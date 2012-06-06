@@ -148,6 +148,11 @@ AliasAnalysis::analyze()
                         lastStore = store;
                 }
 
+                if (!lastStore) {
+                    IonSpew(IonSpew_Alias, "Load %d depends on nothing", def->id());
+                    continue;
+                }
+
                 def->setDependency(lastStore);
                 IonSpew(IonSpew_Alias, "Load %d depends on store %d", def->id(), lastStore->id());
 

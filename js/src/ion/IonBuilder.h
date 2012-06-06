@@ -204,6 +204,7 @@ class IonBuilder : public MIRGenerator
     bool traverseBytecode();
     ControlStatus snoopControlFlow(JSOp op);
     void markPhiBytecodeUses(jsbytecode *pc);
+    bool processIterators();
     bool inspectOpcode(JSOp op);
     uint32 readIndex(jsbytecode *pc);
     JSAtom *readAtom(jsbytecode *pc);
@@ -250,7 +251,7 @@ class IonBuilder : public MIRGenerator
     MBasicBlock *newBlock(MBasicBlock *predecessor, jsbytecode *pc);
     MBasicBlock *newBlock(MBasicBlock *predecessor, jsbytecode *pc, uint32 loopDepth);
     MBasicBlock *newBlockAfter(MBasicBlock *at, MBasicBlock *predecessor, jsbytecode *pc);
-    MBasicBlock *newOsrPreheader(MBasicBlock *header, jsbytecode *loopHead, jsbytecode *loopEntry);
+    MBasicBlock *newOsrPreheader(MBasicBlock *header, jsbytecode *loopEntry);
     MBasicBlock *newPendingLoopHeader(MBasicBlock *predecessor, jsbytecode *pc);
     MBasicBlock *newBlock(jsbytecode *pc) {
         return newBlock(NULL, pc);
@@ -333,6 +334,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_setelem_typed(int arrayType);
     bool jsop_length();
     bool jsop_length_fastPath();
+    bool jsop_arguments();
     bool jsop_arguments_length();
     bool jsop_arguments_getelem();
     bool jsop_arguments_setelem();
@@ -394,6 +396,7 @@ class IonBuilder : public MIRGenerator
     Vector<CFGState, 8, IonAllocPolicy> cfgStack_;
     Vector<ControlFlowInfo, 4, IonAllocPolicy> loops_;
     Vector<ControlFlowInfo, 0, IonAllocPolicy> switches_;
+    Vector<MInstruction *, 2, IonAllocPolicy> iterators_;
     TypeOracle *oracle;
     size_t inliningDepth;
 };

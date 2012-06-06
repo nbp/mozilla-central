@@ -16,7 +16,7 @@ using namespace mozilla::a11y;
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsLabelAccessible::
-  nsXFormsLabelAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsLabelAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -48,7 +48,7 @@ nsXFormsLabelAccessible::Description(nsString& aDescription)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsOutputAccessible::
-  nsXFormsOutputAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsOutputAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -65,7 +65,7 @@ nsXFormsOutputAccessible::NativeRole()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsTriggerAccessible::
-  nsXFormsTriggerAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsTriggerAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -114,12 +114,16 @@ nsXFormsTriggerAccessible::DoAction(PRUint8 aIndex)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsInputAccessible::
-  nsXFormsInputAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsInputAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsEditableAccessible(aContent, aDoc)
 {
 }
 
-NS_IMPL_ISUPPORTS_INHERITED3(nsXFormsInputAccessible, nsAccessible, nsHyperTextAccessible, nsIAccessibleText, nsIAccessibleEditableText)
+NS_IMPL_ISUPPORTS_INHERITED3(nsXFormsInputAccessible,
+                             Accessible,
+                             HyperTextAccessible,
+                             nsIAccessibleText,
+                             nsIAccessibleEditableText)
 
 role
 nsXFormsInputAccessible::NativeRole()
@@ -159,7 +163,7 @@ nsXFormsInputAccessible::DoAction(PRUint8 aIndex)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsInputBooleanAccessible::
-  nsXFormsInputBooleanAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsInputBooleanAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -227,7 +231,7 @@ nsXFormsInputBooleanAccessible::DoAction(PRUint8 aIndex)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsInputDateAccessible::
-  nsXFormsInputDateAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsInputDateAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsContainerAccessible(aContent, aDoc)
 {
 }
@@ -244,7 +248,7 @@ nsXFormsInputDateAccessible::NativeRole()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsSecretAccessible::
-  nsXFormsSecretAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsSecretAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsInputAccessible(aContent, aDoc)
 {
 }
@@ -273,7 +277,7 @@ nsXFormsSecretAccessible::Value(nsString& aValue)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsRangeAccessible::
-  nsXFormsRangeAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsRangeAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -366,7 +370,7 @@ nsXFormsRangeAccessible::GetCurrentValue(double *aCurrentValue)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsSelectAccessible::
-  nsXFormsSelectAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsSelectAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsContainerAccessible(aContent, aDoc)
 {
 }
@@ -393,7 +397,7 @@ nsXFormsSelectAccessible::NativeState()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsChoicesAccessible::
-  nsXFormsChoicesAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsChoicesAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsAccessible(aContent, aDoc)
 {
 }
@@ -422,7 +426,7 @@ nsXFormsChoicesAccessible::CacheChildren()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsSelectFullAccessible::
-  nsXFormsSelectFullAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsSelectFullAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsSelectableAccessible(aContent, aDoc)
 {
 }
@@ -445,7 +449,7 @@ nsXFormsSelectFullAccessible::CacheChildren()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsItemCheckgroupAccessible::
-  nsXFormsItemCheckgroupAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsItemCheckgroupAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsSelectableItemAccessible(aContent, aDoc)
 {
 }
@@ -487,7 +491,7 @@ nsXFormsItemCheckgroupAccessible::GetActionName(PRUint8 aIndex, nsAString& aName
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsItemRadiogroupAccessible::
-  nsXFormsItemRadiogroupAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsItemRadiogroupAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsSelectableItemAccessible(aContent, aDoc)
 {
 }
@@ -525,7 +529,7 @@ nsXFormsItemRadiogroupAccessible::GetActionName(PRUint8 aIndex, nsAString& aName
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsSelectComboboxAccessible::
-  nsXFormsSelectComboboxAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsSelectComboboxAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsSelectableAccessible(aContent, aDoc)
 {
 }
@@ -551,7 +555,13 @@ nsXFormsSelectComboboxAccessible::NativeState()
   else
     state |= states::COLLAPSED;
 
-  return state | states::HASPOPUP | states::FOCUSABLE;
+  return state | states::HASPOPUP;
+}
+
+PRUint64
+nsXFormsSelectComboboxAccessible::NativeInteractiveState() const
+{
+  return NativelyUnavailable() ? states::UNAVAILABLE : states::FOCUSABLE;
 }
 
 bool
@@ -566,7 +576,7 @@ nsXFormsSelectComboboxAccessible::CanHaveAnonChildren()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXFormsItemComboboxAccessible::
-  nsXFormsItemComboboxAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXFormsItemComboboxAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   nsXFormsSelectableItemAccessible(aContent, aDoc)
 {
 }
@@ -581,15 +591,17 @@ PRUint64
 nsXFormsItemComboboxAccessible::NativeState()
 {
   PRUint64 state = nsXFormsSelectableItemAccessible::NativeState();
-
-  if (state & states::UNAVAILABLE)
-    return state;
-
-  state |= states::SELECTABLE;
   if (IsSelected())
     state |= states::SELECTED;
 
   return state;
+}
+
+PRUint64
+nsXFormsItemComboboxAccessible::NativeInteractiveState() const
+{
+  return NativelyUnavailable() ?
+    states::UNAVAILABLE : states::FOCUSABLE | states::SELECTABLE;
 }
 
 NS_IMETHODIMP

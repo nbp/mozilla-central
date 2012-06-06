@@ -564,6 +564,8 @@ class LDefinition
             return LDefinition::GENERAL;
           case MIRType_StackFrame:
             return LDefinition::GENERAL;
+          case MIRType_ArgObj:
+            return LDefinition::GENERAL;
           default:
             JS_NOT_REACHED("unexpected type");
             return LDefinition::GENERAL;
@@ -976,18 +978,6 @@ class LSafepoint : public TempObject
     }
     SlotList &gcSlots() {
         return gcSlots_;
-    }
-
-    // spillRegs stand for all live registers which are spilled by saveLive.  It
-    // includes gc registers and all live registers not restored by the wrapper.
-    RegisterSet spillRegs() const {
-        RegisterSet wrapper =
-            RegisterSet(GeneralRegisterSet(Registers::WrapperMask),
-                        FloatRegisterSet(FloatRegisters::WrapperMask));
-        RegisterSet spills =
-            RegisterSet::Union(RegisterSet::Intersect(wrapper, liveRegs()),
-                               RegisterSet(gcRegs(), FloatRegisterSet()));
-        return spills;
     }
 
 #ifdef JS_NUNBOX32

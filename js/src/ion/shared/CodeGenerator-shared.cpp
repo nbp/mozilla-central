@@ -73,7 +73,7 @@ CodeGeneratorShared::generateOutOfLineCode()
         if (!gen->temp().ensureBallast())
             return false;
         masm.setFramePushed(outOfLineCode_[i]->framePushed());
-        masm.bind(outOfLineCode_[i]->entry());
+        outOfLineCode_[i]->bind(&masm);
 
         if (!outOfLineCode_[i]->generate(this))
             return false;
@@ -129,7 +129,6 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
           case MIRType_Object:
           case MIRType_Boolean:
           case MIRType_Double:
-          case MIRType_Magic:
           {
             LAllocation *payload = snapshot->payloadOfSlot(i);
             JSValueType type = ValueTypeFromMIRType(mir->type());
@@ -152,6 +151,23 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
                         return false;
                     snapshots_.addConstantPoolSlot(index);
                 }
+            }
+            break;
+          }
+          case MIRType_ArgObj:
+          {
+            LAllocation *payload = snapshot->payloadOfSlot(i);
+            if (payload->isMemory()) {
+                snapshots_.addArgObjSlot(ToStackIndex(payload));
+            } else if (payload->isGeneralReg()) {
+                snapshots_.addArgObjSlot(ToRegister(payload));
+            } else {
+                MConstant *constant = mir->toConstant();
+                uint32 index;
+
+                if (!graph.addConstantToPool(constant, &index))
+                    return false;
+                snapshots_.addConstantPoolSlot(index);
             }
             break;
           }
@@ -208,7 +224,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     FlattenedMResumePointIter mirOperandIter(snapshot->mir());
     if (!mirOperandIter.init())
         return false;
-    
+
     uint32 startIndex = 0;
     for (MResumePoint **it = mirOperandIter.begin(), **end = mirOperandIter.end();
          it != end;
@@ -220,7 +236,10 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         JSScript *script = block->info().script();
         jsbytecode *pc = mir->pc();
         uint32 exprStack = mir->stackDepth() - block->info().ninvoke();
-        snapshots_.startFrame(fun, script, pc, exprStack);
+        uint32 numActualArgs = 0;
+        if (it + 1 != end)
+            numActualArgs = mir->numActualArgs();
+        snapshots_.startFrame(fun, script, pc, exprStack, numActualArgs);
 
 #ifdef TRACK_SNAPSHOTS
         LInstruction *ins = instruction();
@@ -252,7 +271,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     snapshots_.endSnapshot();
 
     snapshot->setSnapshotOffset(offset);
-
+    
     return !snapshots_.oom();
 }
 
@@ -292,7 +311,7 @@ CodeGeneratorShared::encodeSafepoint(LSafepoint *safepoint)
     JS_ASSERT(safepoint->osiCallPointOffset());
 
     safepoints_.writeOsiCallPointOffset(safepoint->osiCallPointOffset());
-    safepoints_.writeGcRegs(safepoint->gcRegs(), safepoint->spillRegs().gprs());
+    safepoints_.writeGcRegs(safepoint->gcRegs(), safepoint->liveRegs().gprs());
     safepoints_.writeGcSlots(safepoint->gcSlots().length(), safepoint->gcSlots().begin());
 #ifdef JS_NUNBOX32
     safepoints_.writeValueSlots(safepoint->valueSlots().length(), safepoint->valueSlots().begin());

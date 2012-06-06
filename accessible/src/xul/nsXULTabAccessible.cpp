@@ -26,8 +26,8 @@ using namespace mozilla::a11y;
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXULTabAccessible::
-  nsXULTabAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
-  nsAccessibleWrap(aContent, aDoc)
+  nsXULTabAccessible(nsIContent* aContent, DocAccessible* aDoc) :
+  AccessibleWrap(aContent, aDoc)
 {
 }
 
@@ -66,7 +66,7 @@ NS_IMETHODIMP nsXULTabAccessible::DoAction(PRUint8 index)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// nsXULTabAccessible: nsAccessible
+// nsXULTabAccessible: Accessible
 
 role
 nsXULTabAccessible::NativeRole()
@@ -80,23 +80,9 @@ nsXULTabAccessible::NativeState()
   // Possible states: focused, focusable, unavailable(disabled), offscreen.
 
   // get focus and disable status from base class
-  PRUint64 state = nsAccessibleWrap::NativeState();
-
-  // In the past, tabs have been focusable in classic theme
-  // They may be again in the future
-  // Check style for -moz-user-focus: normal to see if it's focusable
-  state &= ~states::FOCUSABLE;
-
-  nsIFrame *frame = mContent->GetPrimaryFrame();
-  if (frame) {
-    const nsStyleUserInterface* ui = frame->GetStyleUserInterface();
-    if (ui->mUserFocus == NS_STYLE_USER_FOCUS_NORMAL)
-      state |= states::FOCUSABLE;
-  }
+  PRUint64 state = AccessibleWrap::NativeState();
 
   // Check whether the tab is selected
-  state |= states::SELECTABLE;
-  state &= ~states::SELECTED;
   nsCOMPtr<nsIDOMXULSelectControlItemElement> tab(do_QueryInterface(mContent));
   if (tab) {
     bool selected = false;
@@ -106,11 +92,18 @@ nsXULTabAccessible::NativeState()
   return state;
 }
 
+PRUint64
+nsXULTabAccessible::NativeInteractiveState() const
+{
+  PRUint64 state = Accessible::NativeInteractiveState();
+  return (state & states::UNAVAILABLE) ? state : state | states::SELECTABLE;
+}
+
 // nsIAccessible
 Relation
 nsXULTabAccessible::RelationByType(PRUint32 aType)
 {
-  Relation rel = nsAccessibleWrap::RelationByType(aType);
+  Relation rel = AccessibleWrap::RelationByType(aType);
   if (aType != nsIAccessibleRelation::RELATION_LABEL_FOR)
     return rel;
 
@@ -137,7 +130,7 @@ nsXULTabAccessible::RelationByType(PRUint32 aType)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXULTabsAccessible::
-  nsXULTabsAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
+  nsXULTabsAccessible(nsIContent* aContent, DocAccessible* aDoc) :
   XULSelectControlAccessible(aContent, aDoc)
 {
 }
@@ -173,8 +166,8 @@ nsXULTabsAccessible::GetNameInternal(nsAString& aName)
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXULTabpanelsAccessible::
-  nsXULTabpanelsAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
-  nsAccessibleWrap(aContent, aDoc)
+  nsXULTabpanelsAccessible(nsIContent* aContent, DocAccessible* aDoc) :
+  AccessibleWrap(aContent, aDoc)
 {
 }
 
@@ -190,8 +183,8 @@ nsXULTabpanelsAccessible::NativeRole()
 ////////////////////////////////////////////////////////////////////////////////
 
 nsXULTabpanelAccessible::
-  nsXULTabpanelAccessible(nsIContent* aContent, nsDocAccessible* aDoc) :
-  nsAccessibleWrap(aContent, aDoc)
+  nsXULTabpanelAccessible(nsIContent* aContent, DocAccessible* aDoc) :
+  AccessibleWrap(aContent, aDoc)
 {
 }
 
@@ -204,7 +197,7 @@ nsXULTabpanelAccessible::NativeRole()
 Relation
 nsXULTabpanelAccessible::RelationByType(PRUint32 aType)
 {
-  Relation rel = nsAccessibleWrap::RelationByType(aType);
+  Relation rel = AccessibleWrap::RelationByType(aType);
   if (aType != nsIAccessibleRelation::RELATION_LABELLED_BY)
     return rel;
 
