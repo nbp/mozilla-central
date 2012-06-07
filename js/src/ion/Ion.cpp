@@ -804,7 +804,7 @@ CheckFrame(StackFrame *fp)
         return false;
     }
 
-    if (fp->hasCallObj()) {
+    if (fp->hasCallObj() && fp->maybeFun() && !fp->fun()->isHeavyweight()) {
         // Functions with call objects aren't supported yet. To support them,
         // we need to fix bug 659577 which would prevent aliasing locals to
         // stack slots.
@@ -841,7 +841,6 @@ CheckFrame(StackFrame *fp)
         return false;
     }
 
-    JS_ASSERT_IF(fp->maybeFun(), !fp->fun()->isHeavyweight());
     return true;
 }
 
