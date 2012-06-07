@@ -345,6 +345,9 @@ MConstant::printOpcode(FILE *fp)
       case MIRType_String:
         fprintf(fp, "string %p", (void *)value().toString());
         break;
+      case MIRType_Magic:
+        fprintf(fp, "magic");
+        break;
       case MIRType_ArgObj:
         fprintf(fp, "lazy arguments");
         break;
