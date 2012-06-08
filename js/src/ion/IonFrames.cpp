@@ -821,11 +821,11 @@ InlineFrameIterator::findNextFrame()
     for (unsigned i = 0; i < remaining; i++) {
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 
-        // Recover the number of actual arguments stored with the next frame.
-        uint32 numActualArgs = si_.nextNumActualArgs();
+        // Recover the number of actual arguments from the script.
+        numActualArgs_ = GET_ARGC(pc_);
 
         // Skip over non-argument slots, as well as |this|.
-        unsigned skipCount = (si_.slots() - 1) - numActualArgs - 1;
+        unsigned skipCount = (si_.slots() - 1) - numActualArgs_ - 1;
         for (unsigned j = 0; j < skipCount; j++)
             si_.skip();
 
@@ -840,7 +840,6 @@ InlineFrameIterator::findNextFrame()
         callee_ = funval.toObject().toFunction();
         script_ = callee_->script();
         pc_ = script_->code + si_.pcOffset();
-        numActualArgs_ = numActualArgs;
     }
 
     framesRead_++;
@@ -932,9 +931,11 @@ InlineFrameIterator::thisObject() const
 unsigned
 InlineFrameIterator::numActualArgs() const
 {
-    // The number of actual arguments of inline frames is stored inside the
-    // snapshot.  The number of arguments of the outer-most frame is stored in
-    // the Ion JS frame which is on the stack.
+    // The number of actual arguments of inline frames is recovered by the
+    // iteration process. It is recovered from the bytecode because this
+    // property still hold since the for inlined frames. This property does not
+    // hold for the parent frame because it can have optimize a call to
+    // js_fun_call or js_fun_apply.
     if (more())
         return numActualArgs_;
 

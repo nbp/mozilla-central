@@ -4389,11 +4389,7 @@ class MResumePoint : public MNode
     uint32 stackDepth_;
     jsbytecode *pc_;
     MResumePoint *caller_;
-    Mode mode_:2;
-
-    // isFunCall remove one when set from the number of actual arguments.  This
-    // is usefull for cases where inlining matters.
-    bool isFunCall_:1;
+    Mode mode_;
 
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
     bool init(MBasicBlock *state);
@@ -4439,14 +4435,6 @@ class MResumePoint : public MNode
     }
     Mode mode() const {
         return mode_;
-    }
-    uint32 numActualArgs() const {
-        JS_ASSERT(mode_ == Outer && js_CodeSpec[*pc_].format & JOF_INVOKE);
-        return GET_ARGC(pc_) - (isFunCall_ ? 1 : 0);
-    }
-    void setFunCall() {
-        JS_ASSERT(!isFunCall_);
-        isFunCall_ = true;
     }
 };
 

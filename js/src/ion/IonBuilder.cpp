@@ -2688,12 +2688,8 @@ IonBuilder::jsop_call_inline(JSFunction *callee, uint32 argc, IonBuilder &inline
     if (!inlineResumePoint)
         return false;
 
-    // Make sure we can recover the actual number of arguments out of the resume
-    // point. This is used to recover overflow/underflow of arguments of inlined
-    // frames.
-    if (GET_ARGC(pc) - 1 == argc)
-        inlineResumePoint->setFunCall();
-    JS_ASSERT(argc == inlineResumePoint->numActualArgs());
+    // We do not inline JSOP_FUNCALL for now.
+    JS_ASSERT(argc == GET_ARGC(inlineResumePoint->pc()));
 
     // Gather up the arguments and |this| to the inline function.
     // Note that we leave the callee on the simulated stack for the
