@@ -875,6 +875,10 @@ Compile(JSContext *cx, JSScript *script, js::StackFrame *fp, jsbytecode *osrPc)
     JS_ASSERT(ion::IsEnabled(cx));
     JS_ASSERT_IF(osrPc != NULL, (JSOp)*osrPc == JSOP_LOOPENTRY);
 
+    // Skip if there is too much arguments.
+    if (fp->isFunctionFrame() && fp->numActualArgs() <= js_IonOptions.maxStackArg)
+        return Method_Skipped;
+
     if (cx->compartment->debugMode()) {
         IonSpew(IonSpew_Abort, "debugging");
         return Method_CantCompile;

@@ -108,6 +108,11 @@ struct IonOptions
     // Default: 10,240
     uint32 usesBeforeInlining;
 
+    // How many actual arguments are accepted on the C stack.
+    //
+    // Default: 4,096
+    uint32 maxStackArg;
+
     void setEagerCompilation() {
         usesBeforeCompile = 0;
 
@@ -125,7 +130,8 @@ struct IonOptions
         inlining(true),
         rangeAnalysis(true),
         usesBeforeCompile(40),
-        usesBeforeInlining(10240)
+        usesBeforeInlining(10240),
+        maxStackArg(4096)
     { }
 };
 
