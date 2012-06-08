@@ -1011,7 +1011,8 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
         // arguments.
         numActualArgs = fp->numActualArgs();
 
-        // We do not need to handle underflow because formal arguments are pad with |undefined| values but we need to distinguish between the 
+        // We do not need to handle underflow because formal arguments are pad
+        // with |undefined| values but we need to distinguish between the
         if (fp->hasOverflowArgs()) {
             int formalArgc = maxArgc;
             Value *formalArgv = maxArgv;
