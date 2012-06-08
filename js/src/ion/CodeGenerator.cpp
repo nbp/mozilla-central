@@ -458,7 +458,7 @@ CodeGenerator::visitCallNative(LCallNative *call)
 
     // Preload arguments into registers.
     masm.loadJSContext(argJSContextReg);
-    masm.move32(Imm32(call->nargs()), argUintNReg);
+    masm.move32(Imm32(call->numStackArgs()), argUintNReg);
     masm.movePtr(StackPointer, argVpReg);
 
     masm.Push(argUintNReg);
@@ -565,11 +565,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     if (call->hasSingleTarget()) {
         // Missing arguments must have been explicitly appended by the IonBuilder.
-        JS_ASSERT(call->getSingleTarget()->nargs <= call->nargs());
+        JS_ASSERT(call->getSingleTarget()->nargs <= call->numStackArgs());
     } else {
         // Check whether the provided arguments satisfy target argc.
         masm.load16ZeroExtend(Address(calleereg, offsetof(JSFunction, nargs)), nargsreg);
-        masm.cmp32(nargsreg, Imm32(call->nargs()));
+        masm.cmp32(nargsreg, Imm32(call->numStackArgs()));
         masm.j(Assembler::Above, &thunk);
     }
 
@@ -592,7 +592,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
             return false;
 
         JS_ASSERT(ArgumentsRectifierReg != objreg);
-        masm.move32(Imm32(call->nargs()), ArgumentsRectifierReg);
+        masm.move32(Imm32(call->numStackArgs()), ArgumentsRectifierReg);
         masm.movePtr(ImmWord(argumentsRectifier->raw()), objreg);
     }
 
@@ -669,9 +669,9 @@ CodeGenerator::visitCallConstructor(LCallConstructor *call)
     // Nestle %esp up to the argument vector.
     masm.freeStack(unusedStack);
 
-    pushArg(StackPointer);          // argv.
-    pushArg(Imm32(call->nargs()));  // argc.
-    pushArg(calleereg);             // JSFunction *.
+    pushArg(StackPointer);                  // argv.
+    pushArg(Imm32(call->numActualArgs()));  // argc.
+    pushArg(calleereg);                     // JSFunction *.
 
     if (!callVM(InvokeConstructorFunctionInfo, call))
         return false;
