@@ -381,8 +381,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
         masm.subl(Imm32(1), r8);
         masm.bind(&initialSkip);
 
-        masm.mov(Operand(rcx, 0x0), rdx);
-        masm.push(rdx);
+        masm.push(Operand(rcx, 0x0));
 
         masm.testl(r8, r8);
         masm.j(Assembler::NonZero, &copyLoopTop);
