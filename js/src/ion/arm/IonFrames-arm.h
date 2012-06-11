@@ -218,7 +218,11 @@ class IonNativeExitFrameLayout
     IonExitFooterFrame footer_;
     IonExitFrameLayout exit_;
     uintptr_t argc_;
-    Value calleeResult_;
+
+    // We need to split the Value in 2 field of 32 bits, otherwise the C++
+    // compiler may add some padding between the fields.
+    uint32_t loCalleeResult_;
+    uint32_t hiCalleeResult_;
 
   public:
     static inline size_t Size() {
@@ -226,10 +230,10 @@ class IonNativeExitFrameLayout
     }
 
     static size_t offsetOfResult() {
-        return offsetof(IonNativeExitFrameLayout, calleeResult_);
+        return offsetof(IonNativeExitFrameLayout, loCalleeResult_);
     }
     inline Value *vp() {
-        return &calleeResult_;
+        return reinterpret_cast<Value*>(&loCalleeResult_);
     }
     inline uintptr_t argc() const {
         return argc_;
