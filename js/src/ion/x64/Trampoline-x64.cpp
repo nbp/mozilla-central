@@ -347,7 +347,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.movzwl(Operand(rax, offsetof(JSFunction, nargs)), rcx);
     masm.subq(r8, rcx);
 
-    // Copy number of actual arguments
+    // Copy the number of actual arguments
     masm.movq(Operand(rsp, IonJSFrameLayout::offsetOfNumActualArgs()), rdx);
 
     masm.moveValue(UndefinedValue(), r10);
