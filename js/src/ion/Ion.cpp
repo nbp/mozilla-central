@@ -876,9 +876,8 @@ CheckFrame(StackFrame *fp)
         return false;
     }
 
-    if (fp->hasArgsObj() || fp->script()->argumentsHasLocalBinding()) {
-        // Functions with arguments objects, or scripts that use arguments, are
-        // not supported yet.
+    if (fp->script()->needsArgsObj()) {
+        // Functions with arguments objects, are not supported yet.
         IonSpew(IonSpew_Abort, "frame has argsobj");
         return false;
     }
@@ -1079,7 +1078,7 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
     if (fp->isFunctionFrame()) {
         // CountArgSlot include |this| and the |scopeChain|.
         maxArgc = CountArgSlots(fp->fun()) - 1; // -1 = discard |scopeChain|
-        maxArgv = fp->formalArgs() - 1;         // -1 = include |this|
+        maxArgv = fp->formals() - 1;            // -1 = include |this|
 
         // Formal arguments are the argument corresponding to the function
         // definition and actual arguments are corresponding to the call-site
@@ -1091,8 +1090,8 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
         if (fp->hasOverflowArgs()) {
             int formalArgc = maxArgc;
             Value *formalArgv = maxArgv;
-            maxArgc = numActualArgs + 1;    // +1 = include |this|
-            maxArgv = fp->actualArgs() - 1; // -1 = include |this|
+            maxArgc = numActualArgs + 1; // +1 = include |this|
+            maxArgv = fp->actuals() - 1; // -1 = include |this|
 
             // The beginning of the actual args is not updated, so we just copy
             // the formal args into the actual args to get a linear vector which
