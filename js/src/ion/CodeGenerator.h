@@ -103,6 +103,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitTypeBarrier(LTypeBarrier *lir);
     bool visitMonitorTypes(LMonitorTypes *lir);
     bool visitCallNative(LCallNative *call);
+    bool emitCallInvokeFunction(LCallGeneric *call, uint32 unusedStack);
     bool visitCallGeneric(LCallGeneric *call);
     bool visitCallConstructor(LCallConstructor *call);
     bool visitDoubleToInt32(LDoubleToInt32 *lir);
@@ -178,6 +179,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);
     bool visitBitOpV(LBitOpV *lir);
+    bool visitGuardObject(LGuardObject *lir);
 
     bool visitCheckOverRecursed(LCheckOverRecursed *lir);
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);

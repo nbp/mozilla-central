@@ -180,7 +180,16 @@ SnapshotReader::readFrameHeader()
     mirId_     = reader_.readUnsigned();
     lirOpcode_ = reader_.readUnsigned();
     lirId_     = reader_.readUnsigned();
+#endif
 
+    framesRead_++;
+    slotsRead_ = 0;
+}
+
+#ifdef TRACK_SNAPSHOTS
+void
+SnapshotReader::spewBailingFrom() const
+{
     if (IonSpewEnabled(IonSpew_Bailouts)) {
         IonSpewHeader(IonSpew_Bailouts);
         fprintf(IonSpewFile, " bailing from bytecode: %s, MIR: ", js_CodeName[pcOpcode_]);
@@ -190,11 +199,8 @@ SnapshotReader::readFrameHeader()
         fprintf(IonSpewFile, " [%u]", lirId_);
         fprintf(IonSpewFile, "\n");
     }
-#endif
-
-    framesRead_++;
-    slotsRead_ = 0;
 }
+#endif
 
 #ifdef JS_NUNBOX32
 static const uint32 NUNBOX32_STACK_STACK = 0;

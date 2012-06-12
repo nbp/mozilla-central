@@ -29,6 +29,7 @@
 #include "jsobjinlines.h"
 #include "jsscopeinlines.h"
 #include "ion/IonCompartment.h"
+#include "ion/Ion.h"
 
 #if ENABLE_YARR_JIT
 #include "assembler/jit/ExecutableAllocator.h"
@@ -105,6 +106,12 @@ JSCompartment::setNeedsBarrier(bool needs)
     if (needsBarrier_ != needs)
         mjit::ClearAllFrames(this);
 #endif
+
+#ifdef JS_ION
+    if (needsBarrier_ != needs)
+        ion::ToggleBarriers(this, needs);
+#endif
+
     needsBarrier_ = needs;
 }
 
@@ -116,7 +123,7 @@ JSCompartment::ensureIonCompartmentExists(JSContext *cx)
     if (ionCompartment_)
         return true;
 
-    // Set the compartment early, so linking works.
+    /* Set the compartment early, so linking works. */
     ionCompartment_ = cx->new_<IonCompartment>();
 
     if (!ionCompartment_ || !ionCompartment_->initialize(cx)) {
@@ -424,7 +431,7 @@ JSCompartment::markTypes(JSTracer *trc)
      * compartment. These can be referred to directly by type sets, which we
      * cannot modify while code which depends on these type sets is active.
      */
-    JS_ASSERT(activeAnalysis || gcPreserveCode);
+    JS_ASSERT(activeAnalysis || isPreservingCode());
 
     for (CellIterUnderGC i(this, FINALIZE_SCRIPT); !i.done(); i.next()) {
         JSScript *script = i.get<JSScript>();
@@ -452,20 +459,19 @@ JSCompartment::discardJitCode(FreeOp *fop)
 
     /*
      * Kick all frames on the stack into the interpreter, and release all JIT
-     * code in the compartment unless gcPreserveCode is set, in which case
+     * code in the compartment unless code is being preserved, in which case
      * purge all caches in the JIT scripts. Even if we are not releasing all
      * JIT code, we still need to release code for scripts which are in the
      * middle of a native or getter stub call, as these stubs will have been
      * redirected to the interpoline.
      */
     mjit::ClearAllFrames(this);
-# ifdef JS_ION
-    ion::InvalidateAll(fop, this);
-# endif
 
-    if (gcPreserveCode) {
+    if (isPreservingCode()) {
         for (CellIterUnderGC i(this, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
+
+            /* Discard JM caches. */
             for (int constructing = 0; constructing <= 1; constructing++) {
                 for (int barriers = 0; barriers <= 1; barriers++) {
                     mjit::JITScript *jit = script->getJIT((bool) constructing, (bool) barriers);
@@ -474,12 +480,15 @@ JSCompartment::discardJitCode(FreeOp *fop)
                 }
             }
 
-# ifdef JS_ION
-            // As a temporary measure until Bug 746691 lands, always kill Ion code.
-            ion::FinishInvalidation(fop, script);
-# endif
+            /* Discard Ion caches. */
+            if (script->hasIonScript())
+                script->ion->purgeCaches();
         }
     } else {
+# ifdef JS_ION
+        /* Only mark OSI points if code is being discarded. */
+        ion::InvalidateAll(fop, this);
+# endif
         for (CellIterUnderGC i(this, FINALIZE_SCRIPT); !i.done(); i.next()) {
             JSScript *script = i.get<JSScript>();
             mjit::ReleaseScriptCode(fop, script);
@@ -530,7 +539,7 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
     /* JIT code can hold references on RegExpShared, so sweep regexps after clearing code. */
     regExps.sweep(rt);
 
-    if (!activeAnalysis && !gcPreserveCode) {
+    if (!activeAnalysis && !isPreservingCode()) {
         gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_DISCARD_ANALYSIS);
 
         /*
