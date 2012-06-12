@@ -145,7 +145,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, Value *vp)
          * innermost function as uninlineable to expand its frame and allow us
          * to recover its callee object.
          */
-        JSInlinedSite *inlined;
+        InlinedSite *inlined;
         jsbytecode *prevpc = fp->prev()->pcQuadratic(cx->stack, fp, &inlined);
         if (inlined) {
             mjit::JITChunk *chunk = fp->prev()->jit()->chunk(prevpc);
@@ -743,7 +743,7 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
             args.thisv() = vp[2];
 
             /* Steps 7-8. */
-            fp->forEachCanonicalActualArg(CopyTo(args.array()));
+            fp->forEachUnaliasedActual(CopyTo(args.array()));
         }
     } else {
         /* Step 3. */

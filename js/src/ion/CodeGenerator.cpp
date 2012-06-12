@@ -374,7 +374,7 @@ CodeGenerator::visitStoreSlotV(LStoreSlotV *store)
     const ValueOperand value = ToValue(store, LStoreSlotV::Value);
 
     if (store->mir()->needsBarrier())
-       masm.emitPreBarrier(Address(base, offset), MIRType_Value);
+       emitPreBarrier(Address(base, offset), MIRType_Value);
 
     masm.storeValue(value, Address(base, offset));
     return true;
@@ -458,7 +458,7 @@ CodeGenerator::visitCallNative(LCallNative *call)
 
     // Preload arguments into registers.
     masm.loadJSContext(argJSContextReg);
-    masm.move32(Imm32(call->nargs()), argUintNReg);
+    masm.move32(Imm32(call->numStackArgs()), argUintNReg);
     masm.movePtr(StackPointer, argVpReg);
 
     masm.Push(argUintNReg);
@@ -503,6 +503,29 @@ CodeGenerator::visitCallNative(LCallNative *call)
 }
 
 bool
+CodeGenerator::emitCallInvokeFunction(LCallGeneric *call, uint32 unusedStack)
+{
+    typedef bool (*pf)(JSContext *, JSFunction *, uint32, Value *, Value *);
+    static const VMFunction InvokeFunctionInfo = FunctionInfo<pf>(InvokeFunction);
+
+    // Nestle %esp up to the argument vector.
+    // Each path must account for framePushed_ separately, for callVM to be valid.
+    masm.freeStack(unusedStack);
+
+    pushArg(StackPointer);                    // argv.
+    pushArg(Imm32(call->numStackArgs()));     // argc.
+    pushArg(ToRegister(call->getFunction())); // JSFunction *.
+
+    if (!callVM(InvokeFunctionInfo, call))
+        return false;
+
+    // Un-nestle %esp from the argument vector. No prefix was pushed.
+    masm.reserveStack(unusedStack);
+
+    return true;
+}
+
+bool
 CodeGenerator::visitCallGeneric(LCallGeneric *call)
 {
     // Holds the function object.
@@ -528,6 +551,22 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         masm.cmpPtr(nargsreg, ImmWord(&js::FunctionClass));
         if (!bailoutIf(Assembler::NotEqual, call->snapshot()))
             return false;
+    }
+
+    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
+    if (call->hasSingleTarget() &&
+        call->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT)
+    {
+        emitCallInvokeFunction(call, unusedStack);
+
+        if (call->mir()->isConstructing()) {
+            Label notPrimitive;
+            masm.branchTestPrimitive(Assembler::NotEqual, JSReturnOperand, &notPrimitive);
+            masm.loadValue(Address(StackPointer, unusedStack), JSReturnOperand);
+            masm.bind(&notPrimitive);
+        }
+
+        return true;
     }
 
     Label end, invoke;
@@ -565,11 +604,11 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
     if (call->hasSingleTarget()) {
         // Missing arguments must have been explicitly appended by the IonBuilder.
-        JS_ASSERT(call->getSingleTarget()->nargs <= call->nargs());
+        JS_ASSERT(call->getSingleTarget()->nargs <= call->numStackArgs());
     } else {
         // Check whether the provided arguments satisfy target argc.
         masm.load16ZeroExtend(Address(calleereg, offsetof(JSFunction, nargs)), nargsreg);
-        masm.cmp32(nargsreg, Imm32(call->nargs()));
+        masm.cmp32(nargsreg, Imm32(call->numStackArgs()));
         masm.j(Assembler::Above, &thunk);
     }
 
@@ -592,7 +631,7 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
             return false;
 
         JS_ASSERT(ArgumentsRectifierReg != objreg);
-        masm.move32(Imm32(call->nargs()), ArgumentsRectifierReg);
+        masm.move32(Imm32(call->numStackArgs()), ArgumentsRectifierReg);
         masm.movePtr(ImmWord(argumentsRectifier->raw()), objreg);
     }
 
@@ -613,26 +652,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     masm.jump(&end);
 
     // Handle uncompiled or native functions.
-    {
-        masm.bind(&invoke);
-
-        typedef bool (*pf)(JSContext *, JSFunction *, uint32, Value *, Value *);
-        static const VMFunction InvokeFunctionInfo = FunctionInfo<pf>(InvokeFunction);
-
-        // Nestle %esp up to the argument vector.
-        // Each path must account for framePushed_ separately, for callVM to be valid.
-        masm.freeStack(unusedStack);
-
-        pushArg(StackPointer);                 // argv.
-        pushArg(Imm32(call->numActualArgs())); // argc.
-        pushArg(calleereg);                    // JSFunction *.
-
-        if (!callVM(InvokeFunctionInfo, call))
-            return false;
-
-        // Un-nestle %esp from the argument vector. No prefix was pushed.
-        masm.reserveStack(unusedStack);
-    }
+    masm.bind(&invoke);
+    emitCallInvokeFunction(call, unusedStack);
 
     masm.bind(&end);
 
@@ -640,10 +661,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
     // replace the return value with the Object from CreateThis.
     if (call->mir()->isConstructing()) {
         Label notPrimitive;
-
         masm.branchTestPrimitive(Assembler::NotEqual, JSReturnOperand, &notPrimitive);
         masm.loadValue(Address(StackPointer, unusedStack), JSReturnOperand);
-
         masm.bind(&notPrimitive);
     }
 
@@ -669,9 +688,9 @@ CodeGenerator::visitCallConstructor(LCallConstructor *call)
     // Nestle %esp up to the argument vector.
     masm.freeStack(unusedStack);
 
-    pushArg(StackPointer);          // argv.
-    pushArg(Imm32(call->nargs()));  // argc.
-    pushArg(calleereg);             // JSFunction *.
+    pushArg(StackPointer);                  // argv.
+    pushArg(Imm32(call->numActualArgs()));  // argc.
+    pushArg(calleereg);                     // JSFunction *.
 
     if (!callVM(InvokeConstructorFunctionInfo, call))
         return false;
@@ -1715,6 +1734,9 @@ CodeGenerator::emitArrayPopShift(LInstruction *lir, const MArrayPopShift *mir, R
             return false;
     }
 
+    // VM call if a write barrier is necessary.
+    masm.branchTestNeedsBarrier(Assembler::NonZero, lengthTemp, ool->entry());
+
     // Load elements and length.
     masm.loadPtr(Address(obj, JSObject::offsetOfElements()), elementsTemp);
     masm.load32(Address(elementsTemp, ObjectElements::offsetOfLength()), lengthTemp);
@@ -1913,9 +1935,14 @@ CodeGenerator::visitIteratorStart(LIteratorStart *lir)
 
     // Write barrier for stores to the iterator. We only need to take a write
     // barrier if NativeIterator::obj is actually going to change.
-    if (gen->cx->compartment->needsBarrier()) {
-        masm.branchPtr(Assembler::NotEqual, Address(niTemp, offsetof(NativeIterator, obj)),
-                       obj, ool->entry());
+    {
+        Label noBarrier;
+        masm.branchTestNeedsBarrier(Assembler::Zero, temp1, &noBarrier);
+
+        Address objAddr(niTemp, offsetof(NativeIterator, obj));
+        masm.branchPtr(Assembler::NotEqual, objAddr, obj, ool->entry());
+
+        masm.bind(&noBarrier);
     }
 
     // Mark iterator as active.
@@ -2101,7 +2128,8 @@ CodeGenerator::generate()
     script->ion = IonScript::New(cx, graph.localSlotCount(), scriptFrameSize, snapshots_.size(),
                                  bailouts_.length(), graph.numConstants(),
                                  safepointIndices_.length(), osiIndices_.length(),
-                                 cacheList_.length(), safepoints_.size());
+                                 cacheList_.length(), barrierOffsets_.length(),
+                                 safepoints_.size());
     if (!script->ion)
         return false;
     invalidateEpilogueData_.fixup(&masm);
@@ -2132,11 +2160,21 @@ CodeGenerator::generate()
         script->ion->copyOsiIndices(&osiIndices_[0], masm);
     if (cacheList_.length())
         script->ion->copyCacheEntries(&cacheList_[0], masm);
+    if (barrierOffsets_.length())
+        script->ion->copyPrebarrierEntries(&barrierOffsets_[0], masm);
     if (safepoints_.size())
         script->ion->copySafepoints(&safepoints_);
 
     linkAbsoluteLabels();
-    
+
+    // X86 can simply generate the correct barriers in place, but on ARM
+    // technical limitations means we need to generate a branch, let it be
+    // updated with the correct offsets, then once the rest of compilation
+    // is complete, switch the branch over to a cmp.
+#ifdef JS_CPU_ARM
+    bool needsBarrier = cx->compartment->needsBarrier();
+    script->ion->toggleBarriers(needsBarrier);
+#endif
     return true;
 }
 
@@ -2291,7 +2329,7 @@ CodeGenerator::visitStoreFixedSlotV(LStoreFixedSlotV *ins)
 
     Address address(obj, JSObject::getFixedSlotOffset(slot));
     if (ins->mir()->needsBarrier())
-        masm.emitPreBarrier(address, MIRType_Value);
+        emitPreBarrier(address, MIRType_Value);
 
     masm.storeValue(value, address);
 
@@ -2313,7 +2351,7 @@ CodeGenerator::visitStoreFixedSlotT(LStoreFixedSlotT *ins)
 
     Address address(obj, JSObject::getFixedSlotOffset(slot));
     if (ins->mir()->needsBarrier())
-        masm.emitPreBarrier(address, MIRType_Value);
+        emitPreBarrier(address, MIRType_Value);
 
     masm.storeConstantOrRegister(nvalue, address);
 
@@ -2656,6 +2694,14 @@ CodeGenerator::visitBitOpV(LBitOpV *lir)
     }
     JS_NOT_REACHED("unexpected bitop");
     return false;
+}
+
+bool
+CodeGenerator::visitGuardObject(LGuardObject *lir)
+{
+    // The input is already a known object from MGuardObject's TypePolicy.
+    // The output is defined to be the input. Nothing to do.
+    return true;
 }
 
 class OutOfLineTypeOfV : public OutOfLineCodeBase<CodeGenerator>

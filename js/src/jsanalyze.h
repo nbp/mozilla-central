@@ -394,12 +394,13 @@ static inline uint32_t GetBytecodeSlot(JSScript *script, jsbytecode *pc)
       case JSOP_CALLALIASEDVAR:
       case JSOP_SETALIASEDVAR:
       {
-          ScopeCoordinate sc = ScopeCoordinate(pc);
-          return script->bindings.bindingIsArg(sc.binding)
-                 ? ArgSlot(script->bindings.bindingToArg(sc.binding))
-                 : LocalSlot(script, script->bindings.bindingToLocal(sc.binding));
+        ScopeCoordinate sc(pc);
+        if (StaticBlockObject *block = ScopeCoordinateBlockChain(script, pc))
+            return LocalSlot(script, block->slotToFrameLocal(script, sc.slot));
+        if (script->bindings.slotIsArg(sc.slot))
+            return ArgSlot(script->bindings.slotToArg(sc.slot));
+        return LocalSlot(script, script->bindings.slotToLocal(sc.slot));
       }
-
 
       case JSOP_THIS:
         return ThisSlot();
@@ -881,6 +882,7 @@ class ScriptAnalysis
     bool isInlineable:1;
     bool isJaegerCompileable:1;
     bool canTrackVars:1;
+    bool hasLoops_:1;
 
     uint32_t numReturnSites_;
 
@@ -926,6 +928,8 @@ class ScriptAnalysis
     bool usesThisValue() const { return usesThisValue_; }
     bool hasFunctionCalls() const { return hasFunctionCalls_; }
     uint32_t numReturnSites() const { return numReturnSites_; }
+
+    bool hasLoops() const { return hasLoops_; }
 
     /*
      * True if all named formal arguments are not modified. If the arguments

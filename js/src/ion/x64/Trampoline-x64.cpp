@@ -64,7 +64,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     const Register reg_code  = IntArgReg0;
     const Register reg_argc  = IntArgReg1;
     const Register reg_argv  = IntArgReg2;
-    const Register reg_frame = IntArgReg3;
+    JS_ASSERT(OsrFrameReg == IntArgReg3);
 
 #if defined(_WIN64)
     const Operand token  = Operand(rbp, 16 + ShadowStackSpace);
@@ -146,9 +146,6 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     Push the number of bytes we've pushed so far on the stack and call
     *****************************************************************/
     masm.subq(rsp, r14);
-
-    // Don't need to load OsrFrameReg -- it's always passed by the caller.
-    JS_ASSERT(OsrFrameReg == IntArgReg3);
 
     // Create a frame descriptor.
     masm.makeFrameDescriptor(r14, IonFrame_Entry);
@@ -347,7 +344,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.movzwl(Operand(rax, offsetof(JSFunction, nargs)), rcx);
     masm.subq(r8, rcx);
 
-    // Copy number of actual arguments
+    // Copy the number of actual arguments
     masm.movq(Operand(rsp, IonJSFrameLayout::offsetOfNumActualArgs()), rdx);
 
     masm.moveValue(UndefinedValue(), r10);
@@ -381,8 +378,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
         masm.subl(Imm32(1), r8);
         masm.bind(&initialSkip);
 
-        masm.mov(Operand(rcx, 0x0), rdx);
-        masm.push(rdx);
+        masm.push(Operand(rcx, 0x0));
 
         masm.testl(r8, r8);
         masm.j(Assembler::NonZero, &copyLoopTop);
