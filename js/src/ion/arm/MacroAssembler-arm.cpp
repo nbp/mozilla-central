@@ -2765,6 +2765,7 @@ MacroAssemblerARMCompat::testStringTruthy(bool truthy, const ValueOperand &value
 void
 MacroAssemblerARMCompat::enterOsr(Register calleeToken, Register code)
 {
+    push(Imm32(0)); // num actual arguments.
     push(calleeToken);
     push(Imm32(MakeFrameDescriptor(0, IonFrame_Osr)));
     ma_add(sp, Imm32(sizeof(uintptr_t)), sp);   // padding
@@ -2825,6 +2826,15 @@ MacroAssemblerARMCompat::floor(FloatRegister input, Register output, Label *bail
     bind(&fin);
 }
 
+CodeOffsetLabel
+MacroAssemblerARMCompat::toggledJump(bool enabled, Label *label)
+{
+    // The |enabled| bit is ignored; the jmp will be patched to a cmp
+    // during the end of code generation.
+    CodeOffsetLabel ret(nextOffset().getOffset());
+    ma_b(label);
+    return ret;
+}
 
 void
 MacroAssemblerARMCompat::round(FloatRegister input, Register output, Label *bail, FloatRegister tmp)

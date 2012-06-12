@@ -87,7 +87,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     const Register reg_frame = r3;
 
     const DTRAddr slot_token = DTRAddr(sp, DtrOffImm(40));
-    const DTRAddr slot_vp    = DTRAddr(sp, DtrOffImm(44));
+    const Operand slot_vp    = Address(sp, DtrOffImm(44));
 
     JS_ASSERT(OsrFrameReg == reg_frame);
 
@@ -112,10 +112,13 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     // The 5th argument is located at [sp, 40]
     masm.finishDataTransfer();
 
-    // Load calleeToken into r11.
-    aasm->as_dtr(IsLoad, 32, Offset, r11, slot_token);
+    // Load calleeToken into r9.
+    aasm->as_dtr(IsLoad, 32, Offset, r9, slot_token);
 
-    aasm->as_mov(r9, lsl(r1, 3)); // r9 = 8*argc
+    // Load the number of actual arguments into r11.
+    masm.unboxInt32(slot_vp.toAddress(), r11);
+
+    aasm->as_mov(r8, lsl(r1, 3)); // r8 = 8*argc
     // The size of the IonFrame is actually 16, and we pushed r3 when we aren't
     // going to pop it, BUT, we pop the return value, rather than just branching
     // to it, AND we need to access the value pushed by r3, which we need to
@@ -123,7 +126,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     // ionfunction's arguments from the stack, we want the sp to be pointing at
     // the location that r3 was stored in, then we'll pop that value, use it
     // and pop r4-r11, pc to return.
-    aasm->as_add(r9, r9, Imm8(16-4));
+    aasm->as_add(r8, r8, Imm8(16-4));
 
 #if 0
     // This is in case we want to go back to using frames that
@@ -163,16 +166,13 @@ IonCompartment::generateEnterJIT(JSContext *cx)
         masm.bind(&footer);
     }
 
-    masm.makeFrameDescriptor(r9, IonFrame_Entry);
+    masm.makeFrameDescriptor(r8, IonFrame_Entry);
 
-#ifdef DEBUG
-    masm.ma_mov(Imm32(0xdeadbeef), r8);
-#endif
     masm.startDataTransferM(IsStore, sp, IB, NoWriteBack);
                            // [sp]    = return address (written later)
-    masm.transferReg(r8);  // [sp',4] = fill in the buffer value with junk.
-    masm.transferReg(r9);  // [sp',8]  = argc*8+20
-    masm.transferReg(r11); // [sp',12]  = callee token
+    masm.transferReg(r8);  // [sp',4] = descriptor, argc*8+20
+    masm.transferReg(r9);  // [sp',8]  = callee token
+    masm.transferReg(r11); // [sp',12]  = actual arguments
     masm.finishDataTransfer();
 
     // Throw our return address onto the stack.  this setup seems less-than-ideal
@@ -190,7 +190,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     aasm->as_add(sp, sp, lsr(r5, FRAMESIZE_SHIFT));
 
     // Extract return Value location from function arguments.
-    aasm->as_dtr(IsLoad, 32, Offset, r5, slot_vp);
+    aasm->as_dtr(IsLoad, 32, Offset, r5, slot_vp.toDTRAddr());
 
     // Get rid of the bogus r0 push.
     aasm->as_add(sp, sp, Imm8(4));
@@ -367,7 +367,10 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     // Including |this|, there are (|nargs| + 1) arguments to copy.
     JS_ASSERT(ArgumentsRectifierReg == r8);
 
-    // Load the number of |undefined|s to push into %rcx.
+    // Copy number of actual arguments into r0
+    masm.ma_ldr(DTRAddr(sp, DtrOffImm(IonJSFrameLayout::offsetOfNumActualArgs())), r10);
+
+    // Load the number of |undefined|s to push into r6.
     masm.ma_ldr(DTRAddr(sp, DtrOffImm(IonJSFrameLayout::offsetOfCalleeToken())), r1);
     masm.ma_ldrh(EDtrAddr(r1, EDtrOffImm(offsetof(JSFunction, nargs))), r6);
 
@@ -391,7 +394,7 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     // Get the topmost argument.
 
     masm.ma_alu(r3, lsl(r8, 3), r3, op_add); // r3 <- r3 + nargs * 8
-    masm.ma_add(r3, Imm32(sizeof(IonJSFrameLayout)), r3);
+    masm.ma_add(r3, Imm32(sizeof(IonRectifierFrameLayout)), r3);
 
     // Push arguments, |nargs| + 1 times (to include |this|).
     {
@@ -412,10 +415,9 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.makeFrameDescriptor(r6, IonFrame_Rectifier);
 
     // Construct IonJSFrameLayout.
+    masm.ma_push(r0); // actual arguments.
     masm.ma_push(r1); // calleeToken.
-    masm.ma_push(r6); // sizeDescriptor.
-    masm.ma_mov(Imm32(0xdeadbeef), r11);
-    masm.ma_push(r11); // padding.
+    masm.ma_push(r6); // frame descriptor.
 
     // Call the target function.
     // Note that this code assumes the function is JITted.
@@ -425,19 +427,27 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     masm.ma_ldr(DTRAddr(r3, DtrOffImm(IonCode::OffsetOfCode())), r3);
     masm.ma_callIonHalfPush(r3);
 
+    // arg1
+    //  ...
+    // argN
+    // num actual args
+    // callee token
+    // sizeDescriptor     <- sp now
+    // return address
+
     // Remove the rectifier frame.
+    masm.ma_dtr(IsLoad, sp, Imm32(12), r4, PostIndex);
+
+    // arg1
+    //  ...
+    // argN               <- sp now; r4 <- frame descriptor
+    // num actual args
     // callee token
     // sizeDescriptor
-    // padding              <- sp now
     // return address
-    masm.ma_dtr(IsLoad, sp, Imm32(4), r4, PreIndex);  // r4 <- sizeDescriptor with FrameType.
-    // Remove the rectifier frame.
-    // callee token
-    // sizeDescriptor     <- sp now; r4 <- frame descriptor
-    // padding
-    // return address
-    masm.ma_add(sp, Imm32(8), sp);
-    masm.ma_alu(sp, lsr(r4, FRAMESIZE_SHIFT), sp, op_add);      // Discard pushed arguments.
+
+    // Discard pushed arguments.
+    masm.ma_alu(sp, lsr(r4, FRAMESIZE_SHIFT), sp, op_add);
 
     masm.ret();
     Linker linker(masm);

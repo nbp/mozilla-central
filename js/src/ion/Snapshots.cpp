@@ -64,7 +64,6 @@ using namespace js::ion;
 // Note that the first frame doesn't have the "parent PC" field.
 //
 //   [ptr] Debug only: JSScript *
-//   [vwu] # actual args.
 //   [vwu] pc offset
 //   [vwu] # of slots, including nargs
 // [slot*] N slot entries, where N = nargs + nfixed + stackDepth
@@ -171,7 +170,6 @@ SnapshotReader::readFrameHeader()
     script_ = u.script;
 #endif
 
-    argc_ = reader_.readUnsigned();
     pcOffset_ = reader_.readUnsigned();
     slotCount_ = reader_.readUnsigned();
     IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", pcOffset_, slotCount_);
@@ -182,7 +180,16 @@ SnapshotReader::readFrameHeader()
     mirId_     = reader_.readUnsigned();
     lirOpcode_ = reader_.readUnsigned();
     lirId_     = reader_.readUnsigned();
+#endif
 
+    framesRead_++;
+    slotsRead_ = 0;
+}
+
+#ifdef TRACK_SNAPSHOTS
+void
+SnapshotReader::spewBailingFrom() const
+{
     if (IonSpewEnabled(IonSpew_Bailouts)) {
         IonSpewHeader(IonSpew_Bailouts);
         fprintf(IonSpewFile, " bailing from bytecode: %s, MIR: ", js_CodeName[pcOpcode_]);
@@ -192,11 +199,8 @@ SnapshotReader::readFrameHeader()
         fprintf(IonSpewFile, " [%u]", lirId_);
         fprintf(IonSpewFile, "\n");
     }
-#endif
-
-    framesRead_++;
-    slotsRead_ = 0;
 }
+#endif
 
 #ifdef JS_NUNBOX32
 static const uint32 NUNBOX32_STACK_STACK = 0;
@@ -313,8 +317,7 @@ SnapshotWriter::startSnapshot(uint32 frameCount, BailoutKind kind, bool resumeAf
 }
 
 void
-SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack,
-                           uint32 argc)
+SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32 exprStack)
 {
     JS_ASSERT(CountArgSlots(fun) < SNAPSHOT_MAX_NARGS);
     JS_ASSERT(exprStack < SNAPSHOT_MAX_STACK);
@@ -341,7 +344,6 @@ SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, ui
 
     uint32 pcoff = uint32(pc - script->code);
     IonSpew(IonSpew_Snapshots, "Writing pc offset %u, nslots %u", pcoff, nslots_);
-    writer_.writeUnsigned(argc);
     writer_.writeUnsigned(pcoff);
     writer_.writeUnsigned(nslots_);
 }

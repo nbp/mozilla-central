@@ -399,10 +399,14 @@ IonScript::IonScript()
     safepointIndexEntries_(0),
     frameLocals_(0),
     frameSize_(0),
-    safepointsStart_(0),
-    safepointsSize_(0),
+    osiIndexOffset_(0),
+    osiIndexEntries_(0),
     cacheList_(0),
     cacheEntries_(0),
+    prebarrierList_(0),
+    prebarrierEntries_(0),
+    safepointsStart_(0),
+    safepointsSize_(0),
     refcount_(0)
 {
 }
@@ -410,7 +414,8 @@ static const int DataAlignment = 4;
 IonScript *
 IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
-               size_t osiIndices, size_t cacheEntries, size_t safepointsSize)
+               size_t osiIndices, size_t cacheEntries, size_t prebarrierEntries,
+               size_t safepointsSize)
 {
     if (snapshotsSize >= MAX_BUFFER_SIZE ||
         (bailoutEntries >= MAX_BUFFER_SIZE / sizeof(uint32)))
@@ -428,6 +433,8 @@ IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snaps
     size_t paddedSafepointIndicesSize = AlignBytes(safepointIndices * sizeof(SafepointIndex), DataAlignment);
     size_t paddedOsiIndicesSize = AlignBytes(osiIndices * sizeof(OsiIndex), DataAlignment);
     size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
+    size_t paddedPrebarrierEntriesSize =
+        AlignBytes(prebarrierEntries * sizeof(CodeOffsetLabel), DataAlignment);
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
     size_t bytes = paddedSnapshotsSize +
                    paddedBailoutSize +
@@ -435,6 +442,7 @@ IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snaps
                    paddedSafepointIndicesSize+
                    paddedOsiIndicesSize +
                    paddedCacheEntriesSize +
+                   paddedPrebarrierEntriesSize +
                    paddedSafepointSize;
     uint8 *buffer = (uint8 *)cx->malloc_(sizeof(IonScript) + bytes);
     if (!buffer)
@@ -468,6 +476,10 @@ IonScript::New(JSContext *cx, uint32 frameLocals, uint32 frameSize, size_t snaps
     script->cacheList_ = offsetCursor;
     script->cacheEntries_ = cacheEntries;
     offsetCursor += paddedCacheEntriesSize;
+
+    script->prebarrierList_ = offsetCursor;
+    script->prebarrierEntries_ = prebarrierEntries;
+    offsetCursor += paddedPrebarrierEntriesSize;
 
     script->safepointsStart_ = offsetCursor;
     script->safepointsSize_ = safepointsSize;
@@ -553,6 +565,23 @@ IonScript::copyCacheEntries(const IonCache *caches, MacroAssembler &masm)
      */
     for (size_t i = 0; i < numCaches(); i++)
         getCache(i).updateBaseAddress(method_, masm);
+}
+
+inline CodeOffsetLabel &
+IonScript::getPrebarrier(size_t index)
+{
+    JS_ASSERT(index < numPrebarriers());
+    return prebarrierList()[index];
+}
+
+void
+IonScript::copyPrebarrierEntries(const CodeOffsetLabel *barriers, MacroAssembler &masm)
+{
+    memcpy(prebarrierList(), barriers, numPrebarriers() * sizeof(CodeOffsetLabel));
+
+    // On ARM, the saved offset may be wrong due to shuffling code buffers. Correct it.
+    for (size_t i = 0; i < numPrebarriers(); i++)
+        getPrebarrier(i).fixup(&masm);
 }
 
 const SafepointIndex *
@@ -642,6 +671,36 @@ void
 IonScript::Destroy(FreeOp *fop, IonScript *script)
 {
     fop->free_(script);
+}
+
+void
+IonScript::toggleBarriers(bool enabled)
+{
+    for (size_t i = 0; i < numPrebarriers(); i++) {
+        CodeLocationLabel loc(method(), getPrebarrier(i));
+
+        if (enabled)
+            Assembler::ToggleToCmp(loc);
+        else
+            Assembler::ToggleToJmp(loc);
+    }
+}
+
+void
+IonScript::purgeCaches()
+{
+    for (size_t i = 0; i < numCaches(); i++)
+        getCache(i).reset();
+}
+
+void
+ion::ToggleBarriers(JSCompartment *comp, bool needs)
+{
+    for (gc::CellIterUnderGC i(comp, gc::FINALIZE_SCRIPT); !i.done(); i.next()) {
+        JSScript *script = i.get<JSScript>();
+        if (script->hasIonScript())
+            script->ion->toggleBarriers(needs);
+    }
 }
 
 static bool
@@ -804,7 +863,12 @@ CheckFrame(StackFrame *fp)
         return false;
     }
 
-    if (fp->hasCallObj()) {
+    if (fp->isFunctionFrame() && fp->fun()->isHeavyweight()) {
+        IonSpew(IonSpew_Abort, "function is heavyweight");
+        return false;
+    }
+
+    if (fp->isFunctionFrame() && fp->isStrictEvalFrame() && fp->hasCallObj()) {
         // Functions with call objects aren't supported yet. To support them,
         // we need to fix bug 659577 which would prevent aliasing locals to
         // stack slots.
@@ -874,6 +938,10 @@ Compile(JSContext *cx, JSScript *script, js::StackFrame *fp, jsbytecode *osrPc)
     JS_ASSERT(ion::IsEnabled(cx));
     JS_ASSERT_IF(osrPc != NULL, (JSOp)*osrPc == JSOP_LOOPENTRY);
 
+    // Skip if there is too much arguments.
+    if (fp->hasArgs() && fp->numActualArgs() <= js_IonOptions.maxStackArg)
+        return Method_Skipped;
+
     if (cx->compartment->debugMode()) {
         IonSpew(IonSpew_Abort, "debugging");
         return Method_CantCompile;
@@ -890,8 +958,15 @@ Compile(JSContext *cx, JSScript *script, js::StackFrame *fp, jsbytecode *osrPc)
         return Method_Compiled;
     }
 
-    if (script->incUseCount() <= js_IonOptions.usesBeforeCompile)
-        return Method_Skipped;
+    if (cx->methodJitEnabled) {
+        // If JM is enabled we use getUseCount instead of incUseCount to avoid
+        // bumping the use count twice.
+        if (script->getUseCount() < js_IonOptions.usesBeforeCompile)
+            return Method_Skipped;
+    } else {
+        if (script->incUseCount() < js_IonOptions.usesBeforeCompileNoJaeger)
+            return Method_Skipped;
+    }
 
     if (!IonCompile(cx, script, fp, osrPc))
         return Method_CantCompile;
@@ -993,27 +1068,35 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     EnterIonCode enter = cx->compartment->ionCompartment()->enterJITInfallible();
 
-    int argc = 0;
-    Value *argv = NULL;
+    // maxArgc is the maximum of arguments between the number of actual
+    // arguments and the number of formal arguments. It accounts for |this|.
+    int maxArgc = 0;
+    Value *maxArgv = NULL;
     int numActualArgs = 0;
 
     void *calleeToken;
     if (fp->isFunctionFrame()) {
-        // CountArgSlot include |this| and the |scopeChain|, -1 is used to
-        // discard the |scopeChain|.
-        argc = CountArgSlots(fp->fun()) - 1;
-        argv = fp->formalArgs() - 1;
+        // CountArgSlot include |this| and the |scopeChain|.
+        maxArgc = CountArgSlots(fp->fun()) - 1; // -1 = discard |scopeChain|
+        maxArgv = fp->formalArgs() - 1;         // -1 = include |this|
+
+        // Formal arguments are the argument corresponding to the function
+        // definition and actual arguments are corresponding to the call-site
+        // arguments.
         numActualArgs = fp->numActualArgs();
 
+        // We do not need to handle underflow because formal arguments are pad
+        // with |undefined| values but we need to distinguish between the
         if (fp->hasOverflowArgs()) {
-            int formalArgc = argc;
-            Value *formalArgv = argv;
-            argc = numActualArgs + 1;
-            argv = fp->actualArgs() - 1;
+            int formalArgc = maxArgc;
+            Value *formalArgv = maxArgv;
+            maxArgc = numActualArgs + 1;    // +1 = include |this|
+            maxArgv = fp->actualArgs() - 1; // -1 = include |this|
+
             // The beginning of the actual args is not updated, so we just copy
             // the formal args into the actual args to get a linear vector which
             // can be copied by generateEnterJit.
-            memcpy(argv, formalArgv, formalArgc * sizeof(Value));
+            memcpy(maxArgv, formalArgv, formalArgc * sizeof(Value));
         }
         calleeToken = CalleeToToken(&fp->callee());
     } else {
@@ -1031,7 +1114,7 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
         JSAutoResolveFlags rf(cx, RESOLVE_INFER);
 
         // Single transition point from Interpreter to Ion.
-        enter(jitcode, argc, argv, fp, calleeToken, &result);
+        enter(jitcode, maxArgc, maxArgv, fp, calleeToken, &result);
     }
 
     if (result.isMagic() && result.whyMagic() == JS_ION_BAILOUT)
@@ -1042,8 +1125,6 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
 
     // The trampoline wrote the return value but did not set the HAS_RVAL flag.
     fp->setReturnValue(result);
-    if (fp->isFunctionFrame())
-        fp->updateEpilogueFlags();
 
     // Ion callers wrap primitive constructor return.
     if (!result.isMagic() && fp->isConstructing() && fp->returnValue().isPrimitive())
@@ -1095,10 +1176,9 @@ InvalidateActivation(FreeOp *fop, uint8 *ionTop, bool invalidateAll)
           case IonFrame_JS:
           {
             JS_ASSERT(it.isScripted());
-            IonSpew(IonSpew_Invalidate, "#%d JS frame @ %p", frameno, it.fp());
-            IonSpew(IonSpew_Invalidate, "   token: %p", it.jsFrame()->calleeToken());
-            IonSpew(IonSpew_Invalidate, "   script: %p; %s:%d", it.script(),
-                    it.script()->filename, it.script()->lineno);
+            IonSpew(IonSpew_Invalidate, "#%d JS frame @ %p, %s:%d (fun: %p, script: %p, pc %p)",
+                    frameno, it.fp(), it.script()->filename, it.script()->lineno,
+                    it.maybeCallee(), it.script(), it.returnAddressToFp());
             break;
           }
           case IonFrame_Rectifier:
@@ -1114,7 +1194,6 @@ InvalidateActivation(FreeOp *fop, uint8 *ionTop, bool invalidateAll)
             IonSpew(IonSpew_Invalidate, "#%d entry frame @ %p", frameno, it.fp());
             break;
         }
-        IonSpew(IonSpew_Invalidate, "   return address %p", it.returnAddress());
 #endif
 
         if (!it.isScripted())
@@ -1150,11 +1229,8 @@ InvalidateActivation(FreeOp *fop, uint8 *ionTop, bool invalidateAll)
         // instructions after the call) in to capture an appropriate
         // snapshot after the call occurs.
 
-        IonSpew(IonSpew_Invalidate, "   ! requires invalidation");
         IonScript *ionScript = script->ion;
         ionScript->incref();
-        IonSpew(IonSpew_Invalidate, "   ionScript %p ref %u", (void *) ionScript,
-                unsigned(ionScript->refcount()));
 
         const SafepointIndex *si = ionScript->getSafepointIndex(it.returnAddressToFp());
         IonCode *ionCode = ionScript->method();
@@ -1183,8 +1259,8 @@ InvalidateActivation(FreeOp *fop, uint8 *ionTop, bool invalidateAll)
         CodeLocationLabel osiPatchPoint = SafepointReader::InvalidationPatchPoint(ionScript, si);
         CodeLocationLabel invalidateEpilogue(ionCode, ionScript->invalidateEpilogueOffset());
 
-        IonSpew(IonSpew_Invalidate, "   -> patching address to call instruction %p",
-                (void *) osiPatchPoint.raw());
+        IonSpew(IonSpew_Invalidate, "   ! Invalidate ionScript %p (ref %u) -> patching osipoint %p",
+                ionScript, ionScript->refcount(), (void *) osiPatchPoint.raw());
         Assembler::patchWrite_NearCall(osiPatchPoint, invalidateEpilogue);
     }
 
@@ -1205,11 +1281,16 @@ ion::InvalidateAll(FreeOp *fop, JSCompartment *c)
 void
 ion::Invalidate(FreeOp *fop, const Vector<types::RecompileInfo> &invalid, bool resetUses)
 {
+    IonSpew(IonSpew_Invalidate, "Start invalidation.");
     // Add an invalidation reference to all invalidated IonScripts to indicate
     // to the traversal which frames have been invalidated.
     for (size_t i = 0; i < invalid.length(); i++) {
-        if (invalid[i].script->hasIonScript())
-            invalid[i].script->ion->incref();
+        JSScript *script = invalid[i].script;
+        if (script->hasIonScript()) {
+            IonSpew(IonSpew_Invalidate, " Invalidate %s:%u, IonScript %p",
+                    script->filename, script->lineno, script->ion);
+            script->ion->incref();
+        }
     }
 
     for (IonActivationIterator iter(fop->runtime()); iter.more(); ++iter)
