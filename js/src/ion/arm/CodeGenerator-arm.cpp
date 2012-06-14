@@ -1036,7 +1036,7 @@ CodeGeneratorARM::visitUnbox(LUnbox *unbox)
             return false;
         }
 
-        masm.movePtr(Imm32(0), ToRegister(output));
+        masm.movePtr(Imm32(0), ToRegister(unbox->output()));
         return true;
     }
 
