@@ -415,10 +415,15 @@ class LCallGeneric : public LCallInstructionHelper<BOX_PIECES, 1, 2>
         return mir_->toCall();
     }
 
-    uint32 nargs() const {
-        JS_ASSERT(mir()->argc() >= 1);
-        return mir()->argc() - 1; // |this| is not a formal argument.
+    // The number of stack arguments is the max between the number of formal
+    // arguments and the number of actual arguments. The number of stack
+    // argument includes the |undefined| padding added in case of underflow.
+    // Does not include |this|.
+    uint32 numStackArgs() const {
+        JS_ASSERT(mir()->numStackArgs() >= 1);
+        return mir()->numStackArgs() - 1; // |this| is not a formal argument.
     }
+    // Does not include |this|.
     uint32 numActualArgs() const {
         return mir()->numActualArgs();
     }
@@ -474,9 +479,9 @@ class LCallNative : public LCallInstructionHelper<BOX_PIECES, 0, 4>
     }
 
     // TODO: Common this out with LCallGeneric.
-    uint32 nargs() const {
-        JS_ASSERT(mir()->argc() >= 1);
-        return mir()->argc() - 1; // |this| is not a formal argument.
+    uint32 numStackArgs() const {
+        JS_ASSERT(mir()->numStackArgs() >= 1);
+        return mir()->numStackArgs() - 1; // |this| is not a formal argument.
     }
 
     const LAllocation *getArgJSContextReg() {
@@ -516,9 +521,12 @@ class LCallConstructor : public LInstructionHelper<BOX_PIECES, 1, 0>
         return mir_->toCall();
     }
 
-    uint32 nargs() const {
-        JS_ASSERT(mir()->argc() >= 1);
-        return mir()->argc() - 1; // |this| is not a formal argument.
+    uint32 numStackArgs() const {
+        JS_ASSERT(mir()->numStackArgs() >= 1);
+        return mir()->numStackArgs() - 1; // |this| is not a formal argument.
+    }
+    uint32 numActualArgs() const {
+        return mir()->numActualArgs();
     }
     bool isCall() const {
         return true;
@@ -2652,6 +2660,27 @@ class LGuardClass : public LInstructionHelper<0, 1, 1>
     }
     const LAllocation *tempInt() {
         return getTemp(0)->output();
+    }
+};
+
+// Guard that a value is an Object.
+// The MIR already has a TypePolicy, so by the time this LInstruction is
+// reached, the input is already a known-object.
+// Therefore, this class merely passes through the input.
+class LGuardObject : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(GuardObject);
+
+    LGuardObject(const LAllocation &in) {
+        setOperand(0, in);
+    }
+
+    const LAllocation *input() {
+        return getOperand(0);
+    }
+    const LDefinition *output() {
+        return getDef(0);
     }
 };
 

@@ -1283,31 +1283,14 @@ AssertJit(JSContext *cx, unsigned argc, jsval *vp)
 static JSScript *
 ValueToScript(JSContext *cx, jsval v, JSFunction **funp = NULL)
 {
-    JSScript *script = NULL;
-    JSFunction *fun = NULL;
+    JSFunction *fun = JS_ValueToFunction(cx, v);
+    if (!fun)
+        return NULL;
 
-    if (!JSVAL_IS_PRIMITIVE(v)) {
-        JSObject *obj = JSVAL_TO_OBJECT(v);
-        JSClass *clasp = JS_GetClass(obj);
+    JSScript *script = fun->maybeScript();
+    if (!script)
+        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_SCRIPTS_ONLY);
 
-        if (clasp == Jsvalify(&GeneratorClass)) {
-            if (JSGenerator *gen = (JSGenerator *) JS_GetPrivate(obj)) {
-                fun = gen->floatingFrame()->fun();
-                script = fun->script();
-            }
-        }
-    }
-
-    if (!script) {
-        fun = JS_ValueToFunction(cx, v);
-        if (!fun)
-            return NULL;
-        script = fun->maybeScript();
-        if (!script) {
-            JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL,
-                                 JSSMSG_SCRIPTS_ONLY);
-        }
-    }
     if (fun && funp)
         *funp = fun;
 
@@ -2162,7 +2145,7 @@ DumpStack(JSContext *cx, unsigned argc, Value *vp)
 
     uint32_t index = 0;
     for (; !iter.done(); ++index, ++iter) {
-        Value v;
+        RootedValue v(cx);
         if (iter.isNonEvalFunctionFrame() || iter.isNativeCall()) {
             v = iter.calleev();
         } else if (iter.isEvalFrame()) {
@@ -2170,9 +2153,9 @@ DumpStack(JSContext *cx, unsigned argc, Value *vp)
         } else {
             v = StringValue(globalStr);
         }
-        if (!JS_WrapValue(cx, &v))
+        if (!JS_WrapValue(cx, v.address()))
             return false;
-        if (!JS_SetElement(cx, arr, index, &v))
+        if (!JS_SetElement(cx, arr, index, v.address()))
             return false;
     }
 

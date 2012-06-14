@@ -3960,25 +3960,24 @@ nsGenericElement::SaveSubtreeState()
 // latter case it may be null.
 static
 bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
-                        bool aIsReplace, nsINode* aRefChild)
+                      bool aIsReplace, nsINode* aRefChild)
 {
-  NS_PRECONDITION(aNewChild, "Must have new child");
-  NS_PRECONDITION(!aIsReplace || aRefChild,
-                  "Must have ref content for replace");
-  NS_PRECONDITION(aParent->IsNodeOfType(nsINode::eDOCUMENT) ||
-                  aParent->IsNodeOfType(nsINode::eDOCUMENT_FRAGMENT) ||
-                  aParent->IsElement(),
-                  "Nodes that are not documents, document fragments or "
-                  "elements can't be parents!");
+  MOZ_ASSERT(aNewChild, "Must have new child");
+  MOZ_ASSERT_IF(aIsReplace, aRefChild);
+  MOZ_ASSERT(aParent);
+  MOZ_ASSERT(aParent->IsNodeOfType(nsINode::eDOCUMENT) ||
+             aParent->IsNodeOfType(nsINode::eDOCUMENT_FRAGMENT) ||
+             aParent->IsElement(),
+             "Nodes that are not documents, document fragments or elements "
+             "can't be parents!");
 
   // A common case is that aNewChild has no kids, in which case
   // aParent can't be a descendant of aNewChild unless they're
   // actually equal to each other.  Fast-path that case, since aParent
   // could be pretty deep in the DOM tree.
-  if (aParent &&
-      (aNewChild == aParent ||
-       (aNewChild->GetFirstChild() &&
-        nsContentUtils::ContentIsDescendantOf(aParent, aNewChild)))) {
+  if (aNewChild == aParent ||
+      (aNewChild->GetFirstChild() &&
+       nsContentUtils::ContentIsDescendantOf(aParent, aNewChild))) {
     return false;
   }
 
@@ -3991,8 +3990,8 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
   case nsIDOMNode::TEXT_NODE :
   case nsIDOMNode::CDATA_SECTION_NODE :
   case nsIDOMNode::ENTITY_REFERENCE_NODE :
-    // Only allowed under elements
-    return aParent != nsnull;
+    // Allowed under Elements and DocumentFragments
+    return aParent->NodeType() != nsIDOMNode::DOCUMENT_NODE;
   case nsIDOMNode::ELEMENT_NODE :
     {
       if (!aParent->IsNodeOfType(nsINode::eDOCUMENT)) {
@@ -4000,8 +3999,8 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
         return true;
       }
 
-      Element* rootElement =
-        static_cast<nsIDocument*>(aParent)->GetRootElement();
+      nsIDocument* parentDocument = static_cast<nsIDocument*>(aParent);
+      Element* rootElement = parentDocument->GetRootElement();
       if (rootElement) {
         // Already have a documentElement, so this is only OK if we're
         // replacing it.
@@ -4015,13 +4014,7 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
         return true;
       }
 
-      // Now grovel for a doctype
-      nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(aParent);
-      NS_ASSERTION(doc, "Shouldn't happen");
-      nsCOMPtr<nsIDOMDocumentType> docType;
-      doc->GetDoctype(getter_AddRefs(docType));
-      nsCOMPtr<nsIContent> docTypeContent = do_QueryInterface(docType);
-      
+      nsIContent* docTypeContent = parentDocument->GetDocumentType();
       if (!docTypeContent) {
         // It's all good.
         return true;
@@ -4043,11 +4036,8 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
         return false;
       }
 
-      nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(aParent);
-      NS_ASSERTION(doc, "Shouldn't happen");
-      nsCOMPtr<nsIDOMDocumentType> docType;
-      doc->GetDoctype(getter_AddRefs(docType));
-      nsCOMPtr<nsIContent> docTypeContent = do_QueryInterface(docType);
+      nsIDocument* parentDocument = static_cast<nsIDocument*>(aParent);
+      nsIContent* docTypeContent = parentDocument->GetDocumentType();
       if (docTypeContent) {
         // Already have a doctype, so this is only OK if we're replacing it
         return aIsReplace && docTypeContent == aRefChild;
@@ -4055,8 +4045,7 @@ bool IsAllowedAsChild(nsIContent* aNewChild, nsINode* aParent,
 
       // We don't have a doctype yet.  Our one remaining constraint is
       // that the doctype must come before the documentElement.
-      Element* rootElement =
-        static_cast<nsIDocument*>(aParent)->GetRootElement();
+      Element* rootElement = parentDocument->GetRootElement();
       if (!rootElement) {
         // It's all good
         return true;
@@ -4487,9 +4476,16 @@ ContentUnbinder* ContentUnbinder::sContentUnbinder = nsnull;
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGenericElement)
   nsINode::Unlink(tmp);
 
-  if (tmp->HasProperties() && tmp->IsXUL()) {
-    tmp->DeleteProperty(nsGkAtoms::contextmenulistener);
-    tmp->DeleteProperty(nsGkAtoms::popuplistener);
+  if (tmp->HasProperties()) {
+    if (tmp->IsHTML()) {
+      tmp->DeleteProperty(nsGkAtoms::microdataProperties);
+      tmp->DeleteProperty(nsGkAtoms::itemtype);
+      tmp->DeleteProperty(nsGkAtoms::itemref);
+      tmp->DeleteProperty(nsGkAtoms::itemprop);
+    } else if (tmp->IsXUL()) {
+      tmp->DeleteProperty(nsGkAtoms::contextmenulistener);
+      tmp->DeleteProperty(nsGkAtoms::popuplistener);
+    }
   }
 
   // Unlink child content (and unbind our subtree).
@@ -4987,14 +4983,25 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGenericElement)
 
   tmp->OwnerDoc()->BindingManager()->Traverse(tmp, cb);
 
-  if (tmp->HasProperties() && tmp->IsXUL()) {
-    nsISupports* property =
-      static_cast<nsISupports*>
-                 (tmp->GetProperty(nsGkAtoms::contextmenulistener));
-    cb.NoteXPCOMChild(property);
-    property = static_cast<nsISupports*>
-                          (tmp->GetProperty(nsGkAtoms::popuplistener));
-    cb.NoteXPCOMChild(property);
+  if (tmp->HasProperties()) {
+    if (tmp->IsHTML()) {
+      nsISupports* property = static_cast<nsISupports*>
+                                         (tmp->GetProperty(nsGkAtoms::microdataProperties));
+      cb.NoteXPCOMChild(property);
+      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemref));
+      cb.NoteXPCOMChild(property);
+      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemprop));
+      cb.NoteXPCOMChild(property);
+      property = static_cast<nsISupports*>(tmp->GetProperty(nsGkAtoms::itemtype));
+      cb.NoteXPCOMChild(property);
+    } else if (tmp->IsXUL()) {
+      nsISupports* property = static_cast<nsISupports*>
+                                         (tmp->GetProperty(nsGkAtoms::contextmenulistener));
+      cb.NoteXPCOMChild(property);
+      property = static_cast<nsISupports*>
+                            (tmp->GetProperty(nsGkAtoms::popuplistener));
+      cb.NoteXPCOMChild(property);
+    }
   }
 
   // Traverse attribute names and child content.

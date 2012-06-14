@@ -184,6 +184,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitGetElementCache(MGetElementCache *ins);
     bool visitBindNameCache(MBindNameCache *ins);
     bool visitGuardClass(MGuardClass *ins);
+    bool visitGuardObject(MGuardObject *ins);
     bool visitCallGetProperty(MCallGetProperty *ins);
     bool visitDeleteProperty(MDeleteProperty *ins);
     bool visitCallGetName(MCallGetName *ins);
@@ -200,11 +201,6 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitArgumentsLength(MArgumentsLength *ins);
     bool visitArgumentsGet(MArgumentsGet *ins);
     bool visitThrow(MThrow *ins);
-
-    bool visitGuardObject(MGuardObject *ins) {
-        // The type policy associated with this instruction does all the work.
-        return true;
-    }
 };
 
 } // namespace ion

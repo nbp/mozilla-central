@@ -1131,7 +1131,7 @@ class MCall
 
   public:
     INSTRUCTION_HEADER(Call);
-    static MCall *New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct);
+    static MCall *New(JSFunction *target, size_t maxArgc, size_t numActualArgs, bool construct);
 
     void initPrepareCall(MDefinition *start) {
         JS_ASSERT(start->isPrepareCall());
@@ -1164,12 +1164,15 @@ class MCall
         return construct_;
     }
 
+    // The number of stack arguments is the max between the number of formal
+    // arguments and the number of actual arguments. The number of stack
+    // argument includes the |undefined| padding added in case of underflow.
     // Includes |this|.
-    uint32 argc() const {
+    uint32 numStackArgs() const {
         return numOperands() - NumNonArgumentOperands;
     }
 
-    // Includes |this|. Does not include any callsite-added Undefined values.
+    // Does not include |this|.
     uint32 numActualArgs() const {
         return numActualArgs_;
     }
@@ -1446,6 +1449,7 @@ class MGuardObject : public MUnaryInstruction, public SingleObjectPolicy
     {
         setGuard();
         setMovable();
+        setResultType(MIRType_Object);
     }
 
   public:
@@ -1453,6 +1457,10 @@ class MGuardObject : public MUnaryInstruction, public SingleObjectPolicy
 
     static MGuardObject *New(MDefinition *ins) {
         return new MGuardObject(ins);
+    }
+
+    MDefinition *input() const {
+        return getOperand(0);
     }
 
     TypePolicy *typePolicy() {
@@ -4467,11 +4475,7 @@ class MResumePoint : public MNode
     uint32 stackDepth_;
     jsbytecode *pc_;
     MResumePoint *caller_;
-    Mode mode_:2;
-
-    // isFunCall remove one when set from the number of actual arguments.  This
-    // is usefull for cases where inlining matters.
-    bool isFunCall_:1;
+    Mode mode_;
 
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
     bool init(MBasicBlock *state);
@@ -4517,14 +4521,6 @@ class MResumePoint : public MNode
     }
     Mode mode() const {
         return mode_;
-    }
-    uint32 numActualArgs() const {
-        JS_ASSERT(mode_ == Outer && js_CodeSpec[*pc_].format & JOF_INVOKE);
-        return GET_ARGC(pc_) - (isFunCall_ ? 1 : 0);
-    }
-    void setFunCall() {
-        JS_ASSERT(!isFunCall_);
-        isFunCall_ = true;
     }
 };
 

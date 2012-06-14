@@ -231,7 +231,7 @@ LIRGenerator::visitCall(MCall *call)
             return false;
     }
 
-    freeArguments(call->argc());
+    freeArguments(call->numStackArgs());
     return true;
 }
 
@@ -1413,6 +1413,13 @@ LIRGenerator::visitGuardClass(MGuardClass *ins)
     LDefinition t = temp();
     LGuardClass *guard = new LGuardClass(useRegister(ins->obj()), t);
     return assignSnapshot(guard) && add(guard, ins);
+}
+
+bool
+LIRGenerator::visitGuardObject(MGuardObject *ins)
+{
+    LGuardObject *lir = new LGuardObject(useAtStart(ins->input()));
+    return defineReuseInput(lir, ins, 0);
 }
 
 bool

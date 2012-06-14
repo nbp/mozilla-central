@@ -386,11 +386,11 @@ MParameter::congruentTo(MDefinition * const &ins) const
 }
 
 MCall *
-MCall::New(JSFunction *target, size_t argc, size_t numActualArgs, bool construct)
+MCall::New(JSFunction *target, size_t maxArgc, size_t numActualArgs, bool construct)
 {
-    JS_ASSERT(argc >= numActualArgs);
+    JS_ASSERT(maxArgc >= numActualArgs);
     MCall *ins = new MCall(target, numActualArgs, construct);
-    if (!ins->init(argc + NumNonArgumentOperands))
+    if (!ins->init(maxArgc + NumNonArgumentOperands))
         return NULL;
     return ins;
 }
@@ -469,7 +469,7 @@ MPrepareCall::argc() const
 {
     JS_ASSERT(useCount() == 1);
     MCall *call = usesBegin()->node()->toDefinition()->toCall();
-    return call->argc();
+    return call->numStackArgs();
 }
 
 void
@@ -1124,8 +1124,7 @@ MResumePoint::MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *cal
     stackDepth_(block->stackDepth()),
     pc_(pc),
     caller_(caller),
-    mode_(mode),
-    isFunCall_(false)
+    mode_(mode)
 {
 }
 

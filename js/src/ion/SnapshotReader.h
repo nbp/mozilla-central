@@ -61,7 +61,6 @@ class SnapshotReader
 {
     CompactBufferReader reader_;
 
-    uint32 argc_;               // Number of actual arguments. (inline frames only)
     uint32 pcOffset_;           // Offset from script->code.
     uint32 slotCount_;          // Number of slots.
     uint32 frameCount_;
@@ -76,12 +75,17 @@ class SnapshotReader
 #endif
 
 #ifdef TRACK_SNAPSHOTS
+  private:
     uint32 pcOpcode_;
     uint32 mirOpcode_;
     uint32 mirId_;
     uint32 lirOpcode_;
     uint32 lirId_;
+  public:
+    void spewBailingFrom() const;
 #endif
+
+  private:
 
     void readSnapshotHeader();
     void readFrameHeader();
@@ -229,9 +233,6 @@ class SnapshotReader
   public:
     SnapshotReader(const uint8 *buffer, const uint8 *end);
 
-    uint32 nextNumActualArgs() const {
-        return argc_;
-    }
     uint32 pcOffset() const {
         return pcOffset_;
     }

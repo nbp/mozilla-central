@@ -976,7 +976,7 @@ static const PRUnichar nbsp = 160;
 ///////////////////////////////////////////////////////////////////////////
 // IsNextCharWhitespace: checks the adjacent content in the same block
 //                       to see if following selection is whitespace or nbsp
-nsresult 
+void
 nsHTMLEditor::IsNextCharWhitespace(nsIDOMNode *aParentNode, 
                                    PRInt32 aOffset,
                                    bool *outIsSpace,
@@ -984,7 +984,7 @@ nsHTMLEditor::IsNextCharWhitespace(nsIDOMNode *aParentNode,
                                    nsCOMPtr<nsIDOMNode> *outNode,
                                    PRInt32 *outOffset)
 {
-  NS_ENSURE_TRUE(outIsSpace && outIsNBSP, NS_ERROR_NULL_POINTER);
+  MOZ_ASSERT(outIsSpace && outIsNBSP);
   *outIsSpace = false;
   *outIsNBSP = false;
   if (outNode) *outNode = nsnull;
@@ -1004,7 +1004,7 @@ nsHTMLEditor::IsNextCharWhitespace(nsIDOMNode *aParentNode,
       *outIsNBSP = (tempString.First() == nbsp);
       if (outNode) *outNode = do_QueryInterface(aParentNode);
       if (outOffset) *outOffset = aOffset+1;  // yes, this is _past_ the character; 
-      return NS_OK;
+      return;
     }
   }
   
@@ -1028,7 +1028,7 @@ nsHTMLEditor::IsNextCharWhitespace(nsIDOMNode *aParentNode,
           *outIsNBSP = (tempString.First() == nbsp);
           if (outNode) *outNode = do_QueryInterface(node);
           if (outOffset) *outOffset = 1;  // yes, this is _past_ the character; 
-          return NS_OK;
+          return;
         }
         // else it's an empty text node, or not editable; skip it.
       }
@@ -1040,15 +1040,13 @@ nsHTMLEditor::IsNextCharWhitespace(nsIDOMNode *aParentNode,
     tmp = node;
     node = NextNodeInBlock(tmp, kIterForward);
   }
-  
-  return NS_OK;
 }
 
 
 ///////////////////////////////////////////////////////////////////////////
 // IsPrevCharWhitespace: checks the adjacent content in the same block
 //                       to see if following selection is whitespace
-nsresult 
+void
 nsHTMLEditor::IsPrevCharWhitespace(nsIDOMNode *aParentNode, 
                                    PRInt32 aOffset,
                                    bool *outIsSpace,
@@ -1056,7 +1054,7 @@ nsHTMLEditor::IsPrevCharWhitespace(nsIDOMNode *aParentNode,
                                    nsCOMPtr<nsIDOMNode> *outNode,
                                    PRInt32 *outOffset)
 {
-  NS_ENSURE_TRUE(outIsSpace && outIsNBSP, NS_ERROR_NULL_POINTER);
+  MOZ_ASSERT(outIsSpace && outIsNBSP);
   *outIsSpace = false;
   *outIsNBSP = false;
   if (outNode) *outNode = nsnull;
@@ -1075,7 +1073,7 @@ nsHTMLEditor::IsPrevCharWhitespace(nsIDOMNode *aParentNode,
       *outIsNBSP = (tempString.First() == nbsp);
       if (outNode) *outNode = do_QueryInterface(aParentNode);
       if (outOffset) *outOffset = aOffset-1;  
-      return NS_OK;
+      return;
     }
   }
   
@@ -1100,7 +1098,7 @@ nsHTMLEditor::IsPrevCharWhitespace(nsIDOMNode *aParentNode,
           *outIsNBSP = (tempString.First() == nbsp);
           if (outNode) *outNode = do_QueryInterface(aParentNode);
           if (outOffset) *outOffset = strLength-1;  
-          return NS_OK;
+          return;
         }
         // else it's an empty text node, or not editable; skip it.
       }
@@ -1113,9 +1111,6 @@ nsHTMLEditor::IsPrevCharWhitespace(nsIDOMNode *aParentNode,
     tmp = node;
     node = NextNodeInBlock(tmp, kIterBackward);
   }
-  
-  return NS_OK;
-  
 }
 
 
@@ -2093,11 +2088,11 @@ nsHTMLEditor::GetHTMLBackgroundColorState(bool *aMixed, nsAString &aOutColor)
                                                  getter_AddRefs(domElement));
   NS_ENSURE_SUCCESS(res, res);
 
-  nsCOMPtr<nsINode> element = do_QueryInterface(domElement);
+  nsCOMPtr<dom::Element> element = do_QueryInterface(domElement);
 
   while (element) {
     // We are in a cell or selected table
-    element->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::bgcolor, aOutColor);
+    element->GetAttr(kNameSpaceID_None, nsGkAtoms::bgcolor, aOutColor);
 
     // Done if we have a color explicitly set
     if (!aOutColor.IsEmpty()) {
@@ -2105,7 +2100,7 @@ nsHTMLEditor::GetHTMLBackgroundColorState(bool *aMixed, nsAString &aOutColor)
     }
 
     // Once we hit the body, we're done
-    if (element->AsElement()->IsHTML(nsGkAtoms::body)) {
+    if (element->IsHTML(nsGkAtoms::body)) {
       return NS_OK;
     }
 
@@ -2861,7 +2856,7 @@ nsHTMLEditor::CreateElementWithDefaults(const nsAString& aTagName, nsIDOMElement
   //  go through the transaction system
 
   nsCOMPtr<nsIDOMElement>newElement;
-  nsCOMPtr<nsIContent> newContent;
+  nsCOMPtr<dom::Element> newContent;
   nsCOMPtr<nsIDOMDocument> doc = do_QueryReferent(mDocWeak);
   NS_ENSURE_TRUE(doc, NS_ERROR_NOT_INITIALIZED);
 
@@ -3407,8 +3402,11 @@ nsHTMLEditor::DeleteSelectionImpl(EDirection aAction,
   // Don't strip wrappers if this is the only wrapper in the block.  Then we'll
   // add a <br> later, so it won't be an empty wrapper in the end.
   nsCOMPtr<nsIContent> blockParent = content;
-  while (!IsBlockNode(blockParent)) {
+  while (blockParent && !IsBlockNode(blockParent)) {
     blockParent = blockParent->GetParent();
+  }
+  if (!blockParent) {
+    return NS_OK;
   }
   bool emptyBlockParent;
   res = IsEmptyNode(blockParent, &emptyBlockParent);
@@ -3772,13 +3770,6 @@ nsHTMLEditor::TagCanContainTag(nsIAtom* aParentTag, nsIAtom* aChildTag)
                "Fix the caller, this type of node can never contain children.");
 
   return nsHTMLEditUtils::CanContain(parentTagEnum, childTagEnum);
-}
-
-bool
-nsHTMLEditor::IsContainer(nsINode* aNode)
-{
-  nsCOMPtr<nsIDOMNode> node = do_QueryInterface(aNode);
-  return IsContainer(node);
 }
 
 bool
@@ -4625,9 +4616,8 @@ nsHTMLEditor::IsVisTextNode(nsIContent* aNode,
       nsCOMPtr<nsIDOMNode> visNode;
       PRInt32 outVisOffset=0;
       PRInt16 visType=0;
-      nsresult res = wsRunObj.NextVisibleNode(node, 0, address_of(visNode),
-                                              &outVisOffset, &visType);
-      NS_ENSURE_SUCCESS(res, res);
+      wsRunObj.NextVisibleNode(node, 0, address_of(visNode),
+                               &outVisOffset, &visType);
       if ( (visType == nsWSRunObject::eNormalWS) ||
            (visType == nsWSRunObject::eText) )
       {
@@ -4697,7 +4687,7 @@ nsHTMLEditor::IsEmptyNodeImpl(nsINode* aNode,
   // anchors are containers, named anchors are "empty" but we don't
   // want to treat them as such.  Also, don't call ListItems or table
   // cells empty if caller desires.  Form Widgets not empty.
-  if (!IsContainer(aNode)                                   ||
+  if (!IsContainer(aNode->AsDOMNode())                      ||
       (aNode->IsElement() &&
        (nsHTMLEditUtils::IsNamedAnchor(aNode->AsElement())  ||
         nsHTMLEditUtils::IsFormWidget(aNode->AsElement())   ||
@@ -4872,8 +4862,7 @@ nsHTMLEditor::SetIsCSSEnabled(bool aIsCSSPrefChecked)
     return NS_ERROR_NOT_INITIALIZED;
   }
 
-  nsresult rv = mHTMLCSSUtils->SetCSSEnabled(aIsCSSPrefChecked);
-  NS_ENSURE_SUCCESS(rv, rv);
+  mHTMLCSSUtils->SetCSSEnabled(aIsCSSPrefChecked);
 
   // Disable the eEditorNoCSSMask flag if we're enabling StyleWithCSS.
   PRUint32 flags = mFlags;
@@ -5351,6 +5340,12 @@ nsHTMLEditor::SetReturnInParagraphCreatesNewParagraph(bool aCreatesNewParagraph)
 {
   mCRInParagraphCreatesParagraph = aCreatesNewParagraph;
   return NS_OK;
+}
+
+bool
+nsHTMLEditor::GetReturnInParagraphCreatesNewParagraph()
+{
+  return mCRInParagraphCreatesParagraph;
 }
 
 nsresult

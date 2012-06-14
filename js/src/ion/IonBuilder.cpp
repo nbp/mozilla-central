@@ -2702,12 +2702,8 @@ IonBuilder::jsop_call_inline(JSFunction *callee, uint32 argc, IonBuilder &inline
     if (!inlineResumePoint)
         return false;
 
-    // Make sure we can recover the actual number of arguments out of the resume
-    // point. This is used to recover overflow/underflow of arguments of inlined
-    // frames.
-    if (GET_ARGC(pc) - 1 == argc)
-        inlineResumePoint->setFunCall();
-    JS_ASSERT(argc == inlineResumePoint->numActualArgs());
+    // We do not inline JSOP_FUNCALL for now.
+    JS_ASSERT(argc == GET_ARGC(inlineResumePoint->pc()));
 
     // Gather up the arguments and |this| to the inline function.
     // Note that we leave the callee on the simulated stack for the
@@ -3705,9 +3701,13 @@ IonBuilder::pushTypeBarrier(MInstruction *ins, types::TypeSet *actual, types::Ty
     MInstruction *barrier;
     JSValueType type = observed->getKnownTypeTag(cx);
 
-    // An unbox instruction isn't enough to capture JSVAL_TYPE_OBJECT.
-    if (type == JSVAL_TYPE_OBJECT && !observed->hasType(types::Type::AnyObjectType()))
+    // An unbox instruction isn't enough to capture JSVAL_TYPE_OBJECT. Use a type
+    // barrier followed by an infallible unbox.
+    bool isObject = false;
+    if (type == JSVAL_TYPE_OBJECT && !observed->hasType(types::Type::AnyObjectType())) {
         type = JSVAL_TYPE_UNKNOWN;
+        isObject = true;
+    }
 
     switch (type) {
       case JSVAL_TYPE_UNKNOWN:
@@ -3720,6 +3720,10 @@ IonBuilder::pushTypeBarrier(MInstruction *ins, types::TypeSet *actual, types::Ty
             return pushConstant(UndefinedValue());
         if (type == JSVAL_TYPE_NULL)
             return pushConstant(NullValue());
+        if (isObject) {
+            barrier = MUnbox::New(barrier, MIRType_Object, MUnbox::Infallible);
+            current->add(barrier);
+        }
         break;
       default:
         MUnbox::Mode mode = ins->isEffectful() ? MUnbox::TypeBarrier : MUnbox::TypeGuard;
@@ -3869,7 +3873,7 @@ IonBuilder::jsop_setgname(HandlePropertyName name)
     current->add(store);
 
     // Determine whether write barrier is required.
-    if (cx->compartment->needsBarrier() && (!propertyTypes || propertyTypes->needsBarrier(cx)))
+    if (!propertyTypes || propertyTypes->needsBarrier(cx))
         store->setNeedsBarrier(true);
 
     // Pop the global object pushed by bindgname.
@@ -4222,7 +4226,7 @@ IonBuilder::jsop_setelem_dense()
     }
 
     // Determine whether a write barrier is required.
-    if (cx->compartment->needsBarrier() && oracle->elementWriteNeedsBarrier(script, pc))
+    if (oracle->elementWriteNeedsBarrier(script, pc))
         store->setNeedsBarrier(true);
 
     if (elementType != MIRType_None && packed)
@@ -4478,7 +4482,13 @@ IonBuilder::jsop_getprop(HandlePropertyName name)
     }
 
     if (types::TypeSet *propTypes = GetDefiniteSlot(cx, unaryTypes.inTypes, name)) {
-        MLoadFixedSlot *fixed = MLoadFixedSlot::New(obj, propTypes->definiteSlot());
+        MDefinition *useObj = obj;
+        if (unaryTypes.inTypes && unaryTypes.inTypes->baseFlags()) {
+            MGuardObject *guard = MGuardObject::New(obj);
+            current->add(guard);
+            useObj = guard;
+        }
+        MLoadFixedSlot *fixed = MLoadFixedSlot::New(useObj, propTypes->definiteSlot());
         if (!barrier)
             fixed->setResultType(unary.rval);
 
@@ -4527,7 +4537,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
             MStoreFixedSlot *fixed = MStoreFixedSlot::New(obj, value, propTypes->definiteSlot());
             current->add(fixed);
             current->push(value);
-            if (cx->compartment->needsBarrier() && propTypes->needsBarrier(cx))
+            if (propTypes->needsBarrier(cx))
                 fixed->setNeedsBarrier();
             return resumeAfter(fixed);
         }
@@ -4542,10 +4552,8 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
         ins = MSetPropertyCache::New(obj, value, name, script->strictModeCode);
 
         RootedId id(cx, NameToId(name));
-        if (cx->compartment->needsBarrier() &&
-            (!binaryTypes.lhsTypes || binaryTypes.lhsTypes->propertyNeedsBarrier(cx, id))) {
+        if (!binaryTypes.lhsTypes || binaryTypes.lhsTypes->propertyNeedsBarrier(cx, id))
             ins->setNeedsBarrier();
-        }
     }
 
     current->add(ins);

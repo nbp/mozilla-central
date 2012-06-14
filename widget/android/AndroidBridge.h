@@ -155,7 +155,7 @@ public:
         SCREENSHOT_UPDATE = 2
     };
 
-    nsresult TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt32 srcY, PRInt32 srcW, PRInt32 srcH, PRInt32 dstY, PRInt32 dstX, PRInt32 dstW, PRInt32 dstH, PRInt32 bufW, PRInt32 bufH, PRInt32 tabId, PRInt32 token, jobject buffer);
+    nsresult TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt32 srcY, PRInt32 srcW, PRInt32 srcH, PRInt32 dstW, PRInt32 dstH, PRInt32 tabId, float scale, PRInt32 token);
 
     static void NotifyPaintedRect(float top, float left, float bottom, float right);
 
@@ -340,7 +340,7 @@ public:
     void ShowSurface(jobject surface, const gfxRect& aRect, bool aInverted, bool aBlend);
     void HideSurface(jobject surface);
 
-    void AddPluginView(jobject view, const gfxRect& rect, bool isFullScreen, int orientation);
+    void AddPluginView(jobject view, const gfxRect& rect, bool isFullScreen);
     void RemovePluginView(jobject view, bool isFullScreen);
 
     // These methods don't use a ScreenOrientation because it's an
@@ -354,6 +354,8 @@ public:
     void UnlockScreenOrientation();
 
     void PumpMessageLoop();
+
+    void NotifyWakeLockChanged(const nsAString& topic, const nsAString& state);
 
 protected:
     static AndroidBridge *sBridge;
@@ -474,6 +476,7 @@ protected:
     jmethodID jLockScreenOrientation;
     jmethodID jUnlockScreenOrientation;
     jmethodID jPumpMessageLoop;
+    jmethodID jNotifyWakeLockChanged;
 
     // For native surface stuff
     jclass jSurfaceClass;

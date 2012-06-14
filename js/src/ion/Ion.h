@@ -99,8 +99,14 @@ struct IonOptions
     // How many invocations or loop iterations are needed before functions
     // are compiled.
     //
-    // Default: 40.
+    // Default: 10,240
     uint32 usesBeforeCompile;
+
+    // How many invocations or loop iterations are needed before functions
+    // are compiled when JM is disabled.
+    //
+    // Default: 40
+    uint32 usesBeforeCompileNoJaeger;
 
     // How many invocations or loop iterations are needed before calls
     // are inlined.
@@ -108,11 +114,16 @@ struct IonOptions
     // Default: 10,240
     uint32 usesBeforeInlining;
 
+    // How many actual arguments are accepted on the C stack.
+    //
+    // Default: 4,096
+    uint32 maxStackArg;
+
     void setEagerCompilation() {
-        usesBeforeCompile = 0;
+        usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
 
         // Eagerly inline calls to improve test coverage.
-        usesBeforeInlining = usesBeforeCompile;
+        usesBeforeInlining = 0;
     }
 
     IonOptions()
@@ -124,8 +135,10 @@ struct IonOptions
         lsra(true),
         inlining(true),
         rangeAnalysis(true),
-        usesBeforeCompile(40),
-        usesBeforeInlining(10240)
+        usesBeforeCompile(10240),
+        usesBeforeCompileNoJaeger(40),
+        usesBeforeInlining(usesBeforeCompile),
+        maxStackArg(4096)
     { }
 };
 
@@ -179,6 +192,8 @@ IonExecStatus SideCannon(JSContext *cx, StackFrame *fp, jsbytecode *pc);
 // Walk the stack and invalidate active Ion frames for the invalid scripts.
 void Invalidate(FreeOp *fop, const Vector<types::RecompileInfo> &invalid, bool resetUses = true);
 void MarkFromIon(JSCompartment *comp, Value *vp);
+
+void ToggleBarriers(JSCompartment *comp, bool needs);
 
 static inline bool IsEnabled(JSContext *cx)
 {

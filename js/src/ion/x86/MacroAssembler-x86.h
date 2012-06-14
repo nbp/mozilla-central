@@ -462,7 +462,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         movl(Imm32(imm.value), Operand(address));
     }
     void storePtr(ImmGCPtr imm, const Address &address) {
-        movl(Imm32(imm.value), Operand(address));
+        movl(imm, Operand(address));
     }
     void storePtr(Register src, const Address &address) {
         movl(src, Operand(address));
@@ -729,6 +729,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     }
 
     void enterOsr(Register calleeToken, Register code) {
+        push(Imm32(0)); // num actual args.
         push(calleeToken);
         push(Imm32(MakeFrameDescriptor(0, IonFrame_Osr)));
         call(code);

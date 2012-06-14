@@ -323,6 +323,13 @@ class MacroAssemblerX86Shared : public Assembler
         bind(&done);
     }
 
+    // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().
+    CodeOffsetLabel toggledJump(Label *label) {
+        CodeOffsetLabel offset(size());
+        jump(label);
+        return offset;
+    }
+
     template <typename T>
     void computeEffectiveAddress(const T &address, Register dest) {
         lea(Operand(address), dest);

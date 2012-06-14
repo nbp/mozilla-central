@@ -109,18 +109,20 @@ private:
 
 } // anonymous namespace
 
-static nscolor
-MakeColorPref(const nsString& aColor)
+nscolor
+nsPresContext::MakeColorPref(const nsString& aColor)
 {
-  nscolor color;
   nsCSSParser parser;
-  nsresult rv =
-    parser.ParseColorString(aColor, nsnull, 0, &color);
-  if (NS_FAILED(rv)) {
+  nsCSSValue value;
+  if (!parser.ParseColorString(aColor, nsnull, 0, value)) {
     // Any better choices?
-    color = NS_RGB(0, 0, 0);
+    return NS_RGB(0, 0, 0);
   }
-  return color;
+
+  nscolor color;
+  return nsRuleNode::ComputeColor(value, this, nsnull, color)
+    ? color
+    : NS_RGB(0, 0, 0);
 }
 
 int
@@ -1822,8 +1824,10 @@ nsPresContext::EnsureVisible()
       cv->GetPresContext(getter_AddRefs(currentPresContext));
       if (currentPresContext == this) {
         // OK, this is us.  We want to call Show() on the content viewer.
-        cv->Show();
-        return true;
+        nsresult result = cv->Show();
+        if (NS_SUCCEEDED(result)) {
+          return true;
+        }
       }
     }
   }

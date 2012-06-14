@@ -941,7 +941,7 @@ Debugger::fireEnterFrame(JSContext *cx, Value *vp)
 }
 
 void
-Debugger::fireNewScript(JSContext *cx, Handle<JSScript*> script)
+Debugger::fireNewScript(JSContext *cx, HandleScript script)
 {
     RootedObject hook(cx, getHook(OnNewScript));
     JS_ASSERT(hook);
@@ -2376,7 +2376,7 @@ Class DebuggerScript_class = {
 };
 
 JSObject *
-Debugger::newDebuggerScript(JSContext *cx, Handle<JSScript*> script)
+Debugger::newDebuggerScript(JSContext *cx, HandleScript script)
 {
     assertSameCompartment(cx, object.get());
 
@@ -2392,7 +2392,7 @@ Debugger::newDebuggerScript(JSContext *cx, Handle<JSScript*> script)
 }
 
 JSObject *
-Debugger::wrapScript(JSContext *cx, Handle<JSScript*> script)
+Debugger::wrapScript(JSContext *cx, HandleScript script)
 {
     assertSameCompartment(cx, object.get());
     JS_ASSERT(cx->compartment != script->compartment());
@@ -3137,10 +3137,16 @@ DebuggerArguments_getArg(JSContext *cx, unsigned argc, Value *vp)
      */
     JS_ASSERT(i >= 0);
     Value arg;
-    if (unsigned(i) < fp->numActualArgs())
-        arg = fp->canonicalActualArg(i);
-    else
+    if (unsigned(i) < fp->numActualArgs()) {
+        if (unsigned(i) < fp->numFormalArgs() && fp->script()->formalLivesInCallObject(i))
+            arg = fp->callObj().arg(i);
+        else if (fp->script()->argsObjAliasesFormals())
+            arg = fp->argsObj().arg(i);
+        else
+            arg = fp->unaliasedActual(i);
+    } else {
         arg.setUndefined();
+    }
 
     if (!Debugger::fromChildJSObject(thisobj)->wrapDebuggeeValue(cx, &arg))
         return false;
@@ -3370,6 +3376,7 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, StackFrame *fp, const jschar 
     if (!script)
         return false;
 
+    script->isActiveEval = true;
     return ExecuteKernel(cx, script, *env, fp->thisValue(), EXECUTE_DEBUG, fp, rval);
 }
 
@@ -4389,7 +4396,7 @@ DebuggerEnv_getVariable(JSContext *cx, unsigned argc, Value *vp)
     if (!ValueToIdentifier(cx, args[0], id.address()))
         return false;
 
-    Value v;
+    RootedValue v(cx);
     {
         AutoCompartment ac(cx, env);
         if (!ac.enter() || !cx->compartment->wrapId(cx, id.address()))
@@ -4397,11 +4404,11 @@ DebuggerEnv_getVariable(JSContext *cx, unsigned argc, Value *vp)
 
         /* This can trigger getters. */
         ErrorCopier ec(ac, dbg->toJSObject());
-        if (!env->getGeneric(cx, id, &v))
+        if (!env->getGeneric(cx, id, v.address()))
             return false;
     }
 
-    if (!dbg->wrapDebuggeeValue(cx, &v))
+    if (!dbg->wrapDebuggeeValue(cx, v.address()))
         return false;
     args.rval() = v;
     return true;

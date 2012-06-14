@@ -183,10 +183,12 @@ AndroidBridge::Init(JNIEnv *jEnv,
     else /* not Froyo */
         jSurfacePointerField = jEnv->GetFieldID(jSurfaceClass, "mNativeSurface", "I");
 
+    jNotifyWakeLockChanged = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "notifyWakeLockChanged", "(Ljava/lang/String;Ljava/lang/String;)V");
+
 #ifdef MOZ_JAVA_COMPOSITOR
     jPumpMessageLoop = (jmethodID) jEnv->GetStaticMethodID(jGeckoAppShellClass, "pumpMessageLoop", "()V");
 
-    jAddPluginView = jEnv->GetStaticMethodID(jGeckoAppShellClass, "addPluginView", "(Landroid/view/View;IIIIZI)V");
+    jAddPluginView = jEnv->GetStaticMethodID(jGeckoAppShellClass, "addPluginView", "(Landroid/view/View;IIIIZ)V");
     jRemovePluginView = jEnv->GetStaticMethodID(jGeckoAppShellClass, "removePluginView", "(Landroid/view/View;Z)V");
 
     jCreateSurface = jEnv->GetStaticMethodID(jGeckoAppShellClass, "createSurface", "()Landroid/view/Surface;");
@@ -2298,6 +2300,23 @@ AndroidBridge::PumpMessageLoop()
 #endif
 }
 
+void
+AndroidBridge::NotifyWakeLockChanged(const nsAString& topic, const nsAString& state)
+{
+    JNIEnv* env = GetJNIEnv();
+    if (!env)
+        return;
+
+    AutoLocalJNIFrame jniFrame(env);
+
+    jstring jstrTopic = env->NewString(nsPromiseFlatString(topic).get(),
+                                       topic.Length());
+    jstring jstrState = env->NewString(nsPromiseFlatString(state).get(),
+                                       state.Length());
+
+    env->CallStaticVoidMethod(mGeckoAppShellClass, jNotifyWakeLockChanged, jstrTopic, jstrState);
+}
+
 /* attribute nsIAndroidBrowserApp browserApp; */
 NS_IMETHODIMP nsAndroidBridge::GetBrowserApp(nsIAndroidBrowserApp * *aBrowserApp)
 {
@@ -2314,7 +2333,7 @@ NS_IMETHODIMP nsAndroidBridge::SetBrowserApp(nsIAndroidBrowserApp *aBrowserApp)
 }
 
 void
-AndroidBridge::AddPluginView(jobject view, const gfxRect& rect, bool isFullScreen, int orientation) {
+AndroidBridge::AddPluginView(jobject view, const gfxRect& rect, bool isFullScreen) {
     JNIEnv *env = GetJNIEnv();
     if (!env)
         return;
@@ -2325,7 +2344,7 @@ AndroidBridge::AddPluginView(jobject view, const gfxRect& rect, bool isFullScree
     env->CallStaticVoidMethod(sBridge->mGeckoAppShellClass,
                               sBridge->jAddPluginView, view,
                               (int)rect.x, (int)rect.y, (int)rect.width, (int)rect.height,
-                              isFullScreen, orientation);
+                              isFullScreen);
 #else
     env->CallStaticVoidMethod(sBridge->mGeckoAppShellClass,
                               sBridge->jAddPluginView, view,
@@ -2350,13 +2369,9 @@ jobject JNICALL
 Java_org_mozilla_gecko_GeckoAppShell_allocateDirectBuffer(JNIEnv *env, jclass, jlong size);
 
 
-nsresult AndroidBridge::TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt32 srcY, PRInt32 srcW, PRInt32 srcH, PRInt32 dstX, PRInt32 dstY, PRInt32 dstW, PRInt32 dstH, PRInt32 bufW, PRInt32 bufH, PRInt32 tabId, PRInt32 token, jobject buffer)
+nsresult AndroidBridge::TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt32 srcY, PRInt32 srcW, PRInt32 srcH, PRInt32 dstW, PRInt32 dstH, PRInt32 tabId, float scale, PRInt32 token)
 {
     nsresult rv;
-    float scale = 1.0;
- 
-    if (!buffer)
-        return NS_OK;
 
     // take a screenshot, as wide as possible, proportional to the destination size
     if (!srcW && !srcH) {
@@ -2417,17 +2432,21 @@ nsresult AndroidBridge::TakeScreenshot(nsIDOMWindow *window, PRInt32 srcX, PRInt
              nsPresContext::CSSPixelsToAppUnits(srcW / scale),
              nsPresContext::CSSPixelsToAppUnits(srcH / scale));
 
-    PRUint32 stride = bufW * 2 /* 16 bpp */;
+    PRUint32 stride = dstW * 2;
+    PRUint32 bufferSize = dstH * stride;
+
+    jobject buffer = Java_org_mozilla_gecko_GeckoAppShell_allocateDirectBuffer(env, NULL, bufferSize);
+    if (!buffer)
+        return NS_OK;
 
     void* data = env->GetDirectBufferAddress(buffer);
-    nsRefPtr<gfxImageSurface> surf = new gfxImageSurface(static_cast<unsigned char*>(data), nsIntSize(bufW, bufH), stride, gfxASurface::ImageFormatRGB16_565);
+    memset(data, 0, bufferSize);
+    nsRefPtr<gfxImageSurface> surf = new gfxImageSurface(static_cast<unsigned char*>(data), nsIntSize(dstW, dstH), stride, gfxASurface::ImageFormatRGB16_565);
     nsRefPtr<gfxContext> context = new gfxContext(surf);
-    gfxPoint pt(dstX, dstY);
-    context->Translate(pt);
     context->Scale(scale * dstW / srcW, scale * dstH / srcH);
     rv = presShell->RenderDocument(r, renderDocFlags, bgColor, context);
     NS_ENSURE_SUCCESS(rv, rv);
-    env->CallStaticVoidMethod(AndroidBridge::Bridge()->mGeckoAppShellClass, AndroidBridge::Bridge()->jNotifyScreenShot, buffer, tabId, srcX * dstW / srcW , srcY * dstH / srcH, bufW, bufH, token);
+    env->CallStaticVoidMethod(AndroidBridge::Bridge()->mGeckoAppShellClass, AndroidBridge::Bridge()->jNotifyScreenShot, buffer, tabId, srcX * dstW / srcW , srcY * dstH / srcH, dstW, dstH, token);
     return NS_OK;
 }
 

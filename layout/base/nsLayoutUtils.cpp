@@ -4707,8 +4707,10 @@ nsReflowFrameRunnable::Run()
 static nscoord
 MinimumFontSizeFor(nsPresContext* aPresContext, nscoord aContainerWidth)
 {
-  PRUint32 emPerLine = nsLayoutUtils::FontSizeInflationEmPerLine();
-  PRUint32 minTwips = nsLayoutUtils::FontSizeInflationMinTwips();
+  nsIPresShell* presShell = aPresContext->PresShell();
+
+  PRUint32 emPerLine = presShell->FontSizeInflationEmPerLine();
+  PRUint32 minTwips = presShell->FontSizeInflationMinTwips();
   if (emPerLine == 0 && minTwips == 0) {
     return 0;
   }
@@ -4758,10 +4760,15 @@ nsLayoutUtils::FontSizeInflationInner(const nsIFrame *aFrame,
        f && !IsContainerForFontSizeInflation(f);
        f = f->GetParent()) {
     nsIContent* content = f->GetContent();
+    nsIAtom* fType = f->GetType();
     // Also, if there is more than one frame corresponding to a single
     // content node, we want the outermost one.
     if (!(f->GetParent() && f->GetParent()->GetContent() == content) &&
-        f->GetType() != nsGkAtoms::inlineFrame) {
+        // ignore width/height on inlines since they don't apply
+        fType != nsGkAtoms::inlineFrame &&
+        // ignore width on radios and checkboxes since we enlarge them and
+        // they have width/height in ua.css
+        fType != nsGkAtoms::formControlFrame) {
       nsStyleCoord stylePosWidth = f->GetStylePosition()->mWidth;
       nsStyleCoord stylePosHeight = f->GetStylePosition()->mHeight;
       if (stylePosWidth.GetUnit() != eStyleUnit_Auto ||
@@ -4854,8 +4861,11 @@ nsLayoutUtils::FontSizeInflationFor(const nsIFrame *aFrame)
 /* static */ bool
 nsLayoutUtils::FontSizeInflationEnabled(nsPresContext *aPresContext)
 {
-  if ((sFontSizeInflationEmPerLine == 0 &&
-       sFontSizeInflationMinTwips == 0) ||
+  nsIPresShell* presShell = aPresContext->GetPresShell();
+
+  if (!presShell ||
+      (presShell->FontSizeInflationEmPerLine() == 0 &&
+       presShell->FontSizeInflationMinTwips() == 0) ||
        aPresContext->IsChrome()) {
     return false;
   }
