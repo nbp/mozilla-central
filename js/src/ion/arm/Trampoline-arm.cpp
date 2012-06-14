@@ -71,6 +71,31 @@ GenerateReturn(MacroAssembler &masm, int returnCode)
     masm.dumpPool();
 }
 
+struct EnterJITStack
+{
+    void *r0; // alignment.
+
+    // non-volatile registers.
+    void *r4;
+    void *r5;
+    void *r6;
+    void *r7;
+    void *r8;
+    void *r9;
+    void *r10;
+    void *r11;
+    // The abi does not expect r12 (ip) to be preserved
+    void *lr;
+
+    // Arguments.
+    // code == r0
+    // argc == r1
+    // argv == r2
+    // frame == r3
+    CalleeToken token;
+    Value *vp;
+};
+
 /*
  * This method generates a trampoline on x86 for a c++ function with
  * the following signature:
@@ -86,8 +111,8 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     const Register reg_argv  = r2;
     const Register reg_frame = r3;
 
-    const DTRAddr slot_token = DTRAddr(sp, DtrOffImm(40));
-    const Operand slot_vp    = Address(sp, DtrOffImm(44));
+    const Address slot_token(sp, offsetof(EnterJITStack, token));
+    const Address slot_vp(sp, offsetof(EnterJITStack, vp));
 
     JS_ASSERT(OsrFrameReg == reg_frame);
 
@@ -98,7 +123,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     // rather than the JIT'd code, because they are scanned by the conservative
     // scanner.
     masm.startDataTransferM(IsStore, sp, DB, WriteBack);
-    masm.transferReg(r0); // [sp] -- Unnecessary, except for alignment.
+    masm.transferReg(r0); // [sp,0]
     masm.transferReg(r4); // [sp,4]
     masm.transferReg(r5); // [sp,8]
     masm.transferReg(r6); // [sp,12]
@@ -112,21 +137,15 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     // The 5th argument is located at [sp, 40]
     masm.finishDataTransfer();
 
+    // Save stack pointer into r8
+    masm.movePtr(sp, r8);
+
     // Load calleeToken into r9.
-    aasm->as_dtr(IsLoad, 32, Offset, r9, slot_token);
+    masm.loadPtr(slot_token, r9);
 
-    // Load the number of actual arguments into r11.
-    masm.unboxInt32(slot_vp.toAddress(), r11);
-
-    aasm->as_mov(r8, lsl(r1, 3)); // r8 = 8*argc
-    // The size of the IonFrame is actually 16, and we pushed r3 when we aren't
-    // going to pop it, BUT, we pop the return value, rather than just branching
-    // to it, AND we need to access the value pushed by r3, which we need to
-    // not be at a negative offsett, so after removing the ionframe and the
-    // ionfunction's arguments from the stack, we want the sp to be pointing at
-    // the location that r3 was stored in, then we'll pop that value, use it
-    // and pop r4-r11, pc to return.
-    aasm->as_add(r8, r8, Imm8(16-4));
+    // Load the number of actual arguments into r10.
+    masm.loadPtr(slot_vp, r10);
+    masm.unboxInt32(Address(r10, 0), r10);
 
 #if 0
     // This is in case we want to go back to using frames that
@@ -139,6 +158,7 @@ IonCompartment::generateEnterJIT(JSContext *cx)
     aasm->as_sub(sp, sp, Imm8(4));
     aasm->as_orr(sp, sp, Imm8(4));
 #endif
+
     // Subtract off the size of the arguments from the stack pointer, store elsewhere
     aasm->as_sub(r4, sp, O2RegImmShift(r1, LSL, 3)); //r4 = sp - argc*8
     // Get the final position of the stack pointer into the stack pointer
@@ -166,45 +186,44 @@ IonCompartment::generateEnterJIT(JSContext *cx)
         masm.bind(&footer);
     }
 
+    masm.ma_sub(r8, sp, r8);
     masm.makeFrameDescriptor(r8, IonFrame_Entry);
 
     masm.startDataTransferM(IsStore, sp, IB, NoWriteBack);
                            // [sp]    = return address (written later)
     masm.transferReg(r8);  // [sp',4] = descriptor, argc*8+20
     masm.transferReg(r9);  // [sp',8]  = callee token
-    masm.transferReg(r11); // [sp',12]  = actual arguments
+    masm.transferReg(r10); // [sp',12]  = actual arguments
     masm.finishDataTransfer();
 
-    // Throw our return address onto the stack.  this setup seems less-than-ideal
-    aasm->as_dtr(IsStore, 32, Offset, pc, DTRAddr(sp, DtrOffImm(0)));
+    // Call the function.
+    masm.ma_callIonNoPush(r0);
 
-    // Call the function.  using lr as the link register would be *so* nice
-    aasm->as_blx(r0);
+    // The top of the stack now points to the address of the field following
+    // the return address because the return address is popped for the
+    // return, so we need to remove the size of the return address field.
+    aasm->as_sub(sp, sp, Imm8(4));
 
-    // The top of the stack now points to *ABOVE* the address that we previously stored the
-    // return address into.
     // Load off of the stack the size of our local stack
-    aasm->as_dtr(IsLoad, 32, Offset, r5, DTRAddr(sp, DtrOffImm(4)));
-
-    // TODO: these can be fused into one! I don't think this is true since I added in the lsr.
+    masm.loadPtr(Address(sp, IonJSFrameLayout::offsetOfDescriptor()), r5);
     aasm->as_add(sp, sp, lsr(r5, FRAMESIZE_SHIFT));
 
-    // Extract return Value location from function arguments.
-    aasm->as_dtr(IsLoad, 32, Offset, r5, slot_vp.toDTRAddr());
+    // Store the returned value into the slot_vp
+    masm.loadPtr(slot_vp, r5);
+    masm.storeValue(JSReturnOperand, Address(r5, 0));
+
+    // :TODO: Optimize storeValue with:
+    // We're using a load-double here.  In order for that to work,
+    // the data needs to be stored in two consecutive registers,
+    // make sure this is the case
+    //   ASSERT(JSReturnReg_Type.code() == JSReturnReg_Data.code()+1);
+    //   aasm->as_extdtr(IsStore, 64, true, Offset,
+    //                   JSReturnReg_Data, EDtrAddr(r5, EDtrOffImm(0)));
 
     // Get rid of the bogus r0 push.
     aasm->as_add(sp, sp, Imm8(4));
 
-    // We're using a load-double here.  In order for that to work,
-    // the data needs to be stored in two consecutive registers,
-    // make sure this is the case
-    ASSERT(JSReturnReg_Type.code() == JSReturnReg_Data.code()+1);
-
-    // The lower reg also needs to be an even regster.
-    ASSERT((JSReturnReg_Data.code() & 1) == 0);
-    aasm->as_extdtr(IsStore, 64, true, Offset,
-                    JSReturnReg_Data, EDtrAddr(r5, EDtrOffImm(0)));
-
+    // Restore non-volatile registers and return.
     GenerateReturn(masm, JS_TRUE);
 
     Linker linker(masm);
