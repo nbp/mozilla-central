@@ -1,2 +1,3 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Handle arguments[i] (Bug 735406 part 3, r=)
+Subject: Inline fun.apply when used with lazy arguments (Bug 735402, r=)
+
