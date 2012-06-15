@@ -133,7 +133,6 @@ IonCompartment::generateEnterJIT(JSContext *cx)
 
     // Push the number of actual arguments.  |result| is used to store the
     // actual number of arguments without adding an extra argument to the enter
-
     // JIT.
     masm.mov(Operand(ebp, ARG_RESULT), eax);
     masm.unboxInt32(Address(eax, 0x0), eax);
@@ -343,12 +342,12 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     JS_ASSERT(ArgumentsRectifierReg == esi);
 
     // Load the number of |undefined|s to push into %ecx.
-    masm.movl(Operand(esp, IonJSFrameLayout::offsetOfCalleeToken()), eax);
+    masm.movl(Operand(esp, IonRectifierFrameLayout::offsetOfCalleeToken()), eax);
     masm.movzwl(Operand(eax, offsetof(JSFunction, nargs)), ecx);
     masm.subl(esi, ecx);
 
     // Copy the number of actual arguments.
-    masm.movl(Operand(esp, IonJSFrameLayout::offsetOfNumActualArgs()), edx);
+    masm.movl(Operand(esp, IonRectifierFrameLayout::offsetOfNumActualArgs()), edx);
 
     masm.moveValue(UndefinedValue(), ebx, edi);
 
