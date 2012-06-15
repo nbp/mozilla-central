@@ -931,8 +931,10 @@ Compile(JSContext *cx, JSScript *script, js::StackFrame *fp, jsbytecode *osrPc)
     JS_ASSERT_IF(osrPc != NULL, (JSOp)*osrPc == JSOP_LOOPENTRY);
 
     // Skip if there is too much arguments.
-    if (fp->hasArgs() && fp->numActualArgs() <= js_IonOptions.maxStackArgs)
+    if (fp->hasArgs() && fp->numActualArgs() > js_IonOptions.maxStackArgs) {
+        IonSpew(IonSpew_Abort, "Ignore compilation due huge number of arguments of %s:%d", script->filename, script->lineno);
         return Method_Skipped;
+    }
 
     if (cx->compartment->debugMode()) {
         IonSpew(IonSpew_Abort, "debugging");
