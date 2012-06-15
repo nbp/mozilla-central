@@ -213,13 +213,15 @@ class IonExitFrameLayout : public IonCommonFrameLayout
     }
 };
 
+// Cannot inherit implementation since we need to extend the top of
+// IonExitFrameLayout.
 class IonNativeExitFrameLayout
 {
     IonExitFooterFrame footer_;
     IonExitFrameLayout exit_;
     uintptr_t argc_;
 
-    // We need to split the Value in 2 field of 32 bits, otherwise the C++
+    // We need to split the Value into 2 fields of 32 bits, otherwise the C++
     // compiler may add some padding between the fields.
     uint32_t loCalleeResult_;
     uint32_t hiCalleeResult_;
