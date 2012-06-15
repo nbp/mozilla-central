@@ -504,7 +504,7 @@ class LCallNative : public LCallInstructionHelper<BOX_PIECES, 0, 4>
         return mir_->toCall();
     }
 
-    // TODO: Common this out with LCallGeneric.
+    // :TODO: Common this out with LCallGeneric.
     uint32 numStackArgs() const {
         JS_ASSERT(mir()->numStackArgs() >= 1);
         return mir()->numStackArgs() - 1; // |this| is not a formal argument.
