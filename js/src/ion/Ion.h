@@ -117,7 +117,7 @@ struct IonOptions
     // How many actual arguments are accepted on the C stack.
     //
     // Default: 4,096
-    uint32 maxStackArg;
+    uint32 maxStackArgs;
 
     void setEagerCompilation() {
         usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
@@ -138,7 +138,7 @@ struct IonOptions
         usesBeforeCompile(10240),
         usesBeforeCompileNoJaeger(40),
         usesBeforeInlining(usesBeforeCompile),
-        maxStackArg(4096)
+        maxStackArgs(4096)
     { }
 };
 
