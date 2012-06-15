@@ -290,6 +290,7 @@ class IonBuilder : public MIRGenerator
 
     bool initParameters();
     void rewriteParameters();
+    bool initScopeChain();
     bool pushConstant(const Value &v);
     bool pushTypeBarrier(MInstruction *ins, types::TypeSet *actual, types::TypeSet *observed);
     void monitorResult(MInstruction *ins, types::TypeSet *types);
@@ -300,8 +301,12 @@ class IonBuilder : public MIRGenerator
     MDefinition *createThisScripted(MDefinition *callee);
     MDefinition *createThisScriptedSingleton(HandleFunction target, HandleObject proto, MDefinition *callee);
     MDefinition *createThis(HandleFunction target, MDefinition *callee);
+    MInstruction *createCallObject(MDefinition *callee, MDefinition *scopeObj);
+    void copyFormalIntoCallObj(MDefinition *callObj, MDefinition *slots, unsigned formal);
 
     bool makeCall(HandleFunction target, uint32 argc, bool constructing);
+
+    MDefinition *walkScopeChain(unsigned hops);
 
     bool jsop_add(MDefinition *left, MDefinition *right);
     bool jsop_bitnot();
@@ -329,6 +334,7 @@ class IonBuilder : public MIRGenerator
     bool jsop_getelem();
     bool jsop_getelem_dense();
     bool jsop_getelem_typed(int arrayType);
+    bool jsop_getelem_string();
     bool jsop_setelem();
     bool jsop_setelem_dense();
     bool jsop_setelem_typed(int arrayType);
@@ -354,6 +360,9 @@ class IonBuilder : public MIRGenerator
     bool jsop_iternext(uint8 depth);
     bool jsop_itermore();
     bool jsop_iterend();
+    bool jsop_instanceof();
+    bool jsop_getaliasedvar(ScopeCoordinate sc);
+    bool jsop_setaliasedvar(ScopeCoordinate sc);
 
     /* Inlining. */
 

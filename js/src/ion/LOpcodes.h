@@ -57,6 +57,7 @@
     _(Goto)                         \
     _(NewArray)                     \
     _(NewObject)                    \
+    _(NewCallObject)                \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
     _(RecompileCheck)               \
@@ -154,8 +155,7 @@
     _(GetElementCacheV)             \
     _(BindNameCache)                \
     _(CallGetProperty)              \
-    _(CallGetName)                  \
-    _(CallGetNameTypeOf)            \
+    _(GetNameCache)                 \
     _(CallGetElement)               \
     _(CallSetElement)               \
     _(CallSetProperty)              \
@@ -175,6 +175,8 @@
     _(ToIdV)                        \
     _(Floor)                        \
     _(Round)                        \
+    _(InstanceOfO)                  \
+    _(InstanceOfV)                  \
     _(InterruptCheck)
 
 #if defined(JS_CPU_X86)

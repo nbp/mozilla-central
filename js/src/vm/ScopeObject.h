@@ -99,7 +99,7 @@ class ScopeObject : public JSObject
      * enclosing scope of a ScopeObject is necessarily non-null.
      */
     inline JSObject &enclosingScope() const;
-    inline bool setEnclosingScope(JSContext *cx, HandleObject obj);
+    inline void setEnclosingScope(HandleObject obj);
 
     /*
      * Get or set an aliased variable contained in this scope. Unaliased
@@ -112,16 +112,21 @@ class ScopeObject : public JSObject
 
     /* For jit access. */
     static inline size_t offsetOfEnclosingScope();
+
+    static inline size_t enclosingScopeSlot() {
+        return SCOPE_CHAIN_SLOT;
+    }
 };
 
 class CallObject : public ScopeObject
 {
     static const uint32_t CALLEE_SLOT = 1;
 
+  public:
+    /* This function is internal and is exposed only for JITs. */
     static CallObject *
     create(JSContext *cx, JSScript *script, HandleObject enclosing, HandleFunction callee);
 
-  public:
     static const uint32_t RESERVED_SLOTS = CALL_BLOCK_RESERVED_SLOTS;
 
     static CallObject *createForFunction(JSContext *cx, StackFrame *fp);
@@ -159,6 +164,9 @@ class CallObject : public ScopeObject
 
     /* Copy in all the unaliased formals and locals. */
     void copyUnaliasedValues(StackFrame *fp);
+
+    /* For jit access. */
+    static inline size_t offsetOfCallee();
 };
 
 class DeclEnvObject : public ScopeObject
@@ -168,7 +176,6 @@ class DeclEnvObject : public ScopeObject
     static const gc::AllocKind FINALIZE_KIND = gc::FINALIZE_OBJECT2;
 
     static DeclEnvObject *create(JSContext *cx, StackFrame *fp);
-
 };
 
 class NestedScopeObject : public ScopeObject

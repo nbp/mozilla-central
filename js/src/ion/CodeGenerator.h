@@ -113,6 +113,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitNewObjectVMCall(LNewObject *lir);
     bool visitNewObject(LNewObject *lir);
     bool visitOutOfLineNewObject(OutOfLineNewObject *ool);
+    bool visitNewCallObject(LNewCallObject *lir);
     bool visitInitProp(LInitProp *lir);
     bool visitCreateThisVMCall(LCreateThis *lir);
     bool visitCreateThis(LCreateThis *lir);
@@ -141,8 +142,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitFromCharCode(LFromCharCode *lir);
     bool visitFunctionEnvironment(LFunctionEnvironment *lir);
     bool visitCallGetProperty(LCallGetProperty *lir);
-    bool visitCallGetName(LCallGetName *lir);
-    bool visitCallGetNameTypeOf(LCallGetNameTypeOf *lir);
     bool visitCallGetElement(LCallGetElement *lir);
     bool visitCallSetElement(LCallSetElement *lir);
     bool visitThrow(LThrow *lir);
@@ -179,6 +178,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);
     bool visitBitOpV(LBitOpV *lir);
+    bool emitInstanceOf(LInstruction *ins, Register rhs);
+    bool visitInstanceOfO(LInstanceOfO *ins);
+    bool visitInstanceOfV(LInstanceOfV *ins);
     bool visitGuardObject(LGuardObject *lir);
 
     bool visitCheckOverRecursed(LCheckOverRecursed *lir);
@@ -192,6 +194,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitOutOfLineGetElementCache(OutOfLineCache *ool);
     bool visitOutOfLineSetPropertyCache(OutOfLineCache *ool);
     bool visitOutOfLineBindNameCache(OutOfLineCache *ool);
+    bool visitOutOfLineGetNameCache(OutOfLineCache *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
         return visitCache(ins);
@@ -209,6 +212,9 @@ class CodeGenerator : public CodeGeneratorSpecific
         return visitCache(ins);
     }
     bool visitSetPropertyCacheT(LSetPropertyCacheT *ins) {
+        return visitCache(ins);
+    }
+    bool visitGetNameCache(LGetNameCache *ins) {
         return visitCache(ins);
     }
 

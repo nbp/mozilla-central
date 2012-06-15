@@ -143,6 +143,19 @@ LIRGenerator::visitNewObject(MNewObject *ins)
 }
 
 bool
+LIRGenerator::visitNewCallObject(MNewCallObject *ins)
+{
+    JS_ASSERT(ins->scopeObj()->type() == MIRType_Object);
+    JS_ASSERT(ins->callee()->type() == MIRType_Object);
+
+    LNewCallObject *lir = new LNewCallObject(useRegister(ins->scopeObj()),
+                                             useRegister(ins->callee()));
+    if (ins->templateObj())
+        return define(lir, ins) && assignSafepoint(lir, ins);
+    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitInitProp(MInitProp *ins)
 {
     LInitProp *lir = new LInitProp(useRegister(ins->getObject()));
@@ -1358,6 +1371,17 @@ LIRGenerator::visitStoreFixedSlot(MStoreFixedSlot *ins)
 }
 
 bool
+LIRGenerator::visitGetNameCache(MGetNameCache *ins)
+{
+    JS_ASSERT(ins->scopeObj()->type() == MIRType_Object);
+
+    LGetNameCache *lir = new LGetNameCache(useRegister(ins->scopeObj()));
+    if (!defineBox(lir, ins))
+        return false;
+    return assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitGetPropertyCache(MGetPropertyCache *ins)
 {
     JS_ASSERT(ins->object()->type() == MIRType_Object);
@@ -1420,22 +1444,6 @@ LIRGenerator::visitCallGetProperty(MCallGetProperty *ins)
     LCallGetProperty *lir = new LCallGetProperty();
     if (!useBox(lir, LCallGetProperty::Value, ins->value()))
         return false;
-    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
-}
-
-bool
-LIRGenerator::visitCallGetName(MCallGetName *ins)
-{
-    LCallGetName *lir = new LCallGetName();
-    lir->setOperand(0, useRegister(ins->getOperand(0)));
-    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
-}
-
-bool
-LIRGenerator::visitCallGetNameTypeOf(MCallGetNameTypeOf *ins)
-{
-    LCallGetNameTypeOf *lir = new LCallGetNameTypeOf();
-    lir->setOperand(0, useRegister(ins->getOperand(0)));
     return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
 }
 
@@ -1564,6 +1572,25 @@ LIRGenerator::visitThrow(MThrow *ins)
     if (!useBox(lir, LThrow::Value, value))
         return false;
     return add(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitInstanceOf(MInstanceOf *ins)
+{
+    MDefinition *lhs = ins->lhs();
+    MDefinition *rhs = ins->rhs();
+
+    JS_ASSERT(lhs->type() == MIRType_Value || lhs->type() == MIRType_Object);
+    JS_ASSERT(rhs->type() == MIRType_Object);
+
+    // InstanceOf with non-object will always return false
+    if (lhs->type() == MIRType_Object) {
+        LInstanceOfO *lir = new LInstanceOfO(useRegister(lhs), useRegister(rhs), temp(), temp());
+        return define(lir, ins) && assignSafepoint(lir, ins);
+    } else {
+        LInstanceOfV *lir = new LInstanceOfV(useRegister(rhs), temp(), temp());
+        return useBox(lir, LInstanceOfV::LHS, lhs) && define(lir, ins) && assignSafepoint(lir, ins);
+    }
 }
 
 static void

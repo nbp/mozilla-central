@@ -113,6 +113,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitGoto(MGoto *ins);
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
+    bool visitNewCallObject(MNewCallObject *ins);
     bool visitInitProp(MInitProp *ins);
     bool visitCheckOverRecursed(MCheckOverRecursed *ins);
     bool visitDefVar(MDefVar *ins);
@@ -187,8 +188,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitGuardObject(MGuardObject *ins);
     bool visitCallGetProperty(MCallGetProperty *ins);
     bool visitDeleteProperty(MDeleteProperty *ins);
-    bool visitCallGetName(MCallGetName *ins);
-    bool visitCallGetNameTypeOf(MCallGetNameTypeOf *ins);
+    bool visitGetNameCache(MGetNameCache *ins);
     bool visitCallGetElement(MCallGetElement *ins);
     bool visitCallSetElement(MCallSetElement *ins);
     bool visitSetPropertyCache(MSetPropertyCache *ins);
@@ -199,6 +199,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitIteratorEnd(MIteratorEnd *ins);
     bool visitStringLength(MStringLength *ins);
     bool visitThrow(MThrow *ins);
+    bool visitInstanceOf(MInstanceOf *ins);
 };
 
 } // namespace ion

@@ -251,7 +251,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     snapshots_.endSnapshot();
 
     snapshot->setSnapshotOffset(offset);
-    
+
     return !snapshots_.oom();
 }
 
@@ -474,7 +474,6 @@ void
 CodeGeneratorShared::emitPreBarrier(Address address, MIRType type)
 {
     addPreBarrierOffset(masm.patchableCallPreBarrier(address, type));
-    
 }
 
 } // namespace ion

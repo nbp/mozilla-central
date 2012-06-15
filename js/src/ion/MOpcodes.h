@@ -94,6 +94,7 @@ namespace ion {
     _(ToString)                                                             \
     _(NewArray)                                                             \
     _(NewObject)                                                            \
+    _(NewCallObject)                                                        \
     _(InitProp)                                                             \
     _(Start)                                                                \
     _(OsrEntry)                                                             \
@@ -133,8 +134,7 @@ namespace ion {
     _(LoadFixedSlot)                                                        \
     _(StoreFixedSlot)                                                       \
     _(CallGetProperty)                                                      \
-    _(CallGetName)                                                          \
-    _(CallGetNameTypeOf)                                                    \
+    _(GetNameCache)                                                         \
     _(CallGetElement)                                                       \
     _(CallSetElement)                                                       \
     _(CallSetProperty)                                                      \
@@ -147,6 +147,7 @@ namespace ion {
     _(StringLength)                                                         \
     _(Floor)                                                                \
     _(Round)                                                                \
+    _(InstanceOf)                                                           \
     _(InterruptCheck)
 
 // Forward declarations of MIR types.
