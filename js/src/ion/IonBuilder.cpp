@@ -845,9 +845,11 @@ IonBuilder::inspectOpcode(JSOp op)
       case JSOP_FUNCALL:
         return jsop_funcall(GET_ARGC(pc));
 
+      case JSOP_FUNAPPLY:
+        return jsop_funapply(GET_ARGC(pc));
+
       case JSOP_CALL:
       case JSOP_NEW:
-      case JSOP_FUNAPPLY:
         return jsop_call(GET_ARGC(pc), (JSOp)*pc == JSOP_NEW);
 
       case JSOP_INT8:
@@ -2994,6 +2996,53 @@ IonBuilder::jsop_funcall(uint32 argc)
 
     // Call without inlining.
     return makeCall(target, argc, false);
+}
+
+bool
+IonBuilder::jsop_funapply(uint32 argc)
+{
+    // Stack for JSOP_FUNAPPLY:
+    // 1:      MPassArg(This)
+    // 2:      MPassArg(Vp)
+    // argc+1: MPassArg(JSFunction *), the 'f' in |f.call()|, in |this| position.
+    // argc+2: The native 'apply' function.
+
+    // If |Function.prototype.call| may be overridden, don't optimize callsite.
+    RootedFunction native(cx, getSingleCallTarget(argc, pc));
+    if (!native || !native->isNative() || native->native() != &js_fun_apply)
+        return makeCall(native, argc, false);
+
+    // Do not handle case when there is no second argument.
+    if (argc != 2)
+        return makeCall(native, argc, false);
+
+    // Reject when called with an Array or object.
+    MPassArg *passVp = current->peek(-2)->toPassArg();
+    if (passVp->getArgument()->type() != MIRType_ArgObj)
+        return makeCall(native, argc, false);
+
+    // Extract call target.
+    types::TypeSet *funTypes = oracle->getCallArg(script, argc, 0, pc);
+    RootedObject funobj(cx, (funTypes) ? funTypes->getSingleton(cx, false) : NULL);
+    RootedFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
+
+    // Unwrap the (JSFunction *) parameter.
+    int funcDepth = -((int)argc + 1);
+    MPassArg *passFunc = current->peek(funcDepth)->toPassArg();
+    current->rewriteAtDepth(funcDepth, passFunc->getArgument());
+
+    // Remove the MPassArg(JSFunction *).
+    passFunc->replaceAllUsesWith(passFunc->getArgument());
+    passFunc->block()->discard(passFunc);
+
+    // Shimmy the slots down to remove the native 'apply' function.
+    current->shimmySlots(funcDepth - 1);
+
+    // Do no optim for now.
+    return makeCall(native, argc, false);
+
+    // Call without inlining.
+    // return makeCall(target, argc, false);
 }
 
 bool
