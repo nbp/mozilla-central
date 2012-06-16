@@ -2672,8 +2672,6 @@ IonBuilder::jsop_notearg()
     MPassArg *arg = MPassArg::New(def);
 
     // We do not support giving the argument object as argument yet.
-    if (def->type() == MIRType_ArgObj)
-        return abort("NYI: escaping of the argument object.");
 
     current->add(arg);
     current->push(arg);
