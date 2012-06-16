@@ -61,12 +61,12 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
 
     static final String URL_KEY = "url";
     static final String CURRENT_URL_KEY = "currenturl";
-    static final String TYPE_KEY = "type";
+    static final String TARGET_KEY = "target";
     static final String SEARCH_KEY = "search";
     static final String USER_ENTERED_KEY = "user_entered";
-    static enum Type { ADD, EDIT };
+    static enum Target { NEW_TAB, CURRENT_TAB };
 
-    private String mType;
+    private String mTarget;
     private AwesomeBarTabs mAwesomeTabs;
     private AwesomeBarEditText mText;
     private ImageButton mGoButton;
@@ -74,9 +74,6 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
     private ContextMenuSubject mContextMenuSubject;
     private SuggestClient mSuggestClient;
     private AsyncTask<String, Void, ArrayList<String>> mSuggestTask;
-
-    private static String sSuggestEngine;
-    private static String sSuggestTemplate;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -126,7 +123,7 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
 
         Intent intent = getIntent();
         String currentUrl = intent.getStringExtra(CURRENT_URL_KEY);
-        mType = intent.getStringExtra(TYPE_KEY);
+        mTarget = intent.getStringExtra(TARGET_KEY);
         if (currentUrl != null) {
             mText.setText(currentUrl);
             mText.selectAll();
@@ -230,63 +227,23 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
         registerForContextMenu(mAwesomeTabs.findViewById(R.id.bookmarks_list));
         registerForContextMenu(mAwesomeTabs.findViewById(R.id.history_list));
 
-        if (sSuggestTemplate == null) {
-            loadSuggestClientFromPrefs();
-        } else {
-            loadSuggestClient();
-        }
-
         GeckoAppShell.registerGeckoEventListener("SearchEngines:Data", this);
         GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("SearchEngines:Get", null));
-    }
-
-    private void loadSuggestClientFromPrefs() {
-        GeckoAppShell.getHandler().post(new Runnable() {
-            public void run() {
-                SharedPreferences prefs = getSearchPreferences();
-                sSuggestEngine = prefs.getString("suggestEngine", null);
-                sSuggestTemplate = prefs.getString("suggestTemplate", null);
-                if (sSuggestTemplate != null) {
-                    loadSuggestClient();
-                    mAwesomeTabs.setSuggestEngine(sSuggestEngine, null);
-                }
-            }
-        });
-    }
-
-    private void loadSuggestClient() {
-        mSuggestClient = new SuggestClient(GeckoApp.mAppContext, sSuggestTemplate, SUGGESTION_TIMEOUT, SUGGESTION_MAX);
     }
 
     public void handleMessage(String event, JSONObject message) {
         try {
             if (event.equals("SearchEngines:Data")) {
-                final String suggestEngine = message.optString("suggestEngine");
-                final String suggestTemplate = message.optString("suggestTemplate");
-                if (!TextUtils.equals(suggestTemplate, sSuggestTemplate)) {
-                    saveSuggestEngineData(suggestEngine, suggestTemplate);
-                    sSuggestEngine = suggestEngine;
-                    sSuggestTemplate = suggestTemplate;
-                    loadSuggestClient();
-                }
+                final String suggestEngine =  message.isNull("suggestEngine") ? null : message.getString("suggestEngine");
+                final String suggestTemplate = message.isNull("suggestTemplate") ? null : message.getString("suggestTemplate");
+                if (suggestTemplate != null)
+                    mSuggestClient = new SuggestClient(GeckoApp.mAppContext, suggestTemplate, SUGGESTION_TIMEOUT, SUGGESTION_MAX);
                 mAwesomeTabs.setSearchEngines(suggestEngine, message.getJSONArray("searchEngines"));
             }
         } catch (Exception e) {
             // do nothing
             Log.i(LOGTAG, "handleMessage throws " + e + " for message: " + event);
         }
-    }
-
-    private void saveSuggestEngineData(final String suggestEngine, final String suggestTemplate) {
-        GeckoAppShell.getHandler().post(new Runnable() {
-            public void run() {
-                SharedPreferences prefs = getSearchPreferences();
-                SharedPreferences.Editor editor = prefs.edit();
-                editor.putString("suggestEngine", suggestEngine);
-                editor.putString("suggestTemplate", suggestTemplate);
-                editor.commit();
-            }
-        });
     }
 
     @Override
@@ -368,7 +325,7 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
     private void openUrlAndFinish(String url) {
         Intent resultIntent = new Intent();
         resultIntent.putExtra(URL_KEY, url);
-        resultIntent.putExtra(TYPE_KEY, mType);
+        resultIntent.putExtra(TARGET_KEY, mTarget);
         finishWithResult(resultIntent);
     }
 
@@ -384,7 +341,7 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
 
         Intent resultIntent = new Intent();
         resultIntent.putExtra(URL_KEY, url);
-        resultIntent.putExtra(TYPE_KEY, mType);
+        resultIntent.putExtra(TARGET_KEY, mTarget);
         resultIntent.putExtra(USER_ENTERED_KEY, true);
         finishWithResult(resultIntent);
     }
@@ -392,7 +349,7 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
     private void openSearchAndFinish(String url, String engine) {
         Intent resultIntent = new Intent();
         resultIntent.putExtra(URL_KEY, url);
-        resultIntent.putExtra(TYPE_KEY, mType);
+        resultIntent.putExtra(TARGET_KEY, mTarget);
         resultIntent.putExtra(SEARCH_KEY, engine);
         finishWithResult(resultIntent);
     }
@@ -589,7 +546,7 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
                     break;
                 }
 
-                GeckoApp.mAppContext.loadUrl(url, AwesomeBar.Type.ADD);
+                GeckoApp.mAppContext.loadUrl(url, AwesomeBar.Target.NEW_TAB);
                 Toast.makeText(this, R.string.new_tab_opened, Toast.LENGTH_SHORT).show();
                 break;
             }
@@ -671,8 +628,12 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
                     @Override
                     public void onPostExecute(Void result) {
                         int messageId = R.string.bookmark_removed;
-                        if (mInReadingList)
+                        if (mInReadingList) {
                             messageId = R.string.reading_list_removed;
+
+                            GeckoEvent e = GeckoEvent.createBroadcastEvent("Reader:Remove", url);
+                            GeckoAppShell.sendEventToGecko(e);
+                        }
 
                         Toast.makeText(AwesomeBar.this, messageId, Toast.LENGTH_SHORT).show();
                     }
@@ -761,9 +722,5 @@ public class AwesomeBar extends GeckoActivity implements GeckoEventListener {
         public void setOnKeyPreImeListener(OnKeyPreImeListener listener) {
             mOnKeyPreImeListener = listener;
         }
-    }
-
-    private SharedPreferences getSearchPreferences() {
-        return getSharedPreferences("search.prefs", MODE_PRIVATE);
     }
 }

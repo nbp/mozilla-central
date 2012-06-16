@@ -517,14 +517,6 @@ var gCSSProperties = {
 		// negative and zero invalid per editor's draft
 		invalid_values: [ "-1", "0", "3px" ]
 	},
-	"-moz-column-fill": {
-		domProp: "MozColumnFill",
-		inherited: false,
-		type: CSS_TYPE_LONGHAND,
-		initial_values: [ "balance" ],
-		other_values: [ "auto" ],
-		invalid_values: [ "2px", "dotted", "5em" ]
-	},
 	"-moz-column-gap": {
 		domProp: "MozColumnGap",
 		inherited: false,
@@ -2352,7 +2344,7 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		prerequisites: { "display": "block" },
-		initial_values: [ "0", "-moz-calc(0em)", "-moz-calc(-2px)", "-moz-calc(-1%)" ],
+		initial_values: [ "auto", "0", "-moz-calc(0em)", "-moz-calc(-2px)", "-moz-calc(-1%)" ],
 		other_values: [ "30px", "50%",
 			"-moz-calc(2px)",
 			"-moz-calc(50%)",
@@ -2360,14 +2352,14 @@ var gCSSProperties = {
 			"-moz-calc(25px*3)",
 			"-moz-calc(3*25px + 50%)",
 		],
-		invalid_values: [ "auto", "none", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available" ]
+		invalid_values: [ "none", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available" ]
 	},
 	"min-width": {
 		domProp: "minWidth",
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		prerequisites: { "display": "block" },
-		initial_values: [ "0", "-moz-calc(0em)", "-moz-calc(-2px)", "-moz-calc(-1%)" ],
+		initial_values: [ "auto", "0", "-moz-calc(0em)", "-moz-calc(-2px)", "-moz-calc(-1%)" ],
 		other_values: [ "30px", "50%", "-moz-max-content", "-moz-min-content", "-moz-fit-content", "-moz-available",
 			"-moz-calc(2px)",
 			"-moz-calc(50%)",
@@ -2375,7 +2367,7 @@ var gCSSProperties = {
 			"-moz-calc(25px*3)",
 			"-moz-calc(3*25px + 50%)",
 		],
-		invalid_values: [ "auto", "none" ]
+		invalid_values: [ "none" ]
 	},
 	"opacity": {
 		domProp: "opacity",

@@ -115,6 +115,7 @@
   <string name="add_to_reading_list">&add_to_reading_list;</string>
   <string name="reading_list_added">&reading_list_added;</string>
   <string name="reading_list_removed">&reading_list_removed;</string>
+  <string name="reading_list_failed">&reading_list_failed;</string>
   <string name="reader_mode">&reader_mode;</string>
 
   <string name="contextmenu_open_new_tab">&contextmenu_open_new_tab;</string>
@@ -122,6 +123,9 @@
   <string name="contextmenu_remove_bookmark">&contextmenu_remove_bookmark;</string>
   <string name="contextmenu_add_to_launcher">&contextmenu_add_to_launcher;</string>
   <string name="contextmenu_share">&contextmenu_share;</string>
+  <string name="contextmenu_pasteandgo">&contextmenu_pasteandgo;</string>
+  <string name="contextmenu_paste">&contextmenu_paste;</string>
+  <string name="contextmenu_copyurl">&contextmenu_copyurl;</string>
   <string name="contextmenu_edit_bookmark">&contextmenu_edit_bookmark;</string>
 
   <string name="history_removed">&history_removed;</string>

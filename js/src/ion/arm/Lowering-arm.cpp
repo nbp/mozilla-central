@@ -278,7 +278,7 @@ bool
 LIRGeneratorARM::lowerDivI(MDiv *div)
 {
     LDivI *lir = new LDivI(useFixed(div->lhs(), r0), use(div->rhs(), r1),
-                           tempFixed(r2), tempFixed(r3)/*, tempFixed(lr)*/);
+                           tempFixed(r2), tempFixed(r3));
     return assignSnapshot(lir) && defineFixed(lir, div, LAllocation(AnyRegister(r0)));
 }
 
@@ -301,13 +301,13 @@ LIRGeneratorARM::lowerModI(MMod *mod)
         if (1 << shift == rhs) {
             LModPowTwoI *lir = new LModPowTwoI(useRegister(mod->lhs()), shift);
             return (assignSnapshot(lir) && define(lir, mod));
-        } else if (shift != 32 && (1 << (shift+1)) - 1 == rhs) {
+        } else if (shift < 31 && (1 << (shift+1)) - 1 == rhs) {
             LModMaskI *lir = new LModMaskI(useRegister(mod->lhs()), temp(LDefinition::GENERAL), shift+1);
             return (assignSnapshot(lir) && define(lir, mod));
         }
     }
     LModI *lir = new LModI(useFixed(mod->lhs(), r0), use(mod->rhs(), r1),
-                           tempFixed(r2), tempFixed(r3)/*, tempFixed(lr)*/);
+                           tempFixed(r2), tempFixed(r3), temp(LDefinition::GENERAL));
 
     return assignSnapshot(lir) && defineFixed(lir, mod, LAllocation(AnyRegister(r1)));
 }

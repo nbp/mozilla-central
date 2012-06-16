@@ -351,7 +351,6 @@ CodeGeneratorARM::visitSubI(LSubI *ins)
     const LAllocation *lhs = ins->getOperand(0);
     const LAllocation *rhs = ins->getOperand(1);
     const LDefinition *dest = ins->getDef(0);
-
     if (rhs->isConstant()) {
         masm.ma_sub(ToRegister(lhs), Imm32(ToInt32(rhs)), ToRegister(dest), SetCond);
     } else {
@@ -372,6 +371,7 @@ CodeGeneratorARM::visitMulI(LMulI *ins)
     MMul *mul = ins->mir();
 
     if (rhs->isConstant()) {
+        // Bailout when this condition is met.
         Assembler::Condition c = Assembler::Overflow;
         // Bailout on -0.0
         int32 constant = ToInt32(rhs);
@@ -384,10 +384,10 @@ CodeGeneratorARM::visitMulI(LMulI *ins)
         // TODO: move these to ma_mul.
         switch (constant) {
           case -1:
-              masm.ma_rsb(ToRegister(lhs), Imm32(0), ToRegister(dest));
+            masm.ma_rsb(ToRegister(lhs), Imm32(0), ToRegister(dest), SetCond);
             break;
           case 0:
-              masm.ma_mov(Imm32(0), ToRegister(dest));
+            masm.ma_mov(Imm32(0), ToRegister(dest));
             return true; // escape overflow check;
           case 1:
             // nop
@@ -395,6 +395,7 @@ CodeGeneratorARM::visitMulI(LMulI *ins)
             return true; // escape overflow check;
           case 2:
             masm.ma_add(ToRegister(lhs), ToRegister(lhs), ToRegister(dest), SetCond);
+            // Overflow is handled later.
             break;
           default: {
             bool handled = false;
@@ -493,7 +494,6 @@ CodeGeneratorARM::visitDivI(LDivI *ins)
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
     MDiv *mir = ins->mir();
-
     if (mir->canBeNegativeOverflow()) {
         // Prevent INT_MIN / -1;
         // The integer division will give INT_MIN, but we want -(double)INT_MIN.
@@ -541,7 +541,11 @@ CodeGeneratorARM::visitModI(LModI *ins)
     // Extract the registers from this instruction
     Register lhs = ToRegister(ins->lhs());
     Register rhs = ToRegister(ins->rhs());
-    // Prevent INT_MIN / -1;
+    Register callTemp = ToRegister(ins->getTemp(2));
+    // save the lhs in case we end up with a 0 that should be a -0.0 because lhs < 0.
+    JS_ASSERT(callTemp.code() > r3.code() && callTemp.code() < r12.code());
+    masm.ma_mov(lhs, callTemp);
+    // Prevent INT_MIN % -1;
     // The integer division will give INT_MIN, but we want -(double)INT_MIN.
     masm.ma_cmp(lhs, Imm32(INT_MIN)); // sets EQ if lhs == INT_MIN
     masm.ma_cmp(rhs, Imm32(-1), Assembler::Equal); // if EQ (LHS == INT_MIN), sets EQ if rhs == -1
@@ -568,6 +572,15 @@ CodeGeneratorARM::visitModI(LModI *ins)
     masm.passABIArg(lhs);
     masm.passABIArg(rhs);
     masm.callWithABI(JS_FUNC_TO_DATA_PTR(void *, __aeabi_idivmod));
+    // If X%Y == 0 and X < 0, then we *actually* wanted to return -0.0
+    Label join;
+    // See if X < 0
+    masm.ma_cmp(r1, Imm32(0));
+    masm.ma_b(&join, Assembler::NotEqual);
+    masm.ma_cmp(callTemp, Imm32(0));
+    if (!bailoutIf(Assembler::Signed, ins->snapshot()))
+        return false;
+    masm.bind(&join);
     return true;
 }
 
@@ -817,7 +830,7 @@ CodeGeneratorARM::visitTableSwitch(LTableSwitch *ins)
     } else {
         masm.ma_rsb(tempReg, Imm32(cases - 1), tempReg, SetCond);
     }
-    DePooler dp(&masm);
+    AutoForbidPools afp(&masm);
     masm.ma_ldr(DTRAddr(pc, DtrRegImmShift(tempReg, LSL, 2)), pc, Offset, Assembler::Unsigned);
     masm.ma_b(defaultcase);
     DeferredJumpTable *d = new DeferredJumpTable(ins, masm.nextOffset(), &masm);
@@ -1028,15 +1041,13 @@ CodeGeneratorARM::visitUnbox(LUnbox *unbox)
     if (mir->type() == MIRType_ArgObj) {
         Register payload = ToRegister(unbox->payload());
         if (mir->fallible()) {
-            masm.ma_cmp(type, Imm32(JSVAL_TAG_MAGIC));
+            masm.ma_cmp(type, ImmTag(JSVAL_TAG_MAGIC));
             if (!bailoutIf(Assembler::NotEqual, unbox->snapshot()))
                 return false;
             masm.ma_cmp(payload, Imm32(JS_OPTIMIZED_ARGUMENTS));
             if (!bailoutIf(Assembler::NotEqual, unbox->snapshot()))
             return false;
         }
-
-        masm.movePtr(Imm32(0), ToRegister(unbox->output()));
         return true;
     }
 

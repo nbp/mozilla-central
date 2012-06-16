@@ -227,7 +227,9 @@ WebGLContext::DestroyResourcesAndContext()
     // We just got rid of everything, so the context had better
     // have been going away.
 #ifdef DEBUG
-    printf_stderr("--- WebGL context destroyed: %p\n", gl.get());
+    if (gl->DebugMode()) {
+        printf_stderr("--- WebGL context destroyed: %p\n", gl.get());
+    }
 #endif
 
     gl = nsnull;
@@ -519,7 +521,9 @@ WebGLContext::SetDimensions(PRInt32 width, PRInt32 height)
     }
 
 #ifdef DEBUG
-    printf_stderr ("--- WebGL context created: %p\n", gl.get());
+    if (gl->DebugMode()) {
+        printf_stderr("--- WebGL context created: %p\n", gl.get());
+    }
 #endif
 
     mWidth = width;
@@ -857,7 +861,13 @@ bool WebGLContext::IsExtensionSupported(WebGLExtensionID ei)
             isSupported = true;
             break;
         case WebGL_WEBGL_compressed_texture_s3tc:
-            isSupported = gl->IsExtensionSupported(GLContext::EXT_texture_compression_s3tc);
+            if (gl->IsExtensionSupported(GLContext::EXT_texture_compression_s3tc)) {
+                isSupported = true;
+            } else {
+                isSupported = gl->IsExtensionSupported(GLContext::EXT_texture_compression_dxt1) &&
+                              gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt3) &&
+                              gl->IsExtensionSupported(GLContext::ANGLE_texture_compression_dxt5);
+            }
             break;
         default:
             isSupported = false;

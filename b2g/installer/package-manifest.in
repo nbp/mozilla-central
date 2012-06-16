@@ -177,6 +177,7 @@
 #ifdef MOZ_B2G_RIL
 @BINPATH@/components/dom_mms.xpt
 #endif
+@BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_range.xpt
 @BINPATH@/components/dom_settings.xpt
@@ -657,3 +658,4 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 #endif
 @BINPATH@/components/MozKeyboard.js
 @BINPATH@/components/DirectoryProvider.js
+@BINPATH@/components/ProcessGlobal.js

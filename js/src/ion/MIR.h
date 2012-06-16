@@ -196,7 +196,6 @@ class AliasSet {
         Element           = 1 << 1, // A member of obj->elements.
         Slot              = 1 << 2, // A member of obj->slots.
         TypedArrayElement = 1 << 3, // A typed array element.
-        ActualArgs        = 1 << 4, // .
         Last              = TypedArrayElement,
         Any               = Last | (Last - 1),
 
@@ -2059,12 +2058,11 @@ class MAbs
 
 class MSqrt
   : public MUnaryInstruction,
-    public ArithPolicy
+    public DoublePolicy<0>
 {
     MSqrt(MDefinition *num)
       : MUnaryInstruction(num)
     {
-        specialization_ = MIRType_Double;
         setResultType(MIRType_Double);
     }
 
@@ -2080,6 +2078,55 @@ class MSqrt
         return this;
     }
     bool congruentTo(MDefinition *const &ins) const {
+        return congruentIfOperandsEqual(ins);
+    }
+
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+class MMathFunction
+  : public MUnaryInstruction,
+    public DoublePolicy<0>
+{
+  public:
+    enum Function {
+        Log,
+        Sin,
+        Cos,
+        Tan
+    };
+
+  private:
+    Function function_;
+
+    MMathFunction(MDefinition *input, Function function)
+      : MUnaryInstruction(input), function_(function)
+    {
+        setResultType(MIRType_Double);
+        setMovable();
+    }
+
+  public:
+    INSTRUCTION_HEADER(MathFunction);
+    static MMathFunction *New(MDefinition *input, Function function) {
+        return new MMathFunction(input, function);
+    }
+    Function function() const {
+        return function_;
+    }
+    MDefinition *input() const {
+        return getOperand(0);
+    }
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    bool congruentTo(MDefinition *const &ins) const {
+        if (!ins->isMathFunction())
+            return false;
+        if (ins->toMathFunction()->function() != function())
+            return false;
         return congruentIfOperandsEqual(ins);
     }
 
@@ -2297,7 +2344,6 @@ class MCharCodeAt
   : public MBinaryInstruction,
     public MixPolicy<StringPolicy, IntPolicy<1> >
 {
-  public:
     MCharCodeAt(MDefinition *str, MDefinition *index)
         : MBinaryInstruction(str, index)
     {
@@ -2305,14 +2351,20 @@ class MCharCodeAt
         setResultType(MIRType_Int32);
     }
 
+  public:
     INSTRUCTION_HEADER(CharCodeAt);
+
+    static MCharCodeAt *New(MDefinition *str, MDefinition *index) {
+        return new MCharCodeAt(str, index);
+    }
 
     TypePolicy *typePolicy() {
         return this;
     }
 
     virtual AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        // Strings are immutable, so there is no implicit dependency.
+        return AliasSet::None();
     }
 };
 
@@ -2320,7 +2372,6 @@ class MFromCharCode
   : public MUnaryInstruction,
     public IntPolicy<0>
 {
-  public:
     MFromCharCode(MDefinition *code)
       : MUnaryInstruction(code)
     {
@@ -2328,7 +2379,12 @@ class MFromCharCode
         setResultType(MIRType_String);
     }
 
+  public:
     INSTRUCTION_HEADER(FromCharCode);
+
+    static MFromCharCode *New(MDefinition *code) {
+        return new MFromCharCode(code);
+    }
 
     virtual AliasSet getAliasSet() const {
         return AliasSet::None();
@@ -3438,14 +3494,18 @@ class MClampToUint8
     }
 };
 
-class MLoadFixedSlot : public MUnaryInstruction, public SingleObjectPolicy
+class MLoadFixedSlot
+  : public MUnaryInstruction,
+    public SingleObjectPolicy
 {
     size_t slot_;
 
+  protected:
     MLoadFixedSlot(MDefinition *obj, size_t slot)
       : MUnaryInstruction(obj), slot_(slot)
     {
         setResultType(MIRType_Value);
+        setMovable();
     }
 
   public:
@@ -3478,20 +3538,27 @@ class MLoadFixedSlot : public MUnaryInstruction, public SingleObjectPolicy
     }
 };
 
-class MStoreFixedSlot : public MBinaryInstruction, public SingleObjectPolicy
+class MStoreFixedSlot
+  : public MBinaryInstruction,
+    public SingleObjectPolicy
 {
     bool needsBarrier_;
     size_t slot_;
 
-    MStoreFixedSlot(MDefinition *obj, MDefinition *rval, size_t slot)
-      : MBinaryInstruction(obj, rval), needsBarrier_(false), slot_(slot)
+    MStoreFixedSlot(MDefinition *obj, MDefinition *rval, size_t slot, bool barrier)
+      : MBinaryInstruction(obj, rval),
+        needsBarrier_(barrier),
+        slot_(slot)
     {}
 
   public:
     INSTRUCTION_HEADER(StoreFixedSlot);
 
-    static MStoreFixedSlot *New(MDefinition *obj, MDefinition *rval, size_t slot) {
-        return new MStoreFixedSlot(obj, rval, slot);
+    static MStoreFixedSlot *New(MDefinition *obj, size_t slot, MDefinition *rval) {
+        return new MStoreFixedSlot(obj, rval, slot, false);
+    }
+    static MStoreFixedSlot *NewBarriered(MDefinition *obj, size_t slot, MDefinition *rval) {
+        return new MStoreFixedSlot(obj, rval, slot, true);
     }
 
     TypePolicy *typePolicy() {
@@ -3787,11 +3854,11 @@ class MStoreSlot
     MIRType slotType_;
     bool needsBarrier_;
 
-    MStoreSlot(MDefinition *slots, uint32 slot, MDefinition *value)
+    MStoreSlot(MDefinition *slots, uint32 slot, MDefinition *value, bool barrier)
         : MBinaryInstruction(slots, value),
           slot_(slot),
           slotType_(MIRType_Value),
-          needsBarrier_(false)
+          needsBarrier_(barrier)
     {
         JS_ASSERT(slots->type() == MIRType_Slots);
     }
@@ -3800,7 +3867,10 @@ class MStoreSlot
     INSTRUCTION_HEADER(StoreSlot);
 
     static MStoreSlot *New(MDefinition *slots, uint32 slot, MDefinition *value) {
-        return new MStoreSlot(slots, slot, value);
+        return new MStoreSlot(slots, slot, value, false);
+    }
+    static MStoreSlot *NewBarriered(MDefinition *slots, uint32 slot, MDefinition *value) {
+        return new MStoreSlot(slots, slot, value, true);
     }
 
     TypePolicy *typePolicy() {
@@ -3833,9 +3903,7 @@ class MStoreSlot
     }
 };
 
-// Inline call to get a name from a scope object. This is a superclass of the
-// actual opcodes which implement different variants of the operation.
-class MCallGetNameInstruction
+class MGetNameCache
   : public MUnaryInstruction,
     public SingleObjectPolicy
 {
@@ -3849,8 +3917,7 @@ class MCallGetNameInstruction
     CompilerRootPropertyName name_;
     AccessKind kind_;
 
-  protected:
-    MCallGetNameInstruction(MDefinition *obj, HandlePropertyName name, AccessKind kind)
+    MGetNameCache(MDefinition *obj, HandlePropertyName name, AccessKind kind)
       : MUnaryInstruction(obj),
         name_(name),
         kind_(kind)
@@ -3859,10 +3926,15 @@ class MCallGetNameInstruction
     }
 
   public:
+    INSTRUCTION_HEADER(GetNameCache);
+
+    static MGetNameCache *New(MDefinition *obj, HandlePropertyName name, AccessKind kind) {
+        return new MGetNameCache(obj, name, kind);
+    }
     TypePolicy *typePolicy() {
         return this;
     }
-    MDefinition *obj() const {
+    MDefinition *scopeObj() const {
         return getOperand(0);
     }
     PropertyName *name() const {
@@ -4026,34 +4098,6 @@ class MCallGetProperty
     }
 };
 
-class MCallGetName : public MCallGetNameInstruction
-{
-    MCallGetName(MDefinition *obj, HandlePropertyName name)
-        : MCallGetNameInstruction(obj, name, MCallGetNameInstruction::NAME)
-    {}
-
-  public:
-    INSTRUCTION_HEADER(CallGetName);
-
-    static MCallGetName *New(MDefinition *obj, HandlePropertyName name) {
-        return new MCallGetName(obj, name);
-    }
-};
-
-class MCallGetNameTypeOf : public MCallGetNameInstruction
-{
-    MCallGetNameTypeOf(MDefinition *obj, HandlePropertyName name)
-        : MCallGetNameInstruction(obj, name, MCallGetNameInstruction::NAMETYPEOF)
-    {}
-
-  public:
-    INSTRUCTION_HEADER(CallGetNameTypeOf);
-
-    static MCallGetNameTypeOf *New(MDefinition *obj, HandlePropertyName name) {
-        return new MCallGetNameTypeOf(obj, name);
-    }
-};
-
 // Inline call to handle lhs[rhs]. The first input is a Value so that this
 // instruction can handle both objects and strings.
 class MCallGetElement
@@ -4136,7 +4180,9 @@ class MStringLength
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        // The string |length| property is immutable, so there is no
+        // implicit dependency.
+        return AliasSet::None();
     }
 };
 
@@ -4295,6 +4341,33 @@ class MIteratorEnd
     }
 };
 
+// Implementation for instanceof operator.
+class MInstanceOf
+  : public MBinaryInstruction,
+    public InstanceOfPolicy
+{
+  public:
+    MInstanceOf(MDefinition *obj, MDefinition *proto)
+      : MBinaryInstruction(obj, proto)
+    {
+        setResultType(MIRType_Boolean);
+    }
+
+    INSTRUCTION_HEADER(InstanceOf);
+
+    TypePolicy *typePolicy() {
+        return this;
+    }
+
+    MDefinition *lhs() const {
+        return getOperand(0);
+    }
+
+    MDefinition *rhs() const {
+        return getOperand(1);
+    }
+};
+
 // This is just a fake MIR Instruction wrapping a MConstant which has a
 // different MIRType than the Value type. This is used to prevent magic
 // unboxing.
@@ -4348,11 +4421,11 @@ class MArgumentsLength
 };
 
 // This MIR instruction is used to get an argument from the actual arguments.
-class MArgumentsGet
+class MGetArgument
   : public MUnaryInstruction,
     public IntPolicy<0>
 {
-    MArgumentsGet(MDefinition *idx)
+    MGetArgument(MDefinition *idx)
       : MUnaryInstruction(idx)
     {
         setResultType(MIRType_Value);
@@ -4360,10 +4433,10 @@ class MArgumentsGet
     }
 
   public:
-    INSTRUCTION_HEADER(ArgumentsGet);
+    INSTRUCTION_HEADER(GetArgument);
 
-    static MArgumentsGet *New(MDefinition *idx) {
-        return new MArgumentsGet(idx);
+    static MGetArgument *New(MDefinition *idx) {
+        return new MGetArgument(idx);
     }
 
     MDefinition *index() const {
@@ -4377,7 +4450,7 @@ class MArgumentsGet
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ActualArgs);
+        return AliasSet::None();
    }
 };
 
@@ -4452,6 +4525,60 @@ class MMonitorTypes : public MUnaryInstruction
         return typeSet_;
     }
     AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+class MNewCallObject : public MBinaryInstruction
+{
+    CompilerRootObject templateObj_;
+
+    MNewCallObject(HandleObject templateObj, MDefinition *scopeObj, MDefinition *callee)
+      : MBinaryInstruction(scopeObj, callee),
+        templateObj_(templateObj)
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    INSTRUCTION_HEADER(NewCallObject);
+
+    static MNewCallObject *New(HandleObject templateObj, MDefinition *scopeObj,
+                               MDefinition *callee)
+    {
+        return new MNewCallObject(templateObj, scopeObj, callee);
+    }
+
+    MDefinition *scopeObj() {
+        return getOperand(0);
+    }
+    MDefinition *callee() {
+        return getOperand(1);
+    }
+    JSObject *templateObj() {
+        return templateObj_;
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+// This is an alias for MLoadFixedSlot.
+class MEnclosingScope : public MLoadFixedSlot
+{
+    MEnclosingScope(MDefinition *obj)
+      : MLoadFixedSlot(obj, ScopeObject::enclosingScopeSlot())
+    {
+        setResultType(MIRType_Object);
+    }
+
+  public:
+    static MEnclosingScope *New(MDefinition *obj) {
+        return new MEnclosingScope(obj);
+    }
+
+    AliasSet getAliasSet() const {
+        // ScopeObject reserved slots are immutable.
         return AliasSet::None();
     }
 };

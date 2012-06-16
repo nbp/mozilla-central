@@ -122,7 +122,8 @@ ion::GetIonContext()
 IonContext::IonContext(JSContext *cx, TempAllocator *temp)
   : cx(cx),
     temp(temp),
-    prev_(CurrentIonContext())
+    prev_(CurrentIonContext()),
+    assemblerCount_(0)
 {
     SetIonContext(this);
 }
@@ -343,6 +344,12 @@ void
 IonCode::finalize(FreeOp *fop)
 {
     JS_ASSERT(!fop->onBackgroundThread());
+
+    // Buffer can be freed at any time hereafter. Catch use-after-free bugs.
+    JS_POISON(code_, JS_FREE_PATTERN, bufferSize_);
+
+    // Code buffers are stored inside JSC pools.
+    // Pools are refcounted. Releasing the pool may free it.
     if (pool_)
         pool_->release();
 }
@@ -863,19 +870,6 @@ CheckFrame(StackFrame *fp)
         return false;
     }
 
-    if (fp->isFunctionFrame() && fp->fun()->isHeavyweight()) {
-        IonSpew(IonSpew_Abort, "function is heavyweight");
-        return false;
-    }
-
-    if (fp->isFunctionFrame() && fp->isStrictEvalFrame() && fp->hasCallObj()) {
-        // Functions with call objects aren't supported yet. To support them,
-        // we need to fix bug 659577 which would prevent aliasing locals to
-        // stack slots.
-        IonSpew(IonSpew_Abort, "frame has callobj");
-        return false;
-    }
-
     if (fp->script()->needsArgsObj()) {
         // Functions with arguments objects, are not supported yet.
         IonSpew(IonSpew_Abort, "frame has argsobj");
@@ -938,8 +932,10 @@ Compile(JSContext *cx, JSScript *script, js::StackFrame *fp, jsbytecode *osrPc)
     JS_ASSERT_IF(osrPc != NULL, (JSOp)*osrPc == JSOP_LOOPENTRY);
 
     // Skip if there is too much arguments.
-    if (fp->hasArgs() && fp->numActualArgs() <= js_IonOptions.maxStackArg)
+    if (fp->hasArgs() && fp->numActualArgs() > js_IonOptions.maxStackArgs) {
+        IonSpew(IonSpew_Abort, "Ignore compilation due huge number of arguments of %s:%d", script->filename, script->lineno);
         return Method_Skipped;
+    }
 
     if (cx->compartment->debugMode()) {
         IonSpew(IonSpew_Abort, "debugging");
@@ -1116,8 +1112,11 @@ EnterIon(JSContext *cx, StackFrame *fp, void *jitcode)
         enter(jitcode, maxArgc, maxArgv, fp, calleeToken, &result);
     }
 
-    if (result.isMagic() && result.whyMagic() == JS_ION_BAILOUT)
+    if (result.isMagic() && result.whyMagic() == JS_ION_BAILOUT) {
+        if (!EnsureHasCallObject(cx, cx->fp()))
+            return IonExec_Error;
         return IonExec_Bailout;
+    }
 
     JS_ASSERT(fp == cx->fp());
     JS_ASSERT(!cx->runtime->hasIonReturnOverride());

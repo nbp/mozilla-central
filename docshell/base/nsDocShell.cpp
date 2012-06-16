@@ -165,9 +165,7 @@
 
 #include "nsIGlobalHistory2.h"
 
-#ifdef DEBUG_DOCSHELL_FOCUS
 #include "nsEventStateManager.h"
-#endif
 
 #include "nsIFrame.h"
 
@@ -1401,6 +1399,17 @@ nsDocShell::LoadURI(nsIURI * aURI,
 #endif
 
         return LoadHistoryEntry(shEntry, loadType);
+    }
+
+    // On history navigation via Back/Forward buttons, don't execute
+    // automatic JavaScript redirection such as |location.href = ...| or
+    // |window.open()|
+    //
+    // LOAD_NORMAL:        window.open(...) etc.
+    // LOAD_STOP_CONTENT:  location.href = ..., location.assign(...)
+    if ((loadType == LOAD_NORMAL || loadType == LOAD_STOP_CONTENT) &&
+        ShouldBlockLoadingForBackButton()) {
+        return NS_OK;
     }
 
     // Perform the load...
@@ -7919,10 +7928,10 @@ nsDocShell::CheckLoadingPermissions()
         }
 
         // Compare origins
-        bool equal;
-        sameOrigin = subjPrincipal->Equals(p, &equal);
+        bool subsumes;
+        sameOrigin = subjPrincipal->Subsumes(p, &subsumes);
         if (NS_SUCCEEDED(sameOrigin)) {
-            if (equal) {
+            if (subsumes) {
                 // Same origin, permit load
 
                 return sameOrigin;
@@ -11566,6 +11575,16 @@ nsDocShell::OnLinkClick(nsIContent* aContent,
     return NS_OK;
   }
 
+  // On history navigation through Back/Forward buttons, don't execute
+  // automatic JavaScript redirection such as |anchorElement.click()| or
+  // |formElement.submit()|.
+  //
+  // XXX |formElement.submit()| bypasses this checkpoint because it calls
+  //     nsDocShell::OnLinkClickSync(...) instead.
+  if (ShouldBlockLoadingForBackButton()) {
+    return NS_OK;
+  }
+
   if (aContent->IsEditable()) {
     return NS_OK;
   }
@@ -11608,6 +11627,13 @@ nsDocShell::OnLinkClickSync(nsIContent *aContent,
   }
 
   if (!IsOKToLoadURI(aURI)) {
+    return NS_OK;
+  }
+
+  // XXX When the linking node was HTMLFormElement, it is synchronous event.
+  //     That is, the caller of this method is not |OnLinkClickEvent::Run()|
+  //     but |nsHTMLFormElement::SubmitSubmission(...)|.
+  if (nsGkAtoms::form == aContent->Tag() && ShouldBlockLoadingForBackButton()) {
     return NS_OK;
   }
 
@@ -11758,6 +11784,20 @@ nsDocShell::OnLeaveLink()
                                     EmptyString().get());
   }
   return rv;
+}
+
+bool
+nsDocShell::ShouldBlockLoadingForBackButton()
+{
+  if (!(mLoadType & LOAD_CMD_HISTORY) ||
+      nsEventStateManager::IsHandlingUserInput() ||
+      !Preferences::GetBool("accessibility.blockjsredirection")) {
+    return false;
+  }
+
+  bool canGoForward = false;
+  GetCanGoForward(&canGoForward);
+  return canGoForward;
 }
 
 //----------------------------------------------------------------------
@@ -11951,7 +11991,7 @@ nsDocShell::SetIsBrowserFrame(bool aValue)
   // docshell-marked-as-browser-frame would have to distinguish between
   // newly-created browser frames and frames which went from true to false back
   // to true.)
-  NS_ENSURE_STATE(!mIsBrowserFrame);
+  NS_ENSURE_STATE(!mIsBrowserFrame || aValue);
 
   bool wasBrowserFrame = mIsBrowserFrame;
   mIsBrowserFrame = aValue;

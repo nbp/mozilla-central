@@ -253,6 +253,32 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
+class LNewCallObject : public LInstructionHelper<1, 2, 0>
+{
+  public:
+    LIR_HEADER(NewCallObject);
+
+    LNewCallObject(const LAllocation &scopeObj, const LAllocation &callee) {
+        setOperand(0, scopeObj);
+        setOperand(1, callee);
+    }
+
+    bool isCall() const;
+
+    const LDefinition *output() {
+        return getDef(0);
+    }
+    const LAllocation *scopeObj() {
+        return getOperand(0); 
+    }
+    const LAllocation *callee() {
+        return getOperand(1); 
+    }
+    MNewCallObject *mir() const {
+        return mir_->toNewCallObject();
+    }
+};
+
 // Takes in an Object and a Value.
 class LInitProp : public LInstructionHelper<0, 1 + BOX_PIECES, 0>
 {
@@ -478,10 +504,13 @@ class LCallNative : public LCallInstructionHelper<BOX_PIECES, 0, 4>
         return mir_->toCall();
     }
 
-    // TODO: Common this out with LCallGeneric.
+    // :TODO: Common this out with LCallGeneric.
     uint32 numStackArgs() const {
         JS_ASSERT(mir()->numStackArgs() >= 1);
         return mir()->numStackArgs() - 1; // |this| is not a formal argument.
+    }
+    uint32 numActualArgs() const {
+        return mir()->numActualArgs();
     }
 
     const LAllocation *getArgJSContextReg() {
@@ -1025,6 +1054,25 @@ class LSqrtD : public LInstructionHelper<1, 1, 0>
     }
     const LDefinition *output() {
         return this->getDef(0);
+    }
+};
+
+class LMathFunctionD : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(MathFunctionD);
+    LMathFunctionD(const LAllocation &input) {
+        setOperand(0, input);
+    }
+
+    const LAllocation *input() {
+        return getOperand(0);
+    }
+    const LDefinition *output() {
+        return getDef(0);
+    }
+    MMathFunction *mir() const {
+        return mir_->toMathFunction();
     }
 };
 
@@ -2090,6 +2138,24 @@ class LStoreFixedSlotT : public LInstructionHelper<0, 2, 0>
     }
 };
 
+// Note, Name ICs always return a Value. There are no V/T variants.
+class LGetNameCache : public LInstructionHelper<BOX_PIECES, 1, 0>
+{
+  public:
+    LIR_HEADER(GetNameCache);
+    BOX_OUTPUT_ACCESSORS();
+
+    LGetNameCache(const LAllocation &scopeObj) {
+        setOperand(0, scopeObj);
+    }
+    const LAllocation *scopeObj() {
+        return getOperand(0);
+    }
+    const MGetNameCache *mir() const {
+        return mir_->toGetNameCache();
+    }
+};
+
 // Patchable jump to stubs generated for a GetProperty cache, which loads a
 // boxed value.
 class LGetPropertyCacheV : public LInstructionHelper<BOX_PIECES, 1, 0>
@@ -2338,26 +2404,6 @@ class LCallGetProperty : public LCallInstructionHelper<BOX_PIECES, BOX_PIECES, 0
     }
 };
 
-class LCallGetName : public LCallInstructionHelper<BOX_PIECES, 1, 0>
-{
-  public:
-    LIR_HEADER(CallGetName);
-
-    MCallGetName *mir() const {
-        return mir_->toCallGetName();
-    }
-};
-
-class LCallGetNameTypeOf : public LCallInstructionHelper<BOX_PIECES, 1, 0>
-{
-  public:
-    LIR_HEADER(CallGetNameTypeOf);
-
-    MCallGetNameTypeOf *mir() const {
-        return mir_->toCallGetNameTypeOf();
-    }
-};
-
 // Call js::GetElement.
 class LCallGetElement : public LCallInstructionHelper<BOX_PIECES, 2 * BOX_PIECES, 0>
 {
@@ -2587,13 +2633,13 @@ class LArgumentsLength : public LInstructionHelper<1, 0, 0>
 };
 
 // Load a value from the actual arguments.
-class LArgumentsGet : public LInstructionHelper<BOX_PIECES, 1, 0>
+class LGetArgument : public LInstructionHelper<BOX_PIECES, 1, 0>
 {
   public:
-    LIR_HEADER(ArgumentsGet);
+    LIR_HEADER(GetArgument);
     BOX_OUTPUT_ACCESSORS();
 
-    LArgumentsGet(const LAllocation &index) {
+    LGetArgument(const LAllocation &index) {
         setOperand(0, index);
     }
     const LAllocation *index() {
@@ -2741,6 +2787,52 @@ class LPhi : public LInstruction
     virtual void printInfo(FILE *fp) {
         printOperands(fp);
     }
+};
+
+class LInstanceOfO : public LInstructionHelper<1, 2, 2>
+{
+  public:
+    LIR_HEADER(InstanceOfO);
+    LInstanceOfO(const LAllocation &lhs, const LAllocation &rhs, const LDefinition &temp, const LDefinition &temp2) {
+        setOperand(0, lhs);
+        setOperand(1, rhs);
+        setTemp(0, temp);
+        setTemp(1, temp2);
+    }
+
+    const LAllocation *lhs() {
+        return getOperand(0);
+    }
+    const LAllocation *rhs() {
+        return getOperand(1);
+    }
+    const LDefinition *output() {
+        return getDef(0);
+    }
+};
+
+class LInstanceOfV : public LInstructionHelper<1, BOX_PIECES+1, 2>
+{
+  public:
+    LIR_HEADER(InstanceOfV);
+    LInstanceOfV(const LAllocation &rhs, const LDefinition &temp, const LDefinition &temp2) {
+        setOperand(RHS, rhs);
+        setTemp(0, temp);
+        setTemp(1, temp2);
+    }
+
+    const LAllocation *lhs() {
+        return getOperand(LHS);
+    }
+    const LAllocation *rhs() {
+        return getOperand(RHS);
+    }
+    const LDefinition *output() {
+        return getDef(0);
+    }
+
+    static const size_t LHS = 0;
+    static const size_t RHS = BOX_PIECES;
 };
 
 } // namespace ion

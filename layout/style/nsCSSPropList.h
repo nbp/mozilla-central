@@ -1378,16 +1378,6 @@ CSS_PROP_COLUMN(
     offsetof(nsStyleColumn, mColumnCount),
     eStyleAnimType_Custom)
 CSS_PROP_COLUMN(
-    -moz-column-fill,
-    _moz_column_fill,
-    CSS_PROP_DOMPROP_PREFIXED(ColumnFill),
-    CSS_PROPERTY_PARSE_VALUE,
-    "",
-    VARIANT_HK,
-    kColumnFillKTable,
-    CSS_PROP_NO_OFFSET,
-    eStyleAnimType_None)
-CSS_PROP_COLUMN(
     -moz-column-width,
     _moz_column_width,
     CSS_PROP_DOMPROP_PREFIXED(ColumnWidth),
@@ -1980,7 +1970,7 @@ CSS_PROP_POSITION(
         CSS_PROPERTY_VALUE_NONNEGATIVE |
         CSS_PROPERTY_STORES_CALC,
     "",
-    VARIANT_HLP | VARIANT_CALC,
+    VARIANT_AHLP | VARIANT_CALC,
     nsnull,
     offsetof(nsStylePosition, mMinHeight),
     eStyleAnimType_Coord)
@@ -1992,7 +1982,7 @@ CSS_PROP_POSITION(
         CSS_PROPERTY_VALUE_NONNEGATIVE |
         CSS_PROPERTY_STORES_CALC,
     "",
-    VARIANT_HKLP | VARIANT_CALC,
+    VARIANT_AHKLP | VARIANT_CALC,
     kWidthKTable,
     offsetof(nsStylePosition, mMinWidth),
     eStyleAnimType_Coord)

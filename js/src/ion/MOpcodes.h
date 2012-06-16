@@ -75,6 +75,7 @@ namespace ion {
     _(Ursh)                                                                 \
     _(Abs)                                                                  \
     _(Sqrt)                                                                 \
+    _(MathFunction)                                                         \
     _(Add)                                                                  \
     _(Sub)                                                                  \
     _(Mul)                                                                  \
@@ -94,6 +95,7 @@ namespace ion {
     _(ToString)                                                             \
     _(NewArray)                                                             \
     _(NewObject)                                                            \
+    _(NewCallObject)                                                        \
     _(InitProp)                                                             \
     _(Start)                                                                \
     _(OsrEntry)                                                             \
@@ -133,8 +135,7 @@ namespace ion {
     _(LoadFixedSlot)                                                        \
     _(StoreFixedSlot)                                                       \
     _(CallGetProperty)                                                      \
-    _(CallGetName)                                                          \
-    _(CallGetNameTypeOf)                                                    \
+    _(GetNameCache)                                                         \
     _(CallGetElement)                                                       \
     _(CallSetElement)                                                       \
     _(CallSetProperty)                                                      \
@@ -146,9 +147,10 @@ namespace ion {
     _(IteratorEnd)                                                          \
     _(StringLength)                                                         \
     _(ArgumentsLength)                                                      \
-    _(ArgumentsGet)                                                         \
+    _(GetArgument)                                                          \
     _(Floor)                                                                \
     _(Round)                                                                \
+    _(InstanceOf)                                                           \
     _(InterruptCheck)
 
 // Forward declarations of MIR types.

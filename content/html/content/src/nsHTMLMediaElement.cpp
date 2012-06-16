@@ -56,8 +56,6 @@
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIAppShell.h"
 #include "nsWidgetsCID.h"
-
-#include "nsIPrivateDOMEvent.h"
 #include "nsIDOMNotifyAudioAvailableEvent.h"
 #include "nsMediaFragmentURIParser.h"
 #include "nsURIHashKey.h"
@@ -2156,7 +2154,7 @@ nsHTMLMediaElement::CanHandleMediaType(const char* aMIMEType,
 #ifdef MOZ_GSTREAMER
   if (IsH264Type(nsDependentCString(aMIMEType))) {
     *aCodecList = gH264Codecs;
-    return CANPLAY_YES;
+    return CANPLAY_MAYBE;
   }
 #endif
 #ifdef MOZ_MEDIA_PLUGINS

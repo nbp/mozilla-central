@@ -44,6 +44,7 @@
 #include "IonSpewer.h"
 #include "MIRGenerator.h"
 #include "shared/CodeGenerator-shared-inl.h"
+#include "jsmath.h"
 #include "jsnum.h"
 #include "jsinterpinlines.h"
 
@@ -513,7 +514,7 @@ CodeGenerator::emitCallInvokeFunction(LCallGeneric *call, uint32 unusedStack)
     masm.freeStack(unusedStack);
 
     pushArg(StackPointer);                    // argv.
-    pushArg(Imm32(call->numStackArgs()));     // argc.
+    pushArg(Imm32(call->numActualArgs()));    // argc.
     pushArg(ToRegister(call->getFunction())); // JSFunction *.
 
     if (!callVM(InvokeFunctionInfo, call))
@@ -618,6 +619,8 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
         masm.movePtr(Address(objreg, IonCode::OffsetOfCode()), objreg);
     }
 
+    Label afterCall;
+
     // Argument fixup needed. Get ready to call the argumentsRectifier.
     if (!call->hasSingleTarget()) {
         // Skip this thunk unless an explicit jump target.
@@ -632,17 +635,22 @@ CodeGenerator::visitCallGeneric(LCallGeneric *call)
 
         JS_ASSERT(ArgumentsRectifierReg != objreg);
         masm.move32(Imm32(call->numStackArgs()), ArgumentsRectifierReg);
-        masm.movePtr(ImmWord(argumentsRectifier->raw()), objreg);
+        masm.call(argumentsRectifier);
+        if (!markSafepoint(call))
+            return false;
+        masm.jump(&afterCall);
     }
 
     masm.bind(&rejoin);
 
     masm.checkStackAlignment();
 
-    // Finally call the function in objreg, as assigned by one of the paths above.
+    // Finally call the function in objreg.
     masm.callIon(objreg);
     if (!markSafepoint(call))
         return false;
+
+    masm.bind(&afterCall);
 
     // Increment to remove IonFramePrefix; decrement to fill FrameSizeClass.
     // The return address has already been removed from the Ion frame.
@@ -1023,6 +1031,48 @@ CodeGenerator::visitOutOfLineNewObject(OutOfLineNewObject *ool)
 }
 
 bool
+CodeGenerator::visitNewCallObject(LNewCallObject *lir)
+{
+    Register obj = ToRegister(lir->output());
+    Register scopeObj = ToRegister(lir->scopeObj());
+    Register callee = ToRegister(lir->callee());
+
+    typedef JSObject *(*pf)(JSContext *, HandleObject, HandleFunction);
+    static const VMFunction NewCallObjectInfo = FunctionInfo<pf>(NewCallObject);
+
+    if (lir->mir()->templateObj()) {
+        // If we have a template object, we can inline call object creation.
+        OutOfLineCode *ool = oolCallVM(NewCallObjectInfo, lir, (ArgList(), scopeObj, callee),
+                                       StoreRegisterTo(obj));
+        if (!ool)
+            return false;
+
+        RootedObject templateObj(gen->cx, lir->mir()->templateObj());
+        masm.getNewObject(gen->cx, obj, templateObj, ool->entry());
+
+        // Initialize the scope and callee slots. No write barriers are needed
+        // here because we're overwriting UndefinedValue(), however, we may need
+        // generational barriers later.
+        Address scopeSlot(obj, ScopeObject::offsetOfEnclosingScope());
+        masm.storeValue(JSVAL_TYPE_OBJECT, scopeObj, scopeSlot);
+
+        Address calleeSlot(obj, CallObject::offsetOfCallee());
+        masm.storeValue(JSVAL_TYPE_OBJECT, callee, calleeSlot);
+
+        masm.bind(ool->rejoin());
+    } else {
+        // Otherwise, perform a normal call.
+        pushArg(callee);
+        pushArg(scopeObj);
+
+        if (!callVM(NewCallObjectInfo, lir))
+            return false;
+    }
+
+    return true;
+}
+
+bool
 CodeGenerator::visitInitProp(LInitProp *lir)
 {
     Register objReg = ToRegister(lir->getObject());
@@ -1165,6 +1215,47 @@ CodeGenerator::visitAbsI(LAbsI *ins)
         return false;
     masm.bind(&positive);
 
+    return true;
+}
+
+bool
+CodeGenerator::visitMathFunctionD(LMathFunctionD *ins)
+{
+    FloatRegister input = ToFloatRegister(ins->input());
+    JS_ASSERT(ToFloatRegister(ins->output()) == ReturnFloatReg);
+
+    MathCache *mathCache = gen->cx->runtime->getMathCache(gen->cx);
+
+    saveVolatile(ReturnFloatReg);
+
+    // It's safe to use any volatile register as temp now.
+    Register temp = RegisterSet::Volatile().takeGeneral();
+    masm.setupUnalignedABICall(2, temp);
+    masm.movePtr(ImmWord(mathCache), temp);
+    masm.passABIArg(temp);
+    masm.passABIArg(input);
+
+    void *funptr = NULL;
+    switch (ins->mir()->function()) {
+      case MMathFunction::Log:
+        funptr = JS_FUNC_TO_DATA_PTR(void *, js::math_log_impl);
+        break;
+      case MMathFunction::Sin:
+        funptr = JS_FUNC_TO_DATA_PTR(void *, js::math_sin_impl);
+        break;
+      case MMathFunction::Cos:
+        funptr = JS_FUNC_TO_DATA_PTR(void *, js::math_cos_impl);
+        break;
+      case MMathFunction::Tan:
+        funptr = JS_FUNC_TO_DATA_PTR(void *, js::math_tan_impl);
+        break;
+      default:
+        JS_NOT_REACHED("Unknown math function");
+    }
+
+    masm.callWithABI(funptr, MacroAssembler::DOUBLE);
+
+    restoreVolatile(ReturnFloatReg);
     return true;
 }
 
@@ -2076,19 +2167,19 @@ CodeGenerator::visitArgumentsLength(LArgumentsLength *lir)
 }
 
 bool
-CodeGenerator::visitArgumentsGet(LArgumentsGet *lir)
+CodeGenerator::visitGetArgument(LGetArgument *lir)
 {
     ValueOperand result = GetValueOutput(lir);
     const LAllocation *index = lir->index();
     size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
 
     if (index->isConstant()) {
-        uint8 i = index->toConstant()->toInt32();
-        Address argPtr(StackPointer, sizeof(Value*) * i + argvOffset);
+        int32 i = index->toConstant()->toInt32();
+        Address argPtr(StackPointer, sizeof(Value) * i + argvOffset);
         masm.loadValue(argPtr, result);
     } else {
         Register i = ToRegister(index);
-        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value*)), argvOffset);
+        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value)), argvOffset);
         masm.loadValue(argPtr, result);
     }
     return true;
@@ -2261,26 +2352,6 @@ CodeGenerator::visitCallGetProperty(LCallGetProperty *lir)
 }
 
 bool
-CodeGenerator::visitCallGetName(LCallGetName *lir)
-{
-    static const VMFunction Info = FunctionInfo<GetPropertyOrNameFn>(GetScopeName);
-
-    pushArg(ImmGCPtr(lir->mir()->name()));
-    pushArg(ToRegister(lir->getOperand(0)));
-    return callVM(Info, lir);
-}
-
-bool
-CodeGenerator::visitCallGetNameTypeOf(LCallGetNameTypeOf *lir)
-{
-    static const VMFunction Info = FunctionInfo<GetPropertyOrNameFn>(GetScopeNameForTypeOf);
-
-    pushArg(ImmGCPtr(lir->mir()->name()));
-    pushArg(ToRegister(lir->getOperand(0)));
-    return callVM(Info, lir);
-}
-
-bool
 CodeGenerator::visitCallGetElement(LCallGetElement *lir)
 {
     typedef bool (*pf)(JSContext *, const Value &, const Value &, Value *);
@@ -2402,6 +2473,8 @@ class OutOfLineCache : public OutOfLineCodeBase<CodeGenerator>
 
     bool accept(CodeGenerator *codegen) {
         switch (ins->op()) {
+          case LInstruction::LOp_InstanceOfO:
+          case LInstruction::LOp_InstanceOfV:
           case LInstruction::LOp_GetPropertyCacheT:
           case LInstruction::LOp_GetPropertyCacheV:
             return codegen->visitOutOfLineCacheGetProperty(this);
@@ -2412,6 +2485,8 @@ class OutOfLineCache : public OutOfLineCodeBase<CodeGenerator>
             return codegen->visitOutOfLineSetPropertyCache(this);
           case LInstruction::LOp_BindNameCache:
             return codegen->visitOutOfLineBindNameCache(this);
+          case LInstruction::LOp_GetNameCache:
+            return codegen->visitOutOfLineGetNameCache(this);
           default:
             JS_NOT_REACHED("Bad instruction");
             return false;
@@ -2445,45 +2520,100 @@ CodeGenerator::visitCache(LInstruction *ins)
 }
 
 bool
-CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
+CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
 {
-    Register objReg = ToRegister(ool->cache()->getOperand(0));
-    RegisterSet liveRegs = ool->cache()->safepoint()->liveRegs();
+    LGetNameCache *lir = ool->cache()->toGetNameCache();
+    const MGetNameCache *mir = lir->mir();
+    Register scopeChain = ToRegister(lir->scopeObj());
+    RegisterSet liveRegs = lir->safepoint()->liveRegs();
+    TypedOrValueRegister output(GetValueOutput(lir));
 
-    LInstruction *ins_ = ool->cache();
-    const MGetPropertyCache *mir;
-
-    TypedOrValueRegister output;
-
-    if (ins_->op() == LInstruction::LOp_GetPropertyCacheT) {
-        LGetPropertyCacheT *ins = (LGetPropertyCacheT *) ins_;
-        output = TypedOrValueRegister(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
-        mir = ins->mir();
-    } else {
-        LGetPropertyCacheV *ins = (LGetPropertyCacheV *) ins_;
-        output = TypedOrValueRegister(GetValueOutput(ins));
-        mir = ins->mir();
-    }
-
-    IonCacheGetProperty cache(ool->getInlineJump(), ool->getInlineLabel(),
-                              masm.labelForPatch(), liveRegs,
-                              objReg, mir->name(), output);
+    IonCache::Kind kind = (mir->accessKind() == MGetNameCache::NAME)
+                          ? IonCache::Name
+                          : IonCache::NameTypeOf;
+    IonCacheName cache(kind, ool->getInlineJump(), ool->getInlineLabel(),
+                       masm.labelForPatch(), liveRegs,
+                       scopeChain, mir->name(), output);
 
     cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
     size_t cacheIndex = allocateCache(cache);
 
-    saveLive(ins_);
+    saveLive(lir);
+
+    typedef bool (*pf)(JSContext *, size_t, HandleObject, Value *);
+    static const VMFunction GetNameCacheInfo = FunctionInfo<pf>(GetNameCache);
+
+    pushArg(scopeChain);
+    pushArg(Imm32(cacheIndex));
+    if (!callVM(GetNameCacheInfo, lir))
+        return false;
+
+    masm.storeCallResultValue(output);
+    restoreLive(lir);
+
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
+CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
+{
+    RegisterSet liveRegs = ool->cache()->safepoint()->liveRegs();
+
+    LInstruction *ins = ool->cache();
+    const MInstruction *mir = ins->mirRaw()->toInstruction();
+
+    TypedOrValueRegister output;
+
+    Register objReg;
+
+    // Define the input and output registers each opcode wants,
+    // and which atom property it should get
+    // Note: because all registers are saved, the output register should be
+    //       a def register, else the result will be overriden by restoreLive(ins)
+    RootedPropertyName name(gen->cx);
+    switch (ins->op()) {
+      case LInstruction::LOp_InstanceOfO:
+      case LInstruction::LOp_InstanceOfV:
+        name = GetIonContext()->cx->runtime->atomState.classPrototypeAtom;
+        objReg = ToRegister(ins->getTemp(1));
+        output = TypedOrValueRegister(MIRType_Object, ToAnyRegister(ins->getDef(0)));
+        break;
+      case LInstruction::LOp_GetPropertyCacheT:
+        name = ((LGetPropertyCacheT *) ins)->mir()->name();
+        objReg = ToRegister(ins->getOperand(0));
+        output = TypedOrValueRegister(mir->type(), ToAnyRegister(ins->getDef(0)));
+        break;
+      case LInstruction::LOp_GetPropertyCacheV:
+        name = ((LGetPropertyCacheV *) ins)->mir()->name();
+        objReg = ToRegister(ins->getOperand(0));
+        output = TypedOrValueRegister(GetValueOutput(ins));
+        break;
+      default:
+        JS_NOT_REACHED("Bad instruction");
+        return false;
+    }
+
+    IonCacheGetProperty cache(ool->getInlineJump(), ool->getInlineLabel(),
+                              masm.labelForPatch(), liveRegs,
+                              objReg, name, output);
+    JS_ASSERT(mir->resumePoint() != NULL);
+
+    cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
+    size_t cacheIndex = allocateCache(cache);
+
+    saveLive(ins);
 
     typedef bool (*pf)(JSContext *, size_t, HandleObject, Value *);
     static const VMFunction GetPropertyCacheInfo = FunctionInfo<pf>(GetPropertyCache);
 
     pushArg(objReg);
     pushArg(Imm32(cacheIndex));
-    if (!callVM(GetPropertyCacheInfo, ins_))
+    if (!callVM(GetPropertyCacheInfo, ins))
         return false;
 
     masm.storeCallResultValue(output);
-    restoreLive(ins_);
+    restoreLive(ins);
 
     masm.jump(ool->rejoin());
 
@@ -3073,6 +3203,146 @@ CodeGenerator::visitClampVToUint8(LClampVToUint8 *lir)
     masm.bind(&isZero);
     masm.move32(Imm32(0), output);
 
+    masm.bind(&done);
+    return true;
+}
+
+bool
+CodeGenerator::visitInstanceOfO(LInstanceOfO *ins)
+{
+    Register rhs = ToRegister(ins->getOperand(1));
+    return emitInstanceOf(ins, rhs);
+}
+
+bool
+CodeGenerator::visitInstanceOfV(LInstanceOfV *ins)
+{
+    Register rhs = ToRegister(ins->getOperand(LInstanceOfV::RHS));
+    return emitInstanceOf(ins, rhs);
+}
+
+bool
+CodeGenerator::emitInstanceOf(LInstruction *ins, Register rhs)
+{
+    Register rhsTmp = ToRegister(ins->getTemp(1));
+    Register output = ToRegister(ins->getDef(0));
+    
+    // This temporary is used in other parts of the code. 
+    // Different names are used so the purpose is clear.
+    Register rhsFlags = ToRegister(ins->getTemp(0));
+    Register lhsTmp = ToRegister(ins->getTemp(0));
+
+    Label callHasInstance;    
+    Label boundFunctionCheck;    
+    Label boundFunctionDone;    
+    Label done;
+    Label loopPrototypeChain;
+
+    typedef bool (*pf)(JSContext *, HandleObject, const Value &, JSBool *);
+    static const VMFunction HasInstanceInfo = FunctionInfo<pf>(js::HasInstance);
+
+    OutOfLineCode *call = oolCallVM(HasInstanceInfo, ins, (ArgList(), rhs, ToValue(ins, 0)),
+                                   StoreRegisterTo(output));
+    if (!call)
+        return false;
+
+    // 1. CODE FOR HASINSTANCE_BOUND_FUNCTION
+
+    // ASM-equivalent of following code
+    //  boundFunctionCheck:
+    //      if (!rhs->isFunction())
+    //          goto callHasInstance
+    //      if (!rhs->isBoundFunction())
+    //          goto HasInstanceCunction
+    //      rhs = rhs->getBoundFunction();
+    //      goto boundFunctionCheck
+
+    masm.mov(rhs, rhsTmp);
+
+    // Check Function
+    masm.bind(&boundFunctionCheck);
+
+    masm.loadBaseShape(rhsTmp, output);
+    masm.cmpPtr(Address(output, BaseShape::offsetOfClass()), ImmWord(&js::FunctionClass));
+    masm.j(Assembler::NotEqual, call->entry());
+
+    // Check Bound Function
+    masm.loadPtr(Address(output, BaseShape::offsetOfFlags()), rhsFlags);
+    masm.and32(Imm32(BaseShape::BOUND_FUNCTION), rhsFlags);
+    masm.j(Assembler::Zero, &boundFunctionDone);
+
+    // Get Bound Function
+    masm.loadPtr(Address(output, BaseShape::offsetOfParent()), rhsTmp);
+    masm.jump(&boundFunctionCheck); 
+
+    // 2. CODE FOR HASINSTANCE_FUNCTION
+    masm.bind(&boundFunctionDone); 
+
+    // ASM-equivalent of following code
+    //  if (!lhs->isObject()) {
+    //    output = false;
+    //    goto done;
+    //  }
+    //  rhs = rhs->getPrototypeClass();
+    //  output = false;
+    //  while (1) {
+    //    lhs = lhs->getType().proto;
+    //    if (lhs == NULL)
+    //      goto done;
+    //    if (lhs != rhs) {
+    //      output = true;
+    //      goto done; 
+    //    }
+    //  }
+
+    // When lhs is a value: The HasInstance for function objects always
+    // return false when lhs isn't an object. So check if 
+    // lhs is an object and otherwise return false
+    if (ins->isInstanceOfV()) {
+        Label isObject;
+        ValueOperand lhsValue = ToValue(ins, LInstanceOfV::LHS);
+        masm.branchTestObject(Assembler::Equal, lhsValue, &isObject);
+        masm.mov(Imm32(0), output);
+        masm.jump(&done); 
+
+        masm.bind(&isObject);
+        Register tmp = masm.extractObject(lhsValue, lhsTmp);
+        masm.mov(tmp, lhsTmp);
+    } else {
+        masm.mov(ToRegister(ins->getOperand(0)), lhsTmp);
+    }
+
+    // Get prototype-class by using a OutOfLine GetProperty Cache    
+    // It will use register 'rhsTmp' as input and register 'output' as output, see r1889
+    OutOfLineCache *ool = new OutOfLineCache(ins);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
+    CodeOffsetLabel label = masm.labelForPatch();
+    masm.bind(ool->rejoin());
+    ool->setInlineJump(jump, label);
+
+    // Move the OutOfLineCache return value and set the output on false
+    masm.mov(output, rhsTmp);
+    masm.mov(Imm32(0), output);
+
+    // Walk the prototype chain
+    masm.bind(&loopPrototypeChain);
+    masm.loadPtr(Address(lhsTmp, JSObject::offsetOfType()), lhsTmp);
+    masm.loadPtr(Address(lhsTmp, offsetof(types::TypeObject, proto)), lhsTmp);
+
+    masm.test32(lhsTmp, lhsTmp);
+    masm.j(Assembler::Zero, &done);
+
+    // Check lhs is equal to rhsShape
+    masm.cmp32(lhsTmp, rhsTmp);
+    masm.j(Assembler::NotEqual, &loopPrototypeChain);
+
+    // return true
+    masm.mov(Imm32(1), output); 
+
+    masm.bind(call->rejoin());
     masm.bind(&done);
     return true;
 }

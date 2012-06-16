@@ -25,14 +25,12 @@ ScopeObject::enclosingScope() const
     return getReservedSlot(SCOPE_CHAIN_SLOT).toObject();
 }
 
-inline bool
-ScopeObject::setEnclosingScope(JSContext *cx, HandleObject obj)
+inline void
+ScopeObject::setEnclosingScope(HandleObject obj)
 {
-    RootedObject self(cx, this);
-    if (!obj->setDelegate(cx))
-        return false;
-    self->setFixedSlot(SCOPE_CHAIN_SLOT, ObjectValue(*obj));
-    return true;
+    JS_ASSERT_IF(obj->isCall() || obj->isDeclEnv() || obj->isBlock(),
+                 obj->isDelegate());
+    setFixedSlot(SCOPE_CHAIN_SLOT, ObjectValue(*obj));
 }
 
 inline const Value &
@@ -132,6 +130,12 @@ CallObject::varArray()
     JS_ASSERT(hasContiguousSlots(RESERVED_SLOTS + fun->nargs,
                                  fun->script()->bindings.numVars()));
     return HeapSlotArray(getSlotAddress(RESERVED_SLOTS + fun->nargs));
+}
+
+/*static*/ inline size_t
+CallObject::offsetOfCallee()
+{
+    return getFixedSlotOffset(CALLEE_SLOT);
 }
 
 inline uint32_t

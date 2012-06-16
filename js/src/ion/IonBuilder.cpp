@@ -260,19 +260,31 @@ IonBuilder::build()
         current->initSlot(info().localSlot(i), undef);
     }
 
-    // Guard against over-recursion.
-    MCheckOverRecursed *check = new MCheckOverRecursed;
-    current->add(check);
-    check->setResumePoint(current->entryResumePoint());
+    // Initialize something for the scope chain. We can bail out before the
+    // start instruction, but the snapshot is encoded *at* the start
+    // instruction, which means generating any code that could load into
+    // registers is illegal.
+    {
+        MInstruction *scope = MConstant::New(UndefinedValue());
+        current->add(scope);
+        current->initSlot(info().scopeChainSlot(), scope);
+    }
 
-    // Recompile to inline calls if this function is hot.
-    insertRecompileCheck();
-
+    // Emit the start instruction, so we can begin real instructions.
     current->makeStart(MStart::New(MStart::StartType_Default));
 
     // Parameters have been checked to correspond to the typeset, now we unbox
     // what we can in an infallible manner.
     rewriteParameters();
+
+    // It's safe to start emitting actual IR, so now build the scope chain.
+    if (!initScopeChain())
+        return false;
+
+    // Guard against over-recursion.
+    MCheckOverRecursed *check = new MCheckOverRecursed;
+    current->add(check);
+    check->setResumePoint(current->entryResumePoint());
 
     // Prevent |this| from being DCE'd: necessary for constructors.
     if (info().fun())
@@ -298,6 +310,9 @@ IonBuilder::build()
         if (ins->type() == MIRType_Value)
             ins->setResumePoint(current->entryResumePoint());
     }
+
+    // Recompile to inline calls if this function is hot.
+    insertRecompileCheck();
 
     if (!traverseBytecode())
         return false;
@@ -467,30 +482,6 @@ IonBuilder::rewriteParameters()
 bool
 IonBuilder::initParameters()
 {
-    // The scope chain is only tracked in scripts that have NAME opcodes which
-    // will try to access the scope. For other scripts, the scope instructions
-    // will be held live by resume points and code will still be generated for
-    // them, so just use a constant undefined value.
-    MInstruction *scope;
-    if (script->analysis()->usesScopeChain()) {
-        if (info().fun()) {
-            MCallee *callee = MCallee::New();
-            current->add(callee);
-
-            scope = MFunctionEnvironment::New(callee);
-        } else {
-            if (!script->compileAndGo)
-                return abort("non-CNG global scripts are not supported");
-
-            scope = MConstant::New(ObjectValue(*initialScopeChain_));
-        }
-    } else {
-        scope = MConstant::New(UndefinedValue());
-    }
-
-    current->add(scope);
-    current->initSlot(info().scopeChainSlot(), scope);
-
     if (!info().fun())
         return true;
 
@@ -505,6 +496,48 @@ IonBuilder::initParameters()
         current->initSlot(info().argSlot(i), param);
     }
 
+    return true;
+}
+
+bool
+IonBuilder::initScopeChain()
+{
+    MInstruction *scope = NULL;
+
+    // If the script doesn't use the scopechain, then it's already initialized
+    // from earlier.
+    if (!script->analysis()->usesScopeChain())
+        return true;
+
+    // The scope chain is only tracked in scripts that have NAME opcodes which
+    // will try to access the scope. For other scripts, the scope instructions
+    // will be held live by resume points and code will still be generated for
+    // them, so just use a constant undefined value.
+    if (!script->compileAndGo)
+        return abort("non-CNG global scripts are not supported");
+
+    if (JSFunction *fun = info().fun()) {
+        MCallee *callee = MCallee::New();
+        current->add(callee);
+
+        scope = MFunctionEnvironment::New(callee);
+        current->add(scope);
+
+        if (fun->isHeavyweight()) {
+            // We don't yet support inlining of DeclEnv objects.
+            if (js_IsNamedLambda(fun))
+                return abort("DeclEnv scope objects are not yet supported");
+
+            scope = createCallObject(callee, scope);
+            if (!scope)
+                return false;
+        }
+    } else {
+        scope = MConstant::New(ObjectValue(*initialScopeChain_));
+        current->add(scope);
+    }
+
+    current->setScopeChain(scope);
     return true;
 }
 
@@ -794,7 +827,7 @@ IonBuilder::inspectOpcode(JSOp op)
         // actual arguments are stored. The tricky part is that if we add a MIR
         // to wrap the spilling action, we don't want the spilling to be
         // captured by the GETARG and by the resume point, only by
-        // MArgumentsGet.
+        // MGetArgument.
         if (info().hasArguments())
             return abort("NYI: arguments & setarg.");
         current->setArg(GET_SLOTNO(pc));
@@ -897,6 +930,13 @@ IonBuilder::inspectOpcode(JSOp op)
         current->pick(-GET_INT8(pc));
         return true;
 
+      case JSOP_GETALIASEDVAR:
+      case JSOP_CALLALIASEDVAR:
+        return jsop_getaliasedvar(ScopeCoordinate(pc));
+
+      case JSOP_SETALIASEDVAR:
+        return jsop_setaliasedvar(ScopeCoordinate(pc));
+
       case JSOP_UINT24:
         return pushConstant(Int32Value(GET_UINT24(pc)));
 
@@ -968,6 +1008,9 @@ IonBuilder::inspectOpcode(JSOp op)
 
       case JSOP_ENDITER:
         return jsop_iterend();
+
+      case JSOP_INSTANCEOF:
+        return jsop_instanceof();
 
       default:
 #ifdef DEBUG
@@ -2853,6 +2896,61 @@ IonBuilder::inlineScriptedCall(JSFunction *target, uint32 argc)
     return jsop_call_inline(target, argc, inlineBuilder);
 }
 
+void
+IonBuilder::copyFormalIntoCallObj(MDefinition *callObj, MDefinition *slots, unsigned formal)
+{
+    // Note that in the case of using dynamic slots, RESERVED_SLOTS == numFixedSlots.
+    MDefinition *param = current->getSlot(info().argSlot(formal));
+    if (slots)
+        current->add(MStoreSlot::New(slots, formal, param));
+    else
+        current->add(MStoreFixedSlot::New(callObj, CallObject::RESERVED_SLOTS + formal, param));
+}
+
+MInstruction *
+IonBuilder::createCallObject(MDefinition *callee, MDefinition *scope)
+{
+    bool hasDynamicSlots = script->bindings.lastShape()->numFixedSlots() <=
+                           ScopeObject::CALL_BLOCK_RESERVED_SLOTS;
+
+    RootedObject templateObj(cx);
+    if (!hasDynamicSlots && !script->bindings.extensibleParents()) {
+        // Create a template CallObject so we can inline its creation.
+        RootedShape shape(cx, script->bindings.callObjectShape(cx));
+        if (!shape)
+            return NULL;
+        RootedTypeObject type(cx, cx->compartment->getEmptyType(cx));
+        if (!type)
+            return NULL;
+        gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
+
+        templateObj = JSObject::create(cx, kind, shape, type, NULL);
+        if (!templateObj)
+            return NULL;
+    }
+
+    MInstruction *callObj = MNewCallObject::New(templateObj, scope, callee);
+    current->add(callObj);
+
+    // CallObject slots are either entirely fixed, or entirely dynamic. If
+    // dynamic, load the slots pointer ahead of time.
+    MInstruction *slots = NULL;
+    if (hasDynamicSlots) {
+        slots = MSlots::New(callObj);
+        current->add(slots);
+    }
+
+    if (script->bindingsAccessedDynamically) {
+        for (unsigned slot = 0; slot < info().fun()->nargs; slot++)
+            copyFormalIntoCallObj(callObj, slots, slot);
+    } else if (unsigned n = script->numClosedArgs()) {
+        for (unsigned i = 0; i < n; i++)
+            copyFormalIntoCallObj(callObj, slots, script->getClosedArg(i));
+    }
+
+    return callObj;
+}
+
 MDefinition *
 IonBuilder::createThisNative()
 {
@@ -3273,7 +3371,7 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
     Shape *shape = (Shape *)prop;
 
     if (baseObj->isFixedSlot(shape->slot())) {
-        MStoreFixedSlot *store = MStoreFixedSlot::New(obj, value, shape->slot());
+        MStoreFixedSlot *store = MStoreFixedSlot::New(obj, shape->slot(), value);
         current->add(store);
         return resumeAfter(store);
     }
@@ -3407,7 +3505,7 @@ IonBuilder::newOsrPreheader(MBasicBlock *predecessor, jsbytecode *loopEntry)
     // predecessor.
     JS_ASSERT(predecessor->stackDepth() == osrBlock->stackDepth());
     JS_ASSERT(info().scopeChainSlot() == 0);
-    JS_ASSERT(osrBlock->getSlot(info().scopeChainSlot())->type() == MIRType_Object);
+    JS_ASSERT(osrBlock->scopeChain()->type() == MIRType_Object);
 
     Vector<MIRType> slotTypes(cx);
     if (!slotTypes.growByUninitialized(osrBlock->stackDepth()))
@@ -3905,17 +4003,15 @@ IonBuilder::jsop_getname(HandlePropertyName name)
         current->add(global);
         object = global;
     } else {
-        current->pushSlot(info().scopeChainSlot());
+        current->push(current->scopeChain());
         object = current->pop();
     }
 
-    MCallGetNameInstruction *ins;
-
-    JSOp op2 = JSOp(*GetNextPc(pc));
-    if (op2 == JSOP_TYPEOF)
-        ins = MCallGetNameTypeOf::New(object, name);
+    MGetNameCache *ins;
+    if (JSOp(*GetNextPc(pc)) == JSOP_TYPEOF)
+        ins = MGetNameCache::New(object, name, MGetNameCache::NAMETYPEOF);
     else
-        ins = MCallGetName::New(object, name);
+        ins = MGetNameCache::New(object, name, MGetNameCache::NAME);
 
     current->add(ins);
     current->push(ins);
@@ -3935,7 +4031,7 @@ IonBuilder::jsop_bindname(PropertyName *name)
 {
     JS_ASSERT(script->analysis()->usesScopeChain());
 
-    MDefinition *scopeChain = current->getSlot(info().scopeChainSlot());
+    MDefinition *scopeChain = current->scopeChain();
     MBindNameCache *ins = MBindNameCache::New(scopeChain, name, script, pc);
 
     current->add(ins);
@@ -3953,6 +4049,9 @@ IonBuilder::jsop_getelem()
     int arrayType = TypedArray::TYPE_MAX;
     if (oracle->elementReadIsTypedArray(script, pc, &arrayType))
         return jsop_getelem_typed(arrayType);
+
+    if (oracle->elementReadIsString(script, pc))
+        return jsop_getelem_string();
 
     if (oracle->elementReadMagicArguments(script, pc))
         return jsop_arguments_getelem();
@@ -4145,6 +4244,31 @@ IonBuilder::jsop_getelem_typed(int arrayType)
 
         return resumeAfter(load) && pushTypeBarrier(load, types, barrier);
     }
+}
+
+bool
+IonBuilder::jsop_getelem_string()
+{
+    MDefinition *id = current->pop();
+    MDefinition *str = current->pop();
+
+    MInstruction *idInt32 = MToInt32::New(id);
+    current->add(idInt32);
+    id = idInt32;
+
+    MStringLength *length = MStringLength::New(str);
+    current->add(length);
+
+    MBoundsCheck *boundsCheck = MBoundsCheck::New(id, length);
+    current->add(boundsCheck);
+
+    MCharCodeAt *charCode = MCharCodeAt::New(str, id);
+    current->add(charCode);
+
+    MFromCharCode *result = MFromCharCode::New(charCode);
+    current->add(result);
+    current->push(result);
+    return true;
 }
 
 bool
@@ -4362,20 +4486,6 @@ IonBuilder::jsop_arguments_getelem()
     MDefinition *idx = current->pop();
     MDefinition *args = current->pop();
 
-    if (idx->isConstant()) {
-        do {
-            Value idxv = idx->toConstant()->value();
-            if (idxv.isInt32() && idxv.toInt32() >= 0)
-                break;
-
-            uint32 index = idxv.toInt32();
-            if (index < info().nargs()) {
-                current->pushArg(index);
-                return true;
-            }
-        } while (false);
-    }
-
     // To ensure that we are not looking above the number of actual arguments.
     MArgumentsLength *length = MArgumentsLength::New(args);
     current->add(length);
@@ -4389,7 +4499,7 @@ IonBuilder::jsop_arguments_getelem()
     current->add(check);
 
     // Load the argument from the actual arguments.
-    MArgumentsGet *load = MArgumentsGet::New(index);
+    MGetArgument *load = MGetArgument::New(index);
     current->add(load);
     current->push(load);
 
@@ -4534,7 +4644,7 @@ IonBuilder::jsop_setprop(HandlePropertyName name)
 
     if (!monitored) {
         if (types::TypeSet *propTypes = GetDefiniteSlot(cx, binaryTypes.lhsTypes, name)) {
-            MStoreFixedSlot *fixed = MStoreFixedSlot::New(obj, value, propTypes->definiteSlot());
+            MStoreFixedSlot *fixed = MStoreFixedSlot::New(obj, propTypes->definiteSlot(), value);
             current->add(fixed);
             current->push(value);
             if (propTypes->needsBarrier(cx))
@@ -4599,8 +4709,7 @@ bool
 IonBuilder::jsop_lambda(JSFunction *fun)
 {
     JS_ASSERT(script->analysis()->usesScopeChain());
-    MDefinition *scopeChain = current->getSlot(info().scopeChainSlot());
-    MLambda *ins = MLambda::New(scopeChain, fun);
+    MLambda *ins = MLambda::New(current->scopeChain(), fun);
     current->add(ins);
     current->push(ins);
 
@@ -4611,9 +4720,8 @@ bool
 IonBuilder::jsop_deflocalfun(uint32 local, JSFunction *fun)
 {
     JS_ASSERT(script->analysis()->usesScopeChain());
-    MDefinition *scopeChain = current->getSlot(info().scopeChainSlot());
 
-    MLambda *ins = MLambda::New(scopeChain, fun);
+    MLambda *ins = MLambda::New(current->scopeChain(), fun);
     current->add(ins);
     current->push(ins);
 
@@ -4637,11 +4745,9 @@ IonBuilder::jsop_defvar(uint32 index)
 
     // Pass the ScopeChain.
     JS_ASSERT(script->analysis()->usesScopeChain());
-    MDefinition *scopeChain = current->getSlot(info().scopeChainSlot());
-    JS_ASSERT(scopeChain->type() == MIRType_Object);
 
     // Bake the name pointer into the MDefVar.
-    MDefVar *defvar = MDefVar::New(name, attrs, scopeChain);
+    MDefVar *defvar = MDefVar::New(name, attrs, current->scopeChain());
     current->add(defvar);
 
     return resumeAfter(defvar);
@@ -4752,3 +4858,106 @@ IonBuilder::jsop_iterend()
 
     return resumeAfter(ins);
 }
+
+MDefinition *
+IonBuilder::walkScopeChain(unsigned hops)
+{
+    MDefinition *scope = current->getSlot(info().scopeChainSlot());
+
+    for (unsigned i = 0; i < hops; i++) {
+        MInstruction *ins = MEnclosingScope::New(scope);
+        current->add(ins);
+        scope = ins;
+    }
+
+    return scope;
+}
+
+static inline bool
+InDynamicScopeSlots(JSScript *script, jsbytecode *pc, unsigned *slot)
+{
+    if (ScopeCoordinateBlockChain(script, pc)) {
+         // Block objects use a fixed AllocKind which means an invariant number
+         // of fixed slots. Any slot below the fixed slot count is inline, any
+         // slot over is in the dynamic slots.
+        uint32 nfixed = gc::GetGCKindSlots(BlockObject::FINALIZE_KIND);
+        if (nfixed <= *slot) {
+            *slot -= nfixed;
+            return true;
+        }
+    } else {
+         // Using special-case hackery in Shape::getChildBinding, CallObject
+         // slots are either altogether in fixed slots or altogether in dynamic
+         // slots (by having numFixed == RESERVED_SLOTS).
+         if (script->bindings.lastShape()->numFixedSlots() <= *slot) {
+             *slot -= ScopeObject::CALL_BLOCK_RESERVED_SLOTS;
+             return true;
+         }
+    }
+    return false;
+}
+
+bool
+IonBuilder::jsop_getaliasedvar(ScopeCoordinate sc)
+{
+    MIRType type = oracle->aliasedVarType(script, pc);
+
+    if (type == MIRType_Null || type == MIRType_Undefined) {
+        if (type == MIRType_Null)
+            return pushConstant(NullValue());
+        return pushConstant(UndefinedValue());
+    }
+
+    MDefinition *obj = walkScopeChain(sc.hops);
+    unsigned slot = ScopeObject::CALL_BLOCK_RESERVED_SLOTS + sc.slot;
+
+    MInstruction *load;
+    if (InDynamicScopeSlots(script, pc, &slot)) {
+        MInstruction *slots = MSlots::New(obj);
+        current->add(slots);
+
+        load = MLoadSlot::New(slots, slot);
+    } else {
+        load = MLoadFixedSlot::New(obj, slot);
+    }
+    load->setResultType(type);
+    current->add(load);
+    current->push(load);
+
+    return true;
+}
+
+bool
+IonBuilder::jsop_setaliasedvar(ScopeCoordinate sc)
+{
+    MDefinition *rval = current->peek(-1);
+    MDefinition *obj = walkScopeChain(sc.hops);
+    unsigned slot = ScopeObject::CALL_BLOCK_RESERVED_SLOTS + sc.slot;
+
+    MInstruction *store;
+    if (InDynamicScopeSlots(script, pc, &slot)) {
+        MInstruction *slots = MSlots::New(obj);
+        current->add(slots);
+        store = MStoreSlot::NewBarriered(slots, slot, rval);
+    } else {
+        store = MStoreFixedSlot::NewBarriered(obj, slot, rval);
+    }
+
+    current->add(store);
+    return resumeAfter(store);
+}
+
+
+bool
+IonBuilder::jsop_instanceof()
+{
+    MDefinition *proto = current->pop();
+    MDefinition *obj = current->pop();
+    MInstanceOf *ins = new MInstanceOf(obj, proto);
+
+    current->add(ins);
+    current->push(ins);
+
+    return resumeAfter(ins);
+}
+
