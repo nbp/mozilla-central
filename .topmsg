@@ -1,0 +1,3 @@
+From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
+Subject: Fix generation of "Lazy arguments" (Bug 765480, r=)
+
