@@ -1186,7 +1186,7 @@ class MCall
 
 // fun.apply(self, arguments)
 class MApplyArgs
-  : public MAryInstruction<2>,
+  : public MAryInstruction<3>,
     public MixPolicy<ObjectPolicy<0>, IntPolicy<1> >
 {
   protected:
