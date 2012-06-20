@@ -386,6 +386,16 @@ LIRGenerator::visitCompare(MCompare *comp)
     MDefinition *right = comp->getOperand(1);
 
     if (comp->specialization() != MIRType_None) {
+        // Move below the emitAtUses call if we ever implement
+        // LCompareSAndBranch. Doing this now wouldn't be wrong, but doesn't
+        // make sense and avoids confusion.
+        if (comp->specialization() == MIRType_String) {
+            LCompareS *lir = new LCompareS(comp->jsop(), useRegister(left), useRegister(right));
+            if (!define(lir, comp))
+                return false;
+            return assignSafepoint(lir, comp);
+        }
+
         // Sniff out if the output of this compare is used only for a branching.
         // If it is, then we willl emit an LCompare*AndBranch instruction in place
         // of this compare and any test that uses this compare. Thus, we can
@@ -891,6 +901,10 @@ LIRGenerator::visitToInt32(MToInt32 *convert)
       case MIRType_Object:
         // Objects might be effectful.
         IonSpew(IonSpew_Abort, "Object to Int32 not supported yet.");
+        break;
+
+      case MIRType_Undefined:
+        IonSpew(IonSpew_Abort, "Undefined coerces to NaN, not int32.");
         break;
 
       default:

@@ -81,6 +81,7 @@
     _(TestVAndBranch)               \
     _(Compare)                      \
     _(CompareD)                     \
+    _(CompareS)                     \
     _(CompareV)                     \
     _(CompareAndBranch)             \
     _(CompareDAndBranch)            \
