@@ -45,6 +45,7 @@
 #include "MIRGenerator.h"
 #include "shared/CodeGenerator-shared-inl.h"
 #include "jsnum.h"
+#include "jsmath.h"
 #include "jsinterpinlines.h"
 
 using namespace js;
