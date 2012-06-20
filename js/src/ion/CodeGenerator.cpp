@@ -701,6 +701,231 @@ CodeGenerator::visitCallConstructor(LCallConstructor *call)
     return true;
 }
 
+bool
+CodeGenerator::emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize)
+{
+    typedef bool (*pf)(JSContext *, JSFunction *, uint32, Value *, Value *);
+    static const VMFunction InvokeFunctionInfo = FunctionInfo<pf>(InvokeFunction);
+
+    pushArg(StackPointer);                     // argv.
+    pushArg(ToRegister(apply->getArgc()));     // argc.
+    pushArg(ToRegister(apply->getFunction())); // JSFunction *.
+
+    // This specialization og callVM restore the extraStackSize after the call.
+    return callVM(InvokeFunctionInfo, apply, extraStackSize);
+}
+
+// Do not bailout after the execution of this function since the stack no longer
+// correspond to what is expected by the snapshots.
+void
+CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
+{
+    // Holds the function nargs. Initially undefined.
+    Register argcreg = ToRegister(apply->getArgc());
+
+    Label loop, end;
+    Register count = ToRegister(apply->getTempObject());
+    Register copyreg = ToRegister(apply->getTempCopy());
+    size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
+
+    masm.branchTestPtr(Assembler::Zero, argcreg, argcreg, &end);
+    masm.movePtr(argcreg, count);
+
+    // Copy arguments.
+    {
+        masm.bind(&loop);
+        BaseIndex disp(StackPointer, argcreg, ScaleFromShift(sizeof(Value)), argvOffset - sizeof(Value));
+        masm.loadPtr(disp, copyreg);
+
+        // Do not use Push here because other this account to 1 in the framePushed
+        // instead of 0.  These push are only counted by argcreg.
+        masm.push(copyreg);
+        masm.subPtr(Imm32(1), count);
+        masm.branchTestPtr(Assembler::NonZero, count, count, &loop);
+    }
+    masm.bind(&end);
+
+    // Push this.
+    masm.Push(ToRegister(apply->getThis()));
+}
+
+void
+CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpace)
+{
+    // Push(this)
+    masm.subPtr(Imm32(sizeof(void*)), StackPointer);
+    masm.implicitPop(sizeof(void*));
+
+    // Arguments
+    masm.subPtr(extraStackSpace, StackPointer);
+}
+
+bool
+CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
+{
+
+    // Holds the function object.
+    Register calleereg = ToRegister(apply->getFunction());
+
+    // Temporary register for modifying the function object.
+    Register objreg = ToRegister(apply->getTempObject());
+    Register copyreg = ToRegister(apply->getTempCopy());
+
+    // Holds the function nargs. Initially undefined.
+    Register argcreg = ToRegister(apply->getArgc());
+
+    // :TODO: Add additional space to make sure the stack alignment would be
+    // correct.
+
+    // Copy the arguments of the current function.
+    emitPushArguments(apply);
+
+    // We need a label to handle bailouts since emitPushAtguments is pushing a
+    // variable number of arguments on the stack.  The label is used to removed
+    // these arguments before bailing out.
+    Label bail;
+
+    // masm.checkStackAlignment();
+
+    // Unless already known, guard that calleereg is actually a function object.
+    if (!apply->hasSingleTarget()) {
+        Register objclass = objreg;
+
+        masm.loadObjClass(calleereg, objclass);
+        masm.cmpPtr(objclass, ImmWord(&js::FunctionClass));
+
+        // This is a bailoutIf except that we need to unwind the dynamic stack
+        // usage before bailing out.
+        masm.branchPtr(Assembler::NotEqual, objclass, ImmWord(&js::FunctionClass), &bail);
+    }
+
+    // If the function is known to be uncompilable, only emit the call to InvokeFunction.
+    if (apply->hasSingleTarget() &&
+        apply->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT)
+    {
+        masm.movePtr(argcreg, copyreg);
+        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
+        emitCallInvokeFunction(apply, copyreg);
+        emitPopArguments(apply, copyreg);
+        return true;
+    }
+
+    Label end, invoke;
+
+    // Guard that calleereg is a non-native function:
+    // Non-native iff (callee->flags & JSFUN_KINDMASK >= JSFUN_INTERPRETED).
+    // This is equivalent to testing if any of the bits in JSFUN_KINDMASK are set.
+    if (!apply->hasSingleTarget()) {
+        Register kind = objreg;
+        Address flags(calleereg, offsetof(JSFunction, flags));
+        masm.load16ZeroExtend_mask(flags, Imm32(JSFUN_KINDMASK), kind);
+        masm.branch32(Assembler::LessThan, kind, Imm32(JSFUN_INTERPRETED), &invoke);
+    } else {
+        // Native single targets are handled by LCallNative.
+        JS_ASSERT(!apply->getSingleTarget()->isNative());
+    }
+
+    // Knowing that calleereg is a non-native function, load the JSScript.
+    masm.movePtr(Address(calleereg, offsetof(JSFunction, u.i.script_)), objreg);
+    masm.movePtr(Address(objreg, offsetof(JSScript, ion)), objreg);
+
+    // Guard that the IonScript has been compiled.
+    masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_DISABLED_SCRIPT), &invoke);
+
+    // Call with an Ion frame or a rectifier frame.
+    {
+        // Copy the stack usage in copyreg
+        masm.movePtr(argcreg, copyreg);
+        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
+
+        // Create the frame descriptor.
+        unsigned pushed = masm.framePushed();
+        masm.addPtr(Imm32(pushed), copyreg);
+        masm.makeFrameDescriptor(copyreg, IonFrame_JS);
+
+        masm.Push(argcreg);
+        masm.Push(calleereg);
+        masm.Push(copyreg); // descriptor
+
+        Label thunk, rejoin;
+
+        {
+            // Check whether the provided arguments satisfy target argc.
+            masm.load16ZeroExtend(Address(calleereg, offsetof(JSFunction, nargs)), copyreg);
+            masm.cmp32(copyreg, argcreg);
+            masm.j(Assembler::Above, &thunk);
+        }
+
+        // No argument fixup needed. Load the start of the target IonCode.
+        {
+            masm.movePtr(Address(objreg, offsetof(IonScript, method_)), objreg);
+            masm.movePtr(Address(objreg, IonCode::OffsetOfCode()), objreg);
+        }
+
+        // Argument fixup needed. Get ready to call the argumentsRectifier.
+        {
+            // Skip this thunk unless an explicit jump target.
+            masm.jump(&rejoin);
+            masm.bind(&thunk);
+
+            // Hardcode the address of the argumentsRectifier code.
+            IonCompartment *ion = gen->ionCompartment();
+            IonCode *argumentsRectifier = ion->getArgumentsRectifier(gen->cx);
+            if (!argumentsRectifier)
+                return false;
+
+            JS_ASSERT(ArgumentsRectifierReg != objreg);
+            masm.movePtr(argcreg, ArgumentsRectifierReg);
+            masm.movePtr(ImmWord(argumentsRectifier->raw()), objreg);
+        }
+
+        masm.bind(&rejoin);
+
+        // masm.checkStackAlignment();
+
+        // Finally call the function in objreg, as assigned by one of the paths above.
+        masm.callIon(objreg);
+        if (!markSafepoint(apply))
+            return false;
+
+        // Recover the number of arguments from the frame descriptor.
+        masm.movePtr(Address(StackPointer, 0), copyreg);
+        masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), copyreg);
+        masm.subPtr(Imm32(pushed), copyreg);
+
+        // Increment to remove IonFramePrefix; decrement to fill FrameSizeClass.
+        // The return address has already been removed from the Ion frame.
+        int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
+        masm.adjustStack(prefixGarbage);
+        masm.jump(&end);
+    }
+
+    // Handle uncompiled or native functions.
+    masm.bind(&invoke);
+    {
+        masm.movePtr(argcreg, copyreg);
+        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
+        emitCallInvokeFunction(apply, copyreg);
+        masm.jump(&end);
+    }
+
+    // Handle bailouts.
+    masm.bind(&bail);
+    {
+        masm.movePtr(argcreg, copyreg);
+        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
+        emitPopArguments(apply, copyreg);
+        if (!bailout(apply->snapshot()))
+            return false;
+    }
+
+    // Pop arguments and continue.
+    masm.bind(&end);
+    emitPopArguments(apply, copyreg);
+
+    return true;
+}
+
 // Registers safe for use before generatePrologue().
 static const uint32 EntryTempMask = Registers::TempMask & ~(1 << OsrFrameReg.code());
 
@@ -2084,11 +2309,11 @@ CodeGenerator::visitArgumentsGet(LArgumentsGet *lir)
 
     if (index->isConstant()) {
         uint8 i = index->toConstant()->toInt32();
-        Address argPtr(StackPointer, sizeof(Value*) * i + argvOffset);
+        Address argPtr(StackPointer, sizeof(Value) * i + argvOffset);
         masm.loadValue(argPtr, result);
     } else {
         Register i = ToRegister(index);
-        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value*)), argvOffset);
+        BaseIndex argPtr(StackPointer, i, ScaleFromShift(sizeof(Value)), argvOffset);
         masm.loadValue(argPtr, result);
     }
     return true;

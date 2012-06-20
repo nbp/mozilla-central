@@ -88,6 +88,7 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
   public:
     using MacroAssemblerX86Shared::call;
     using MacroAssemblerX86Shared::Push;
+    using MacroAssemblerX86Shared::callWithExitFrame;
 
     enum Result {
         GENERAL,
@@ -373,6 +374,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     }
     void subPtr(Imm32 imm, const Register &dest) {
         subq(imm, dest);
+    }
+    void subPtr(const Register &src, const Register &dest) {
+        subq(src, dest);
     }
 
     // Specialization for AbsoluteAddress.
@@ -797,6 +801,13 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
     void linkExitFrame() {
         mov(ImmWord(GetIonContext()->cx->runtime), ScratchReg);
         mov(StackPointer, Operand(ScratchReg, offsetof(JSRuntime, ionTop)));
+    }
+
+    void callWithExitFrame(IonCode *target, Register frameShift) {
+        addPtr(Imm32(framePushed()), frameShift);
+        makeFrameDescriptor(frameShift, IonFrame_JS);
+        Push(frameShift);
+        call(target);
     }
 
     void enterOsr(Register calleeToken, Register code) {

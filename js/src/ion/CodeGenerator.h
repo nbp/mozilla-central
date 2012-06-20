@@ -106,6 +106,10 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool emitCallInvokeFunction(LCallGeneric *call, uint32 unusedStack);
     bool visitCallGeneric(LCallGeneric *call);
     bool visitCallConstructor(LCallConstructor *call);
+    bool emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize);
+    void emitPushArguments(LApplyArgsGeneric *apply);
+    void emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSize);
+    bool visitApplyArgsGeneric(LApplyArgsGeneric *apply);
     bool visitDoubleToInt32(LDoubleToInt32 *lir);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);

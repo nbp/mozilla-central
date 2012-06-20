@@ -3026,23 +3026,42 @@ IonBuilder::jsop_funapply(uint32 argc)
     RootedObject funobj(cx, (funTypes) ? funTypes->getSingleton(cx, false) : NULL);
     RootedFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
 
-    // Unwrap the (JSFunction *) parameter.
-    int funcDepth = -((int)argc + 1);
-    MPassArg *passFunc = current->peek(funcDepth)->toPassArg();
-    current->rewriteAtDepth(funcDepth, passFunc->getArgument());
+    // This
+    MPassArg *passThis = current->pop()->toPassArg();
+    MDefinition *argThis = passThis->getArgument();
+    passThis->replaceAllUsesWith(argThis);
+    passThis->block()->discard(passThis);
+
+    // Vp
+    passVp = current->pop()->toPassArg();
+    passVp->replaceAllUsesWith(passVp->getArgument());
+    passVp->block()->discard(passVp);
 
     // Remove the MPassArg(JSFunction *).
-    passFunc->replaceAllUsesWith(passFunc->getArgument());
+    // Unwrap the (JSFunction *) parameter.
+    int funcDepth = -((int)argc + 1);
+    MPassArg *passFunc = current->pop()->toPassArg();
+    MDefinition *argFunc = passFunc->getArgument();
+    passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
-
-    // Shimmy the slots down to remove the native 'apply' function.
-    current->shimmySlots(funcDepth - 1);
-
-    // Do no optim for now.
-    return makeCall(native, argc, false);
 
     // Call without inlining.
     // return makeCall(target, argc, false);
+    MLazyArguments *lazyArgs = MLazyArguments::New();
+    current->add(lazyArgs);
+
+    MArgumentsLength *numArgs = MArgumentsLength::New(lazyArgs);
+    current->add(numArgs);
+
+    MApplyArgs *apply = MApplyArgs::New(target, argFunc, numArgs, argThis);
+    current->add(apply);
+    current->push(apply);
+    if (!resumeAfter(apply))
+        return false;
+
+    types::TypeSet *barrier;
+    types::TypeSet *types = oracle->returnTypeSet(script, pc, &barrier);
+    return pushTypeBarrier(apply, types, barrier);
 }
 
 bool

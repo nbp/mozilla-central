@@ -120,6 +120,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitPassArg(MPassArg *arg);
     bool visitCreateThis(MCreateThis *ins);
     bool visitCall(MCall *call);
+    bool visitApplyArgs(MApplyArgs *apply);
     bool visitTest(MTest *test);
     bool visitCompare(MCompare *comp);
     bool visitTypeOf(MTypeOf *ins);

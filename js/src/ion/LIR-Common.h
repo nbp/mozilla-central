@@ -537,6 +537,54 @@ class LCallConstructor : public LInstructionHelper<BOX_PIECES, 1, 0>
     }
 };
 
+// Generates a polymorphic callsite, wherein the function being called is
+// unknown and anticipated to vary.
+class LApplyArgsGeneric : public LCallInstructionHelper<BOX_PIECES, 3, 2>
+{
+  public:
+    LIR_HEADER(ApplyArgsGeneric);
+
+    LApplyArgsGeneric(const LAllocation &func,
+                      const LAllocation &argc,
+                      const LAllocation &self,
+                      const LDefinition &tmpobjreg,
+                      const LDefinition &tmpcopy)
+    {
+        setOperand(0, func);
+        setOperand(1, argc);
+        setOperand(2, self);
+        setTemp(0, tmpobjreg);
+        setTemp(1, tmpcopy);
+    }
+
+    MApplyArgs *mir() const {
+        return mir_->toApplyArgs();
+    }
+
+    bool hasSingleTarget() const {
+        return getSingleTarget() != NULL;
+    }
+    JSFunction *getSingleTarget() const {
+        return mir()->getSingleTarget();
+    }
+
+    const LAllocation *getFunction() {
+        return getOperand(0);
+    }
+    const LAllocation *getArgc() {
+        return getOperand(1);
+    }
+    const LAllocation *getThis() {
+        return getOperand(2);
+    }
+    const LAllocation *getTempObject() {
+        return getTemp(0)->output();
+    }
+    const LAllocation *getTempCopy() {
+        return getTemp(1)->output();
+    }
+};
+
 // Takes in either an integer or boolean input and tests it for truthiness.
 class LTestIAndBranch : public LInstructionHelper<0, 1, 0>
 {

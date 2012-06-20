@@ -64,6 +64,7 @@
     _(CallGeneric)                  \
     _(CallNative)                   \
     _(CallConstructor)              \
+    _(ApplyArgsGeneric)             \
     _(StackArg)                     \
     _(CreateThis)                   \
     _(BitNotI)                      \

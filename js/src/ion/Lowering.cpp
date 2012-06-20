@@ -235,6 +235,42 @@ LIRGenerator::visitCall(MCall *call)
     return true;
 }
 
+bool
+LIRGenerator::visitApplyArgs(MApplyArgs *apply)
+{
+    JS_ASSERT(CallTempReg0 != CallTempReg1);
+    JS_ASSERT(CallTempReg0 != ArgumentsRectifierReg);
+    JS_ASSERT(CallTempReg1 != ArgumentsRectifierReg);
+    JS_ASSERT(apply->getFunction()->type() == MIRType_Object);
+
+    // Height of the current argument vector.
+    //uint32 argslot = getArgumentSlotForCall();
+    JSFunction *target = apply->getSingleTarget();
+
+    if (target && target->isNative()) {
+        IonSpew(IonSpew_Abort, "native.apply(., arguments) is not supported yet.");
+        return false;
+        // JS_NOT_REACHED("track un-implemented versions");
+    } else {
+        LApplyArgsGeneric *lir = new LApplyArgsGeneric(
+            useRegister(apply->getFunction()),
+            useFixed(apply->getArgc(), CallTempReg0),
+            useRegister(apply->getThis()),
+            tempFixed(CallTempReg1), tempFixed(CallTempReg2));
+
+        // Bailout is only needed in the case of possible non-JSFunction callee.
+        if (!target && !assignSnapshot(lir))
+            return false;
+
+        if (!defineReturn(lir, apply))
+            return false;
+        if (!assignSafepoint(lir, apply))
+            return false;
+    }
+
+    return true;
+}
+
 static JSOp
 ReorderComparison(JSOp op, MDefinition **lhsp, MDefinition **rhsp)
 {

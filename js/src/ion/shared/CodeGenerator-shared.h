@@ -256,7 +256,7 @@ class CodeGeneratorShared : public LInstructionVisitor
         masm.storeCallResultValue(t);
     }
 
-    bool callVM(const VMFunction &f, LInstruction *ins);
+    bool callVM(const VMFunction &f, LInstruction *ins, Register shiftSlot = Register::Invalid());
 
     template <class ArgSeq, class StoreOutputTo>
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,

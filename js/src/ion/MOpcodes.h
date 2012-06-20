@@ -64,6 +64,7 @@ namespace ion {
     _(PrepareCall)                                                          \
     _(PassArg)                                                              \
     _(Call)                                                                 \
+    _(ApplyArgs)                                                            \
     _(BitNot)                                                               \
     _(TypeOf)                                                               \
     _(ToId)                                                                 \
