@@ -857,7 +857,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
         Label thunk, rejoin;
 
-        {
+        if (!apply->hasSingleTarget()) {
             // Check whether the provided arguments satisfy target argc.
             masm.load16ZeroExtend(Address(calleereg, offsetof(JSFunction, nargs)), copyreg);
             masm.cmp32(copyreg, argcreg);
@@ -871,7 +871,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         }
 
         // Argument fixup needed. Get ready to call the argumentsRectifier.
-        {
+        if (!apply->hasSingleTarget()) {
             // Skip this thunk unless an explicit jump target.
             masm.jump(&rejoin);
             masm.bind(&thunk);
