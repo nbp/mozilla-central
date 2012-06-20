@@ -44,7 +44,7 @@
 #include "nsIBaseWindow.h"
 #include "nsIViewManager.h"
 #include "nsFrameSelection.h"
-#include "nsTypedSelection.h"
+#include "mozilla/Selection.h"
 #include "nsXULPopupManager.h"
 #include "nsIDOMNodeFilter.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -927,8 +927,7 @@ nsFocusManager::WindowHidden(nsIDOMWindow* aWindow)
   // window, or an ancestor of the focused window. Either way, the focus is no
   // longer valid, so it needs to be updated.
 
-  nsIContent* oldFocusedContent = mFocusedContent;
-  mFocusedContent = nsnull;
+  nsCOMPtr<nsIContent> oldFocusedContent = mFocusedContent.forget();
 
   if (oldFocusedContent && oldFocusedContent->IsInDoc()) {
     NotifyFocusStateChange(oldFocusedContent,

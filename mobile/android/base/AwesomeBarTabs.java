@@ -96,7 +96,7 @@ public class AwesomeBarTabs extends TabHost {
         public TextView titleView;
         public TextView urlView;
         public ImageView faviconView;
-        public ImageView starView;
+        public ImageView bookmarkIconView;
     }
 
     private class SearchEntryViewHolder {
@@ -127,7 +127,7 @@ public class AwesomeBarTabs extends TabHost {
                 viewHolder.titleView = (TextView) convertView.findViewById(R.id.title);
                 viewHolder.urlView = (TextView) convertView.findViewById(R.id.url);
                 viewHolder.faviconView = (ImageView) convertView.findViewById(R.id.favicon);
-                viewHolder.starView = (ImageView) convertView.findViewById(R.id.bookmark_star);
+                viewHolder.bookmarkIconView = (ImageView) convertView.findViewById(R.id.bookmark_icon);
 
                 convertView.setTag(viewHolder);
             } else {
@@ -157,11 +157,16 @@ public class AwesomeBarTabs extends TabHost {
             }
 
             Integer bookmarkId = (Integer) historyItem.get(Combined.BOOKMARK_ID);
+            Integer display = (Integer) historyItem.get(Combined.DISPLAY);
 
             // The bookmark id will be 0 (null in database) when the url
-            // is not a bookmark.
-            int visibility = (bookmarkId == 0 ? View.GONE : View.VISIBLE);
-            viewHolder.starView.setVisibility(visibility);
+            // is not a bookmark. Reading list items are irrelevant in history
+            // tab. We should never show any sign or them.
+            int visibility = (bookmarkId != 0 && display != Combined.DISPLAY_READER ?
+                              View.VISIBLE : View.GONE);
+
+            viewHolder.bookmarkIconView.setVisibility(visibility);
+            viewHolder.bookmarkIconView.setImageResource(R.drawable.ic_awesomebar_star);
 
             return convertView;
         }
@@ -481,6 +486,7 @@ public class AwesomeBarTabs extends TabHost {
             byte[] favicon = cursor.getBlob(cursor.getColumnIndexOrThrow(URLColumns.FAVICON));
             Integer bookmarkId = cursor.getInt(cursor.getColumnIndexOrThrow(Combined.BOOKMARK_ID));
             Integer historyId = cursor.getInt(cursor.getColumnIndexOrThrow(Combined.HISTORY_ID));
+            Integer display = cursor.getInt(cursor.getColumnIndexOrThrow(Combined.DISPLAY));
 
             // Use the URL instead of an empty title for consistency with the normal URL
             // bar view - this is the equivalent of getDisplayTitle() in Tab.java
@@ -495,6 +501,7 @@ public class AwesomeBarTabs extends TabHost {
 
             historyItem.put(Combined.BOOKMARK_ID, bookmarkId);
             historyItem.put(Combined.HISTORY_ID, historyId);
+            historyItem.put(Combined.DISPLAY, display);
 
             return historyItem;
         }
@@ -766,7 +773,7 @@ public class AwesomeBarTabs extends TabHost {
                     viewHolder.titleView = (TextView) convertView.findViewById(R.id.title);
                     viewHolder.urlView = (TextView) convertView.findViewById(R.id.url);
                     viewHolder.faviconView = (ImageView) convertView.findViewById(R.id.favicon);
-                    viewHolder.starView = (ImageView) convertView.findViewById(R.id.bookmark_star);
+                    viewHolder.bookmarkIconView = (ImageView) convertView.findViewById(R.id.bookmark_icon);
 
                     convertView.setTag(viewHolder);
                 } else {
@@ -781,7 +788,7 @@ public class AwesomeBarTabs extends TabHost {
                 updateTitle(viewHolder.titleView, cursor);
                 updateUrl(viewHolder.urlView, cursor);
                 updateFavicon(viewHolder.faviconView, cursor);
-                updateBookmarkStar(viewHolder.starView, cursor);
+                updateBookmarkIcon(viewHolder.bookmarkIconView, cursor);
             }
 
             return convertView;
@@ -1084,14 +1091,23 @@ public class AwesomeBarTabs extends TabHost {
         urlView.setText(url);
     }
 
-    private void updateBookmarkStar(ImageView starView, Cursor cursor) {
+    private void updateBookmarkIcon(ImageView bookmarkIconView, Cursor cursor) {
         int bookmarkIdIndex = cursor.getColumnIndexOrThrow(Combined.BOOKMARK_ID);
         long id = cursor.getLong(bookmarkIdIndex);
+
+        int displayIndex = cursor.getColumnIndexOrThrow(Combined.DISPLAY);
+        int display = cursor.getInt(displayIndex);
 
         // The bookmark id will be 0 (null in database) when the url
         // is not a bookmark.
         int visibility = (id == 0 ? View.GONE : View.VISIBLE);
-        starView.setVisibility(visibility);
+        bookmarkIconView.setVisibility(visibility);
+
+        if (display == Combined.DISPLAY_READER) {
+            bookmarkIconView.setImageResource(R.drawable.ic_awesomebar_reader);
+        } else {
+            bookmarkIconView.setImageResource(R.drawable.ic_awesomebar_star);
+        }
     }
 
     public void setOnUrlOpenListener(OnUrlOpenListener listener) {
@@ -1150,38 +1166,12 @@ public class AwesomeBarTabs extends TabHost {
         public Drawable icon;
         public ArrayList<String> suggestions;
 
-        public SearchEngine(String name) {
-            this(name, null);
-        }
-
         public SearchEngine(String name, Drawable icon) {
             this.name = name;
             this.icon = icon;
             this.suggestions = new ArrayList<String>();
         }
     };
-
-    /**
-     * Sets the suggest engine, which will show suggestions for user-entered queries.
-     * If the suggest engine has already been set, it will be replaced, and its
-     * suggestions will be copied to the new suggest engine.
-     */
-    public void setSuggestEngine(String name, Drawable icon) {
-        // We currently save the suggest engine in shared preferences, so this
-        // method is called immediately when the AwesomeBar is created. It's
-        // called again in setSuggestions(), when the list of search engines is
-        // received from Gecko (in case the suggestion engine has changed).
-        final SearchEngine suggestEngine = new SearchEngine(name, icon);
-        if (mSuggestEngine != null)
-            suggestEngine.suggestions = mSuggestEngine.suggestions;
-
-        GeckoAppShell.getMainHandler().post(new Runnable() {
-            public void run() {
-                mSuggestEngine = suggestEngine;
-                mAllPagesCursorAdapter.notifyDataSetChanged();
-            }
-        });
-    }
 
     /**
      * Sets suggestions associated with the current suggest engine.
@@ -1201,16 +1191,17 @@ public class AwesomeBarTabs extends TabHost {
     /**
      * Sets search engines to be shown for user-entered queries.
      */
-    public void setSearchEngines(String suggestEngine, JSONArray engines) {
+    public void setSearchEngines(String suggestEngineName, JSONArray engines) {
         final ArrayList<SearchEngine> searchEngines = new ArrayList<SearchEngine>();
+        SearchEngine suggestEngine = null;
         for (int i = 0; i < engines.length(); i++) {
             try {
                 JSONObject engineJSON = engines.getJSONObject(i);
                 String name = engineJSON.getString("name");
                 String iconURI = engineJSON.getString("iconURI");
                 Drawable icon = getDrawableFromDataURI(iconURI);
-                if (name.equals(suggestEngine)) {
-                    setSuggestEngine(name, icon);
+                if (name.equals(suggestEngineName)) {
+                    suggestEngine = new SearchEngine(name, icon);
                 } else {
                     searchEngines.add(new SearchEngine(name, icon));
                 }
@@ -1220,8 +1211,10 @@ public class AwesomeBarTabs extends TabHost {
             }
         }
 
+        final SearchEngine suggestEngineArg = suggestEngine;
         GeckoAppShell.getMainHandler().post(new Runnable() {
             public void run() {
+                mSuggestEngine = suggestEngineArg;
                 mSearchEngines = searchEngines;
                 mAllPagesCursorAdapter.notifyDataSetChanged();
             }

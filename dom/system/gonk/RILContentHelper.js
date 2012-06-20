@@ -19,7 +19,7 @@ const RILCONTENTHELPER_CID =
   Components.ID("{472816e1-1fd6-4405-996c-806f9ea68174}");
 const MOBILECONNECTIONINFO_CID =
   Components.ID("{a35cfd39-2d93-4489-ac7d-396475dacb27}");
-const MOBILEOPERATORINFO_CID =
+const MOBILENETWORKINFO_CID =
   Components.ID("{a6c8416c-09b4-46d1-bf29-6520d677d085}");
 
 const RIL_IPC_MSG_NAMES = [
@@ -36,11 +36,17 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:SetCardLock:Return:KO",
   "RIL:UnlockCardLock:Return:OK",
   "RIL:UnlockCardLock:Return:KO",
+  "RIL:UssdReceived",
+  "RIL:SendUssd:Return:OK",
+  "RIL:SendUssd:Return:KO",
+  "RIL:CancelUssd:Return:OK",
+  "RIL:CancelUssd:Return:KO"
 ];
 
 const kVoiceChangedTopic     = "mobile-connection-voice-changed";
 const kDataChangedTopic      = "mobile-connection-data-changed";
 const kCardStateChangedTopic = "mobile-connection-cardstate-changed";
+const kUssdReceivedTopic     = "mobile-connection-ussd-received";
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
                                    "@mozilla.org/childprocessmessagemanager;1",
@@ -62,24 +68,24 @@ MobileConnectionInfo.prototype = {
   connected: false,
   emergencyCallsOnly: false,
   roaming: false,
-  operator: null,
+  network: null,
   type: null,
   signalStrength: null,
   relSignalStrength: null
 };
 
-function MobileOperatorInfo() {}
-MobileOperatorInfo.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozMobileOperatorInfo]),
-  classID:        MOBILEOPERATORINFO_CID,
+function MobileNetworkInfo() {}
+MobileNetworkInfo.prototype = {
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIDOMMozMobileNetworkInfo]),
+  classID:        MOBILENETWORKINFO_CID,
   classInfo:      XPCOMUtils.generateCI({
-    classID:          MOBILEOPERATORINFO_CID,
-    classDescription: "MobileOperatorInfo",
+    classID:          MOBILENETWORKINFO_CID,
+    classDescription: "MobileNetworkInfo",
     flags:            Ci.nsIClassInfo.DOM_OBJECT,
-    interfaces:       [Ci.nsIDOMMozMobileOperatorInfo]
+    interfaces:       [Ci.nsIDOMMozMobileNetworkInfo]
   }),
 
-  // nsIDOMMozMobileOperatorInfo
+  // nsIDOMMozMobileNetworkInfo
 
   shortName: null,
   longName: null,
@@ -99,18 +105,16 @@ function RILContentHelper() {
   // Request initial state.
   let radioState = cpmm.QueryInterface(Ci.nsISyncMessageSender)
                        .sendSyncMessage("RIL:GetRadioState")[0];
+
   if (!radioState) {
     debug("Received null radioState from chrome process.");
     return;
   }
   this.cardState = radioState.cardState;
-  for (let key in radioState.voice) {
-    this.voiceConnectionInfo[key] = radioState.voice[key];
-  }
-  for (let key in radioState.data) {
-    this.dataConnectionInfo[key] = radioState.data[key];
-  }
+  this.updateConnectionInfo(radioState.voice, this.voiceConnectionInfo);
+  this.updateConnectionInfo(radioState.data, this.dataConnectionInfo);
 }
+
 RILContentHelper.prototype = {
   __proto__: DOMRequestIpcHelper.prototype,
 
@@ -122,6 +126,30 @@ RILContentHelper.prototype = {
                                     classDescription: "RILContentHelper",
                                     interfaces: [Ci.nsIMobileConnectionProvider,
                                                  Ci.nsIRILContentHelper]}),
+
+  updateConnectionInfo: function updateConnectionInfo(srcInfo, destInfo) {
+    for (let key in srcInfo) {
+      if (key != "network") {
+        destInfo[key] = srcInfo[key];
+      }
+    }
+
+    let srcNetwork = srcInfo.network;
+    if (!srcNetwork) {
+      destInfo.network= null;
+      return;
+    }
+
+    let network = destInfo.network;
+    if (!network) {
+      network = destInfo.network = new MobileNetworkInfo();
+    }
+
+    network.longName = srcNetwork.longName;
+    network.shortName = srcNetwork.shortName;
+    network.mnc = srcNetwork.mnc;
+    network.mcc = srcNetwork.mcc;
+  },
 
   // nsIRILContentHelper
 
@@ -172,6 +200,30 @@ RILContentHelper.prototype = {
     let request = Services.DOMRequest.createRequest(window);
     info.requestId = this.getRequestId(request);
     cpmm.sendAsyncMessage("RIL:SetCardLock", info);
+    return request;
+  },
+
+  sendUSSD: function sendUSSD(window, ussd) {
+    debug("Sending USSD " + ussd);
+    if (!window) {
+      throw Components.Exception("Can't get window object",
+                                 Cr.NS_ERROR_EXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+    cpmm.sendAsyncMessage("RIL:SendUSSD", {ussd: ussd, requestId: requestId});
+    return request;
+  },
+
+  cancelUSSD: function cancelUSSD(window) {
+    debug("Cancel USSD");
+    if (!window) {
+      throw Components.Exception("Can't get window object",
+                                 Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+    cpmm.sendAsyncMessage("RIL:CancelUSSD", {requestId: requestId});
     return request;
   },
 
@@ -274,6 +326,36 @@ RILContentHelper.prototype = {
 
   // nsIFrameMessageListener
 
+  fireRequestSuccess: function fireRequestSuccess(requestId, result) {
+    let request = this.takeRequest(requestId);
+    if (!request) {
+      if (DEBUG) {
+        debug("not firing success for id: " + requestId + ", result: " + JSON.stringify(result));
+      }
+      return;
+    }
+
+    if (DEBUG) {
+      debug("fire request success, id: " + requestId + ", result: " + JSON.stringify(result));
+    }
+    Services.DOMRequest.fireSuccess(request, result);
+  },
+
+  fireRequestError: function fireRequestError(requestId, error) {
+    let request = this.takeRequest(requestId);
+    if (!request) {
+      if (DEBUG) {
+        debug("not firing error for id: " + requestId + ", error: " + JSON.stringify(error));
+      }
+      return;
+    }
+
+    if (DEBUG) {
+      debug("fire request error, id: " + requestId + ", result: " + JSON.stringify(error));
+    }
+    Services.DOMRequest.fireError(request, error);
+  },
+
   receiveMessage: function receiveMessage(msg) {
     let request;
     debug("Received message '" + msg.name + "': " + JSON.stringify(msg.json));
@@ -285,15 +367,11 @@ RILContentHelper.prototype = {
         }
         break;
       case "RIL:VoiceInfoChanged":
-        for (let key in msg.json) {
-          this.voiceConnectionInfo[key] = msg.json[key];
-        }
+        this.updateConnectionInfo(msg.json, this.voiceConnectionInfo);
         Services.obs.notifyObservers(null, kVoiceChangedTopic, null);
         break;
       case "RIL:DataInfoChanged":
-        for (let key in msg.json) {
-          this.dataConnectionInfo[key] = msg.json[key];
-        }
+        this.updateConnectionInfo(msg.json, this.dataConnectionInfo);
         Services.obs.notifyObservers(null, kDataChangedTopic, null);
         break;
       case "RIL:EnumerateCalls":
@@ -315,14 +393,26 @@ RILContentHelper.prototype = {
       case "RIL:GetCardLock:Return:OK":
       case "RIL:SetCardLock:Return:OK":
       case "RIL:UnlockCardLock:Return:OK":
+        this.fireRequestSuccess(msg.json.requestId, msg.json);
+        break;
+      case "RIL:GetCardLock:Return:KO":
+      case "RIL:SetCardLock:Return:KO":
+      case "RIL:UnlockCardLock:Return:KO":
+        this.fireRequestError(msg.json.requestId, msg.json.errorMsg);
+        break;
+      case "RIL:UssdReceived":
+        Services.obs.notifyObservers(null, kUssdReceivedTopic,
+                                     msg.json.message);
+        break;
+      case "RIL:SendUssd:Return:OK":
+      case "RIL:CancelUssd:Return:OK":
         request = this.takeRequest(msg.json.requestId);
         if (request) {
           Services.DOMRequest.fireSuccess(request, msg.json);
         }
         break;
-      case "RIL:GetCardLock:Return:KO":
-      case "RIL:SetCardLock:Return:KO":
-      case "RIL:UnlockCardLock:Return:KO":
+      case "RIL:SendUssd:Return:KO":
+      case "RIL:CancelUssd:Return:KO":
         request = this.takeRequest(msg.json.requestId);
         if (request) {
           Services.DOMRequest.fireError(request, msg.json.errorMsg);
@@ -371,7 +461,7 @@ RILContentHelper.prototype = {
     let networks = message.networks;
     for (let i = 0; i < networks.length; i++) {
       let network = networks[i];
-      let info = new MobileOperatorInfo();
+      let info = new MobileNetworkInfo();
 
       for (let key in network) {
         info[key] = network[key];

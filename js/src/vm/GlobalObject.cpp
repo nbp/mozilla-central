@@ -111,13 +111,19 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
         JS_ASSERT(proto == functionProto);
         functionProto->flags |= JSFUN_PROTOTYPE;
 
-        JSScript *script =
-            JSScript::NewScript(cx, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, JSVERSION_DEFAULT);
-        if (!script)
+        Rooted<JSScript*> script(cx);
+        script = JSScript::Create(cx,
+                                  /* savedCallerFun = */ false,
+                                  /* principals = */ NULL,
+                                  /* originPrincipals = */ NULL,
+                                  /* compileAndGo = */ false,
+                                  /* noScriptRval = */ true,
+                                  /* globalObject = */ NULL,
+                                  JSVERSION_DEFAULT,
+                                  /* staticLevel = */ 0);
+        if (!script || !script->fullyInitTrivial(cx))
             return NULL;
-        script->noScriptRval = true;
-        script->code[0] = JSOP_STOP;
-        script->code[1] = SRC_NULL;
+
         functionProto->initScript(script);
         functionProto->getType(cx)->interpretedFunction = functionProto;
         script->setFunction(functionProto);
@@ -244,6 +250,8 @@ GlobalObject::create(JSContext *cx, Class *clasp)
     obj = &obj_->asGlobal();
 
     if (!obj->setSingletonType(cx) || !obj->setVarObj(cx))
+        return NULL;
+    if (!obj->setDelegate(cx))
         return NULL;
 
     /* Construct a regexp statics object for this global object. */

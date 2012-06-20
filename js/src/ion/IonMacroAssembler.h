@@ -96,6 +96,9 @@ class MacroAssembler : public MacroAssemblerSpecific
     {
         if (!GetIonContext()->temp)
             alloc_.construct(GetIonContext()->cx);
+#ifdef JS_CPU_ARM
+        m_buffer.id = GetIonContext()->getNextAssemblerId();
+#endif
     }
 
     // This constructor should only be used when there is no IonContext active
@@ -106,6 +109,9 @@ class MacroAssembler : public MacroAssemblerSpecific
     {
         ionContext_.construct(cx, (js::ion::TempAllocator *)NULL);
         alloc_.construct(cx);
+#ifdef JS_CPU_ARM
+        m_buffer.id = GetIonContext()->getNextAssemblerId();
+#endif
     }
 
     MoveResolver &moveResolver() {
@@ -369,7 +375,6 @@ class MacroAssembler : public MacroAssemblerSpecific
     template <typename T>
     CodeOffsetLabel patchableCallPreBarrier(const T &address, MIRType type) {
         JS_ASSERT(type == MIRType_Value || type == MIRType_String || type == MIRType_Object);
-        JSContext *cx = GetIonContext()->cx;
 
         Label done;
 

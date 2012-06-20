@@ -148,8 +148,6 @@ struct SharedContext {
     const RootedObject scopeChain_; /* scope chain object for the script */
 
   public:
-    unsigned        staticLevel;    /* static compilation unit nesting level */
-
     Bindings        bindings;       /* bindings in this code, including
                                        arguments if we're compiling a function */
     Bindings::AutoRooter bindingsRoot; /* root for stack allocated bindings. */
@@ -217,6 +215,8 @@ struct Parser;
 struct TreeContext {                /* tree context for semantic checks */
     SharedContext   *sc;            /* context shared between parsing and bytecode generation */
 
+    const unsigned  staticLevel;    /* static compilation unit nesting level */
+
     uint32_t        parenDepth;     /* nesting depth of parens that might turn out
                                        to be generator expressions */
     uint32_t        yieldCount;     /* number of |yield| tokens encountered at
@@ -267,7 +267,7 @@ struct TreeContext {                /* tree context for semantic checks */
 
     void trace(JSTracer *trc);
 
-    inline TreeContext(Parser *prs, SharedContext *sc);
+    inline TreeContext(Parser *prs, SharedContext *sc, unsigned staticLevel);
     inline ~TreeContext();
 
     inline bool init();
@@ -367,9 +367,6 @@ struct StmtInfo {
     ((stmt)->update = (top), (stmt)->breaks = (stmt)->continues = (-1))
 
 namespace frontend {
-
-bool
-SetStaticLevel(SharedContext *sc, unsigned staticLevel);
 
 bool
 GenerateBlockId(SharedContext *sc, uint32_t &blockid);

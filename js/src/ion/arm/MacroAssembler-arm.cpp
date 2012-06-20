@@ -1827,6 +1827,7 @@ MacroAssemblerARMCompat::storePtr(const Register &src, const AbsoluteAddress &de
 void
 MacroAssemblerARMCompat::cmp32(const Register &lhs, const Imm32 &rhs)
 {
+    JS_ASSERT(lhs != ScratchRegister);
     ma_cmp(lhs, rhs);
 }
 
@@ -1839,6 +1840,7 @@ MacroAssemblerARMCompat::cmp32(const Register &lhs, const Register &rhs)
 void
 MacroAssemblerARMCompat::cmpPtr(const Register &lhs, const ImmWord &rhs)
 {
+    JS_ASSERT(lhs != ScratchRegister);
     ma_cmp(lhs, Imm32(rhs.value));
 }
 
@@ -1853,6 +1855,13 @@ MacroAssemblerARMCompat::cmpPtr(const Address &lhs, const Register &rhs)
 {
     loadPtr(lhs, ScratchRegister);
     cmpPtr(ScratchRegister, rhs);
+}
+
+void
+MacroAssemblerARMCompat::cmpPtr(const Address &lhs, const ImmWord &rhs)
+{
+    loadPtr(lhs, lr);
+    ma_cmp(lr, Imm32(rhs.value));
 }
 
 void
@@ -2190,7 +2199,8 @@ MacroAssemblerARMCompat::boolValueToDouble(const ValueOperand &operand, const Fl
     VFPRegister d = VFPRegister(dest);
     ma_vimm(1.0, dest);
     ma_cmp(operand.payloadReg(), Imm32(0));
-    as_vsub(d, d, d, NotEqual);
+    // If the source is 0, then subtract the dest from itself, producing 0.
+    as_vsub(d, d, d, Equal);
 }
 
 void
@@ -2547,20 +2557,18 @@ MacroAssemblerARM::ma_callIon(const Register r)
     // When the stack is 8 byte aligned,
     // we want to decrement sp by 8, and write pc+8 into the new sp.
     // when we return from this call, sp will be its present value minus 4.
-    enterNoPool();
+    AutoForbidPools afp(this);
     as_dtr(IsStore, 32, PreIndex, pc, DTRAddr(sp, DtrOffImm(-8)));
     as_blx(r);
-    leaveNoPool();
 }
 void
 MacroAssemblerARM::ma_callIonNoPush(const Register r)
 {
     // Since we just write the return address into the stack, which is
     // popped on return, the net effect is removing 4 bytes from the stack
-    enterNoPool();
+    AutoForbidPools afp(this);
     as_dtr(IsStore, 32, Offset, pc, DTRAddr(sp, DtrOffImm(0)));
     as_blx(r);
-    leaveNoPool();
 }
 
 void
@@ -2569,10 +2577,9 @@ MacroAssemblerARM::ma_callIonHalfPush(const Register r)
     // The stack is unaligned by 4 bytes.
     // We push the pc to the stack to align the stack before the call, when we
     // return the pc is poped and the stack is restored to its unaligned state.
-    enterNoPool();
+    AutoForbidPools afp(this);
     ma_push(pc);
     as_blx(r);
-    leaveNoPool();
 }
 
 void
@@ -2709,6 +2716,11 @@ MacroAssemblerARMCompat::callWithABI(void *fun, Result result)
     }
     checkStackAlignment();
     ma_call(fun);
+
+    if (result == DOUBLE) {
+        // Move double from r0/r1 to ReturnFloatReg.
+        as_vxfer(r0, r1, ReturnFloatReg, CoreToFloat);
+    }
 
     freeStack(stackAdjust);
     if (dynamicAlignment_) {

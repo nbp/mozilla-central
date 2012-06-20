@@ -5936,7 +5936,12 @@ g.addColorStop(0, '#f00');
 g.addColorStop(1, '#f00');
 ctx.fillStyle = g;
 ctx.fillRect(0, 0, 100, 50);
-todo_isPixel(ctx, 40,20, 0,255,0,255, 2);
+
+if (IsAzureEnabled() && IsAzureSkia()) {
+  isPixel(ctx, 40,20, 0,255,0,255, 2);
+} else {
+  todo_isPixel(ctx, 40,20, 0,255,0,255, 2);
+}
 
 
 }
@@ -11138,7 +11143,10 @@ ctx.fillRect(0, 0, 100, 50);
 ctx.scale(2, 0.5);
 ctx.fillStyle = '#0f0';
 ctx.beginPath();
-ctx.arc(25, 50, 56, 0, 2*Math.PI, false);
+var hypothenuse = Math.sqrt(50 * 50 + 25 * 25);
+var tolerance = 0.5;
+var radius = hypothenuse + tolerance;
+ctx.arc(25, 50, radius, 0, 2*Math.PI, false);
 ctx.fill();
 ctx.fillStyle = '#f00';
 ctx.beginPath();

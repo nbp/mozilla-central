@@ -1929,8 +1929,8 @@ nsXPConnect::CreateSandbox(JSContext *cx, nsIPrincipal *principal,
     jsval rval = JSVAL_VOID;
     AUTO_MARK_JSVAL(ccx, &rval);
 
-    nsresult rv = xpc_CreateSandboxObject(cx, &rval, principal, NULL, false, true,
-                                          EmptyCString());
+    SandboxOptions options;
+    nsresult rv = xpc_CreateSandboxObject(cx, &rval, principal, options);
     NS_ASSERTION(NS_FAILED(rv) || !JSVAL_IS_PRIMITIVE(rval),
                  "Bad return value from xpc_CreateSandboxObject()!");
 
@@ -2611,7 +2611,6 @@ Base64Decode(JSContext *cx, JS::Value val, JS::Value *out)
     return true;
 }
 
-#ifdef DEBUG
 void
 DumpJSHeap(FILE* file)
 {
@@ -2623,7 +2622,6 @@ DumpJSHeap(FILE* file)
     }
     js::DumpHeapComplete(xpc->GetRuntime()->GetJSRuntime(), file);
 }
-#endif
 
 void
 SetLocationForGlobal(JSObject *global, const nsACString& location)

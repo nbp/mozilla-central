@@ -8,7 +8,6 @@
 #include "nsDOMClassInfoID.h"
 #include "nsDOMError.h"
 #include "nsIDOMNSEvent.h"
-#include "nsIPrivateDOMEvent.h"
 #include "nsDOMWindowUtils.h"
 #include "nsQueryContentEventResult.h"
 #include "nsGlobalWindow.h"
@@ -283,7 +282,8 @@ MaybeReflowForInflationScreenWidthChange(nsPresContext *aPresContext)
               if (shell) {
                 nsIFrame *rootFrame = shell->GetRootFrame();
                 if (rootFrame) {
-                  shell->FrameNeedsReflow(rootFrame, nsIPresShell::eResize,
+                  shell->FrameNeedsReflow(rootFrame,
+                                          nsIPresShell::eStyleChange,
                                           NS_FRAME_IS_DIRTY);
                 }
               }
@@ -1005,7 +1005,8 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
                                          float aY,
                                          PRUint32 aDirection,
                                          PRFloat64 aDelta,
-                                         PRInt32 aModifiers)
+                                         PRInt32 aModifiers,
+                                         PRUint32 aClickCount)
 {
   if (!IsUniversalXPConnectCapable()) {
     return NS_ERROR_DOM_SECURITY_ERR;
@@ -1036,11 +1037,14 @@ nsDOMWindowUtils::SendSimpleGestureEvent(const nsAString& aType,
     msg = NS_SIMPLE_GESTURE_TAP;
   else if (aType.EqualsLiteral("MozPressTapGesture"))
     msg = NS_SIMPLE_GESTURE_PRESSTAP;
+  else if (aType.EqualsLiteral("MozEdgeUIGesture"))
+    msg = NS_SIMPLE_GESTURE_EDGEUI;
   else
     return NS_ERROR_FAILURE;
  
   nsSimpleGestureEvent event(true, msg, widget, aDirection, aDelta);
   event.modifiers = GetWidgetModifiers(aModifiers);
+  event.clickCount = aClickCount;
   event.time = PR_IntervalNow();
 
   nsPresContext* presContext = GetPresContext();
@@ -1406,10 +1410,9 @@ nsDOMWindowUtils::DispatchDOMEventViaPresShell(nsIDOMNode* aTarget,
   NS_ENSURE_STATE(presContext);
   nsCOMPtr<nsIPresShell> shell = presContext->GetPresShell();
   NS_ENSURE_STATE(shell);
-  nsCOMPtr<nsIPrivateDOMEvent> event = do_QueryInterface(aEvent);
-  NS_ENSURE_STATE(event);
-  event->SetTrusted(aTrusted);
-  nsEvent* internalEvent = event->GetInternalNSEvent();
+  NS_ENSURE_STATE(aEvent);
+  aEvent->SetTrusted(aTrusted);
+  nsEvent* internalEvent = aEvent->GetInternalNSEvent();
   NS_ENSURE_STATE(internalEvent);
   nsCOMPtr<nsIContent> content = do_QueryInterface(aTarget);
   NS_ENSURE_STATE(content);
@@ -1793,7 +1796,6 @@ nsDOMWindowUtils::LeaveModalStateWithWindow(nsIDOMWindow *aWindow)
   nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
   NS_ENSURE_STATE(window);
 
-  NS_ENSURE_ARG_POINTER(aWindow);
   window->LeaveModalState(aWindow);
   return NS_OK;
 }

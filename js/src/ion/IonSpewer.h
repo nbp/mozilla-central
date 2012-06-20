@@ -92,6 +92,7 @@ enum IonSpewChannel {
 
 // The IonSpewer is only available on debug builds.
 // None of the global functions have effect on non-debug builds.
+static const int NULL_ID = -1;
 
 #ifdef DEBUG
 
@@ -127,9 +128,14 @@ void IonSpewEndFunction();
 void CheckLogging();
 extern FILE *IonSpewFile;
 void IonSpew(IonSpewChannel channel, const char *fmt, ...);
+void IonSpewStart(IonSpewChannel channel, const char *fmt, ...);
+void IonSpewCont(IonSpewChannel channel, const char *fmt, ...);
+void IonSpewFin(IonSpewChannel channel);
 void IonSpewHeader(IonSpewChannel channel);
 bool IonSpewEnabled(IonSpewChannel channel);
 void IonSpewVA(IonSpewChannel channel, const char *fmt, va_list ap);
+void IonSpewStartVA(IonSpewChannel channel, const char *fmt, va_list ap);
+void IonSpewContVA(IonSpewChannel channel, const char *fmt, va_list ap);
 
 void EnableChannel(IonSpewChannel channel);
 void DisableChannel(IonSpewChannel channel);
@@ -151,12 +157,19 @@ static inline void CheckLogging()
 static FILE *const IonSpewFile = NULL;
 static inline void IonSpew(IonSpewChannel, const char *fmt, ...)
 { }
+static inline void IonSpewStart(IonSpewChannel channel, const char *fmt, ...)
+{ }
+static inline void IonSpewCont(IonSpewChannel channel, const char *fmt, ...)
+{ }
+static inline void IonSpewFin(IonSpewChannel channel)
+{ }
+
 static inline void IonSpewHeader(IonSpewChannel channel)
 { }
 static inline bool IonSpewEnabled(IonSpewChannel channel)
 { return false; }
-static inline void IonSpewVA(IonSpewChannel, const char *fmt, va_list ap)
-{ } 
+static inline void IonSpewVA(IonSpewChannel channel, const char *fmt, va_list ap)
+{ }
 
 static inline void EnableChannel(IonSpewChannel)
 { }

@@ -338,6 +338,7 @@ public:
   virtual NS_HIDDEN_(void) MaybeUpdateTouchState();
   virtual NS_HIDDEN_(void) UpdateTouchState();
   virtual NS_HIDDEN_(bool) DispatchCustomEvent(const char *aEventName);
+  virtual NS_HIDDEN_(void) RefreshCompartmentPrincipal();
   virtual NS_HIDDEN_(nsresult) SetFullScreenInternal(bool aIsFullScreen, bool aRequireTrust);
 
   // nsIDOMStorageIndexedDB
@@ -379,7 +380,17 @@ public:
     nsCOMPtr<nsIDOMWindow> top;
     GetTop(getter_AddRefs(top));
     if (top)
-      return static_cast<nsGlobalWindow *>(static_cast<nsIDOMWindow *>(top.get()));
+      return static_cast<nsGlobalWindow *>(top.get());
+    return nsnull;
+  }
+
+  inline nsGlobalWindow* GetScriptableTop()
+  {
+    nsCOMPtr<nsIDOMWindow> top;
+    GetScriptableTop(getter_AddRefs(top));
+    if (top) {
+      return static_cast<nsGlobalWindow *>(top.get());
+    }
     return nsnull;
   }
 

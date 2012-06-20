@@ -340,12 +340,12 @@ IonCompartment::generateArgumentsRectifier(JSContext *cx)
     JS_ASSERT(ArgumentsRectifierReg == r8);
 
     // Load the number of |undefined|s to push into %rcx.
-    masm.movq(Operand(rsp, IonJSFrameLayout::offsetOfCalleeToken()), rax);
+    masm.movq(Operand(rsp, IonRectifierFrameLayout::offsetOfCalleeToken()), rax);
     masm.movzwl(Operand(rax, offsetof(JSFunction, nargs)), rcx);
     masm.subq(r8, rcx);
 
     // Copy the number of actual arguments
-    masm.movq(Operand(rsp, IonJSFrameLayout::offsetOfNumActualArgs()), rdx);
+    masm.movq(Operand(rsp, IonRectifierFrameLayout::offsetOfNumActualArgs()), rdx);
 
     masm.moveValue(UndefinedValue(), r10);
 

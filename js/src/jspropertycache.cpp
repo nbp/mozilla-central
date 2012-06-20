@@ -137,7 +137,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
     if (entry->kpc != pc) {
         PCMETER(kpcmisses++);
 
-        PropertyName *name = GetNameFromBytecode(cx, pc, op, cs);
+        PropertyName *name = GetNameFromBytecode(cx, pc, op);
 #ifdef DEBUG_notme
         JSAutoByteString printable;
         fprintf(stderr,
@@ -160,7 +160,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
 
     if (entry->kshape != obj->lastProperty()) {
         PCMETER(kshapemisses++);
-        return GetNameFromBytecode(cx, pc, op, cs);
+        return GetNameFromBytecode(cx, pc, op);
     }
 
     /*
@@ -169,6 +169,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
      */
     pobj = obj;
 
+    JSObject *scopeObj = NULL;
     if (JOF_MODE(cs.format) == JOF_NAME) {
         uint8_t scopeIndex = entry->scopeIndex;
         while (scopeIndex > 0) {
@@ -179,7 +180,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
             scopeIndex--;
         }
 
-        *objp = pobj;
+        scopeObj = pobj;
     }
 
     uint8_t protoIndex = entry->protoIndex;
@@ -192,8 +193,10 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
     }
 
     if (pobj->lastProperty() == entry->pshape) {
+        if (JOF_MODE(cs.format) == JOF_NAME)
+            *objp = scopeObj;
 #ifdef DEBUG
-        PropertyName *name = GetNameFromBytecode(cx, pc, op, cs);
+        PropertyName *name = GetNameFromBytecode(cx, pc, op);
         JS_ASSERT(pobj->nativeContains(cx, NameToId(name)));
 #endif
         *pobjp = pobj;
@@ -201,7 +204,7 @@ PropertyCache::fullTest(JSContext *cx, jsbytecode *pc, JSObject **objp, JSObject
     }
 
     PCMETER(vcapmisses++);
-    return GetNameFromBytecode(cx, pc, op, cs);
+    return GetNameFromBytecode(cx, pc, op);
 }
 
 #ifdef DEBUG

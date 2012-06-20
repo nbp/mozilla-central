@@ -58,6 +58,8 @@ JS_STATIC_ASSERT(1 << defaultShift == sizeof(jsval));
 class MacroAssemblerARM : public Assembler
 {
   public:
+    MacroAssemblerARM() {
+    }
     void convertInt32ToDouble(const Register &src, const FloatRegister &dest);
     void convertUInt32ToDouble(const Register &src, const FloatRegister &dest);
     void convertDoubleToFloat(const FloatRegister &src, const FloatRegister &dest);
@@ -1005,6 +1007,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void cmpPtr(const Register &lhs, const ImmWord &rhs);
     void cmpPtr(const Register &lhs, const Register &rhs);
     void cmpPtr(const Address &lhs, const Register &rhs);
+    void cmpPtr(const Address &lhs, const ImmWord &rhs);
 
     void subPtr(Imm32 imm, const Register dest);
     void addPtr(Imm32 imm, const Register dest);
