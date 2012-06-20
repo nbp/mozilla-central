@@ -3135,9 +3135,7 @@ IonBuilder::jsop_funapply(uint32 argc)
     passVp->replaceAllUsesWith(passVp->getArgument());
     passVp->block()->discard(passVp);
 
-    // Remove the MPassArg(JSFunction *).
     // Unwrap the (JSFunction *) parameter.
-    int funcDepth = -((int)argc + 1);
     MPassArg *passFunc = current->pop()->toPassArg();
     MDefinition *argFunc = passFunc->getArgument();
     passFunc->replaceAllUsesWith(argFunc);
