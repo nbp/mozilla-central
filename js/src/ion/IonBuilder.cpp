@@ -3100,8 +3100,8 @@ bool
 IonBuilder::jsop_funapply(uint32 argc)
 {
     // Stack for JSOP_FUNAPPLY:
-    // 1:      MPassArg(This)
-    // 2:      MPassArg(Vp)
+    // 1:      MPassArg(Vp)
+    // 2:      MPassArg(This)
     // argc+1: MPassArg(JSFunction *), the 'f' in |f.call()|, in |this| position.
     // argc+2: The native 'apply' function.
 
@@ -3115,7 +3115,7 @@ IonBuilder::jsop_funapply(uint32 argc)
         return makeCall(native, argc, false);
 
     // Reject when called with an Array or object.
-    MPassArg *passVp = current->peek(-2)->toPassArg();
+    MPassArg *passVp = current->peek(-1)->toPassArg();
     if (passVp->getArgument()->type() != MIRType_ArgObj)
         return makeCall(native, argc, false);
 
