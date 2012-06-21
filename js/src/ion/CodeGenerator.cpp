@@ -754,7 +754,8 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
     masm.bind(&end);
 
     // Push this.
-    masm.Push(ToRegister(apply->getThis()));
+    // ToValue(lir, LInitProp::ValueIndex)
+    masm.Push(JSVAL_TYPE_OBJECT, ToRegister(apply->getThis()));
 }
 
 void
@@ -770,7 +771,6 @@ CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpa
 bool
 CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 {
-
     // Holds the function object.
     Register calleereg = ToRegister(apply->getFunction());
 
