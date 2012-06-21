@@ -3124,16 +3124,16 @@ IonBuilder::jsop_funapply(uint32 argc)
     RootedObject funobj(cx, (funTypes) ? funTypes->getSingleton(cx, false) : NULL);
     RootedFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
 
+    // Vp
+    passVp = current->pop()->toPassArg();
+    passVp->replaceAllUsesWith(passVp->getArgument());
+    passVp->block()->discard(passVp);
+
     // This
     MPassArg *passThis = current->pop()->toPassArg();
     MDefinition *argThis = passThis->getArgument();
     passThis->replaceAllUsesWith(argThis);
     passThis->block()->discard(passThis);
-
-    // Vp
-    passVp = current->pop()->toPassArg();
-    passVp->replaceAllUsesWith(passVp->getArgument());
-    passVp->block()->discard(passVp);
 
     // Unwrap the (JSFunction *) parameter.
     MPassArg *passFunc = current->pop()->toPassArg();
