@@ -365,6 +365,9 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
             addq(Imm32(amount), StackPointer);
         framePushed_ -= amount;
     }
+    void freeStack(Register amount) {
+        addq(amount, StackPointer);
+    }
 
     void addPtr(const Register &src, const Register &dest) {
         addq(src, dest);
