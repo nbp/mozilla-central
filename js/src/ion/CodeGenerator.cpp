@@ -782,30 +782,21 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     // Holds the function nargs. Initially undefined.
     Register argcreg = ToRegister(apply->getArgc());
 
+    // Unless already known, guard that calleereg is actually a function object.
+    if (!apply->hasSingleTarget()) {
+        masm.loadObjClass(calleereg, objreg);
+        masm.cmpPtr(objreg, ImmWord(&js::FunctionClass));
+        if (!bailoutIf(Assembler::NotEqual, apply->snapshot()))
+            return false;
+    }
+
     // :TODO: Add additional space to make sure the stack alignment would be
     // correct.
 
     // Copy the arguments of the current function.
     emitPushArguments(apply);
 
-    // We need a label to handle bailouts since emitPushAtguments is pushing a
-    // variable number of arguments on the stack.  The label is used to removed
-    // these arguments before bailing out.
-    Label bail;
-
     // masm.checkStackAlignment();
-
-    // Unless already known, guard that calleereg is actually a function object.
-    if (!apply->hasSingleTarget()) {
-        Register objclass = objreg;
-
-        masm.loadObjClass(calleereg, objclass);
-        masm.cmpPtr(objclass, ImmWord(&js::FunctionClass));
-
-        // This is a bailoutIf except that we need to unwind the dynamic stack
-        // usage before bailing out.
-        masm.branchPtr(Assembler::NotEqual, objclass, ImmWord(&js::FunctionClass), &bail);
-    }
 
     // If the function is known to be uncompilable, only emit the call to InvokeFunction.
     if (apply->hasSingleTarget() &&
@@ -915,16 +906,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
         emitCallInvokeFunction(apply, copyreg);
         masm.jump(&end);
-    }
-
-    // Handle bailouts.
-    masm.bind(&bail);
-    {
-        masm.movePtr(argcreg, copyreg);
-        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
-        emitPopArguments(apply, copyreg);
-        if (!bailout(apply->snapshot()))
-            return false;
     }
 
     // Pop arguments and continue.
