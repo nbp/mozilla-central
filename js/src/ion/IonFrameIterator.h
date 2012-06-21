@@ -66,6 +66,10 @@ enum FrameType
     // mismatches in calls.
     IonFrame_Rectifier,
 
+    // A bailed JS frame is a JS frame signalling that its callee has been
+    // bailed out.
+    IonFrame_Bailed_JS,
+
     // A bailed rectifier frame is a rectifier frame signalling that its callee
     // has been bailed out.
     IonFrame_Bailed_Rectifier,

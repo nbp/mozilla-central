@@ -322,31 +322,12 @@ EnsureExitFrame(IonCommonFrameLayout *frame)
         return;
     }
 
-    // We've bailed out the invalidated frame, so we now transform it
-    // into an exit frame. This:
-    //
-    //      calleeToken
-    //      callerFrameDesc
-    //      returnAddress
-    //      .. locals ..
-    //
-    // Becomes:
-    //
-    //      dummyCalleeToken
-    //      callerFrameDesc
-    //      returnAddress
-    //
-    // The frame descriptor contains the size of the caller's locals,
-    // but not the caller or callee's frame headers. When we remove the
-    // bailed frame and link it as an exit frame, the pushed callee
-    // token is no longer part of any frame header, and thus we must
-    // change the caller's frame descriptor to include it as a local.
-    // Otherwise, stack traversal code will fail because it is off by
-    // one word.
+    if (frame->prevType() == IonFrame_JS) {
+        frame->changePrevType(IonFrame_Bailed_JS);
+        return;
+    }
 
-    uint32 callerFrameSize = frame->prevFrameLocalSize() +
-        IonJSFrameLayout::Size() - IonExitFrameLayout::Size();
-    frame->setFrameDescriptor(callerFrameSize, frame->prevType());
+    JS_NOT_REACHED("invalid");
 }
 
 uint32

@@ -159,7 +159,7 @@ IonFrameIterator::isFunctionFrame() const
 bool
 IonFrameIterator::isEntryJSFrame() const
 {
-    if (prevType() == IonFrame_JS)
+    if (prevType() == IonFrame_JS || prevType() == IonFrame_Bailed_JS)
         return false;
 
     if (prevType() == IonFrame_Entry)
@@ -205,7 +205,7 @@ IonFrameIterator::prevFp() const
     // This quick fix must be removed as soon as bug 717297 land.  This is
     // needed because the descriptor size of JS-to-JS frame which is just after
     // a Rectifier frame should not change. (cf EnsureExitFrame function)
-    if (prevType() == IonFrame_Bailed_Rectifier) {
+    if (prevType() == IonFrame_Bailed_Rectifier || prevType() == IonFrame_Bailed_JS) {
         JS_ASSERT(type_ == IonFrame_Exit);
         currentSize = SizeOfFramePrefix(IonFrame_JS);
     }
@@ -232,6 +232,8 @@ IonFrameIterator::operator++()
     // next frame.
     uint8 *prev = prevFp();
     type_ = current()->prevType();
+    if (type_ == IonFrame_Bailed_JS)
+        type_ = IonFrame_JS;
     returnAddressToFp_ = current()->returnAddress();
     current_ = prev;
     return *this;
@@ -565,6 +567,9 @@ MarkIonActivation(JSTracer *trc, const IonActivationIterator &activations)
             break;
           case IonFrame_JS:
             MarkIonJSFrame(trc, frames);
+            break;
+          case IonFrame_Bailed_JS:
+            JS_NOT_REACHED("invalid");
             break;
           case IonFrame_Rectifier:
           case IonFrame_Bailed_Rectifier: {
