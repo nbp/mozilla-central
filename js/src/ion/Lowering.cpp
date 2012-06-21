@@ -266,10 +266,11 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
         // JS_NOT_REACHED("track un-implemented versions");
     } else {
         LApplyArgsGeneric *lir = new LApplyArgsGeneric(
-            useRegister(apply->getFunction()),
+            useFixed(apply->getFunction(), CallTempReg4),
             useFixed(apply->getArgc(), CallTempReg0),
-            useRegister(apply->getThis()),
-            tempFixed(CallTempReg1), tempFixed(CallTempReg2));
+            useFixed(apply->getThis(), CallTempReg1),
+            tempFixed(CallTempReg3),
+            tempFixed(CallTempReg2));
 
         // Bailout is only needed in the case of possible non-JSFunction callee.
         if (!target && !assignSnapshot(lir))
