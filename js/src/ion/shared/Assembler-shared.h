@@ -268,6 +268,36 @@ class Label : public LabelBase
     }
 };
 
+class LabelWithStack : public Label
+{
+    uint32 framePushed_;
+    bool set_;
+
+  public:
+    LabelWithStack()
+      : framePushed_(0),
+        set_(false)
+    { }
+
+    bool isSynced()
+    {
+        return set_;
+    }
+
+    void setFramePushed(uint32 framePushed)
+    {
+        JS_ASSERT(!set_);
+        set_ = true;
+        framePushed_ = framePushed;
+    }
+
+    uint32 getFramePushed()
+    {
+        JS_ASSERT(set_);
+        return framePushed_;
+    }
+};
+
 class RepatchLabel
 {
     static const int32 INVALID_OFFSET = 0xC0000000;
