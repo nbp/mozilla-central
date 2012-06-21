@@ -712,15 +712,26 @@ CodeGenerator::visitCallConstructor(LCallConstructor *call)
 bool
 CodeGenerator::emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraStackSize)
 {
+    Register objreg = ToRegister(apply->getTempObject());
+    JS_ASSERT(objreg != extraStackSize);
+
     typedef bool (*pf)(JSContext *, JSFunction *, uint32, Value *, Value *);
     static const VMFunction InvokeFunctionInfo = FunctionInfo<pf>(InvokeFunction);
 
-    pushArg(StackPointer);                     // argv.
+    // Push the space used by the arguments.
+    masm.movePtr(StackPointer, objreg);
+    masm.Push(extraStackSize);
+
+    pushArg(objreg);                           // argv.
     pushArg(ToRegister(apply->getArgc()));     // argc.
     pushArg(ToRegister(apply->getFunction())); // JSFunction *.
 
     // This specialization og callVM restore the extraStackSize after the call.
-    return callVM(InvokeFunctionInfo, apply, extraStackSize);
+    if (!callVM(InvokeFunctionInfo, apply))
+        return false;
+
+    masm.Pop(extraStackSize);
+    return true;
 }
 
 // Do not bailout after the execution of this function since the stack no longer
