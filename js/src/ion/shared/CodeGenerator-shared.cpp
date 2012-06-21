@@ -375,7 +375,7 @@ CodeGeneratorShared::markOsiPoint(LOsiPoint *ins, uint32 *callPointOffset)
 // Before doing any call to Cpp, you should ensure that volatile
 // registers are evicted by the register allocator.
 bool
-CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, Register shiftSlot)
+CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins)
 {
 #ifdef DEBUG
     if (ins->mirRaw()) {
@@ -403,24 +403,9 @@ CodeGeneratorShared::callVM(const VMFunction &fun, LInstruction *ins, Register s
     // when returning from the call.  Failures are handled with exceptions based
     // on the return value of the C functions.  To guard the outcome of the
     // returned value, use another LIR instruction.
-    if (shiftSlot == Register::Invalid()) {
-        masm.callWithExitFrame(wrapper);
-        if (!markSafepoint(ins))
-            return false;
-    } else {
-        unsigned pushed = masm.framePushed();
-        masm.callWithExitFrame(wrapper, shiftSlot);
-        if (!markSafepoint(ins))
-            return false;
-
-        // Restore the content of the shift register by reading the frame
-        // descriptor and removing the part which was predicted at compilation
-        // time.
-        masm.movePtr(Address(StackPointer, 0), shiftSlot);
-        masm.rshiftPtr(Imm32(FRAMESIZE_SHIFT), shiftSlot);
-        masm.subPtr(Imm32(pushed), shiftSlot);
-    }
-
+    masm.callWithExitFrame(wrapper);
+    if (!markSafepoint(ins))
+        return false;
 
     // Remove rest of the frame left on the stack. We remove the return address
     // which is implicitly poped when returning.

@@ -72,10 +72,6 @@ struct Register {
         Register r = { (Registers::Code)i };
         return r;
     }
-    static Register Invalid() {
-        static Register r = { (Registers::Code) Registers::Total };
-        return r;
-    }
     Code code() const {
         JS_ASSERT((uint32)code_ < Registers::Total);
         return code_;
