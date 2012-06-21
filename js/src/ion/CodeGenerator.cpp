@@ -761,11 +761,10 @@ void
 CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpace)
 {
     // Push(this)
-    masm.subPtr(Imm32(sizeof(void*)), StackPointer);
-    masm.implicitPop(sizeof(void*));
+    masm.freeStack(sizeof(void*));
 
     // Arguments
-    masm.subPtr(extraStackSpace, StackPointer);
+    masm.freeStack(extraStackSpace);
 }
 
 bool
