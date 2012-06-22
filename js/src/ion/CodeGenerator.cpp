@@ -727,7 +727,7 @@ CodeGenerator::emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraSt
     pushArg(ToRegister(apply->getFunction())); // JSFunction *.
 
     // This specialization og callVM restore the extraStackSize after the call.
-    if (!callVM(InvokeFunctionInfo, apply))
+    if (!callVM(InvokeFunctionInfo, apply, &extraStackSize))
         return false;
 
     masm.Pop(extraStackSize);
