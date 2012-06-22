@@ -1187,7 +1187,7 @@ class MCall
 // fun.apply(self, arguments)
 class MApplyArgs
   : public MAryInstruction<3>,
-    public MixPolicy<ObjectPolicy<0>, IntPolicy<1> >
+    public MixPolicy<ObjectPolicy<0>, MixPolicy<IntPolicy<1>, BoxPolicy<2> > >
 {
   protected:
     // Monomorphic cache of single target from TI, or NULL.
@@ -1221,6 +1221,10 @@ class MApplyArgs
     }
     MDefinition *getThis() const {
         return getOperand(2);
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
     }
 };
 
