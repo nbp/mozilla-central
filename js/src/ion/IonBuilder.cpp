@@ -3141,6 +3141,9 @@ IonBuilder::jsop_funapply(uint32 argc)
     passFunc->replaceAllUsesWith(argFunc);
     passFunc->block()->discard(passFunc);
 
+    // Pop apply function.
+    current->pop();
+
     // Call without inlining.
     // return makeCall(target, argc, false);
     MLazyArguments *lazyArgs = MLazyArguments::New();
