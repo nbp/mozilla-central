@@ -759,6 +759,9 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
         // Do not use Push here because other this account to 1 in the framePushed
         // instead of 0.  These push are only counted by argcreg.
         masm.push(copyreg);
+
+        // :TODO: Add an extra load&push if sizeof(Value) == 2 * sizeof(void*).
+
         masm.subPtr(Imm32(1), count);
         masm.branchTestPtr(Assembler::NonZero, count, count, &loop);
     }
