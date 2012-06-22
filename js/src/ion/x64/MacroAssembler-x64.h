@@ -809,10 +809,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         mov(StackPointer, Operand(ScratchReg, offsetof(JSRuntime, ionTop)));
     }
 
-    void callWithExitFrame(IonCode *target, Register frameShift) {
-        addPtr(Imm32(framePushed()), frameShift);
-        makeFrameDescriptor(frameShift, IonFrame_JS);
-        Push(frameShift);
+    void callWithExitFrame(IonCode *target, Register dynStack) {
+        addPtr(Imm32(framePushed()), dynStack);
+        makeFrameDescriptor(dynStack, IonFrame_JS);
+        Push(dynStack);
         call(target);
     }
 
