@@ -765,8 +765,7 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
     masm.bind(&end);
 
     // Push this.
-    // ToValue(lir, LInitProp::ValueIndex)
-    masm.Push(JSVAL_TYPE_OBJECT, ToRegister(apply->getThis()));
+    masm.Push(ToValue(apply, LApplyArgsGeneric::ThisIndex));
 }
 
 void

@@ -266,11 +266,22 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
         // JS_NOT_REACHED("track un-implemented versions");
     } else {
         LApplyArgsGeneric *lir = new LApplyArgsGeneric(
-            useFixed(apply->getFunction(), CallTempReg4),
+            useFixed(apply->getFunction(), CallTempReg3),
             useFixed(apply->getArgc(), CallTempReg0),
-            useFixed(apply->getThis(), CallTempReg1),
-            tempFixed(CallTempReg3),
+            tempFixed(CallTempReg1),
             tempFixed(CallTempReg2));
+
+        MDefinition *self = apply->getThis();
+        size_t index = LApplyArgsGeneric::ThisIndex;
+        if (!ensureDefined(self))
+            return false;
+
+#if defined(JS_NUNBOX32)
+        lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
+        lir->setOperand(index + 1, LUse(CallTempReg5, VirtualRegisterOfPayload(self)));
+#elif defined(JS_PUNBOX64)
+        lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
+#endif
 
         // Bailout is only needed in the case of possible non-JSFunction callee.
         if (!target && !assignSnapshot(lir))

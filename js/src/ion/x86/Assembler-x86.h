@@ -84,6 +84,7 @@ static const Register CallTempReg1 = eax;
 static const Register CallTempReg2 = ebx;
 static const Register CallTempReg3 = ecx;
 static const Register CallTempReg4 = esi;
+static const Register CallTempReg5 = edx;
 
 static const Register OsrFrameReg = edx;
 static const Register PreBarrierReg = edx;

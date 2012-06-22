@@ -568,20 +568,18 @@ class LCallConstructor : public LInstructionHelper<BOX_PIECES, 1, 0>
 
 // Generates a polymorphic callsite, wherein the function being called is
 // unknown and anticipated to vary.
-class LApplyArgsGeneric : public LCallInstructionHelper<BOX_PIECES, 3, 2>
+class LApplyArgsGeneric : public LCallInstructionHelper<BOX_PIECES, BOX_PIECES + 2, 2>
 {
   public:
     LIR_HEADER(ApplyArgsGeneric);
 
     LApplyArgsGeneric(const LAllocation &func,
                       const LAllocation &argc,
-                      const LAllocation &self,
                       const LDefinition &tmpobjreg,
                       const LDefinition &tmpcopy)
     {
         setOperand(0, func);
         setOperand(1, argc);
-        setOperand(2, self);
         setTemp(0, tmpobjreg);
         setTemp(1, tmpcopy);
     }
@@ -603,9 +601,8 @@ class LApplyArgsGeneric : public LCallInstructionHelper<BOX_PIECES, 3, 2>
     const LAllocation *getArgc() {
         return getOperand(1);
     }
-    const LAllocation *getThis() {
-        return getOperand(2);
-    }
+    static const size_t ThisIndex = 2;
+
     const LAllocation *getTempObject() {
         return getTemp(0)->output();
     }
