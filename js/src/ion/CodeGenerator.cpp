@@ -753,6 +753,7 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
 
     // Copy arguments.
     {
+        Label loop;
         masm.bind(&loop);
         BaseIndex disp(StackPointer, argcreg, ScaleFromShift(sizeof(Value)), argvOffset - sizeof(Value));
         masm.loadPtr(disp, copyreg);
@@ -764,7 +765,7 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
         // :TODO: Add an extra load&push if sizeof(Value) == 2 * sizeof(void*).
 
         masm.subPtr(Imm32(1), count);
-        masm.branchTestPtr(Assembler::NonZero, count, count, &loop);
+        masm.j(Assembler::NonZero, &loop);
     }
 
     // Compute the stack usage.
