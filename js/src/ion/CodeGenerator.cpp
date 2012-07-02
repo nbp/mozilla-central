@@ -756,13 +756,17 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
         Label loop;
         masm.bind(&loop);
         BaseIndex disp(StackPointer, argcreg, ScaleFromShift(sizeof(Value)), argvOffset - sizeof(Value));
-        masm.loadPtr(disp, copyreg);
 
         // Do not use Push here because other this account to 1 in the framePushed
         // instead of 0.  These push are only counted by argcreg.
+        masm.loadPtr(disp, copyreg);
         masm.push(copyreg);
 
-        // :TODO: Add an extra load&push if sizeof(Value) == 2 * sizeof(void*).
+        // Handle 32 bits architectures.
+        if (sizeof(Value) == 2 * sizeof(void*)) {
+            masm.loadPtr(disp, copyreg);
+            masm.push(copyreg);
+        }
 
         masm.subPtr(Imm32(1), count);
         masm.j(Assembler::NonZero, &loop);
@@ -775,7 +779,7 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     // Join with all arguments copied and the extra stack usage computed.
     masm.bind(&end);
 
-    // Push this.
+    // Push |this|.
     masm.Push(ToValue(apply, LApplyArgsGeneric::ThisIndex));
 }
 
@@ -810,13 +814,10 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
             return false;
     }
 
-    // :TODO: Add additional space to make sure the stack alignment would be
-    // correct.
-
     // Copy the arguments of the current function.
     emitPushArguments(apply, copyreg);
 
-    // masm.checkStackAlignment();
+    masm.checkStackAlignment();
 
     // If the function is known to be uncompilable, only emit the call to InvokeFunction.
     if (apply->hasSingleTarget() &&
