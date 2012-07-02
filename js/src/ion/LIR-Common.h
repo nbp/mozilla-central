@@ -225,6 +225,36 @@ class LGoto : public LInstructionHelper<0, 0, 0>
     }
 };
 
+class LNewSlots : public LCallInstructionHelper<1, 0, 3>
+{
+  public:
+    LIR_HEADER(NewSlots);
+
+    LNewSlots(const LDefinition &temp1, const LDefinition &temp2,
+              const LDefinition &temp3) {
+        setTemp(0, temp1);
+        setTemp(1, temp2);
+        setTemp(2, temp3);
+    }
+
+    const LDefinition *output() {
+        return getDef(0);
+    }
+    const LDefinition *temp1() {
+        return getTemp(0);
+    }
+    const LDefinition *temp2() {
+        return getTemp(1);
+    }
+    const LDefinition *temp3() {
+        return getTemp(2);
+    }
+
+    MNewSlots *mir() const {
+        return mir_->toNewSlots();
+    }
+};
+
 class LNewArray : public LInstructionHelper<1, 0, 0>
 {
   public:
@@ -253,14 +283,23 @@ class LNewObject : public LInstructionHelper<1, 0, 0>
     }
 };
 
-class LNewCallObject : public LInstructionHelper<1, 2, 0>
+// Allocates a new CallObject. The inputs are:
+//      slots: either a reg representing a HeapSlot *, or a placeholder
+//             meaning that no slots pointer is needed.
+//
+// This instruction generates two possible instruction sets:
+//   (1) If the call object is extensible, this is a callVM to create the
+//       call object.
+//   (2) Otherwise, an inline allocation of the call object is attempted.
+//
+class LNewCallObject : public LInstructionHelper<1, 1, 0>
 {
   public:
     LIR_HEADER(NewCallObject);
 
-    LNewCallObject(const LAllocation &scopeObj, const LAllocation &callee) {
-        setOperand(0, scopeObj);
-        setOperand(1, callee);
+    LNewCallObject(const LAllocation &slots)
+    {
+        setOperand(0, slots);
     }
 
     bool isCall() const;
@@ -268,11 +307,8 @@ class LNewCallObject : public LInstructionHelper<1, 2, 0>
     const LDefinition *output() {
         return getDef(0);
     }
-    const LAllocation *scopeObj() {
-        return getOperand(0); 
-    }
-    const LAllocation *callee() {
-        return getOperand(1); 
+    const LAllocation *slots() {
+        return getOperand(0);
     }
     MNewCallObject *mir() const {
         return mir_->toNewCallObject();
@@ -393,6 +429,30 @@ class LCreateThis : public LInstructionHelper<1, 2, 0>
     MCreateThis *mir() const {
         return mir_->toCreateThis();
     }
+};
+
+// If the Value is an Object, return unbox(Value).
+// Otherwise, return the other Object.
+class LReturnFromCtor : public LInstructionHelper<1, BOX_PIECES + 1, 0>
+{
+  public:
+    LIR_HEADER(ReturnFromCtor);
+
+    LReturnFromCtor(const LAllocation &object)
+    {
+        // Value set by useBox() during lowering.
+        setOperand(LReturnFromCtor::ObjectIndex, object);
+    }
+
+    const LAllocation *getObject() {
+        return getOperand(LReturnFromCtor::ObjectIndex);
+    }
+    const LDefinition *output() {
+        return getDef(0);
+    }
+
+    static const size_t ValueIndex = 0;
+    static const size_t ObjectIndex = BOX_PIECES;
 };
 
 // Writes an argument for a function call to the frame's argument vector.
@@ -725,20 +785,13 @@ class LCompare : public LInstructionHelper<1, 2, 0>
 
 class LCompareD : public LInstructionHelper<1, 2, 0>
 {
-    JSOp jsop_;
-
   public:
     LIR_HEADER(CompareD);
-    LCompareD(JSOp jsop, const LAllocation &left, const LAllocation &right)
-      : jsop_(jsop)
-    {
+    LCompareD(const LAllocation &left, const LAllocation &right) {
         setOperand(0, left);
         setOperand(1, right);
     }
 
-    JSOp jsop() const {
-        return jsop_;
-    }
     const LAllocation *left() {
         return getOperand(0);
     }
@@ -747,25 +800,21 @@ class LCompareD : public LInstructionHelper<1, 2, 0>
     }
     const LDefinition *output() {
         return getDef(0);
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
     }
 };
 
 class LCompareS : public LInstructionHelper<1, 2, 0>
 {
-    JSOp jsop_;
-
   public:
     LIR_HEADER(CompareS);
-    LCompareS(JSOp jsop, const LAllocation &left, const LAllocation &right)
-      : jsop_(jsop)
-    {
+    LCompareS(const LAllocation &left, const LAllocation &right) {
         setOperand(0, left);
         setOperand(1, right);
     }
 
-    JSOp jsop() const {
-        return jsop_;
-    }
     const LAllocation *left() {
         return getOperand(0);
     }
@@ -775,25 +824,22 @@ class LCompareS : public LInstructionHelper<1, 2, 0>
     const LDefinition *output() {
         return getDef(0);
     }
+    MCompare *mir() {
+        return mir_->toCompare();
+    }
 };
 
 class LCompareV : public LCallInstructionHelper<1, 2 * BOX_PIECES, 0>
 {
-    JSOp jsop_;
-
   public:
     LIR_HEADER(CompareV);
 
-    LCompareV(JSOp jsop)
-      : jsop_(jsop)
-    { }
-
-    JSOp jsop() const {
-        return jsop_;
-    }
-
     static const size_t LhsInput = 0;
     static const size_t RhsInput = BOX_PIECES;
+
+    MCompare *mir() const {
+        return mir_->toCompare();
+    }
 };
 
 // Compares two integral values of the same JS type, either integer or object.
@@ -806,13 +852,12 @@ class LCompareAndBranch : public LInstructionHelper<0, 2, 0>
 
   public:
     LIR_HEADER(CompareAndBranch);
-    LCompareAndBranch(MCompare *mir, JSOp jsop, const LAllocation &left, const LAllocation &right,
-                       MBasicBlock *ifTrue, MBasicBlock *ifFalse)
+    LCompareAndBranch(JSOp jsop, const LAllocation &left, const LAllocation &right,
+                      MBasicBlock *ifTrue, MBasicBlock *ifFalse)
       : jsop_(jsop),
         ifTrue_(ifTrue),
         ifFalse_(ifFalse)
     {
-        mir_ = mir;
         setOperand(0, left);
         setOperand(1, right);
     }
@@ -839,25 +884,20 @@ class LCompareAndBranch : public LInstructionHelper<0, 2, 0>
 
 class LCompareDAndBranch : public LInstructionHelper<0, 2, 0>
 {
-    JSOp jsop_;
     MBasicBlock *ifTrue_;
     MBasicBlock *ifFalse_;
 
   public:
     LIR_HEADER(CompareDAndBranch);
-    LCompareDAndBranch(JSOp jsop, const LAllocation &left, const LAllocation &right,
+    LCompareDAndBranch(const LAllocation &left, const LAllocation &right,
                        MBasicBlock *ifTrue, MBasicBlock *ifFalse)
-      : jsop_(jsop),
-        ifTrue_(ifTrue),
+      : ifTrue_(ifTrue),
         ifFalse_(ifFalse)
     {
         setOperand(0, left);
         setOperand(1, right);
     }
 
-    JSOp jsop() const {
-        return jsop_;
-    }
     MBasicBlock *ifTrue() const {
         return ifTrue_;
     }
@@ -869,6 +909,66 @@ class LCompareDAndBranch : public LInstructionHelper<0, 2, 0>
     }
     const LAllocation *right() {
         return getOperand(1);
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
+    }
+};
+
+// Used for strict-equality comparisons where one side is a boolean
+// and the other is a value. Note that CompareI is used to compare
+// two booleans.
+class LCompareB : public LInstructionHelper<1, BOX_PIECES + 1, 0>
+{
+  public:
+    LIR_HEADER(CompareB);
+
+    LCompareB(const LAllocation &rhs) {
+        setOperand(BOX_PIECES, rhs);
+    }
+
+    static const size_t Lhs = 0;
+
+    const LAllocation *rhs() {
+        return getOperand(BOX_PIECES);
+    }
+
+    const LDefinition *output() {
+        return getDef(0);
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
+    }
+};
+
+class LCompareBAndBranch : public LInstructionHelper<0, BOX_PIECES + 1, 0>
+{
+    MBasicBlock *ifTrue_;
+    MBasicBlock *ifFalse_;
+
+  public:
+    LIR_HEADER(CompareBAndBranch);
+
+    LCompareBAndBranch(const LAllocation &rhs, MBasicBlock *ifTrue, MBasicBlock *ifFalse)
+      : ifTrue_(ifTrue), ifFalse_(ifFalse)
+    {
+        setOperand(BOX_PIECES, rhs);
+    }
+
+    static const size_t Lhs = 0;
+
+    const LAllocation *rhs() {
+        return getOperand(BOX_PIECES);
+    }
+
+    MBasicBlock *ifTrue() const {
+        return ifTrue_;
+    }
+    MBasicBlock *ifFalse() const {
+        return ifFalse_;
+    }
+    MCompare *mir() {
+        return mir_->toCompare();
     }
 };
 
@@ -1485,17 +1585,36 @@ class LRegExp : public LCallInstructionHelper<1, 0, 0>
     }
 };
 
-class LLambda : public LCallInstructionHelper<1, 1, 0>
+class LLambdaForSingleton : public LCallInstructionHelper<1, 1, 0>
 {
   public:
-    LIR_HEADER(Lambda);
+    LIR_HEADER(LambdaForSingleton);
 
-    LLambda(const LAllocation &scopeChain)
+    LLambdaForSingleton(const LAllocation &scopeChain)
     {
         setOperand(0, scopeChain);
     }
     const LAllocation *scopeChain() {
         return getOperand(0);
+    }
+    const MLambda *mir() const {
+        return mir_->toLambda();
+    }
+};
+
+class LLambda : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(Lambda);
+
+    LLambda(const LAllocation &scopeChain) {
+        setOperand(0, scopeChain);
+    }
+    const LAllocation *scopeChain() {
+        return getOperand(0);
+    }
+    const LDefinition *output() {
+        return getDef(0);
     }
     const MLambda *mir() const {
         return mir_->toLambda();
@@ -2778,27 +2897,6 @@ class LGuardClass : public LInstructionHelper<0, 1, 1>
     }
     const LAllocation *tempInt() {
         return getTemp(0)->output();
-    }
-};
-
-// Guard that a value is an Object.
-// The MIR already has a TypePolicy, so by the time this LInstruction is
-// reached, the input is already a known-object.
-// Therefore, this class merely passes through the input.
-class LGuardObject : public LInstructionHelper<1, 1, 0>
-{
-  public:
-    LIR_HEADER(GuardObject);
-
-    LGuardObject(const LAllocation &in) {
-        setOperand(0, in);
-    }
-
-    const LAllocation *input() {
-        return getOperand(0);
-    }
-    const LDefinition *output() {
-        return getDef(0);
     }
 };
 

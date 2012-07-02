@@ -422,18 +422,21 @@ public:
   virtual LayersBackend GetBackendType() = 0;
  
   /**
-   * Creates a layer which is optimized for inter-operating with this layer
+   * Creates a surface which is optimized for inter-operating with this layer
    * manager.
    */
   virtual already_AddRefed<gfxASurface>
     CreateOptimalSurface(const gfxIntSize &aSize,
                          gfxASurface::gfxImageFormat imageFormat);
-
+ 
   /**
-   * Which image format to use as an alpha mask with this layer manager.
+   * Creates a surface for alpha masks which is optimized for inter-operating
+   * with this layer manager. In contrast to CreateOptimalSurface, this surface
+   * is optimised for drawing alpha only and we assume that drawing the mask
+   * is fairly simple.
    */
-  virtual gfxASurface::gfxImageFormat MaskImageFormat() 
-  { return gfxASurface::ImageFormatA8; }
+  virtual already_AddRefed<gfxASurface>
+    CreateOptimalMaskSurface(const gfxIntSize &aSize);
 
   /**
    * Creates a DrawTarget which is optimized for inter-operating with this
@@ -699,8 +702,7 @@ public:
     if (aMaskLayer) {
       gfxMatrix maskTransform;
       bool maskIs2D = aMaskLayer->GetTransform().CanDraw2D(&maskTransform);
-      NS_ASSERTION(maskIs2D && maskTransform.HasOnlyIntegerTranslation(),
-                   "Mask layer has invalid transform.");
+      NS_ASSERTION(maskIs2D, "Mask layer has invalid transform.");
     }
 #endif
 
@@ -729,6 +731,15 @@ public:
    */
   void SetIsFixedPosition(bool aFixedPosition) { mIsFixedPosition = aFixedPosition; }
 
+  /**
+   * CONSTRUCTION PHASE ONLY
+   * If a layer is "fixed position", this determines which point on the layer
+   * is considered the "anchor" point, that is, the point which remains in the
+   * same position when compositing the layer tree with a transformation
+   * (such as when asynchronously scrolling and zooming).
+   */
+  void SetFixedPositionAnchor(const gfxPoint& aAnchor) { mAnchor = aAnchor; }
+
   // These getters can be used anytime.
   float GetOpacity() { return mOpacity; }
   const nsIntRect* GetClipRect() { return mUseClipRect ? &mClipRect : nsnull; }
@@ -741,6 +752,7 @@ public:
   virtual Layer* GetLastChild() { return nsnull; }
   const gfx3DMatrix& GetTransform() { return mTransform; }
   bool GetIsFixedPosition() { return mIsFixedPosition; }
+  gfxPoint GetFixedPositionAnchor() { return mAnchor; }
   Layer* GetMaskLayer() { return mMaskLayer; }
 
   /**
@@ -990,6 +1002,7 @@ protected:
   bool mUseClipRect;
   bool mUseTileSourceRect;
   bool mIsFixedPosition;
+  gfxPoint mAnchor;
   DebugOnly<PRUint32> mDebugColorIndex;
 };
 

@@ -469,7 +469,7 @@ GLContext::InitWithPrefix(const char *prefix, bool trygl)
 
         if (IsExtensionSupported(OES_EGL_image)) {
             SymLoadStruct imageSymbols[] = {
-                { (PRFuncPtr*) &mSymbols.fImageTargetTexture2D, { "glEGLImageTargetTexture2DOES", nsnull } },
+                { (PRFuncPtr*) &mSymbols.fImageTargetTexture2D, { "EGLImageTargetTexture2DOES", nsnull } },
                 { nsnull, { nsnull } },
             };
 
@@ -1278,7 +1278,12 @@ GLContext::ChooseGLFormats(ContextFormat& aCF)
     GLFormats formats;
 
     if (aCF.alpha) {
-        formats.texColor = LOCAL_GL_RGBA;
+        if (mIsGLES2 && IsExtensionSupported(EXT_texture_format_BGRA8888)) {
+            formats.texColor = LOCAL_GL_BGRA;
+        } else {
+            formats.texColor = LOCAL_GL_RGBA;
+        }
+
         if (mIsGLES2 && !IsExtensionSupported(OES_rgb8_rgba8)) {
             formats.rbColor = LOCAL_GL_RGBA4;
             aCF.red = aCF.green = aCF.blue = aCF.alpha = 4;
@@ -2258,7 +2263,6 @@ GLContext::UploadSurfaceToTexture(gfxASurface *aSurface,
     }
 
     GLenum format;
-    GLenum internalformat;
     GLenum type;
     PRInt32 pixelSize = gfxASurface::BytePerPixelFromFormat(imageSurface->Format());
     ShaderProgramType shader;
@@ -2296,8 +2300,6 @@ GLContext::UploadSurfaceToTexture(gfxASurface *aSurface,
 
     PRInt32 stride = imageSurface->Stride();
 
-    internalformat = mIsGLES2 ? format : LOCAL_GL_RGBA;
-
     nsIntRegionRectIterator iter(paintRegion);
     const nsIntRect *iterRect;
 
@@ -2329,7 +2331,7 @@ GLContext::UploadSurfaceToTexture(gfxASurface *aSurface,
         } else {
             TexImage2D(LOCAL_GL_TEXTURE_2D,
                        0,
-                       internalformat,
+                       format,
                        iterRect->width,
                        iterRect->height,
                        stride,
@@ -2366,7 +2368,7 @@ GLContext::TexImage2D(GLenum target, GLint level, GLint internalformat,
 {
     if (mIsGLES2) {
 
-        NS_ASSERTION(format == internalformat,
+        NS_ASSERTION(format == (GLenum)internalformat,
                     "format and internalformat not the same for glTexImage2D on GLES2");
 
         if (!CanUploadNonPowerOfTwo()
@@ -2947,11 +2949,9 @@ RemoveNamesFromArray(GLContext *aOrigin, GLsizei aCount, GLuint *aNames, nsTArra
         if (name == 0)
             continue;
 
-        bool found = false;
         for (PRUint32 i = 0; i < aArray.Length(); ++i) {
             if (aArray[i].name == name) {
                 aArray.RemoveElementAt(i);
-                found = true;
                 break;
             }
         }

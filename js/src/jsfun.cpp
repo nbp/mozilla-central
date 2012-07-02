@@ -147,7 +147,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, Value *vp)
          * to recover its callee object.
          */
         InlinedSite *inlined;
-        jsbytecode *prevpc = fp->prev()->pcQuadratic(cx->stack, fp, &inlined);
+        jsbytecode *prevpc = fp->prevpc(&inlined);
         if (inlined) {
             mjit::JITChunk *chunk = fp->prev()->jit()->chunk(prevpc);
             JSFunction *fun = chunk->inlineFrames()[inlined->inlineIndex].fun;
@@ -445,7 +445,8 @@ js::CloneInterpretedFunction(JSContext *cx, JSFunction *srcFun)
     if (!clone->clearType(cx))
         return NULL;
 
-    JSScript *clonedScript = CloneScript(cx, RootedScript(cx, srcFun->script()));
+    Rooted<JSScript*> srcScript(cx, srcFun->script());
+    JSScript *clonedScript = CloneScript(cx, srcScript);
     if (!clonedScript)
         return NULL;
 
@@ -1053,7 +1054,7 @@ Function(JSContext *cx, unsigned argc, Value *vp)
         return false;
     }
 
-    Bindings bindings(cx);
+    Bindings bindings;
     Bindings::AutoRooter bindingsRoot(cx, &bindings);
 
     bool hasRest = false;
@@ -1154,8 +1155,7 @@ Function(JSContext *cx, unsigned argc, Value *vp)
                  * TOK_ERROR, which was already reported.
                  */
                 if (hasRest) {
-                    ReportCompileErrorNumber(cx, &ts, NULL, JSREPORT_ERROR,
-                                             JSMSG_PARAMETER_AFTER_REST);
+                    ts.reportError(JSMSG_PARAMETER_AFTER_REST);
                     return false;
                 }
 
@@ -1165,13 +1165,10 @@ Function(JSContext *cx, unsigned argc, Value *vp)
                         tt = ts.getToken();
                         if (tt != TOK_NAME) {
                             if (tt != TOK_ERROR)
-                                ReportCompileErrorNumber(cx, &ts, NULL,
-                                                         JSREPORT_ERROR,
-                                                         JSMSG_NO_REST_NAME);
+                                ts.reportError(JSMSG_NO_REST_NAME);
                             return false;
                         }
-                    }
-                    else {
+                    } else {
                         return OnBadFormal(cx, tt);
                     }
                 }
@@ -1182,12 +1179,8 @@ Function(JSContext *cx, unsigned argc, Value *vp)
                     JSAutoByteString bytes;
                     if (!js_AtomToPrintableString(cx, name, &bytes))
                         return false;
-                    if (!ReportCompileErrorNumber(cx, &ts, NULL,
-                                                  JSREPORT_WARNING | JSREPORT_STRICT,
-                                                  JSMSG_DUPLICATE_FORMAL, bytes.ptr()))
-                    {
+                    if (!ts.reportStrictWarning(JSMSG_DUPLICATE_FORMAL, bytes.ptr()))
                         return false;
-                    }
                 }
 
                 uint16_t dummy;

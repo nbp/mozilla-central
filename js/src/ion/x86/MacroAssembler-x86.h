@@ -362,7 +362,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
 
     void branchTestValue(Condition cond, const ValueOperand &value, const Value &v, Label *label);
 
-    void cmpPtr(const Register &lhs, const ImmWord rhs) {
+    void cmpPtr(Register lhs, const ImmWord rhs) {
         cmpl(lhs, Imm32(rhs.value));
     }
     void cmpPtr(const Operand &lhs, const ImmWord rhs) {
@@ -371,16 +371,16 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     void cmpPtr(const Operand &lhs, const ImmGCPtr rhs) {
         cmpl(lhs, rhs);
     }
-    void cmpPtr(const Address &lhs, const Register &rhs) {
+    void cmpPtr(const Address &lhs, Register rhs) {
         cmpl(Operand(lhs), rhs);
     }
     void cmpPtr(const Address &lhs, const ImmWord rhs) {
         cmpl(Operand(lhs), rhs);
     }
-    void cmpPtr(const Register &lhs, const Register &rhs) {
+    void cmpPtr(Register lhs, Register rhs) {
         cmpl(lhs, rhs);
     }
-    void testPtr(const Register &lhs, const Register &rhs) {
+    void testPtr(Register lhs, Register rhs) {
         testl(lhs, rhs);
     }
 
@@ -546,7 +546,7 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     // Note: this function clobbers the source register.
     void boxDouble(const FloatRegister &src, const ValueOperand &dest) {
         movd(src, dest.payloadReg());
-        psrlq(Imm32(4), src);
+        psrldq(Imm32(4), src);
         movd(src, dest.typeReg());
     }
     void unboxInt32(const ValueOperand &src, const Register &dest) {

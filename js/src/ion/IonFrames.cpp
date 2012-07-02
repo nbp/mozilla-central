@@ -425,7 +425,7 @@ static void
 MarkIonJSFrame(JSTracer *trc, const IonFrameIterator &frame)
 {
     IonJSFrameLayout *layout = (IonJSFrameLayout *)frame.fp();
-    
+
     MarkCalleeToken(trc, layout->calleeToken());
 
     IonScript *ionScript;
@@ -541,6 +541,9 @@ MarkIonExitFrame(JSTracer *trc, const IonFrameIterator &frame)
             break;
           case VMFunction::RootValue:
             gc::MarkValueRoot(trc, reinterpret_cast<Value*>(argBase), "ion-vm-args");
+            break;
+          case VMFunction::RootCell:
+            gc::MarkThingOrValueRoot(trc, reinterpret_cast<uintptr_t *>(argBase), "ion-vm-args");
             break;
         }
 
@@ -889,6 +892,10 @@ InlineFrameIterator::isConstructing() const
         InlineFrameIterator parent(*this);
         ++parent;
 
+        // Inlined Getters and Setters are never constructing.
+        if (IsGetterPC(parent.pc()) || IsSetterPC(parent.pc()))
+            return false;
+
         // In the case of a JS frame, look up the pc from the snapshot.
         JS_ASSERT(js_CodeSpec[*parent.pc()].format & JOF_INVOKE);
 
@@ -911,6 +918,11 @@ IonFrameIterator::isConstructing() const
     if (parent.isScripted()) {
         // In the case of a JS frame, look up the pc from the snapshot.
         InlineFrameIterator inlinedParent(&parent);
+
+        //Inlined Getters and Setters are never constructing.
+        if (IsGetterPC(inlinedParent.pc()) || IsSetterPC(inlinedParent.pc()))
+            return false;
+
         JS_ASSERT(js_CodeSpec[*inlinedParent.pc()].format & JOF_INVOKE);
 
         return (JSOp)*inlinedParent.pc() == JSOP_NEW;

@@ -43,7 +43,7 @@
 #include "LICM.h" // For LinearSum
 #include "MIR.h"
 #include "MIRGraph.h"
-#include "RangeAnalysis.h"
+#include "EdgeCaseAnalysis.h"
 #include "jsnum.h"
 #include "jstypedarrayinlines.h" // For ClampIntForUint8Array
 
@@ -186,13 +186,13 @@ MDefinition::foldsTo(bool useValueNumbers)
 }
 
 void
-MDefinition::analyzeRangeForward()
+MDefinition::analyzeEdgeCasesForward()
 {
     return;
 }
 
 void
-MDefinition::analyzeRangeBackward()
+MDefinition::analyzeEdgeCasesBackward()
 {
     return;
 }
@@ -298,6 +298,11 @@ MConstant::MConstant(const js::Value &vp)
 {
     setResultType(MIRTypeFromValue(vp));
     setMovable();
+
+    if (type() == MIRType_Int32) {
+        range()->setLower(value().toInt32());
+        range()->setUpper(value().toInt32());
+    }
 }
 
 HashNumber
@@ -701,7 +706,7 @@ MDiv::foldsTo(bool useValueNumbers)
 }
 
 void
-MDiv::analyzeRangeForward()
+MDiv::analyzeEdgeCasesForward()
 {
     // This is only meaningful when doing integer division.
     if (specialization_ != MIRType_Int32)
@@ -733,7 +738,7 @@ MDiv::analyzeRangeForward()
 }
 
 void
-MDiv::analyzeRangeBackward()
+MDiv::analyzeEdgeCasesBackward()
 {
     if (canBeNegativeZero_)
         canBeNegativeZero_ = NeedNegativeZeroCheck(this);
@@ -743,7 +748,7 @@ void
 MDiv::analyzeTruncateBackward()
 {
     if (!isTruncated())
-        setTruncated(js::ion::RangeAnalysis::AllUsesTruncate(this));
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
 }
 
 bool
@@ -751,7 +756,7 @@ MDiv::updateForReplacement(MDefinition *ins_)
 {
     JS_ASSERT(ins_->isDiv());
     MDiv *ins = ins_->toDiv();
-    // Since RangeAnalysis is not being run before GVN, its information does
+    // Since EdgeCaseAnalysis is not being run before GVN, its information does
     // not need to be merged here.
     if (isTruncated())
         setTruncated(ins->isTruncated());
@@ -819,7 +824,7 @@ void
 MAdd::analyzeTruncateBackward()
 {
     if (!isTruncated())
-        setTruncated(js::ion::RangeAnalysis::AllUsesTruncate(this));
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
 }
 
 bool
@@ -836,7 +841,7 @@ void
 MSub::analyzeTruncateBackward()
 {
     if (!isTruncated())
-        setTruncated(js::ion::RangeAnalysis::AllUsesTruncate(this));
+        setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
 }
 
 bool
@@ -866,7 +871,7 @@ MMul::foldsTo(bool useValueNumbers)
 }
 
 void
-MMul::analyzeRangeForward()
+MMul::analyzeEdgeCasesForward()
 {
     // Try to remove the check for negative zero
     // This only makes sense when using the integer multiplication
@@ -890,7 +895,7 @@ MMul::analyzeRangeForward()
 }
 
 void
-MMul::analyzeRangeBackward()
+MMul::analyzeEdgeCasesBackward()
 {
     if (canBeNegativeZero_)
         canBeNegativeZero_ = NeedNegativeZeroCheck(this);
@@ -1016,6 +1021,23 @@ MCompare::infer(JSContext *cx, const TypeOracle::BinaryTypes &b)
 
         if (IsNullOrUndefined(rhs)) {
             specialization_ = rhs;
+            return;
+        }
+    }
+
+    if (jsop() == JSOP_STRICTEQ || jsop() == JSOP_STRICTNE) {
+        // bool/bool case got an int32 specialization earlier.
+        JS_ASSERT(!(lhs == MIRType_Boolean && rhs == MIRType_Boolean));
+
+        if (lhs == MIRType_Boolean) {
+            // Ensure the boolean is on the right so that the type policy knows
+            // which side to unbox.
+            swapOperands();
+            specialization_ = MIRType_Boolean;
+            return;
+        }
+        if (rhs == MIRType_Boolean) {
+            specialization_ = MIRType_Boolean;
             return;
         }
     }
@@ -1170,7 +1192,7 @@ MToInt32::foldsTo(bool useValueNumbers)
 }
 
 void
-MToInt32::analyzeRangeBackward()
+MToInt32::analyzeEdgeCasesBackward()
 {
     canBeNegativeZero_ = NeedNegativeZeroCheck(this);
 }
@@ -1228,6 +1250,80 @@ MClampToUint8::foldsTo(bool useValueNumbers)
             return MConstant::New(Int32Value(clamped));
         }
     }
+    return this;
+}
+
+bool
+MCompare::tryFold(bool *result)
+{
+    JSOp op = jsop();
+
+    if (IsNullOrUndefined(specialization())) {
+        JS_ASSERT(op == JSOP_EQ || op == JSOP_STRICTEQ ||
+                  op == JSOP_NE || op == JSOP_STRICTNE);
+
+        // The LHS is the value we want to test against null or undefined.
+        switch (lhs()->type()) {
+          case MIRType_Value:
+            return false;
+          case MIRType_Undefined:
+          case MIRType_Null:
+            if (lhs()->type() == specialization()) {
+                // Both sides have the same type, null or undefined.
+                *result = (op == JSOP_EQ || op == JSOP_STRICTEQ);
+            } else {
+                // One side is null, the other side is undefined. The result is only
+                // true for loose equality.
+                *result = (op == JSOP_EQ || op == JSOP_STRICTNE);
+            }
+            return true;
+          case MIRType_Int32:
+          case MIRType_Double:
+          case MIRType_String:
+          case MIRType_Object:
+          case MIRType_Boolean:
+            *result = (op == JSOP_NE || op == JSOP_STRICTNE);
+            return true;
+          default:
+            JS_NOT_REACHED("Unexpected type");
+            return false;
+        }
+    }
+
+    if (specialization_ == MIRType_Boolean) {
+        JS_ASSERT(op == JSOP_STRICTEQ || op == JSOP_STRICTNE);
+        JS_ASSERT(rhs()->type() == MIRType_Boolean);
+
+        switch (lhs()->type()) {
+          case MIRType_Value:
+            return false;
+          case MIRType_Int32:
+          case MIRType_Double:
+          case MIRType_String:
+          case MIRType_Object:
+          case MIRType_Null:
+          case MIRType_Undefined:
+            *result = (op == JSOP_STRICTNE);
+            return true;
+          case MIRType_Boolean:
+            // Int32 specialization should handle this.
+            JS_NOT_REACHED("Wrong specialization");
+            return false;
+          default:
+            JS_NOT_REACHED("Unexpected type");
+            return false;
+        }
+    }
+
+    return false;
+}
+
+MDefinition *
+MCompare::foldsTo(bool useValueNumbers)
+{
+    bool result;
+    if (tryFold(&result))
+        return MConstant::New(BooleanValue(result));
     return this;
 }
 
@@ -1315,4 +1411,14 @@ MBoundsCheck::updateForReplacement(MDefinition *ins)
     setMinimum(newMinimum);
     setMaximum(newMaximum);
     return true;
+}
+
+void
+MBeta::printOpcode(FILE *fp)
+{
+    PrintOpcodeName(fp, op());
+    fprintf(fp, " ");
+    getOperand(0)->printName(fp);
+    fprintf(fp, " ");
+    comparison_.printRange(fp);
 }

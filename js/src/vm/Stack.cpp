@@ -97,30 +97,37 @@ StackFrame::initDummyFrame(JSContext *cx, JSObject &chain)
     scopeChain_ = &chain;
 }
 
-template <class T, class U, StackFrame::TriggerPostBarriers doPostBarrier>
+template <StackFrame::TriggerPostBarriers doPostBarrier>
 void
-StackFrame::copyFrameAndValues(JSContext *cx, T *vp, StackFrame *otherfp, U *othervp, Value *othersp)
+StackFrame::copyFrameAndValues(JSContext *cx, Value *vp, StackFrame *otherfp,
+                               const Value *othervp, Value *othersp)
 {
-    JS_ASSERT((U *)vp == (U *)this - ((U *)otherfp - othervp));
-    JS_ASSERT((Value *)othervp == otherfp->generatorArgsSnapshotBegin());
+    JS_ASSERT(vp == (Value *)this - ((Value *)otherfp - othervp));
+    JS_ASSERT(othervp == otherfp->generatorArgsSnapshotBegin());
     JS_ASSERT(othersp >= otherfp->slots());
     JS_ASSERT(othersp <= otherfp->generatorSlotsSnapshotBegin() + otherfp->script()->nslots);
-    JS_ASSERT((T *)this - vp == (U *)otherfp - othervp);
+    JS_ASSERT((Value *)this - vp == (Value *)otherfp - othervp);
 
     /* Copy args, StackFrame, and slots. */
-    U *srcend = (U *)otherfp->generatorArgsSnapshotEnd();
-    T *dst = vp;
-    for (U *src = othervp; src < srcend; src++, dst++)
+    const Value *srcend = otherfp->generatorArgsSnapshotEnd();
+    Value *dst = vp;
+    for (const Value *src = othervp; src < srcend; src++, dst++) {
         *dst = *src;
+        if (doPostBarrier)
+            HeapValue::writeBarrierPost(*dst, dst);
+    }
 
     *this = *otherfp;
     if (doPostBarrier)
         writeBarrierPost();
 
-    srcend = (U *)othersp;
-    dst = (T *)slots();
-    for (U *src = (U *)otherfp->slots(); src < srcend; src++, dst++)
+    srcend = othersp;
+    dst = slots();
+    for (const Value *src = otherfp->slots(); src < srcend; src++, dst++) {
         *dst = *src;
+        if (doPostBarrier)
+            HeapValue::writeBarrierPost(*dst, dst);
+    }
 
     if (cx->compartment->debugMode())
         cx->runtime->debugScopes->onGeneratorFrameChange(otherfp, this, cx);
@@ -128,11 +135,11 @@ StackFrame::copyFrameAndValues(JSContext *cx, T *vp, StackFrame *otherfp, U *oth
 
 /* Note: explicit instantiation for js_NewGenerator located in jsiter.cpp. */
 template
-void StackFrame::copyFrameAndValues<Value, HeapValue, StackFrame::NoPostBarrier>(
-                                    JSContext *, Value *, StackFrame *, HeapValue *, Value *);
+void StackFrame::copyFrameAndValues<StackFrame::NoPostBarrier>(
+                                    JSContext *, Value *, StackFrame *, const Value *, Value *);
 template
-void StackFrame::copyFrameAndValues<HeapValue, Value, StackFrame::DoPostBarrier>(
-                                    JSContext *, HeapValue *, StackFrame *, Value *, Value *);
+void StackFrame::copyFrameAndValues<StackFrame::DoPostBarrier>(
+                                    JSContext *, Value *, StackFrame *, const Value *, Value *);
 
 void
 StackFrame::writeBarrierPost()
@@ -195,26 +202,28 @@ StackFrame::prevpcSlow(InlinedSite **pinlined)
 }
 
 jsbytecode *
-StackFrame::pcQuadratic(const ContextStack &stack, StackFrame *next, InlinedSite **pinlined)
+StackFrame::pcQuadratic(const ContextStack &stack, size_t maxDepth)
 {
-    JS_ASSERT_IF(next, next->prev() == this);
-
     StackSegment &seg = stack.space().containingSegment(this);
     FrameRegs &regs = seg.regs();
 
     /*
      * This isn't just an optimization; seg->computeNextFrame(fp) is only
-     * defined if fp != seg->currentFrame.
+     * defined if fp != seg->regs->fp.
      */
-    if (regs.fp() == this) {
-        if (pinlined)
-            *pinlined = regs.inlined();
+    if (regs.fp() == this)
         return regs.pc;
-    }
 
-    if (!next)
-        next = seg.computeNextFrame(this);
-    return next->prevpc(pinlined);
+    /*
+     * To compute fp's pc, we need the next frame (where next->prev == fp).
+     * This requires a linear search which we allow the caller to limit (in
+     * cases where we do not have a hard requirement to find the correct pc).
+     */
+    if (StackFrame *next = seg.computeNextFrame(this, maxDepth))
+        return next->prevpc();
+
+    /* If we hit the limit, just return the beginning of the script. */
+    return regs.fp()->script()->code;
 }
 
 bool
@@ -431,15 +440,18 @@ StackSegment::contains(const CallArgsList *call) const
 }
 
 StackFrame *
-StackSegment::computeNextFrame(const StackFrame *f) const
+StackSegment::computeNextFrame(const StackFrame *f, size_t maxDepth) const
 {
     JS_ASSERT(contains(f) && f != fp());
 
     StackFrame *next = fp();
-    StackFrame *prev;
-    while ((prev = next->prev()) != f)
-        next = prev;
-    return next;
+    for (size_t i = 0; i <= maxDepth; ++i) {
+        if (next->prev() == f)
+            return next;
+        next = next->prev();
+    }
+
+    return NULL;
 }
 
 Value *
@@ -616,12 +628,32 @@ StackSpace::markFrameValues(JSTracer *trc, StackFrame *fp, Value *slotsEnd, jsby
          * Will this slot be synced by the JIT? If not, replace with a dummy
          * value with the same type tag.
          */
-        if (!analysis->trackSlot(slot) || analysis->liveness(slot).live(offset))
+        if (!analysis->trackSlot(slot) || analysis->liveness(slot).live(offset)) {
             gc::MarkValueRoot(trc, vp, "vm_stack");
-        else if (vp->isObject())
-            *vp = ObjectValue(fp->scopeChain()->global());
-        else if (vp->isString())
-            *vp = StringValue(trc->runtime->atomState.nullAtom);
+        } else if (vp->isDouble()) {
+            *vp = DoubleValue(0.0);
+        } else {
+            /*
+             * It's possible that *vp may not be a valid Value. For example, it
+             * may be tagged as a NullValue but the low bits may be nonzero so
+             * that isNull() returns false. This can cause problems later on
+             * when marking the value. Extracting the type in this way and then
+             * overwriting the value circumvents the problem.
+             */
+            JSValueType type = vp->extractNonDoubleType();
+            if (type == JSVAL_TYPE_INT32)
+                *vp = Int32Value(0);
+            else if (type == JSVAL_TYPE_UNDEFINED)
+                *vp = UndefinedValue();
+            else if (type == JSVAL_TYPE_BOOLEAN)
+                *vp = BooleanValue(false);
+            else if (type == JSVAL_TYPE_STRING)
+                *vp = StringValue(trc->runtime->atomState.nullAtom);
+            else if (type == JSVAL_TYPE_NULL)
+                *vp = NullValue();
+            else if (type == JSVAL_TYPE_OBJECT)
+                *vp = ObjectValue(fp->scopeChain()->global());
+        }
     }
 
     gc::MarkValueRootRange(trc, fixedEnd, slotsEnd, "vm_stack");
@@ -806,6 +838,7 @@ ContextStack::ensureOnTop(JSContext *cx, MaybeReportError report, unsigned nvars
                           MaybeExtend extend, bool *pushedSeg, JSCompartment *dest)
 {
     Value *firstUnused = space().firstUnused();
+    FrameRegs *regs = cx->maybeRegs();
 
 #ifdef JS_METHODJIT
     /*
@@ -821,7 +854,6 @@ ContextStack::ensureOnTop(JSContext *cx, MaybeReportError report, unsigned nvars
      * this to deny potential invalidation, which would read from
      * runtime->ionTop.
      */
-    FrameRegs *regs = cx->maybeRegs();
     if (regs && report != DONT_REPORT_ERROR) {
         JSFunction *fun = NULL;
         if (InlinedSite *site = regs->inlined()) {
@@ -1002,6 +1034,7 @@ ContextStack::pushExecuteFrame(JSContext *cx, JSScript *script, const Value &thi
     return true;
 }
 
+#ifdef JS_ION
 bool
 ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, InvokeArgsGuard *iag)
 {
@@ -1026,6 +1059,7 @@ ContextStack::pushBailoutFrame(JSContext *cx, const ion::IonBailoutIterator &it,
     JSFunction *fun = it.callee();
     return pushInvokeFrame(cx, DONT_REPORT_ERROR, args, fun, INITIAL_NONE, bfg);
 }
+#endif
 
 bool
 ContextStack::pushDummyFrame(JSContext *cx, JSCompartment *dest, JSObject &scopeChain, DummyFrameGuard *dfg)
@@ -1102,8 +1136,8 @@ ContextStack::pushGeneratorFrame(JSContext *cx, JSGenerator *gen, GeneratorFrame
     JSObject::writeBarrierPre(gen->obj);
 
     /* Copy from the generator's floating frame to the stack. */
-    stackfp->copyFrameAndValues<Value, HeapValue, StackFrame::NoPostBarrier>(
-                                cx, stackvp, gen->fp, genvp, gen->regs.sp);
+    stackfp->copyFrameAndValues<StackFrame::NoPostBarrier>(cx, stackvp, gen->fp,
+                                                           Valueify(genvp), gen->regs.sp);
     stackfp->resetGeneratorPrev(cx);
     gfg->regs_.rebaseFromTo(gen->regs, *stackfp);
 
@@ -1126,9 +1160,15 @@ ContextStack::popGeneratorFrame(const GeneratorFrameGuard &gfg)
 
     /* Copy from the stack to the generator's floating frame. */
     if (stackfp->isYielding()) {
+        /*
+         * Assert that the frame is not markable so that we don't need an
+         * incremental write barrier when updating the generator's saved slots.
+         */
+        JS_ASSERT(!GeneratorHasMarkableFrame(gen));
+
         gen->regs.rebaseFromTo(stackRegs, *gen->fp);
-        gen->fp->copyFrameAndValues<HeapValue, Value, StackFrame::DoPostBarrier>(
-                                    cx_, genvp, stackfp, stackvp, stackRegs.sp);
+        gen->fp->copyFrameAndValues<StackFrame::DoPostBarrier>(cx_, (Value *)genvp, stackfp,
+                                                               stackvp, stackRegs.sp);
     }
 
     /* ~FrameGuard/popFrame will finish the popping. */
@@ -1259,9 +1299,9 @@ CrashIfInvalidSlot(StackFrame *fp, Value *vp)
 {
     Value *slots = (Value *)(fp + 1);
     if (vp < slots || vp >= slots + fp->script()->nslots) {
-        JS_ASSERT(false && "About to dereference invalid slot");
-        *(int *)0xbad = 0;  // show up nicely in crash-stats
-        MOZ_Assert("About to dereference invalid slot", __FILE__, __LINE__);
+        MOZ_ASSERT(false, "About to dereference invalid slot");
+        *(volatile int *)0xbad = 0;  // show up nicely in crash-stats
+        MOZ_CRASH();
     }
 }
 
@@ -1522,10 +1562,12 @@ StackIter::operator++()
       case IMPLICIT_NATIVE:
         state_ = SCRIPTED;
         break;
-#ifdef JS_ION
       case ION:
+#ifdef JS_ION      
         popIonFrame();
         break;
+#else
+        JS_NOT_REACHED("Unexpected state");
 #endif
     }
     return *this;
@@ -1550,7 +1592,11 @@ StackIter::isFunctionFrame() const
       case SCRIPTED:
         return fp()->isFunctionFrame();
       case ION:
+#ifdef  JS_ION    
         return ionInlineFrames_.isFunctionFrame();
+#else
+        break;
+#endif
       case NATIVE:
       case IMPLICIT_NATIVE:
         return false;
@@ -1602,7 +1648,12 @@ StackIter::isConstructing() const
         JS_NOT_REACHED("Unexpected state");
         return false;
       case ION:
+#ifdef JS_ION      
         return ionInlineFrames_.isConstructing();
+#else
+        JS_NOT_REACHED("Unexpected state");
+        return false;
+#endif        
       case SCRIPTED:
       case NATIVE:
       case IMPLICIT_NATIVE:
@@ -1621,10 +1672,14 @@ StackIter::callee() const
         JS_ASSERT(isFunctionFrame());
         return &fp()->callee();
       case ION:
+#ifdef JS_ION      
         if (ionFrames_.isScripted())
             return ionInlineFrames_.callee();
         JS_ASSERT(ionFrames_.isNative());
         return ionFrames_.callee();
+#else
+        break;
+#endif        
       case NATIVE:
       case IMPLICIT_NATIVE:
         return nativeArgs().callee().toFunction();
@@ -1643,7 +1698,11 @@ StackIter::calleev() const
         JS_ASSERT(isFunctionFrame());
         return fp()->calleev();
       case ION:
+#ifdef JS_ION
         return ObjectValue(*callee());
+#else
+        break;
+#endif
       case NATIVE:
       case IMPLICIT_NATIVE:
         return nativeArgs().calleev();
@@ -1662,7 +1721,11 @@ StackIter::numActualArgs() const
         JS_ASSERT(isFunctionFrame());
         return fp()->numActualArgs();
       case ION:
+#ifdef JS_ION
         return ionInlineFrames_.numActualArgs();
+#else
+        break;
+#endif
       case NATIVE:
       case IMPLICIT_NATIVE:
         return nativeArgs().length();
@@ -1678,7 +1741,11 @@ StackIter::thisv() const
       case DONE:
         break;
       case ION:
+#ifdef JS_ION
         return ObjectValue(*ionInlineFrames_.thisObject());
+#else
+        break;
+#endif        
       case SCRIPTED:
       case NATIVE:
       case IMPLICIT_NATIVE:

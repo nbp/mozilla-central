@@ -82,6 +82,47 @@ js::ScopeCoordinateToFrameVar(JSScript *script, jsbytecode *pc, unsigned *index)
 /*****************************************************************************/
 
 /*
+ * Construct a bare-bones call object given a shape, type, and slots pointer.
+ * The call object must be further initialized to be usable.
+ */
+CallObject *
+CallObject::create(JSContext *cx, HandleShape shape, HandleTypeObject type, HeapSlot *slots,
+                   HandleObject global)
+{
+    gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
+    JS_ASSERT(CanBeFinalizedInBackground(kind, &CallClass));
+    kind = gc::GetBackgroundAllocKind(kind);
+
+    RootedObject obj(cx, JSObject::create(cx, kind, shape, type, slots));
+    if (!obj)
+        return NULL;
+
+    /*
+     * Update the parent for bindings associated with non-compileAndGo scripts,
+     * whose call objects do not have a consistent global variable and need
+     * to be updated dynamically.
+     */
+    if (global != obj->getParent()) {
+        JS_ASSERT(obj->getParent() == NULL);
+        if (!JSObject::setParent(cx, obj, global))
+            return NULL;
+    }
+
+    /*
+     * If |bindings| is for a function that has extensible parents, that means
+     * its Call should have its own shape; see BaseShape::extensibleParents.
+     */
+    if (obj->lastProperty()->extensibleParents()) {
+        if (!obj->generateOwnShape(cx))
+            return NULL;
+    }
+
+    JS_ASSERT(obj->isDelegate());
+
+    return &obj->asCall();
+}
+
+/*
  * Construct a call object for the given bindings.  If this is a call object
  * for a function invocation, callee should be the function being called.
  * Otherwise it must be a call object for eval of strict mode code, and callee
@@ -95,10 +136,6 @@ CallObject::create(JSContext *cx, JSScript *script, HandleObject enclosing, Hand
     if (shape == NULL)
         return NULL;
 
-    gc::AllocKind kind = gc::GetGCObjectKind(shape->numFixedSlots());
-    JS_ASSERT(CanBeFinalizedInBackground(kind, &CallClass));
-    kind = gc::GetBackgroundAllocKind(kind);
-
     RootedTypeObject type(cx);
     type = cx->compartment->getEmptyType(cx);
     if (!type)
@@ -108,34 +145,13 @@ CallObject::create(JSContext *cx, JSScript *script, HandleObject enclosing, Hand
     if (!PreallocateObjectDynamicSlots(cx, shape, &slots))
         return NULL;
 
-    RootedObject obj(cx, JSObject::create(cx, kind, shape, type, slots));
+    RootedObject global(cx, &enclosing->global());
+    RootedObject obj(cx, CallObject::create(cx, shape, type, slots, global));
     if (!obj)
         return NULL;
 
-    /*
-     * Update the parent for bindings associated with non-compileAndGo scripts,
-     * whose call objects do not have a consistent global variable and need
-     * to be updated dynamically.
-     */
-    if (&enclosing->global() != obj->getParent()) {
-        JS_ASSERT(obj->getParent() == NULL);
-        if (!JSObject::setParent(cx, obj, RootedObject(cx, &enclosing->global())))
-            return NULL;
-    }
-
     obj->asScope().setEnclosingScope(enclosing);
     obj->initFixedSlot(CALLEE_SLOT, ObjectOrNullValue(callee));
-
-    /*
-     * If |bindings| is for a function that has extensible parents, that means
-     * its Call should have its own shape; see BaseShape::extensibleParents.
-     */
-    if (obj->lastProperty()->extensibleParents()) {
-        if (!obj->generateOwnShape(cx))
-            return NULL;
-    }
-
-    JS_ASSERT(obj->isDelegate());
 
     return &obj->asCall();
 }
@@ -158,7 +174,8 @@ CallObject::createForFunction(JSContext *cx, StackFrame *fp)
     }
 
     RootedScript script(cx, fp->script());
-    CallObject *callobj = create(cx, script, scopeChain, RootedFunction(cx, &fp->callee()));
+    Rooted<JSFunction*> callee(cx, &fp->callee());
+    CallObject *callobj = create(cx, script, scopeChain, callee);
     if (!callobj)
         return NULL;
 
@@ -191,10 +208,10 @@ CallObject::copyUnaliasedValues(StackFrame *fp)
     /* Copy the unaliased formals. */
     for (unsigned i = 0; i < script->bindings.numArgs(); ++i) {
         if (!script->formalLivesInCallObject(i)) {
-            if (script->argsObjAliasesFormals())
+            if (script->argsObjAliasesFormals() && fp->hasArgsObj())
                 setArg(i, fp->argsObj().arg(i), DONT_CHECK_ALIASING);
             else
-                setArg(i, fp->unaliasedFormal(i), DONT_CHECK_ALIASING);
+                setArg(i, fp->unaliasedFormal(i, DONT_CHECK_ALIASING), DONT_CHECK_ALIASING);
         }
     }
 
@@ -212,7 +229,8 @@ CallObject::createForStrictEval(JSContext *cx, StackFrame *fp)
     JS_ASSERT(cx->fp() == fp);
     JS_ASSERT(cx->regs().pc == fp->script()->code);
 
-    return create(cx, fp->script(), fp->scopeChain(), RootedFunction(cx));
+    Rooted<JSFunction*> callee(cx, NULL);
+    return create(cx, fp->script(), fp->scopeChain(), callee);
 }
 
 JSBool
@@ -302,8 +320,8 @@ DeclEnvObject::create(JSContext *cx, StackFrame *fp)
 
     obj->asScope().setEnclosingScope(fp->scopeChain());
 
-    if (!DefineNativeProperty(cx, obj, RootedId(cx, AtomToId(fp->fun()->atom)),
-                              ObjectValue(fp->callee()), NULL, NULL,
+    Rooted<jsid> id(cx, AtomToId(fp->fun()->atom));
+    if (!DefineNativeProperty(cx, obj, id, ObjectValue(fp->callee()), NULL, NULL,
                               JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY,
                               0, 0)) {
         return NULL;
@@ -351,7 +369,8 @@ with_LookupGeneric(JSContext *cx, HandleObject obj, HandleId id, JSObject **objp
 static JSBool
 with_LookupProperty(JSContext *cx, HandleObject obj, HandlePropertyName name, JSObject **objp, JSProperty **propp)
 {
-    return with_LookupGeneric(cx, obj, RootedId(cx, NameToId(name)), objp, propp);
+    Rooted<jsid> id(cx, NameToId(name));
+    return with_LookupGeneric(cx, obj, id, objp, propp);
 }
 
 static JSBool
@@ -367,7 +386,8 @@ with_LookupElement(JSContext *cx, HandleObject obj, uint32_t index, JSObject **o
 static JSBool
 with_LookupSpecial(JSContext *cx, HandleObject obj, HandleSpecialId sid, JSObject **objp, JSProperty **propp)
 {
-    return with_LookupGeneric(cx, obj, RootedId(cx, SPECIALID_TO_JSID(sid)), objp, propp);
+    Rooted<jsid> id(cx, SPECIALID_TO_JSID(sid));
+    return with_LookupGeneric(cx, obj, id, objp, propp);
 }
 
 static JSBool
@@ -379,7 +399,8 @@ with_GetGeneric(JSContext *cx, HandleObject obj, HandleObject receiver, HandleId
 static JSBool
 with_GetProperty(JSContext *cx, HandleObject obj, HandleObject receiver, HandlePropertyName name, Value *vp)
 {
-    return with_GetGeneric(cx, obj, receiver, RootedId(cx, NameToId(name)), vp);
+    Rooted<jsid> id(cx, NameToId(name));
+    return with_GetGeneric(cx, obj, receiver, id, vp);
 }
 
 static JSBool
@@ -394,7 +415,8 @@ with_GetElement(JSContext *cx, HandleObject obj, HandleObject receiver, uint32_t
 static JSBool
 with_GetSpecial(JSContext *cx, HandleObject obj, HandleObject receiver, HandleSpecialId sid, Value *vp)
 {
-    return with_GetGeneric(cx, obj, receiver, RootedId(cx, SPECIALID_TO_JSID(sid)), vp);
+    Rooted<jsid> id(cx, SPECIALID_TO_JSID(sid));
+    return with_GetGeneric(cx, obj, receiver, id, vp);
 }
 
 static JSBool
@@ -584,7 +606,8 @@ ClonedBlockObject::create(JSContext *cx, Handle<StaticBlockObject *> block, Stac
     /* Set the parent if necessary, as for call objects. */
     if (&fp->global() != obj->getParent()) {
         JS_ASSERT(obj->getParent() == NULL);
-        if (!JSObject::setParent(cx, obj, RootedObject(cx, &fp->global())))
+        Rooted<GlobalObject*> global(cx, &fp->global());
+        if (!JSObject::setParent(cx, obj, global))
             return NULL;
     }
 
@@ -1113,7 +1136,7 @@ class DebugScopeProxy : public BaseProxyHandler
      * This function handles access to unaliased locals/formals. If such
      * accesses were passed on directly to the DebugScopeObject::scope, they
      * would not be reading/writing the canonical location for the variable,
-     * which is on the stack. Thus, handleUn must translate would-be
+     * which is on the stack. Thus, handleUnaliasedAccess must translate
      * accesses to scope objects into analogous accesses of the stack frame.
      *
      * handleUnaliasedAccess returns 'true' if the access was unaliased and
@@ -1162,16 +1185,16 @@ class DebugScopeProxy : public BaseProxyHandler
                     return false;
 
                 if (maybefp) {
-                    if (script->argsObjAliasesFormals()) {
+                    if (script->argsObjAliasesFormals() && maybefp->hasArgsObj()) {
                         if (action == GET)
                             *vp = maybefp->argsObj().arg(i);
                         else
                             maybefp->argsObj().setArg(i, *vp);
                     } else {
                         if (action == GET)
-                            *vp = maybefp->unaliasedFormal(i);
+                            *vp = maybefp->unaliasedFormal(i, DONT_CHECK_ALIASING);
                         else
-                            maybefp->unaliasedFormal(i) = *vp;
+                            maybefp->unaliasedFormal(i, DONT_CHECK_ALIASING) = *vp;
                     }
                 } else {
                     if (action == GET)
@@ -1325,18 +1348,21 @@ class DebugScopeProxy : public BaseProxyHandler
         if (handleUnaliasedAccess(cx, scope, id, GET, vp))
             return true;
 
-        return scope.getGeneric(cx, RootedObject(cx, &scope), RootedId(cx, id), vp);
+        Rooted<ScopeObject*> scopeObj(cx, &scope);
+        Rooted<jsid> idRoot(cx, id);
+        return scope.getGeneric(cx, scopeObj, idRoot, vp);
     }
 
-    bool set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id, bool strict,
+    bool set(JSContext *cx, JSObject *proxy, JSObject *receiver, jsid id_, bool strict,
                      Value *vp) MOZ_OVERRIDE
     {
         ScopeObject &scope = proxy->asDebugScope().scope();
 
-        if (handleUnaliasedAccess(cx, scope, id, SET, vp))
+        if (handleUnaliasedAccess(cx, scope, id_, SET, vp))
             return true;
 
-        return scope.setGeneric(cx, RootedId(cx, id), vp, strict);
+        Rooted<jsid> id(cx, id_);
+        return scope.setGeneric(cx, id, vp, strict);
     }
 
     bool defineProperty(JSContext *cx, JSObject *proxy, jsid id, PropertyDescriptor *desc) MOZ_OVERRIDE
@@ -1426,7 +1452,7 @@ DebugScopeObject::create(JSContext *cx, ScopeObject &scope, HandleObject enclosi
 ScopeObject &
 DebugScopeObject::scope() const
 {
-    return Wrapper::wrappedObject(this)->asScope();
+    return GetProxyTargetObject(this)->asScope();
 }
 
 JSObject &
@@ -1511,16 +1537,10 @@ DebugScopes::sweep()
          * As explained in onGeneratorFrameChange, liveScopes includes
          * suspended generator frames. Since a generator can be finalized while
          * its scope is live, we must explicitly detect finalized generators.
-         * Since the scope is still live, we simulate the onPop* call by
-         * copying unaliased variables into the scope object.
          */
         if (JSGenerator *gen = fp->maybeSuspendedGenerator(rt)) {
             JS_ASSERT(gen->state == JSGEN_NEWBORN || gen->state == JSGEN_OPEN);
             if (!IsObjectMarked(&gen->obj)) {
-                if (scope->isCall())
-                    scope->asCall().copyUnaliasedValues(fp);
-                else if (scope->isBlock())
-                    scope->asClonedBlock().copyUnaliasedValues(fp);
                 e.removeFront();
                 continue;
             }

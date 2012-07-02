@@ -497,7 +497,14 @@ JS_GetFrameScript(JSContext *cx, JSStackFrame *fp)
 JS_PUBLIC_API(jsbytecode *)
 JS_GetFramePC(JSContext *cx, JSStackFrame *fp)
 {
-    return Valueify(fp)->pcQuadratic(cx->stack);
+    /*
+     * This API is used to compute the line number for jsd and XPConnect
+     * exception handling backtraces. Once the stack gets really deep, the
+     * overall cost can become quadratic. This can hang the browser (eventually
+     * terminated by a slow-script dialog) when content causes infinite
+     * recursion and a backtrace.
+     */
+    return Valueify(fp)->pcQuadratic(cx->stack, 100);
 }
 
 JS_PUBLIC_API(void *)
@@ -783,7 +790,8 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
         lastException = cx->getPendingException();
     cx->clearPendingException();
 
-    if (!baseops::GetProperty(cx, obj, RootedId(cx, shape->propid()), &pd->value)) {
+    Rooted<jsid> id(cx, shape->propid());
+    if (!baseops::GetProperty(cx, obj, id, &pd->value)) {
         if (!cx->isExceptionPending()) {
             pd->flags = JSPD_ERROR;
             pd->value = JSVAL_VOID;
@@ -1110,7 +1118,7 @@ JS_StartProfiling(const char *profileName)
         ok = JS_FALSE;
     }
 #endif
-#ifdef MOZ_VTUNE
+#if 0 //def MOZ_VTUNE
     if (!js_StartVtune(profileName))
         ok = JS_FALSE;
 #endif
@@ -1128,7 +1136,7 @@ JS_StopProfiling(const char *profileName)
 #if defined(MOZ_SHARK) && defined(__APPLE__)
     Shark::Stop();
 #endif
-#ifdef MOZ_VTUNE
+#if 0 //def MOZ_VTUNE
     if (!js_StopVtune())
         ok = JS_FALSE;
 #endif
@@ -1161,7 +1169,7 @@ ControlProfilers(bool toState)
             ok = JS_FALSE;
         }
 #endif
-#ifdef MOZ_VTUNE
+#if 0 //def MOZ_VTUNE
         if (! js_ResumeVtune())
             ok = JS_FALSE;
 #endif
@@ -1175,7 +1183,7 @@ ControlProfilers(bool toState)
             ok = JS_FALSE;
         }
 #endif
-#ifdef MOZ_VTUNE
+#if 0 //def MOZ_VTUNE
         if (! js_PauseVtune())
             ok = JS_FALSE;
 #endif
@@ -1422,7 +1430,7 @@ static JSFunctionSpec profiling_functions[] = {
     JS_FN("stopCallgrind",  StopCallgrind,        0,0),
     JS_FN("dumpCallgrind",  DumpCallgrind,        1,0),
 #endif
-#ifdef MOZ_VTUNE
+#if 0 //ef MOZ_VTUNE
     JS_FN("startVtune",     js_StartVtune,        1,0),
     JS_FN("stopVtune",      js_StopVtune,         0,0),
     JS_FN("pauseVtune",     js_PauseVtune,        0,0),
@@ -1477,7 +1485,7 @@ js_DumpCallgrind(const char *outfile)
 
 #endif /* MOZ_CALLGRIND */
 
-#ifdef MOZ_VTUNE
+#if 0 //def MOZ_VTUNE
 #include <VTuneApi.h>
 
 static const char *vtuneErrorMessages[] = {

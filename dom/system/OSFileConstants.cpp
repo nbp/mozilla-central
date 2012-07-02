@@ -9,6 +9,10 @@
 #include "unistd.h"
 #endif // defined(XP_UNIX)
 
+#if defined(XP_MACOSX)
+#include "copyfile.h"
+#endif // defined(XP_MACOSX)
+
 #if defined(XP_WIN)
 #include <windows.h>
 #endif // defined(XP_WIN)
@@ -16,6 +20,14 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "BindingUtils.h"
+
+// Used to provide information on the OS
+
+#include "nsIXULRuntime.h"
+#include "nsXPCOMCIDInternal.h"
+#include "nsServiceManagerUtils.h"
+#include "nsString.h"
+
 #include "OSFileConstants.h"
 
 /**
@@ -144,6 +156,15 @@ static dom::ConstantSpec gLibcProperties[] =
   INT_CONSTANT(SEEK_END),
   INT_CONSTANT(SEEK_SET),
 
+  // copyfile
+#if defined(COPYFILE_DATA)
+  INT_CONSTANT(COPYFILE_DATA),
+  INT_CONSTANT(COPYFILE_EXCL),
+  INT_CONSTANT(COPYFILE_XATTR),
+  INT_CONSTANT(COPYFILE_STAT),
+  INT_CONSTANT(COPYFILE_ACL),
+#endif // defined(COPYFILE_DATA)
+
   // error values
   INT_CONSTANT(EACCES),
   INT_CONSTANT(EAGAIN),
@@ -180,6 +201,19 @@ static dom::ConstantSpec gLibcProperties[] =
   INT_CONSTANT(EWOULDBLOCK),
 #endif // defined(EWOULDBLOCK)
   INT_CONSTANT(EXDEV),
+
+  // Constants used to define data structures
+  //
+  // Many data structures have different fields/sizes/etc. on
+  // various OSes / versions of the same OS / platforms. For these
+  // data structures, we need to compute and export from C the size
+  // and, if necessary, the offset of fields, so as to be able to
+  // define the structure in JS.
+
+#if defined(XP_UNIX)
+  // The size of |mode_t|.
+  {"OSFILE_SIZEOF_MODE_T", INT_TO_JSVAL(sizeof (mode_t)) },
+#endif // defined(XP_UNIX)
 
   PROP_END
 };
@@ -225,7 +259,7 @@ static dom::ConstantSpec gWinProperties[] =
   INT_CONSTANT(FILE_ATTRIBUTE_READONLY),
   INT_CONSTANT(FILE_ATTRIBUTE_TEMPORARY),
 
-  // SetFilePointer error constant
+  // CreateFile error constant
   { "INVALID_HANDLE_VALUE", INT_TO_JSVAL(INT_PTR(INVALID_HANDLE_VALUE)) },
 
 
@@ -240,7 +274,12 @@ static dom::ConstantSpec gWinProperties[] =
   // SetFilePointer error constant
   INT_CONSTANT(INVALID_SET_FILE_POINTER),
 
+  // MoveFile flags
+  INT_CONSTANT(MOVEFILE_COPY_ALLOWED),
+  INT_CONSTANT(MOVEFILE_REPLACE_EXISTING),
+
   // Errors
+  INT_CONSTANT(ERROR_FILE_EXISTS),
   INT_CONSTANT(ERROR_FILE_NOT_FOUND),
   INT_CONSTANT(ERROR_ACCESS_DENIED),
 
@@ -306,6 +345,28 @@ bool DefineOSFileConstants(JSContext *cx, JSObject *global)
     return false;
   }
 #endif // defined(XP_WIN)
+  JSObject *objSys;
+  if (!(objSys = GetOrCreateObjectProperty(cx, objConstants, "Sys"))) {
+    return false;
+  }
+
+  nsCOMPtr<nsIXULRuntime> runtime = do_GetService(XULRUNTIME_SERVICE_CONTRACTID);
+  if (runtime) {
+    nsCAutoString os;
+    nsresult rv = runtime->GetOS(os);
+    MOZ_ASSERT(NS_SUCCEEDED(rv));
+
+    JSString* strVersion = JS_NewStringCopyZ(cx, os.get());
+    if (!strVersion) {
+      return false;
+    }
+
+    jsval valVersion = STRING_TO_JSVAL(strVersion);
+    if (!JS_SetProperty(cx, objSys, "Name", &valVersion)) {
+      return false;
+    }
+  }
+
   return true;
 }
 

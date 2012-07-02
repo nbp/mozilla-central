@@ -50,7 +50,7 @@
 #include "nsIMarkupDocumentViewer.h"
 #include "nsClientRect.h"
 
-#if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK2)
+#if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
 #include <gdk/gdk.h>
 #include <gdk/gdkx.h>
 #endif
@@ -213,8 +213,8 @@ nsDOMWindowUtils::Redraw(PRUint32 aCount, PRUint32 *aDurationOut)
       for (PRUint32 i = 0; i < aCount; i++)
         rootFrame->InvalidateWithFlags(r, nsIFrame::INVALIDATE_IMMEDIATE);
 
-#if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK2)
-      XSync(GDK_DISPLAY(), False);
+#if defined(MOZ_X11) && defined(MOZ_WIDGET_GTK)
+      XSync(GDK_DISPLAY_XDISPLAY(gdk_display_get_default()), False);
 #endif
 
       *aDurationOut = PR_IntervalToMilliseconds(PR_IntervalNow() - iStart);
@@ -492,6 +492,7 @@ nsDOMWindowUtils::SendMouseEventToWindow(const nsAString& aType,
                                          PRInt32 aModifiers,
                                          bool aIgnoreRootScrollFrame)
 {
+  SAMPLE_LABEL("nsDOMWindowUtils", "SendMouseEventToWindow");
   return SendMouseEventCommon(aType, aX, aY, aButton, aClickCount, aModifiers,
                               aIgnoreRootScrollFrame, true);
 }
@@ -1825,13 +1826,13 @@ nsDOMWindowUtils::GetParent(const JS::Value& aObject,
     return NS_ERROR_XPC_BAD_CONVERT_JS;
   }
 
-  JSObject* parent = JS_GetParent(JSVAL_TO_OBJECT(aObject));
+  JS::Rooted<JSObject*> parent(aCx, JS_GetParent(JSVAL_TO_OBJECT(aObject)));
   *aParent = OBJECT_TO_JSVAL(parent);
 
   // Outerize if necessary.
   if (parent) {
     if (JSObjectOp outerize = js::GetObjectClass(parent)->ext.outerObject) {
-      *aParent = OBJECT_TO_JSVAL(outerize(aCx, JS::RootedObject(aCx, parent)));
+      *aParent = OBJECT_TO_JSVAL(outerize(aCx, parent));
     }
   }
 

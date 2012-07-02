@@ -96,6 +96,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitInteger(LInteger *lir);
     bool visitRegExp(LRegExp *lir);
     bool visitLambda(LLambda *lir);
+    bool visitLambdaForSingleton(LLambdaForSingleton *lir);
     bool visitPointer(LPointer *lir);
     bool visitSlots(LSlots *lir);
     bool visitStoreSlotV(LStoreSlotV *store);
@@ -111,6 +112,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     void emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSize);
     bool visitApplyArgsGeneric(LApplyArgsGeneric *apply);
     bool visitDoubleToInt32(LDoubleToInt32 *lir);
+    bool visitNewSlots(LNewSlots *lir);
     bool visitNewArrayCallVM(LNewArray *lir);
     bool visitNewArray(LNewArray *lir);
     bool visitOutOfLineNewArray(OutOfLineNewArray *ool);
@@ -122,6 +124,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCreateThisVMCall(LCreateThis *lir);
     bool visitCreateThis(LCreateThis *lir);
     bool visitOutOfLineCreateThis(OutOfLineCreateThis *ool);
+    bool visitReturnFromCtor(LReturnFromCtor *lir);
     bool visitArrayLength(LArrayLength *lir);
     bool visitTypedArrayLength(LTypedArrayLength *lir);
     bool visitTypedArrayElements(LTypedArrayElements *lir);
@@ -189,7 +192,6 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool emitInstanceOf(LInstruction *ins, Register rhs);
     bool visitInstanceOfO(LInstanceOfO *ins);
     bool visitInstanceOfV(LInstanceOfV *ins);
-    bool visitGuardObject(LGuardObject *lir);
 
     bool visitCheckOverRecursed(LCheckOverRecursed *lir);
     bool visitCheckOverRecursedFailure(CheckOverRecursedFailure *ool);

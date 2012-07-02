@@ -65,8 +65,8 @@ var gCSSProperties = {
 		inherited: false,
 		type: CSS_TYPE_LONGHAND,
 		initial_values: [ "normal" ],
-		other_values: [ "alternate", "normal, alternate", "alternate, normal", "normal, normal", "normal, normal, normal" ],
-		invalid_values: [ "normal normal", "inherit, normal" ]
+		other_values: [ "alternate", "normal, alternate", "alternate, normal", "normal, normal", "normal, normal, normal", "reverse", "alternate-reverse", "normal, reverse, alternate-reverse, alternate" ],
+		invalid_values: [ "normal normal", "inherit, normal", "reverse-alternate" ]
 	},
 	"-moz-animation-duration": {
 		domProp: "MozAnimationDuration",
@@ -1964,7 +1964,27 @@ var gCSSProperties = {
 		initial_values: [ "inline" ],
 		/* XXX none will really mess with other properties */
 		prerequisites: { "float": "none", "position": "static" },
-		other_values: [ "block", "list-item", "inline-block", "table", "inline-table", "table-row-group", "table-header-group", "table-footer-group", "table-row", "table-column-group", "table-column", "table-cell", "table-caption", "none" ],
+		other_values: [
+			"block",
+			"list-item",
+			"inline-block",
+			"table",
+			"inline-table",
+			"table-row-group",
+			"table-header-group",
+			"table-footer-group",
+			"table-row",
+			"table-column-group",
+			"table-column",
+			"table-cell",
+			"table-caption",
+/* XXXdholbert In builds with MOZ_FLEXBOX enabled, this should be uncommented.
+   (This would be #ifdef MOZ_FLEXBOX, if that worked in JS files.)
+			"-moz-flex",
+			"-moz-inline-flex",
+*/
+			"none"
+		],
 		invalid_values: []
 	},
 	"empty-cells": {

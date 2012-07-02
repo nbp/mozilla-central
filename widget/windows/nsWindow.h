@@ -53,6 +53,7 @@ class imgIContainer;
 namespace mozilla {
 namespace widget {
 class NativeKey;
+class ModifierKeyState;
 } // namespace widget
 } // namespacw mozilla;
 
@@ -190,7 +191,7 @@ public:
   virtual bool            DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus);
   void                    InitKeyEvent(nsKeyEvent& aKeyEvent,
                                        const NativeKey& aNativeKey,
-                                       const nsModifierKeyState &aModKeyState);
+                                       const mozilla::widget::ModifierKeyState &aModKeyState);
   virtual bool            DispatchKeyEvent(nsKeyEvent& aKeyEvent,
                                            const MSG *aMsgSentToPlugin);
   void                    DispatchPendingEvents();
@@ -370,15 +371,15 @@ protected:
    */
   LRESULT                 OnChar(const MSG &aMsg,
                                  const NativeKey& aNativeKey,
-                                 nsModifierKeyState &aModKeyState,
+                                 const mozilla::widget::ModifierKeyState &aModKeyState,
                                  bool *aEventDispatched,
                                  PRUint32 aFlags = 0);
   LRESULT                 OnKeyDown(const MSG &aMsg,
-                                    nsModifierKeyState &aModKeyState,
+                                    const mozilla::widget::ModifierKeyState &aModKeyState,
                                     bool *aEventDispatched,
                                     nsFakeCharMessage* aFakeCharMessage);
   LRESULT                 OnKeyUp(const MSG &aMsg,
-                                  nsModifierKeyState &aModKeyState,
+                                  const mozilla::widget::ModifierKeyState &aModKeyState,
                                   bool *aEventDispatched);
   bool                    OnGesture(WPARAM wParam, LPARAM lParam);
   bool                    OnTouch(WPARAM wParam, LPARAM lParam);
@@ -448,8 +449,6 @@ protected:
   static void             ActivateOtherWindowHelper(HWND aWnd);
   void                    ClearCachedResources();
 
-  nsPopupType PopupType() { return mPopupType; }
-
 protected:
   nsCOMPtr<nsIWidget>   mParent;
   nsIntSize             mLastSize;
@@ -475,7 +474,6 @@ protected:
   InputContext mInputContext;
   nsNativeDragTarget*   mNativeDragTarget;
   HKL                   mLastKeyboardLayout;
-  nsPopupType           mPopupType;
   nsSizeMode            mOldSizeMode;
   nsSizeMode            mLastSizeMode;
   WindowHook            mWindowHook;

@@ -169,7 +169,8 @@ js::OnUnknownMethod(JSContext *cx, HandleObject obj, Value idval_, Value *vp)
     TypeScript::MonitorUnknown(cx);
 
     if (value.reference().isPrimitive()) {
-        *vp = value;
+        if (!value.reference().isUndefined())
+            *vp = value;
     } else {
 #if JS_HAS_XML_SUPPORT
         /* Extract the function name from function::name qname. */
@@ -556,7 +557,8 @@ js::LooselyEqual(JSContext *cx, const Value &lval, const Value &rval, bool *resu
 
             if (JSEqualityOp eq = l->getClass()->ext.equality) {
                 JSBool res;
-                if (!eq(cx, RootedObject(cx, l), &rval, &res))
+                Rooted<JSObject*> lobj(cx, l);
+                if (!eq(cx, lobj, &rval, &res))
                     return false;
                 *result = !!res;
                 return true;
@@ -1002,7 +1004,8 @@ IteratorMore(JSContext *cx, JSObject *iterobj, bool *cond, Value *rval)
             return true;
         }
     }
-    if (!js_IteratorMore(cx, RootedObject(cx, iterobj), rval))
+    Rooted<JSObject*> iobj(cx, iterobj);
+    if (!js_IteratorMore(cx, iobj, rval))
         return false;
     *cond = rval->isTrue();
     return true;

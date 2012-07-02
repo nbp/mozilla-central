@@ -91,9 +91,14 @@ struct IonOptions
     // Default: true
     bool inlining;
 
-    // Toggles whether Range Analysis is used.
+    // Toggles whether Edge Case Analysis is used.
     //
     // Default: true
+    bool edgeCaseAnalysis;
+
+    // Toggles whether Range Analysis is used.
+    //
+    // Default: false
     bool rangeAnalysis;
 
     // How many invocations or loop iterations are needed before functions
@@ -119,6 +124,24 @@ struct IonOptions
     // Default: 4,096
     uint32 maxStackArgs;
 
+    // The bytecode length limit for small function.
+    //
+    // The default for this was arrived at empirically via benchmarking.
+    // We may want to tune it further after other optimizations have gone
+    // in.
+    //
+    // Default: 100
+    uint32 smallFunctionMaxBytecodeLength;
+
+    // The inlining limit for small functions.
+    //
+    // This value has been arrived at empirically via benchmarking.
+    // We may want to revisit this tuning after other optimizations have
+    // gone in.
+    //
+    // Default: usesBeforeInlining / 4
+    uint32 smallFunctionUsesBeforeInlining;
+
     void setEagerCompilation() {
         usesBeforeCompile = usesBeforeCompileNoJaeger = 0;
 
@@ -134,11 +157,14 @@ struct IonOptions
         limitScriptSize(true),
         lsra(true),
         inlining(true),
-        rangeAnalysis(true),
+        edgeCaseAnalysis(true),
+        rangeAnalysis(false),
         usesBeforeCompile(10240),
         usesBeforeCompileNoJaeger(40),
         usesBeforeInlining(usesBeforeCompile),
-        maxStackArgs(4096)
+        maxStackArgs(4096),
+        smallFunctionMaxBytecodeLength(100),
+        smallFunctionUsesBeforeInlining(usesBeforeInlining / 4)
     { }
 };
 

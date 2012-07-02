@@ -60,7 +60,7 @@ AccumulateCacheHitTelemetry(mozilla::Telemetry::ID deviceHistogram,
                             PRUint32 hitOrMiss)
 {
     mozilla::Telemetry::Accumulate(
-            mozilla::Telemetry::HTTP_CACHE_DISPOSITION, hitOrMiss);
+            mozilla::Telemetry::HTTP_CACHE_DISPOSITION_2, hitOrMiss);
     if (deviceHistogram != UNKNOWN_DEVICE) {
         mozilla::Telemetry::Accumulate(deviceHistogram, hitOrMiss);
     }
@@ -713,8 +713,7 @@ nsHttpChannel::SetupTransaction()
     // does not count here). also, figure out what version we should be speaking.
     nsCAutoString buf, path;
     nsCString* requestURI;
-    if (mConnectionInfo->UsingSSL() ||
-        mConnectionInfo->ShouldForceConnectMethod() ||
+    if (mConnectionInfo->UsingConnect() ||
         !mConnectionInfo->UsingHttpProxy()) {
         rv = mURI->GetPath(path);
         if (NS_FAILED(rv)) return rv;
@@ -2880,13 +2879,13 @@ HttpCacheQuery::OnCacheEntryAvailable(nsICacheEntryDescriptor *entry,
         if (cacheDeviceID) {
             if (!strcmp(cacheDeviceID, kDiskDeviceID)) {
                 mCacheEntryDeviceTelemetryID
-                    = mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION;
+                    = mozilla::Telemetry::HTTP_DISK_CACHE_DISPOSITION_2;
             } else if (!strcmp(cacheDeviceID, kMemoryDeviceID)) {
                 mCacheEntryDeviceTelemetryID
-                    = mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION;
+                    = mozilla::Telemetry::HTTP_MEMORY_CACHE_DISPOSITION_2;
             } else if (!strcmp(cacheDeviceID, kOfflineDeviceID)) {
                 mCacheEntryDeviceTelemetryID
-                    = mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION;
+                    = mozilla::Telemetry::HTTP_OFFLINE_CACHE_DISPOSITION_2;
             } else {
                 MOZ_NOT_REACHED("unknown cache device ID");
             }
@@ -4634,9 +4633,7 @@ nsHttpChannel::GetIsSSL(bool *aIsSSL)
 NS_IMETHODIMP
 nsHttpChannel::GetProxyMethodIsConnect(bool *aProxyMethodIsConnect)
 {
-    *aProxyMethodIsConnect =
-        (mConnectionInfo->UsingHttpProxy() && mConnectionInfo->UsingSSL()) ||
-        mConnectionInfo->ShouldForceConnectMethod();
+    *aProxyMethodIsConnect = mConnectionInfo->UsingConnect();
     return NS_OK;
 }
 

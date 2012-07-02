@@ -129,6 +129,17 @@ LIRGenerator::visitDefVar(MDefVar *ins)
 }
 
 bool
+LIRGenerator::visitNewSlots(MNewSlots *ins)
+{
+    // No safepoint needed, since we don't pass a cx.
+    LNewSlots *lir = new LNewSlots(tempFixed(CallTempReg0), tempFixed(CallTempReg1),
+                                   tempFixed(CallTempReg2));
+    if (!assignSnapshot(lir))
+        return false;
+    return defineVMReturn(lir, ins);
+}
+
+bool
 LIRGenerator::visitNewArray(MNewArray *ins)
 {
     LNewArray *lir = new LNewArray();
@@ -145,14 +156,31 @@ LIRGenerator::visitNewObject(MNewObject *ins)
 bool
 LIRGenerator::visitNewCallObject(MNewCallObject *ins)
 {
-    JS_ASSERT(ins->scopeObj()->type() == MIRType_Object);
-    JS_ASSERT(ins->callee()->type() == MIRType_Object);
+    bool isCall = ins->templateObj()->lastProperty()->extensibleParents();
 
-    LNewCallObject *lir = new LNewCallObject(useRegister(ins->scopeObj()),
-                                             useRegister(ins->callee()));
-    if (ins->templateObj())
-        return define(lir, ins) && assignSafepoint(lir, ins);
-    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+    LAllocation slots;
+    if (ins->slots()->type() == MIRType_Slots) {
+        if (isCall)
+            slots = useFixed(ins->slots(), CallTempReg2);
+        else
+            slots = useRegister(ins->slots());
+    } else {
+        slots = LConstantIndex::Bogus();
+    }
+
+    LNewCallObject *lir = new LNewCallObject(slots);
+    if (isCall) {
+        if (!defineVMReturn(lir, ins))
+            return false;
+    } else {
+        if (!define(lir, ins))
+            return false;
+    }
+    if (!assignSafepoint(lir, ins))
+        return false;
+
+    JS_ASSERT(isCall == lir->isCall());
+    return true;
 }
 
 bool
@@ -201,6 +229,16 @@ LIRGenerator::visitCreateThis(MCreateThis *ins)
                                        useRegister(ins->getPrototype()));
     
     return define(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitReturnFromCtor(MReturnFromCtor *ins)
+{
+    LReturnFromCtor *lir = new LReturnFromCtor(useRegister(ins->getObject()));
+    if (!useBox(lir, LReturnFromCtor::ValueIndex, ins->getValue()))
+        return false;
+
+    return define(lir, ins);
 }
 
 bool
@@ -336,29 +374,44 @@ LIRGenerator::visitTest(MTest *test)
     // Check if the operand for this test is a compare operation. If it is, we want
     // to emit an LCompare*AndBranch rather than an LTest*AndBranch, to fuse the
     // compare and jump instructions.
-    if (opd->isCompare()) {
+    if (opd->isCompare() && opd->isEmittedAtUses()) {
         MCompare *comp = opd->toCompare();
-        MDefinition *left = comp->getOperand(0);
-        MDefinition *right = comp->getOperand(1);
+        MDefinition *left = comp->lhs();
+        MDefinition *right = comp->rhs();
+
+        // Try to fold the comparison so that we don't have to handle all cases.
+        bool result;
+        if (comp->tryFold(&result))
+            return add(new LGoto(result ? ifTrue : ifFalse));
 
         if (comp->specialization() == MIRType_Int32 || comp->specialization() == MIRType_Object) {
             JSOp op = ReorderComparison(comp->jsop(), &left, &right);
             LAllocation rhs = comp->specialization() == MIRType_Object
                               ? useRegister(right)
                               : useAnyOrConstant(right);
-            return add(new LCompareAndBranch(opd->toCompare(), op, useRegister(left), rhs,
-                                             ifTrue, ifFalse));
+            return add(new LCompareAndBranch(op, useRegister(left), rhs, ifTrue, ifFalse), comp);
         }
         if (comp->specialization() == MIRType_Double) {
-            return add(new LCompareDAndBranch(comp->jsop(), useRegister(left),
-                                              useRegister(right), ifTrue, ifFalse));
+            return add(new LCompareDAndBranch(useRegister(left), useRegister(right), ifTrue,
+                                              ifFalse), comp);
         }
 
         // The second operand has known null/undefined type, so just test the
         // first operand.
         if (IsNullOrUndefined(comp->specialization())) {
             LIsNullOrUndefinedAndBranch *lir = new LIsNullOrUndefinedAndBranch(ifTrue, ifFalse);
-            if (!useBox(lir, LIsNullOrUndefinedAndBranch::Value, comp->getOperand(0)))
+            if (!useBox(lir, LIsNullOrUndefinedAndBranch::Value, left))
+                return false;
+            return add(lir, comp);
+        }
+
+        if (comp->specialization() == MIRType_Boolean) {
+            JS_ASSERT(left->type() == MIRType_Value);
+            JS_ASSERT(right->type() == MIRType_Boolean);
+
+            LCompareBAndBranch *lir = new LCompareBAndBranch(useRegisterOrConstant(right),
+                                                             ifTrue, ifFalse);
+            if (!useBox(lir, LCompareBAndBranch::Lhs, left))
                 return false;
             return add(lir, comp);
         }
@@ -394,15 +447,20 @@ CanEmitCompareAtUses(MInstruction *ins)
 bool
 LIRGenerator::visitCompare(MCompare *comp)
 {
-    MDefinition *left = comp->getOperand(0);
-    MDefinition *right = comp->getOperand(1);
+    MDefinition *left = comp->lhs();
+    MDefinition *right = comp->rhs();
 
     if (comp->specialization() != MIRType_None) {
+        // Try to fold the comparison so that we don't have to handle all cases.
+        bool result;
+        if (comp->tryFold(&result))
+            return define(new LInteger(result), comp);
+
         // Move below the emitAtUses call if we ever implement
         // LCompareSAndBranch. Doing this now wouldn't be wrong, but doesn't
         // make sense and avoids confusion.
         if (comp->specialization() == MIRType_String) {
-            LCompareS *lir = new LCompareS(comp->jsop(), useRegister(left), useRegister(right));
+            LCompareS *lir = new LCompareS(useRegister(left), useRegister(right));
             if (!define(lir, comp))
                 return false;
             return assignSafepoint(lir, comp);
@@ -424,7 +482,17 @@ LIRGenerator::visitCompare(MCompare *comp)
         }
 
         if (comp->specialization() == MIRType_Double)
-            return define(new LCompareD(comp->jsop(), useRegister(left), useRegister(right)), comp);
+            return define(new LCompareD(useRegister(left), useRegister(right)), comp);
+
+        if (comp->specialization() == MIRType_Boolean) {
+            JS_ASSERT(left->type() == MIRType_Value);
+            JS_ASSERT(right->type() == MIRType_Boolean);
+
+            LCompareB *lir = new LCompareB(useRegisterOrConstant(right));
+            if (!useBox(lir, LCompareB::Lhs, left))
+                return false;
+            return define(lir, comp);
+        }
 
         JS_ASSERT(IsNullOrUndefined(comp->specialization()));
 
@@ -434,7 +502,7 @@ LIRGenerator::visitCompare(MCompare *comp)
         return define(lir, comp);
     }
 
-    LCompareV *lir = new LCompareV(comp->jsop());
+    LCompareV *lir = new LCompareV();
     if (!useBox(lir, LCompareV::LhsInput, left))
         return false;
     if (!useBox(lir, LCompareV::RhsInput, right))
@@ -448,7 +516,7 @@ ReorderCommutative(MDefinition **lhsp, MDefinition **rhsp)
     MDefinition *lhs = *lhsp;
     MDefinition *rhs = *rhsp;
 
-    // Put the constant in the left-hand side, if there is one.
+    // Put the constant in the right-hand side, if there is one.
     if (lhs->isConstant()) {
         *rhsp = lhs;
         *lhsp = rhs;
@@ -613,7 +681,7 @@ LIRGenerator::visitAbs(MAbs *ins)
     if (num->type() == MIRType_Int32) {
         LAbsI *lir = new LAbsI(useRegisterAtStart(num));
         // needed to handle abs(INT32_MIN)
-        if (!assignSnapshot(lir))
+        if (!ins->range()->isFinite() && !assignSnapshot(lir))
             return false;
         return defineReuseInput(lir, ins, 0);
     } else {
@@ -653,7 +721,7 @@ LIRGenerator::visitAdd(MAdd *ins)
         JS_ASSERT(lhs->type() == MIRType_Int32);
         ReorderCommutative(&lhs, &rhs);
         LAddI *lir = new LAddI;
-        if (!ins->isTruncated() && !assignSnapshot(lir))
+        if (ins->fallible() && !assignSnapshot(lir))
             return false;
 
         return lowerForALU(lir, ins, lhs, rhs);
@@ -678,7 +746,7 @@ LIRGenerator::visitSub(MSub *ins)
     if (ins->specialization() == MIRType_Int32) {
         JS_ASSERT(lhs->type() == MIRType_Int32);
         LSubI *lir = new LSubI;
-        if (!ins->isTruncated() && !assignSnapshot(lir))
+        if (ins->fallible() && !assignSnapshot(lir))
             return false;
 
         return lowerForALU(lir, ins, lhs, rhs);
@@ -1003,8 +1071,14 @@ LIRGenerator::visitRegExp(MRegExp *ins)
 bool
 LIRGenerator::visitLambda(MLambda *ins)
 {
+    if (ins->fun()->hasSingletonType()) {
+        // This function is only executed once, so we don't bother inlining it.
+        LLambdaForSingleton *lir = new LLambdaForSingleton(useRegister(ins->scopeChain()));
+        return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+    }
+
     LLambda *lir = new LLambda(useRegister(ins->scopeChain()));
-    return defineVMReturn(lir, ins) && assignSafepoint(lir, ins);
+    return define(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -1199,6 +1273,9 @@ LIRGenerator::visitBoundsCheck(MBoundsCheck *ins)
 bool
 LIRGenerator::visitBoundsCheckLower(MBoundsCheckLower *ins)
 {
+    if (!ins->fallible())
+        return true;
+
     LInstruction *check = new LBoundsCheckLower(useRegister(ins->index()));
     return assignSnapshot(check) && add(check, ins);
 }
@@ -1513,8 +1590,10 @@ LIRGenerator::visitGuardClass(MGuardClass *ins)
 bool
 LIRGenerator::visitGuardObject(MGuardObject *ins)
 {
-    LGuardObject *lir = new LGuardObject(useAtStart(ins->input()));
-    return defineReuseInput(lir, ins, 0);
+    // The type policy does all the work, so at this point the input
+    // is guaranteed to be an object.
+    JS_ASSERT(ins->input()->type() == MIRType_Object);
+    return redefine(ins, ins->input());
 }
 
 bool
@@ -1703,7 +1782,7 @@ SpewResumePoint(MBasicBlock *block, MInstruction *ins, MResumePoint *resumePoint
     fprintf(IonSpewFile, "    pc: %p (script: %p, offset: %d)\n",
             (void *)resumePoint->pc(),
             (void *)resumePoint->block()->info().script(),
-            resumePoint->pc() - resumePoint->block()->info().script()->code);
+            int(resumePoint->pc() - resumePoint->block()->info().script()->code));
 
     for (size_t i = 0; i < resumePoint->numOperands(); i++) {
         MDefinition *in = resumePoint->getOperand(i);
