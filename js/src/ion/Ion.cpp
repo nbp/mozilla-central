@@ -1350,7 +1350,6 @@ ion::MarkFromIon(JSCompartment *comp, Value *vp)
     gc::MarkValueUnbarriered(comp->barrierTracer(), vp, "write barrier");
 }
 
-
 int js::ion::LabelBase::id_count = 0;
 
 void ion::disbaleIonScript(JSScript *script)
