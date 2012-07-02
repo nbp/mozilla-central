@@ -786,8 +786,8 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
 void
 CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpace)
 {
-    // Push(this)
-    masm.freeStack(sizeof(void*));
+    // Pop |this|
+    masm.freeStack(sizeof(Value));
 
     // Arguments
     masm.freeStack(extraStackSpace);
