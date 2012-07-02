@@ -17,19 +17,22 @@
 #include "mozilla/Preferences.h"
 #include "nsJSUtils.h"
 #include "DictionaryHelpers.h"
+#include "mozilla/Attributes.h"
 
 using namespace mozilla::dom;
 
 #include "nsDirectoryServiceDefs.h"
 
-class DeviceStorageFile : public nsISupports {
+class DeviceStorageFile MOZ_FINAL : public nsISupports {
 public:
 
   nsCOMPtr<nsIFile> mFile;
   nsString mPath;
+  bool mEditable;
 
   DeviceStorageFile(nsIFile* aFile, const nsAString& aPath)
   : mPath(aPath)
+  , mEditable(false)
   {
     NS_ASSERTION(aFile, "Must not create a DeviceStorageFile with a null nsIFile");
     // always take a clone
@@ -42,6 +45,7 @@ public:
   }
 
   DeviceStorageFile(nsIFile* aFile)
+  : mEditable(false)
   {
     NS_ASSERTION(aFile, "Must not create a DeviceStorageFile with a null nsIFile");
     // always take a clone
@@ -53,6 +57,11 @@ public:
   setPath(const nsAString& aPath) {
     mPath.Assign(aPath);
     NormalizeFilePath();
+  }
+
+  void
+  setEditable(bool aEditable) {
+    mEditable = aEditable;
   }
 
   NS_DECL_ISUPPORTS
@@ -138,15 +147,23 @@ nsDOMDeviceStorage::SetRootFileForType(const nsAString& aType, const PRInt32 aIn
   nsCOMPtr<nsIProperties> dirService = do_GetService(NS_DIRECTORY_SERVICE_CONTRACTID);
   NS_ASSERTION(dirService, "Must have directory service");
 
+#ifdef MOZ_WIDGET_GONK
+  // check that /sdcard exists, if it doesn't go no further.
+  NS_NewLocalFile(NS_LITERAL_STRING("/sdcard"), false, getter_AddRefs(f));
+  bool check = false;
+  f->Exists(&check);
+  if (!check) {
+    mFile = nsnull;
+    return typeResult;
+  }
+  f = nsnull;
+#endif
+
   // Picture directory
   if (aType.Equals(NS_LITERAL_STRING("pictures"))) {
 #ifdef MOZ_WIDGET_GONK
     if (aIndex == 0) {
-      NS_NewLocalFile(NS_LITERAL_STRING("/data/pictures"), false, getter_AddRefs(f));
-    }
-    else if (aIndex == 1) {
       NS_NewLocalFile(NS_LITERAL_STRING("/sdcard/DCIM"), false, getter_AddRefs(f));
-      typeResult = DEVICE_STORAGE_TYPE_EXTERNAL;
     }
 #elif defined (MOZ_WIDGET_COCOA)
     if (aIndex == 0) {
@@ -163,11 +180,7 @@ nsDOMDeviceStorage::SetRootFileForType(const nsAString& aType, const PRInt32 aIn
   if (aType.Equals(NS_LITERAL_STRING("videos"))) {
 #ifdef MOZ_WIDGET_GONK
     if (aIndex == 0) {
-      NS_NewLocalFile(NS_LITERAL_STRING("/data/videos"), false, getter_AddRefs(f));
-    }
-    else if (aIndex == 1) {
-      NS_NewLocalFile(NS_LITERAL_STRING("/sdcard/videos"), false, getter_AddRefs(f));
-      typeResult = DEVICE_STORAGE_TYPE_EXTERNAL;
+      NS_NewLocalFile(NS_LITERAL_STRING("/sdcard/Movies"), false, getter_AddRefs(f));
     }
 #elif defined (MOZ_WIDGET_COCOA)
     if (aIndex == 0) {
@@ -184,11 +197,7 @@ nsDOMDeviceStorage::SetRootFileForType(const nsAString& aType, const PRInt32 aIn
   if (aType.Equals(NS_LITERAL_STRING("music"))) {
 #ifdef MOZ_WIDGET_GONK
     if (aIndex == 0) {
-      NS_NewLocalFile(NS_LITERAL_STRING("/data/music"), false, getter_AddRefs(f));
-    }
-    else if (aIndex == 1) {
-      NS_NewLocalFile(NS_LITERAL_STRING("/sdcard/music"), false, getter_AddRefs(f));
-      typeResult = DEVICE_STORAGE_TYPE_EXTERNAL;
+      NS_NewLocalFile(NS_LITERAL_STRING("/sdcard/Music"), false, getter_AddRefs(f));
     }
 #elif defined (MOZ_WIDGET_COCOA)
     if (aIndex == 0) {
@@ -219,12 +228,12 @@ nsDOMDeviceStorage::SetRootFileForType(const nsAString& aType, const PRInt32 aIn
   return typeResult;
 }
 
-static jsval nsIFileToJsval(nsPIDOMWindow* aWindow, DeviceStorageFile* aFile, bool aEditable)
+static jsval nsIFileToJsval(nsPIDOMWindow* aWindow, DeviceStorageFile* aFile)
 {
   NS_ASSERTION(NS_IsMainThread(), "Wrong thread!");
   NS_ASSERTION(aWindow, "Null Window");
 
-  if (aEditable) {
+  if (aFile->mEditable) {
     // TODO - needs janv's file handle support.
     return JSVAL_NULL;
   }
@@ -308,7 +317,6 @@ public:
   nsDOMDeviceStorageCursor(nsIDOMWindow* aWindow,
                            nsIURI* aURI,
                            DeviceStorageFile* aFile,
-                           bool aEditable,
                            PRUint64 aSince);
 
 private:
@@ -320,7 +328,6 @@ protected:
   bool mOkToCallContinue;
   nsRefPtr<DeviceStorageFile> mFile;
   nsCOMPtr<nsIURI> mURI;
-  bool mEditable;
   PRUint64 mSince;
 
   // to access mFiles
@@ -328,7 +335,7 @@ protected:
   friend class ContinueCursorEvent;
 };
 
-class DeviceStorageCursorRequest : public nsIContentPermissionRequest
+class DeviceStorageCursorRequest MOZ_FINAL : public nsIContentPermissionRequest
 {
 public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -452,7 +459,7 @@ public:
     else {
       nsRefPtr<DeviceStorageFile> file = cursor->mFiles[0];
       cursor->mFiles.RemoveElementAt(0);
-      val = nsIFileToJsval(cursor->GetOwner(), file, cursor->mEditable);
+      val = nsIFileToJsval(cursor->GetOwner(), file);
       cursor->mOkToCallContinue = true;
     }
 
@@ -577,13 +584,11 @@ NS_IMPL_RELEASE_INHERITED(nsDOMDeviceStorageCursor, DOMRequest)
 nsDOMDeviceStorageCursor::nsDOMDeviceStorageCursor(nsIDOMWindow* aWindow,
                                                    nsIURI* aURI,
                                                    DeviceStorageFile* aFile,
-                                                   bool aEditable,
                                                    PRUint64 aSince)
   : DOMRequest(aWindow)
   , mOkToCallContinue(false)
   , mFile(aFile)
   , mURI(aURI)
-  , mEditable(aEditable)
   , mSince(aSince)
 {
 }
@@ -676,9 +681,8 @@ nsDOMDeviceStorageCursor::Continue()
 class PostResultEvent : public nsRunnable
 {
 public:
-  PostResultEvent(nsRefPtr<DOMRequest>& aRequest, bool aEditable, DeviceStorageFile* aFile)
-    : mEditable(aEditable)
-    , mFile(aFile)
+  PostResultEvent(nsRefPtr<DOMRequest>& aRequest, DeviceStorageFile* aFile)
+    : mFile(aFile)
     {
       mRequest.swap(aRequest);
     }
@@ -697,7 +701,7 @@ public:
 
     jsval result = JSVAL_NULL;
     if (mFile) {
-      result = nsIFileToJsval(mRequest->GetOwner(), mFile, mEditable);
+      result = nsIFileToJsval(mRequest->GetOwner(), mFile);
     } else {
       result = StringToJsval(mRequest->GetOwner(), mPath);
     }
@@ -708,7 +712,6 @@ public:
   }
 
 private:
-  bool mEditable;
   nsRefPtr<DeviceStorageFile> mFile;
   nsString mPath;
   nsRefPtr<DOMRequest> mRequest;
@@ -807,16 +810,12 @@ private:
   nsRefPtr<DeviceStorageFile> mFile;
   nsRefPtr<DOMRequest> mRequest;
 };
-
-
 class ReadFileEvent : public nsRunnable
 {
 public:
     ReadFileEvent(DeviceStorageFile* aFile,
-                  bool aEditable,
                   nsRefPtr<DOMRequest>& aRequest)
   : mFile(aFile)
-  , mEditable(aEditable)
     {
       mRequest.swap(aRequest);
     }
@@ -829,7 +828,7 @@ public:
 
     nsRefPtr<nsRunnable> r;
 
-    if (!mEditable) {
+    if (!mFile->mEditable) {
       bool check = false;
       mFile->mFile->Exists(&check);
       if (!check) {
@@ -838,7 +837,7 @@ public:
     }
 
     if (!r) {
-      r = new PostResultEvent(mRequest, mEditable, mFile);
+      r = new PostResultEvent(mRequest, mFile);
     }
     NS_DispatchToMainThread(r);
     return NS_OK;
@@ -846,7 +845,6 @@ public:
 
 private:
   nsRefPtr<DeviceStorageFile> mFile;
-  bool mEditable;
   nsRefPtr<DOMRequest> mRequest;
 };
 
@@ -887,7 +885,7 @@ private:
   nsRefPtr<DOMRequest> mRequest;
 };
 
-class DeviceStorageRequest : public nsIContentPermissionRequest, public nsIRunnable
+class DeviceStorageRequest MOZ_FINAL : public nsIContentPermissionRequest, public nsIRunnable
 {
 public:
 
@@ -901,14 +899,12 @@ public:
                          nsIURI *aURI,
                          DeviceStorageFile *aFile,
                          DOMRequest* aRequest,
-                         bool aEditable,
                          nsIDOMBlob *aBlob = nsnull)
         : mRequestType(aRequestType)
         , mWindow(aWindow)
         , mURI(aURI)
         , mFile(aFile)
         , mRequest(aRequest)
-        , mEditable(aEditable)
         , mBlob(aBlob) {}
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -981,7 +977,7 @@ public:
       }
       case DEVICE_STORAGE_REQUEST_READ:
       {
-        r = new ReadFileEvent(mFile, mEditable, mRequest);
+        r = new ReadFileEvent(mFile, mRequest);
         break;
       }
       case DEVICE_STORAGE_REQUEST_DELETE:
@@ -1006,7 +1002,6 @@ private:
   nsRefPtr<DeviceStorageFile> mFile;
 
   nsRefPtr<DOMRequest> mRequest;
-  bool mEditable;
   nsCOMPtr<nsIDOMBlob> mBlob;
 };
 
@@ -1164,7 +1159,7 @@ nsDOMDeviceStorage::AddNamed(nsIDOMBlob *aBlob,
   }
   else {
     r = new DeviceStorageRequest(DeviceStorageRequest::DEVICE_STORAGE_REQUEST_WRITE,
-                                 win, mURI, dsf, request, true, aBlob);
+                                 win, mURI, dsf, request, aBlob);
   }
   NS_DispatchToMainThread(r);
   return NS_OK;
@@ -1214,12 +1209,13 @@ nsDOMDeviceStorage::GetInternal(const JS::Value & aPath,
   }
 
   nsRefPtr<DeviceStorageFile> dsf = new DeviceStorageFile(mFile, path);
+  dsf->setEditable(aEditable);
 
   if (!dsf->isSafePath()) {
     r = new PostErrorEvent(request, POST_ERROR_EVENT_ILLEGAL_FILE_NAME, dsf);
   } else {
     r = new DeviceStorageRequest(DeviceStorageRequest::DEVICE_STORAGE_REQUEST_READ,
-                                 win, mURI, dsf, request, aEditable);
+                                 win, mURI, dsf, request);
   }
   NS_DispatchToMainThread(r);
   return NS_OK;
@@ -1254,7 +1250,7 @@ nsDOMDeviceStorage::Delete(const JS::Value & aPath, JSContext* aCx, nsIDOMDOMReq
   }
   else {
     r = new DeviceStorageRequest(DeviceStorageRequest::DEVICE_STORAGE_REQUEST_DELETE,
-                                 win, mURI, dsf, request, true);
+                                 win, mURI, dsf, request);
   }
   NS_DispatchToMainThread(r);
   return NS_OK;
@@ -1335,7 +1331,9 @@ nsDOMDeviceStorage::EnumerateInternal(const JS::Value & aName,
   }
   
   nsRefPtr<DeviceStorageFile> dsf = new DeviceStorageFile(mFile, path);
-  nsRefPtr<nsDOMDeviceStorageCursor> cursor = new nsDOMDeviceStorageCursor(win, mURI, dsf, aEditable, since);
+  dsf->setEditable(aEditable);
+
+  nsRefPtr<nsDOMDeviceStorageCursor> cursor = new nsDOMDeviceStorageCursor(win, mURI, dsf, since);
   nsRefPtr<DeviceStorageCursorRequest> r = new DeviceStorageCursorRequest(cursor);
 
   NS_ADDREF(*aRetval = cursor);

@@ -253,10 +253,10 @@ StackFrame::unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing)
 }
 
 inline Value &
-StackFrame::unaliasedActual(unsigned i)
+StackFrame::unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing)
 {
     JS_ASSERT(i < numActualArgs());
-    JS_ASSERT(!script()->formalIsAliased(i));
+    JS_ASSERT_IF(checkAliasing && i < numFormalArgs(), !script()->formalIsAliased(i));
     return i < numFormalArgs() ? formals()[i] : actuals()[i];
 }
 
@@ -622,7 +622,9 @@ StackIter::forEachCanonicalActualArg(Op op, unsigned start /* = 0 */, unsigned c
         JS_ASSERT(isFunctionFrame());
         return fp()->forEachCanonicalActualArg(op, start, count);
       case ION:
+#ifdef JS_ION
         return ionInlineFrames_.forEachCanonicalActualArg(op, start, count);
+#endif
       case NATIVE:
       case IMPLICIT_NATIVE:
         JS_NOT_REACHED("Unused ?");

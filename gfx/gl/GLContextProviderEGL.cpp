@@ -8,7 +8,7 @@
 
 #if defined(XP_UNIX)
 
-#ifdef MOZ_WIDGET_GTK2
+#ifdef MOZ_WIDGET_GTK
 #include <gdk/gdkx.h>
 // we're using default display for now
 #define GET_NATIVE_WINDOW(aWidget) (EGLNativeWindowType)GDK_WINDOW_XID((GdkWindow *) aWidget->GetNativeData(NS_NATIVE_WINDOW))
@@ -144,8 +144,11 @@ static GLLibraryEGL sEGLLibrary;
     (_array).AppendElement(_k);                 \
 } while (0)
 
+#ifndef MOZ_JAVA_COMPOSITOR
 static EGLSurface
 CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config);
+#endif
+
 static bool
 CreateConfig(EGLConfig* aConfig);
 #ifdef MOZ_X11
@@ -760,6 +763,8 @@ GLFormatForImage(gfxASurface::gfxImageFormat aFormat)
         return LOCAL_GL_RGBA;
     case gfxASurface::ImageFormatRGB16_565:
         return LOCAL_GL_RGB;
+    case gfxASurface::ImageFormatA8:
+        return LOCAL_GL_LUMINANCE;
     default:
         NS_WARNING("Unknown GL format for Image format");
     }
@@ -777,6 +782,8 @@ PixelFormatForImage(gfxASurface::gfxImageFormat aFormat)
         return PIXEL_FORMAT_RGBX_8888;
     case gfxASurface::ImageFormatRGB16_565:
         return PIXEL_FORMAT_RGB_565;
+    case gfxASurface::ImageFormatA8:
+        return PIXEL_FORMAT_L_8;
     default:
         MOZ_NOT_REACHED("Unknown gralloc pixel format for Image format");
     }
@@ -790,6 +797,7 @@ GLTypeForImage(gfxASurface::gfxImageFormat aFormat)
     switch (aFormat) {
     case gfxASurface::ImageFormatARGB32:
     case gfxASurface::ImageFormatRGB24:
+    case gfxASurface::ImageFormatA8:
         return LOCAL_GL_UNSIGNED_BYTE;
     case gfxASurface::ImageFormatRGB16_565:
         return LOCAL_GL_UNSIGNED_SHORT_5_6_5;
@@ -812,10 +820,10 @@ public:
         : TextureImage(aSize, aWrapMode, aContentType, aFlags)
         , mGLContext(aContext)
         , mUpdateFormat(gfxASurface::ImageFormatUnknown)
+        , mEGLImage(nsnull)
+        , mTexture(aTexture)
         , mSurface(nsnull)
         , mConfig(nsnull)
-        , mTexture(aTexture)
-        , mEGLImage(nsnull)
         , mTextureState(Created)
         , mBound(false)
         , mIsLocked(false)
@@ -1568,14 +1576,12 @@ CreateConfig(EGLConfig* aConfig)
     }
 }
 
+// When MOZ_JAVA_COMPOSITOR is defined,
+// use mozilla::AndroidBridge::Bridge()->ProvideEGLSurface() instead.
+#ifndef MOZ_JAVA_COMPOSITOR
 static EGLSurface
 CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config)
 {
-#ifdef MOZ_JAVA_COMPOSITOR
-    // Use mozilla::AndroidBridge::Bridge()->ProvideEGLSurface() instead.
-    NS_RUNTIMEABORT("CreateSurfaceForWindow should not be called on Native Fennec.");
-#endif
-
     EGLSurface surface;
 
 #ifdef DEBUG
@@ -1610,6 +1616,7 @@ CreateSurfaceForWindow(nsIWidget *aWidget, EGLConfig config)
 
     return surface;
 }
+#endif
 
 already_AddRefed<GLContext>
 GLContextProviderEGL::CreateForWindow(nsIWidget *aWidget)

@@ -566,6 +566,7 @@ protected:
 
   nsEvent()
   {
+    MOZ_COUNT_CTOR(nsEvent);
   }
 
 public:
@@ -584,6 +585,12 @@ public:
   ~nsEvent()
   {
     MOZ_COUNT_DTOR(nsEvent);
+  }
+
+  nsEvent(const nsEvent& aOther)
+  {
+    MOZ_COUNT_CTOR(nsEvent);
+    *this = aOther;
   }
 
   // See event struct types
@@ -990,7 +997,7 @@ public:
     }
   }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
   ~nsMouseEvent() {
     NS_WARN_IF_FALSE(message != NS_CONTEXTMENU ||
                      button ==

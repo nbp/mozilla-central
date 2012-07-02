@@ -55,8 +55,10 @@ namespace ion {
     _(Test)                                                                 \
     _(Compare)                                                              \
     _(Phi)                                                                  \
+    _(Beta)                                                                 \
     _(OsrValue)                                                             \
     _(OsrScopeChain)                                                        \
+    _(ReturnFromCtor)                                                       \
     _(CheckOverRecursed)                                                    \
     _(RecompileCheck)                                                       \
     _(DefVar)                                                               \
@@ -93,6 +95,7 @@ namespace ion {
     _(ToInt32)                                                              \
     _(TruncateToInt32)                                                      \
     _(ToString)                                                             \
+    _(NewSlots)                                                             \
     _(NewArray)                                                             \
     _(NewObject)                                                            \
     _(NewCallObject)                                                        \

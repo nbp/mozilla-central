@@ -15,7 +15,7 @@
 #include "gfxD2DSurface.h"
 #elif defined(XP_MACOSX)
 #include "gfxPlatformMac.h"
-#elif defined(MOZ_WIDGET_GTK2)
+#elif defined(MOZ_WIDGET_GTK)
 #include "gfxPlatformGtk.h"
 #elif defined(MOZ_WIDGET_QT)
 #include "gfxQtPlatform.h"
@@ -259,7 +259,7 @@ gfxPlatform::Init()
     gPlatform = new gfxWindowsPlatform;
 #elif defined(XP_MACOSX)
     gPlatform = new gfxPlatformMac;
-#elif defined(MOZ_WIDGET_GTK2)
+#elif defined(MOZ_WIDGET_GTK)
     gPlatform = new gfxPlatformGtk;
 #elif defined(MOZ_WIDGET_QT)
     gPlatform = new gfxQtPlatform;
@@ -385,6 +385,16 @@ gfxPlatform::~gfxPlatform()
     // leaked, and we hit them.
     FcFini();
 #endif
+}
+
+already_AddRefed<gfxASurface>
+gfxPlatform::CreateOffscreenImageSurface(const gfxIntSize& aSize,
+                                         gfxASurface::gfxContentType aContentType)
+{ 
+  nsRefPtr<gfxASurface> newSurface;
+  newSurface = new gfxImageSurface(aSize, OptimalFormatForContent(aContentType));
+
+  return newSurface.forget();
 }
 
 already_AddRefed<gfxASurface>
@@ -1441,7 +1451,17 @@ gfxPlatform::Optimal2DFormatForContent(gfxASurface::gfxContentType aContent)
 {
   switch (aContent) {
   case gfxASurface::CONTENT_COLOR:
-    return mozilla::gfx::FORMAT_B8G8R8X8;
+    switch (GetOffscreenFormat()) {
+    case gfxASurface::ImageFormatARGB32:
+      return mozilla::gfx::FORMAT_B8G8R8A8;
+    case gfxASurface::ImageFormatRGB24:
+      return mozilla::gfx::FORMAT_B8G8R8X8;
+    case gfxASurface::ImageFormatRGB16_565:
+      return mozilla::gfx::FORMAT_R5G6B5;
+    default:
+      NS_NOTREACHED("unknown gfxImageFormat for CONTENT_COLOR");
+      return mozilla::gfx::FORMAT_B8G8R8A8;
+    }
   case gfxASurface::CONTENT_ALPHA:
     return mozilla::gfx::FORMAT_A8;
   case gfxASurface::CONTENT_COLOR_ALPHA:

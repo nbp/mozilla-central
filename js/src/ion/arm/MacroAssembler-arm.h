@@ -416,6 +416,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void mov(Imm32 imm, Register dest) {
         ma_mov(imm, dest);
     }
+    void mov(ImmWord imm, Register dest) {
+        ma_mov(Imm32(imm.value), dest);
+    }
     void mov(Register src, Address dest) {
         JS_NOT_REACHED("NYI-IC");
     }
@@ -509,13 +512,15 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
         as_b(label);
     }
 
-    void neg32(const Register &reg) {
-        ma_rsb(reg, Imm32(0), reg);
+    void neg32(Register reg) {
+        ma_neg(reg, reg, SetCond);
     }
-    void test32(const Register &lhs, const Register &rhs) {
+    void test32(Register lhs, Register rhs) {
         ma_tst(lhs, rhs);
     }
-
+    void testPtr(Register lhs, Register rhs) {
+        test32(lhs, rhs);
+    }
 
     // Returns the register containing the type tag.
     Register splitTagForTest(const ValueOperand &value) {
@@ -799,11 +804,9 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void loadValue(Operand dest, ValueOperand val) {
         loadValue(dest.toAddress(), val);
     }
-    void loadValue(Register base, Register index, ValueOperand val);
+    void loadValue(Register base, Register index, ValueOperand val, Imm32 of);
     void loadValue(const BaseIndex &addr, ValueOperand val) {
-        // Harder cases not handled yet.
-        JS_ASSERT(addr.offset == 0);
-        loadValue(addr.base, addr.index, val);
+        loadValue(addr.base, addr.index, val, Imm32(addr.offset));
     }
     void tagValue(JSValueType type, Register payload, ValueOperand dest);
 
@@ -895,7 +898,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
 
     // Builds an exit frame on the stack, with a return address to an internal
     // non-function. Returns offset to be passed to markSafepointAt().
-    uint32 buildFakeExitFrame(const Register &scratch);
+    bool buildFakeExitFrame(const Register &scratch, uint32 *offset);
 
     void callWithExitFrame(IonCode *target);
 

@@ -702,8 +702,8 @@ ScanLinearString(GCMarker *gcmarker, JSLinearString *str)
      * mutations.
      */
     JS_ASSERT(str->JSString::isLinear());
-    while (str->isDependent()) {
-        str = str->asDependent().base();
+    while (str->hasBase()) {
+        str = str->base();
         JS_ASSERT(str->JSString::isLinear());
         JS_COMPARTMENT_ASSERT_STR(gcmarker->runtime, str);
         if (!str->markIfUnmarked())
@@ -797,8 +797,8 @@ MarkChildren(JSTracer *trc, JSObject *obj)
 static void
 MarkChildren(JSTracer *trc, JSString *str)
 {
-    if (str->isDependent())
-        str->asDependent().markChildren(trc);
+    if (str->hasBase())
+        str->markBase(trc);
     else if (str->isRope())
         str->asRope().markChildren(trc);
 }
@@ -1249,7 +1249,8 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
                 end = vp + obj->getDenseArrayInitializedLength();
                 goto scan_value_array;
             } else {
-                JS_ASSERT_IF(runtime->gcIncrementalState != NO_INCREMENTAL,
+                JS_ASSERT_IF(runtime->gcMode == JSGC_MODE_INCREMENTAL &&
+                             runtime->gcIncrementalEnabled,
                              clasp->flags & JSCLASS_IMPLEMENTS_BARRIERS);
             }
             clasp->trace(this, obj);
