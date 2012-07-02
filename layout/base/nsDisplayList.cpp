@@ -2002,6 +2002,68 @@ nsDisplayOwnLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
   return layer.forget();
 }
 
+nsDisplayFixedPosition::nsDisplayFixedPosition(nsDisplayListBuilder* aBuilder,
+                                               nsIFrame* aFrame,
+                                               nsDisplayList* aList)
+    : nsDisplayOwnLayer(aBuilder, aFrame, aList) {
+  MOZ_COUNT_CTOR(nsDisplayFixedPosition);
+}
+
+#ifdef NS_BUILD_REFCNT_LOGGING
+nsDisplayFixedPosition::~nsDisplayFixedPosition() {
+  MOZ_COUNT_DTOR(nsDisplayFixedPosition);
+}
+#endif
+
+already_AddRefed<Layer>
+nsDisplayFixedPosition::BuildLayer(nsDisplayListBuilder* aBuilder,
+                                   LayerManager* aManager,
+                                   const ContainerParameters& aContainerParameters) {
+  nsRefPtr<Layer> layer =
+    nsDisplayOwnLayer::BuildLayer(aBuilder, aManager, aContainerParameters);
+
+  // Work out the anchor point for this fixed position layer. We assume that
+  // any positioning set (left/top/right/bottom) indicates that the
+  // corresponding side of its container should be the anchor point,
+  // defaulting to top-left.
+  nsIFrame* viewportFrame = mFrame->GetParent();
+  nsPresContext *presContext = viewportFrame->PresContext();
+
+  // Fixed position frames are reflowed into the scroll-port size if one has
+  // been set.
+  nsSize containingBlockSize = viewportFrame->GetSize();
+  if (presContext->PresShell()->IsScrollPositionClampingScrollPortSizeSet()) {
+    containingBlockSize = presContext->PresShell()->
+      GetScrollPositionClampingScrollPortSize();
+  }
+
+  // Find out the rect of the viewport frame relative to the reference frame.
+  // This, in conjunction with the container scale, will correspond to the
+  // coordinate-space of the built layer.
+  float factor = presContext->AppUnitsPerDevPixel();
+  nsPoint origin = aBuilder->ToReferenceFrame(viewportFrame);
+  gfxRect anchorRect(NSAppUnitsToFloatPixels(origin.x, factor) *
+                       aContainerParameters.mXScale,
+                     NSAppUnitsToFloatPixels(origin.y, factor) *
+                       aContainerParameters.mYScale,
+                     NSAppUnitsToFloatPixels(containingBlockSize.width, factor) *
+                       aContainerParameters.mXScale,
+                     NSAppUnitsToFloatPixels(containingBlockSize.height, factor) *
+                       aContainerParameters.mYScale);
+
+  gfxPoint anchor(anchorRect.x, anchorRect.y);
+
+  const nsStylePosition* position = mFrame->GetStylePosition();
+  if (position->mOffset.GetRightUnit() != eStyleUnit_Auto)
+    anchor.x = anchorRect.XMost();
+  if (position->mOffset.GetBottomUnit() != eStyleUnit_Auto)
+    anchor.y = anchorRect.YMost();
+
+  layer->SetFixedPositionAnchor(anchor);
+
+  return layer.forget();
+}
+
 nsDisplayScrollLayer::nsDisplayScrollLayer(nsDisplayListBuilder* aBuilder,
                                            nsDisplayList* aList,
                                            nsIFrame* aForFrame,
@@ -2072,12 +2134,15 @@ nsDisplayScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
   nsIContent* content = mScrolledFrame->GetContent();
   ViewID scrollId = nsLayoutUtils::FindIDFor(content);
 
-  nsRect viewport =
-    nsRect(aBuilder->ToReferenceFrame(mScrollFrame), mScrollFrame->GetSize());
+  nsRect viewport = mScrollFrame->GetRect() -
+                    mScrollFrame->GetPosition() +
+                    aBuilder->ToReferenceFrame(mScrollFrame);
 
   bool usingDisplayport = false;
   nsRect displayport;
-  usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+  if (content) {
+    usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
+  }
   RecordFrameMetrics(mScrolledFrame, mScrollFrame, layer, mVisibleRect, viewport,
                      (usingDisplayport ? &displayport : nsnull), scrollId,
                      aContainerParameters);
@@ -2228,71 +2293,6 @@ nsDisplayScrollInfoLayer::ShouldFlattenAway(nsDisplayListBuilder* aBuilder)
   // nsDisplayScrollInfoLayer (with only the metadata) should survive the
   // visibility computation. 
   return RemoveScrollLayerCount() == 1;
-}
-
-nsDisplaySimpleScrollLayer::nsDisplaySimpleScrollLayer(nsDisplayListBuilder* aBuilder,
-                                                       nsIFrame* aFrame, nsDisplayList* aList)
-    : nsDisplayWrapList(aBuilder, aFrame, aList) {
-  MOZ_COUNT_CTOR(nsDisplaySimpleScrollLayer);
-}
-
-#ifdef NS_BUILD_REFCNT_LOGGING
-nsDisplaySimpleScrollLayer::~nsDisplaySimpleScrollLayer() {
-  MOZ_COUNT_DTOR(nsDisplaySimpleScrollLayer);
-}
-#endif
-
-already_AddRefed<Layer>
-nsDisplaySimpleScrollLayer::BuildLayer(nsDisplayListBuilder* aBuilder,
-                                       LayerManager* aManager,
-                                       const ContainerParameters& aContainerParameters) {
-  nsRefPtr<ContainerLayer> layer = aBuilder->LayerBuilder()->
-    BuildContainerLayerFor(aBuilder, aManager, mFrame, this, mList,
-                           aContainerParameters, nsnull);
-
-  // Get the already set unique ID for scrolling this content remotely.
-  // Or, if not set, generate a new ID.
-  nsIContent* content = mFrame->PresContext()->Document()->GetRootElement();
-  ViewID scrollId = nsLayoutUtils::FindIDFor(content);
-
-  nsRect viewport = nsRect(ToReferenceFrame(), mFrame->GetSize());
-
-  bool usingDisplayport = false;
-  nsRect displayport;
-  usingDisplayport = nsLayoutUtils::GetDisplayPort(content, &displayport);
-  RecordFrameMetrics(mFrame, nsnull, layer, mVisibleRect, viewport,
-                     (usingDisplayport ? &displayport : nsnull), scrollId,
-                     aContainerParameters);
-
-  return layer.forget();
-}
-
-bool
-nsDisplaySimpleScrollLayer::ComputeVisibility(nsDisplayListBuilder* aBuilder,
-                                              nsRegion* aVisibleRegion,
-                                              const nsRect& aAllowVisibleRegionExpansion)
-{
-  nsRect displayport;
-  if (nsLayoutUtils::GetDisplayPort(mFrame->PresContext()->Document()->GetRootElement(), &displayport)) {
-    // The visible region for the children may be much bigger than the hole we
-    // are viewing the children from, so that the compositor process has enough
-    // content to asynchronously pan while content is being refreshed.
-
-    nsRegion childVisibleRegion = displayport + ToReferenceFrame();
-
-    nsRect boundedRect =
-      childVisibleRegion.GetBounds().Intersect(mList.GetBounds(aBuilder));
-    nsRect allowExpansion = boundedRect.Intersect(aAllowVisibleRegionExpansion);
-    bool visible = mList.ComputeVisibilityForSublist(
-      aBuilder, &childVisibleRegion, boundedRect, allowExpansion);
-    mVisibleRect = boundedRect;
-
-    return visible;
-
-  } else {
-    return nsDisplayWrapList::ComputeVisibility(aBuilder, aVisibleRegion,
-                                                aAllowVisibleRegionExpansion);
-  }
 }
 
 nsDisplayClip::nsDisplayClip(nsDisplayListBuilder* aBuilder,

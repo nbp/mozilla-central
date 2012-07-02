@@ -1345,8 +1345,8 @@ MacroAssemblerARM::ma_vstr(VFPRegister src, Register base, Register index, int32
     ma_vstr(src, Operand(ScratchRegister, 0));
 }
 
-uint32
-MacroAssemblerARMCompat::buildFakeExitFrame(const Register &scratch)
+bool
+MacroAssemblerARMCompat::buildFakeExitFrame(const Register &scratch, uint32 *offset)
 {
     DebugOnly<uint32> initialDepth = framePushed();
     uint32 descriptor = MakeFrameDescriptor(framePushed(), IonFrame_JS);
@@ -1366,7 +1366,9 @@ MacroAssemblerARMCompat::buildFakeExitFrame(const Register &scratch)
 
     JS_ASSERT(framePushed() == initialDepth + IonExitFrameLayout::Size());
     JS_ASSERT(pseudoReturnOffset - offsetBeforePush == 8);
-    return pseudoReturnOffset;
+
+    *offset = pseudoReturnOffset;
+    return true;
 }
 
 void
@@ -1411,19 +1413,19 @@ MacroAssemblerARMCompat::freeStack(uint32 amount)
 void
 MacroAssemblerARMCompat::add32(Imm32 imm, Register dest)
 {
-    ma_add(imm, dest);
+    ma_add(imm, dest, SetCond);
 }
 
 void
 MacroAssemblerARMCompat::sub32(Imm32 imm, Register dest)
 {
-    ma_sub(imm, dest);
+    ma_sub(imm, dest, SetCond);
 }
 
 void
 MacroAssemblerARMCompat::and32(Imm32 imm, Register dest)
 {
-    ma_and(imm, dest);
+    ma_and(imm, dest, SetCond);
 }
 
 void
@@ -2365,22 +2367,13 @@ MacroAssemblerARMCompat::storeValue(ValueOperand val, Register base, Register in
 }
 
 void
-MacroAssemblerARMCompat::loadValue(Register base, Register index, ValueOperand val)
+MacroAssemblerARMCompat::loadValue(Register base, Register index, ValueOperand val, Imm32 off)
 {
-    if (isValueDTRDCandidate(val)) {
-        ma_lsl(Imm32(TimesEight), index, ScratchRegister);
-        ma_ldrd(EDtrAddr(base, EDtrOffReg(ScratchRegister)), val.payloadReg(), val.typeReg());
-    } else {
-        // The ideal case is the base is dead so the sequence:
-        // ldr val.payloadReg(), [base, index LSL shift]!
-        // ldr val.typeReg(), [base, #4]
-        // only clobbers dead registers
-        // Sadly, this information is not available, so the scratch register is necessary.
-        ma_alu(base, lsl(index, TimesEight), ScratchRegister, op_add);
 
-        // This case is handled by a simpler function.
-        loadValue(Address(ScratchRegister, 0), val);
-    }
+    ma_alu(base, lsl(index, TimesEight), ScratchRegister, op_add);
+
+    // This case is handled by a simpler function.
+    loadValue(Address(ScratchRegister, off.value), val);
 }
 
 void

@@ -273,7 +273,7 @@ CodeGeneratorX86Shared::visitCompareD(LCompareD *comp)
     FloatRegister lhs = ToFloatRegister(comp->left());
     FloatRegister rhs = ToFloatRegister(comp->right());
 
-    Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->jsop());
+    Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->mir()->jsop());
     masm.compareDouble(cond, lhs, rhs);
     emitSet(Assembler::ConditionFromDoubleCondition(cond), ToRegister(comp->output()),
             NaNCondFromDoubleCondition(cond));
@@ -305,7 +305,7 @@ CodeGeneratorX86Shared::visitCompareDAndBranch(LCompareDAndBranch *comp)
     FloatRegister lhs = ToFloatRegister(comp->left());
     FloatRegister rhs = ToFloatRegister(comp->right());
 
-    Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->jsop());
+    Assembler::DoubleCondition cond = JSOpToDoubleCondition(comp->mir()->jsop());
     masm.compareDouble(cond, lhs, rhs);
     emitBranch(Assembler::ConditionFromDoubleCondition(cond), comp->ifTrue(), comp->ifFalse(),
                NaNCondFromDoubleCondition(cond));
@@ -569,9 +569,9 @@ CodeGeneratorX86Shared::visitMulNegativeZeroCheck(MulNegativeZeroCheck *ool)
 {
     LMulI *ins = ool->ins();
     Register result = ToRegister(ins->output());
-    Register lhsCopy = ToRegister(ins->lhsCopy());
+    Operand lhsCopy = ToOperand(ins->lhsCopy());
     Operand rhs = ToOperand(ins->rhs());
-    JS_ASSERT(lhsCopy != result);
+    JS_ASSERT_IF(lhsCopy.kind() == Operand::REG, lhsCopy.reg() != result.code());
 
     // Result is -0 if lhs or rhs is negative.
     masm.movl(lhsCopy, result);
@@ -888,7 +888,7 @@ CodeGeneratorX86Shared::visitTableSwitch(LTableSwitch *ins)
     DeferredJumpTable *d = new DeferredJumpTable(ins);
     if (!masm.addDeferredData(d, (1 << ScalePointer) * cases))
         return false;
-   
+
     // Compute the position where a pointer to the right case stands.
     const LAllocation *base = ins->tempPointer();
     masm.mov(d->label(), ToRegister(base));

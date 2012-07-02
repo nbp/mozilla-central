@@ -323,6 +323,43 @@ class MacroAssemblerX86Shared : public Assembler
         bind(&done);
     }
 
+    bool maybeInlineDouble(uint64_t u, const FloatRegister &dest) {
+        // This implements parts of "13.4 Generating constants" of 
+        // "2. Optimizing subroutines in assembly language" by Agner Fog.
+        switch (u) {
+          case 0ULL:
+            xorpd(dest, dest);
+            break;
+          case 0x3fe0000000000000ULL: // 0.5
+            pcmpeqw(dest, dest);
+            psllq(Imm32(55), dest);
+            psrlq(Imm32(2), dest);
+            break;
+          case 0x3ff0000000000000ULL: // 1.0
+            pcmpeqw(dest, dest);
+            psllq(Imm32(54), dest);
+            psrlq(Imm32(2), dest);
+            break;
+          case 0x3ff8000000000000ULL: // 1.5
+            pcmpeqw(dest, dest);
+            psllq(Imm32(53), dest);
+            psrlq(Imm32(2), dest);
+            break;
+          case 0x4000000000000000ULL: // 2.0
+            pcmpeqw(dest, dest);
+            psllq(Imm32(63), dest);
+            psrlq(Imm32(1), dest);
+            break;
+          case 0xc000000000000000ULL: // -2.0
+            pcmpeqw(dest, dest);
+            psllq(Imm32(62), dest);
+            break;
+          default:
+            return false;
+        }
+        return true;
+    }
+
     // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().
     CodeOffsetLabel toggledJump(Label *label) {
         CodeOffsetLabel offset(size());
@@ -337,33 +374,23 @@ class MacroAssemblerX86Shared : public Assembler
 
     // Builds an exit frame on the stack, with a return address to an internal
     // non-function. Returns offset to be passed to markSafepointAt().
-    uint32 buildFakeExitFrame(const Register &scratch) {
+    bool buildFakeExitFrame(const Register &scratch, uint32 *offset) {
         DebugOnly<uint32> initialDepth = framePushed();
-        Label pseudocall, endcall;
 
-        call(&pseudocall);
-        uint32 callOffset = currentOffset();
-        jump(&endcall);
-
-        align(0x10);
-        {
-            bind(&pseudocall);
-#ifdef JS_CPU_X86
-            movl(Operand(StackPointer, 0x0), scratch);
-#else
-            movq(Operand(StackPointer, 0x0), scratch);
-#endif
-            ret();
-        }
-
-        bind(&endcall);
+        CodeLabel *cl = new CodeLabel();
+        if (!addCodeLabel(cl))
+            return false;
+        mov(cl->dest(), scratch);
 
         uint32 descriptor = MakeFrameDescriptor(framePushed(), IonFrame_JS);
         Push(Imm32(descriptor));
         Push(scratch);
 
+        bind(cl->src());
+        *offset = currentOffset();
+
         JS_ASSERT(framePushed() == initialDepth + IonExitFrameLayout::Size());
-        return callOffset;
+        return true;
     }
 
     void callWithExitFrame(IonCode *target) {

@@ -1910,6 +1910,25 @@ public:
 };
 
 /**
+ * A display item used to represent fixed position elements. This will ensure
+ * the contents gets its own layer, and that the built layer will have
+ * position-related metadata set on it.
+ */
+class nsDisplayFixedPosition : public nsDisplayOwnLayer {
+public:
+  nsDisplayFixedPosition(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
+                         nsDisplayList* aList);
+#ifdef NS_BUILD_REFCNT_LOGGING
+  virtual ~nsDisplayFixedPosition();
+#endif
+
+  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
+                                             LayerManager* aManager,
+                                             const ContainerParameters& aContainerParameters);
+  NS_DISPLAY_DECL_NAME("FixedPosition", TYPE_OWN_LAYER)
+};
+
+/**
  * This potentially creates a layer for the given list of items, whose
  * visibility is determined by the displayport for the given frame instead of
  * what is passed in to ComputeVisibility.
@@ -2013,39 +2032,6 @@ public:
                           nsDisplayItem* aItem);
 
   virtual bool ShouldFlattenAway(nsDisplayListBuilder* aBuilder);
-};
-
-/**
- * A display item that has no purpose but to ensure its contents get
- * their own layer and that FrameMetrics are recorded, if the frame's
- * document's root element has a displayport.
- */
-class nsDisplaySimpleScrollLayer : public nsDisplayWrapList {
-public:
-  nsDisplaySimpleScrollLayer(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
-                             nsDisplayList* aList);
-#ifdef NS_BUILD_REFCNT_LOGGING
-  virtual ~nsDisplaySimpleScrollLayer();
-#endif
-
-  virtual bool ComputeVisibility(nsDisplayListBuilder* aBuilder,
-                                 nsRegion* aVisibleRegion,
-                                 const nsRect& aAllowVisibleRegionExpansion);
-
-  virtual already_AddRefed<Layer> BuildLayer(nsDisplayListBuilder* aBuilder,
-                                             LayerManager* aManager,
-                                             const ContainerParameters& aContainerParameters);
-  virtual LayerState GetLayerState(nsDisplayListBuilder* aBuilder,
-                                   LayerManager* aManager,
-                                   const ContainerParameters& aParameters)
-  {
-    return mozilla::LAYER_ACTIVE;
-  }
-  virtual bool TryMerge(nsDisplayListBuilder* aBuilder, nsDisplayItem* aItem)
-  {
-    return false;
-  }
-  NS_DISPLAY_DECL_NAME("SimpleScrollLayer", TYPE_SIMPLE_SCROLL_LAYER)
 };
 
 /**

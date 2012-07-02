@@ -48,6 +48,7 @@
 #include "GreedyAllocator.h"
 #include "LICM.h"
 #include "ValueNumbering.h"
+#include "EdgeCaseAnalysis.h"
 #include "RangeAnalysis.h"
 #include "LinearScan.h"
 #include "jscompartment.h"
@@ -761,11 +762,11 @@ TestCompiler(IonBuilder &builder, MIRGraph &graph)
         AssertGraphCoherency(graph);
     }
 
-    if (js_IonOptions.rangeAnalysis) {
-        RangeAnalysis rangeAnalysis(graph);
-        if (!rangeAnalysis.analyzeEarly())
+    if (js_IonOptions.edgeCaseAnalysis) {
+        EdgeCaseAnalysis edgeCaseAnalysis(graph);
+        if (!edgeCaseAnalysis.analyzeEarly())
             return false;
-        IonSpewPass("Range Analysis (Early)");
+        IonSpewPass("Edge Case Analysis (Early)");
         AssertGraphCoherency(graph);
     }
 
@@ -774,6 +775,24 @@ TestCompiler(IonBuilder &builder, MIRGraph &graph)
         if (!gvn.analyze())
             return false;
         IonSpewPass("GVN");
+        AssertGraphCoherency(graph);
+    }
+
+    if (js_IonOptions.rangeAnalysis) {
+        RangeAnalysis r(graph);
+        if (!r.addBetaNobes())
+            return false;
+        IonSpewPass("Beta");
+        AssertGraphCoherency(graph);
+
+        if (!r.analyze())
+            return false;
+        IonSpewPass("Range Analysis");
+        AssertGraphCoherency(graph);
+
+        if (!r.removeBetaNobes())
+            return false;
+        IonSpewPass("De-Beta");
         AssertGraphCoherency(graph);
     }
 
@@ -790,11 +809,11 @@ TestCompiler(IonBuilder &builder, MIRGraph &graph)
         AssertGraphCoherency(graph);
     }
 
-    if (js_IonOptions.rangeAnalysis) {
-        RangeAnalysis rangeAnalysis(graph);
-        if (!rangeAnalysis.analyzeLate())
+    if (js_IonOptions.edgeCaseAnalysis) {
+        EdgeCaseAnalysis edgeCaseAnalysis(graph);
+        if (!edgeCaseAnalysis.analyzeLate())
             return false;
-        IonSpewPass("Range Analysis (Late)");
+        IonSpewPass("Edge Case Analysis (Late)");
         AssertGraphCoherency(graph);
     }
 

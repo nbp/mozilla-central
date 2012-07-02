@@ -11,8 +11,8 @@ const Cr = Components.results;
 
 var EXPORTED_SYMBOLS = ['VirtualCursorController'];
 
+Cu.import('resource://gre/modules/accessibility/Utils.jsm');
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
-Cu.import('resource://gre/modules/Services.jsm');
 
 var gAccRetrieval = Cc['@mozilla.org/accessibleRetrieval;1'].
   getService(Ci.nsIAccessibleRetrieval);
@@ -408,28 +408,54 @@ var VirtualCursorController = {
   SINGLE_LINE_EDITABLE: 1,
   MULTI_LINE_EDITABLE: 2,
 
-  explorebytouch: false,
+  exploreByTouch: false,
 
   attach: function attach(aWindow) {
     this.chromeWin = aWindow;
     this.chromeWin.document.addEventListener('keypress', this, true);
+    this.chromeWin.document.addEventListener('mousemove', this, true);
   },
 
   detach: function detach() {
     this.chromeWin.document.removeEventListener('keypress', this, true);
+    this.chromeWin.document.removeEventListener('mousemove', this, true);
   },
 
-  _getBrowserApp: function _getBrowserApp() {
-    switch (Services.appinfo.OS) {
-      case 'Android':
-        return this.chromeWin.BrowserApp;
-      default:
-        return this.chromeWin.gBrowser;
+  handleEvent: function VirtualCursorController_handleEvent(aEvent) {
+    switch (aEvent.type) {
+      case 'keypress':
+        this._handleKeypress(aEvent);
+        break;
+      case 'mousemove':
+        this._handleMousemove(aEvent);
+        break;
     }
   },
 
-  handleEvent: function handleEvent(aEvent) {
-    let document = this._getBrowserApp().selectedBrowser.contentDocument;
+  _handleMousemove: function _handleMousemove(aEvent) {
+    // Explore by touch is disabled.
+    if (!this.exploreByTouch)
+      return;
+
+    // On non-Android we use the shift key to simulate touch.
+    if (Utils.OS != 'Android' && !aEvent.shiftKey)
+      return;
+
+    // We should not be calling moveToPoint more than 10 times a second.
+    // It is granular enough to feel natural, and it does not hammer the CPU.
+    if (!this._handleMousemove._lastEventTime ||
+        aEvent.timeStamp - this._handleMousemove._lastEventTime >= 100) {
+      this.moveToPoint(Utils.getCurrentContentDoc(this.chromeWin),
+                       aEvent.screenX, aEvent.screenY);
+      this._handleMousemove._lastEventTime = aEvent.timeStamp;
+    }
+
+    aEvent.preventDefault();
+    aEvent.stopImmediatePropagation();
+  },
+
+  _handleKeypress: function _handleKeypress(aEvent) {
+    let document = Utils.getCurrentContentDoc(this.chromeWin);
     let target = aEvent.target;
 
     switch (aEvent.keyCode) {
@@ -487,7 +513,7 @@ var VirtualCursorController = {
             target.blur();
         }
 
-        if (Services.appinfo.OS == 'Android')
+        if (Utils.OS == 'Android')
           // Return focus to native Android browser chrome.
           Cc['@mozilla.org/android/bridge;1'].
             getService(Ci.nsIAndroidBridge).handleGeckoMessage(
@@ -505,6 +531,11 @@ var VirtualCursorController = {
 
     aEvent.preventDefault();
     aEvent.stopPropagation();
+  },
+
+  moveToPoint: function moveToPoint(aDocument, aX, aY) {
+    this.getVirtualCursor(aDocument).moveToPoint(TraversalRules.Simple,
+                                                 aX, aY, true);
   },
 
   _isEditableText: function _isEditableText(aElement) {
@@ -590,8 +621,7 @@ var VirtualCursorController = {
         doc = doc.parentDocument;
         continue;
       }
-      if (vc)
-        vc.moveNext(aRule || TraversalRules.Simple, aAccessible, true);
+      vc.moveNext(aRule || TraversalRules.Simple, aAccessible, true);
       break;
     }
   },

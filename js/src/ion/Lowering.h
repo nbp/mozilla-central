@@ -111,6 +111,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitParameter(MParameter *param);
     bool visitCallee(MCallee *callee);
     bool visitGoto(MGoto *ins);
+    bool visitNewSlots(MNewSlots *ins);
     bool visitNewArray(MNewArray *ins);
     bool visitNewObject(MNewObject *ins);
     bool visitNewCallObject(MNewCallObject *ins);
@@ -120,6 +121,7 @@ class LIRGenerator : public LIRGeneratorSpecific
     bool visitPrepareCall(MPrepareCall *ins);
     bool visitPassArg(MPassArg *arg);
     bool visitCreateThis(MCreateThis *ins);
+    bool visitReturnFromCtor(MReturnFromCtor *ins);
     bool visitCall(MCall *call);
     bool visitTest(MTest *test);
     bool visitCompare(MCompare *comp);

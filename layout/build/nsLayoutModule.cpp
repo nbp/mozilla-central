@@ -52,6 +52,7 @@
 #include "ThirdPartyUtil.h"
 #include "mozilla/Services.h"
 #include "nsStructuredCloneContainer.h"
+#include "mozilla/Attributes.h"
 
 #include "nsIEventListenerService.h"
 #include "nsIFrameMessageManager.h"
@@ -281,7 +282,7 @@ NS_GENERIC_FACTORY_CONSTRUCTOR(SmsRequestManager)
 // references to objects in other component libraries that have already been
 // shutdown (and possibly unloaded if 60709 is ever fixed).
 
-class LayoutShutdownObserver : public nsIObserver
+class LayoutShutdownObserver MOZ_FINAL : public nsIObserver
 {
 public:
   NS_DECL_ISUPPORTS
@@ -370,7 +371,7 @@ Shutdown()
   nsLayoutStatics::Release();
 }
 
-#ifdef NS_DEBUG
+#ifdef DEBUG
 nsresult NS_NewFrameUtil(nsIFrameUtil** aResult);
 nsresult NS_NewLayoutDebugger(nsILayoutDebugger** aResult);
 #endif

@@ -108,7 +108,7 @@ class IonBuilder : public MIRGenerator
 
         State state;            // Current state of this control structure.
         jsbytecode *stopAt;     // Bytecode at which to stop the processing loop.
-        
+
         // For if structures, this contains branch information.
         union {
             struct {
@@ -197,8 +197,8 @@ class IonBuilder : public MIRGenerator
                TypeOracle *oracle, CompileInfo &info, size_t inliningDepth = 0, uint32 loopDepth = 0);
 
     bool build();
-    bool buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoint, MDefinition *thisDefn,
-                     MDefinitionVector &args);
+    bool buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoint,
+                     MDefinition *thisDefn, MDefinitionVector &args);
 
   private:
     bool traverseBytecode();
@@ -377,15 +377,49 @@ class IonBuilder : public MIRGenerator
         InliningStatus_Inlined
     };
 
+    // Inlining helpers.
     bool discardCallArgs(uint32 argc, MDefinitionVector &argv, MBasicBlock *bb);
     bool discardCall(uint32 argc, MDefinitionVector &argv, MBasicBlock *bb);
-    InliningStatus inlineNativeCall(JSFunction *target, uint32 argc, bool constructing);
-    InliningStatus inlineMathFunction(MMathFunction::Function function, MIRType argType,
-                                      MIRType returnType);
+    types::TypeSet *getInlineReturnTypeSet();
+    MIRType getInlineReturnType();
+    types::TypeSet *getInlineArgTypeSet(uint32 argc, uint32 arg);
+    MIRType getInlineArgType(uint32 argc, uint32 arg);
 
-    bool jsop_call_inline(JSFunction *callee, uint32 argc, IonBuilder &inlineBuilder);
-    bool inlineScriptedCall(JSFunction *target, uint32 argc);
-    bool makeInliningDecision(JSFunction *target);
+    // Array natives.
+    InliningStatus inlineArray(uint32 argc, bool constructing);
+    InliningStatus inlineArrayPopShift(MArrayPopShift::Mode mode, uint32 argc, bool constructing);
+    InliningStatus inlineArrayPush(uint32 argc, bool constructing);
+
+    // Math natives.
+    InliningStatus inlineMathAbs(uint32 argc, bool constructing);
+    InliningStatus inlineMathFloor(uint32 argc, bool constructing);
+    InliningStatus inlineMathRound(uint32 argc, bool constructing);
+    InliningStatus inlineMathSqrt(uint32 argc, bool constructing);
+    InliningStatus inlineMathFunction(MMathFunction::Function function, uint32 argc,
+                                      bool constructing);
+
+    // String natives.
+    InliningStatus inlineStrCharCodeAt(uint32 argc, bool constructing);
+    InliningStatus inlineStrFromCharCode(uint32 argc, bool constructing);
+    InliningStatus inlineStrCharAt(uint32 argc, bool constructing);
+
+    InliningStatus inlineNativeCall(JSNative native, uint32 argc, bool constructing);
+
+    bool jsop_call_inline(IonBuilder &inlineBuilder, HandleFunction callee,
+                          uint32 argc, bool constructing);
+    bool inlineScriptedCall(HandleFunction target, uint32 argc, bool constructing);
+    bool makeInliningDecision(HandleFunction target);
+
+    bool jsop_call_fun_barrier(HandleFunction target, uint32 argc, 
+                               bool constructing,
+							   types::TypeSet *types,
+                               types::TypeSet *barrier);
+    bool makeCallBarrier(HandleFunction target, uint32 argc, bool constructing,
+                         types::TypeSet *types, types::TypeSet *barrier);
+
+    inline bool TestCommonPropFunc(JSContext *cx, types::TypeSet *types,
+                                   HandleId id, JSFunction **funcp, 
+                                   bool isGetter);
 
   public:
     // A builder is inextricably tied to a particular script.

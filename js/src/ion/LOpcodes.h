@@ -57,6 +57,7 @@
     _(Goto)                         \
     _(NewArray)                     \
     _(NewObject)                    \
+    _(NewSlots)                     \
     _(NewCallObject)                \
     _(InitProp)                     \
     _(CheckOverRecursed)            \
@@ -67,6 +68,7 @@
     _(CallConstructor)              \
     _(StackArg)                     \
     _(CreateThis)                   \
+    _(ReturnFromCtor)               \
     _(BitNotI)                      \
     _(BitNotV)                      \
     _(BitOpI)                       \
@@ -84,6 +86,8 @@
     _(CompareV)                     \
     _(CompareAndBranch)             \
     _(CompareDAndBranch)            \
+    _(CompareB)                     \
+    _(CompareBAndBranch)            \
     _(IsNullOrUndefined)            \
     _(IsNullOrUndefinedAndBranch)   \
     _(AbsI)                         \
@@ -113,6 +117,7 @@
     _(OsrScopeChain)                \
     _(RegExp)                       \
     _(Lambda)                       \
+    _(LambdaForSingleton)           \
     _(ImplicitThis)                 \
     _(Slots)                        \
     _(Elements)                     \
@@ -122,7 +127,6 @@
     _(StoreSlotT)                   \
     _(GuardShape)                   \
     _(GuardClass)                   \
-    _(GuardObject)                  \
     _(TypeBarrier)                  \
     _(MonitorTypes)                 \
     _(InitializedLength)            \

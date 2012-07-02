@@ -23,12 +23,13 @@ SYNC_PP_RES_XML=res/xml/sync_syncadapter.xml res/xml/sync_options.xml
 FENNEC_JAVA_FILES = \
   AboutHomeContent.java \
   AboutHomeSection.java \
+  AndroidImport.java \
+  AndroidImportPreference.java \
   AlertNotification.java \
   AwesomeBar.java \
   AwesomeBarTabs.java \
   BrowserApp.java \
   BrowserToolbar.java \
-  ConfirmPreference.java \
   SyncPreference.java \
   db/AndroidBrowserDB.java \
   db/BrowserDB.java \
@@ -63,11 +64,15 @@ FENNEC_JAVA_FILES = \
   GeckoThread.java \
   GlobalHistory.java \
   GeckoViewsFactory.java \
+  INIParser.java \
+  INISection.java \
   LinkPreference.java \
   LinkTextView.java \
   MenuItemActionBar.java \
   MenuItemDefault.java \
+  MultiChoicePreference.java \
   NSSBridge.java \
+  PrivateDataPreference.java \
   PropertyAnimator.java \
   ProfileMigrator.java \
   PromptService.java \
@@ -86,6 +91,7 @@ FENNEC_JAVA_FILES = \
   TabsTray.java \
   TabsAccessor.java \
   Telemetry.java \
+  WebAppAllocator.java \
   gfx/BitmapUtils.java \
   gfx/BufferedCairoImage.java \
   gfx/CairoGLInfo.java \
@@ -136,6 +142,8 @@ endif
 
 FENNEC_PP_JAVA_FILES = \
   App.java \
+  WebApp.java \
+  WebApps.java \
   GeckoActivity.java \
   LauncherShortcuts.java \
   NotificationHandler.java \
@@ -249,6 +257,7 @@ RES_LAYOUT = \
   res/layout/doorhanger.xml \
   res/layout/find_in_page_content.xml \
   res/layout/gecko_app.xml \
+  res/layout/web_app.xml \
   res/layout/launch_app_list.xml \
   res/layout/launch_app_listitem.xml \
   res/layout/menu_item.xml \
@@ -259,12 +268,12 @@ RES_LAYOUT = \
   res/layout/site_setting_title.xml \
   res/layout/setup_screen.xml \
   res/layout/site_identity_popup.xml \
-  res/layout/reader_popup.xml \
   res/layout/remote_tabs.xml \
   res/layout/remote_tabs_child.xml \
   res/layout/remote_tabs_group.xml \
   res/layout/tabs_counter.xml \
   res/layout/tabs_panel.xml \
+  res/layout/tabs_panel_toolbar.xml \
   res/layout/tabs_row.xml \
   res/layout/tabs_tray.xml \
   res/layout/list_item_header.xml \
@@ -283,19 +292,21 @@ RES_LAYOUT_LAND_V14 = \
 
 RES_LAYOUT_XLARGE = \
   res/layout-xlarge/browser_toolbar.xml \
+  res/layout-xlarge/doorhangerpopup.xml \
   res/layout-xlarge/gecko_app.xml \
   res/layout-xlarge/remote_tabs_child.xml \
   res/layout-xlarge/remote_tabs_group.xml \
-  res/layout-xlarge/tabs_panel.xml \
+  res/layout-xlarge/tabs_panel_toolbar.xml \
   res/layout-xlarge/tabs_row.xml \
   $(NULL)
 
 RES_LAYOUT_SW600DP = \
   res/layout-sw600dp/browser_toolbar.xml \
+  res/layout-sw600dp/doorhangerpopup.xml \
   res/layout-sw600dp/gecko_app.xml \
   res/layout-sw600dp/remote_tabs_child.xml \
   res/layout-sw600dp/remote_tabs_group.xml \
-  res/layout-sw600dp/tabs_panel.xml \
+  res/layout-sw600dp/tabs_panel_toolbar.xml \
   res/layout-sw600dp/tabs_row.xml \
   $(NULL)
 
@@ -375,6 +386,8 @@ RES_DRAWABLE_BASE = \
   res/drawable/ic_menu_reload.png \
   res/drawable/ic_menu_save_as_pdf.png \
   res/drawable/ic_menu_share.png \
+  res/drawable/ic_menu_reading_list_add.png \
+  res/drawable/ic_menu_reading_list_remove.png \
   res/drawable/ic_menu_forward.png \
   res/drawable/remote_tabs_off.png \
   res/drawable/remote_tabs_on.png \
@@ -455,6 +468,8 @@ RES_DRAWABLE_HDPI = \
   res/drawable-hdpi/ic_menu_reload.png \
   res/drawable-hdpi/ic_menu_save_as_pdf.png \
   res/drawable-hdpi/ic_menu_share.png \
+  res/drawable-hdpi/ic_menu_reading_list_add.png \
+  res/drawable-hdpi/ic_menu_reading_list_remove.png \
   res/drawable-hdpi/ic_menu_forward.png \
   res/drawable-hdpi/remote_tabs_off.png \
   res/drawable-hdpi/remote_tabs_on.png \
@@ -503,6 +518,8 @@ RES_DRAWABLE_MDPI_V11 = \
   res/drawable-mdpi-v11/ic_menu_reload.png \
   res/drawable-mdpi-v11/ic_menu_save_as_pdf.png \
   res/drawable-mdpi-v11/ic_menu_share.png \
+  res/drawable-mdpi-v11/ic_menu_reading_list_add.png \
+  res/drawable-mdpi-v11/ic_menu_reading_list_remove.png \
   res/drawable-mdpi-v11/ic_menu_forward.png \
   res/drawable-mdpi-v11/menu.png \
   res/drawable-mdpi-v11/menu_panel_bg.9.png \
@@ -525,6 +542,8 @@ RES_DRAWABLE_HDPI_V11 = \
   res/drawable-hdpi-v11/ic_menu_reload.png \
   res/drawable-hdpi-v11/ic_menu_save_as_pdf.png \
   res/drawable-hdpi-v11/ic_menu_share.png \
+  res/drawable-hdpi-v11/ic_menu_reading_list_add.png \
+  res/drawable-hdpi-v11/ic_menu_reading_list_remove.png \
   res/drawable-hdpi-v11/ic_menu_forward.png \
   res/drawable-hdpi-v11/menu.png \
   res/drawable-hdpi-v11/menu_panel_bg.9.png \
@@ -564,6 +583,8 @@ RES_DRAWABLE_XHDPI_V11 = \
   res/drawable-xhdpi-v11/ic_menu_reload.png \
   res/drawable-xhdpi-v11/ic_menu_save_as_pdf.png \
   res/drawable-xhdpi-v11/ic_menu_share.png \
+  res/drawable-xhdpi-v11/ic_menu_reading_list_add.png \
+  res/drawable-xhdpi-v11/ic_menu_reading_list_remove.png \
   res/drawable-xhdpi-v11/remote_tabs_off.png \
   res/drawable-xhdpi-v11/remote_tabs_on.png \
   res/drawable-xhdpi-v11/tab_new.png \
@@ -852,6 +873,10 @@ RES_MENU = \
   res/menu/titlebar_contextmenu.xml \
   $(NULL)
 
+RES_RAW = \
+  res/raw/webapp_prefs_js \
+  $(NULL)
+
 JAVA_CLASSPATH = $(ANDROID_SDK)/android.jar
 
 ifdef MOZ_CRASHREPORTER
@@ -908,7 +933,7 @@ MOZ_ANDROID_DRAWABLES += \
 
 MOZ_ANDROID_DRAWABLES += $(shell if test -e $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/android-resources.mn; then cat $(topsrcdir)/$(MOZ_BRANDING_DIRECTORY)/android-resources.mn | tr '\n' ' ';  fi)
 
-RESOURCES=$(RES_LAYOUT) $(RES_LAYOUT_LAND_V14) $(RES_LAYOUT_XLARGE) $(RES_LAYOUT_SW600DP) $(RES_VALUES) $(RES_VALUES_V11) $(RES_VALUES_XLARGE) $(RES_VALUES_SW600DP) $(RES_VALUES_LAND_V14) $(RES_VALUES_SW600DP_V14) $(RES_XML) $(RES_ANIM) $(RES_DRAWABLE_NODPI) $(RES_DRAWABLE_BASE) $(RES_DRAWABLE_LDPI) $(RES_DRAWABLE_HDPI) $(RES_DRAWABLE_MDPI_V11) $(RES_DRAWABLE_HDPI_V11) $(RES_DRAWABLE_XHDPI_V11) $(RES_DRAWABLE_LAND_V14) $(RES_DRAWABLE_LAND_MDPI_V14) $(RES_DRAWABLE_LAND_HDPI_V14) $(RES_DRAWABLE_LAND_XHDPI_V14) $(RES_DRAWABLE_XLARGE_MDPI) $(RES_DRAWABLE_XLARGE_HDPI) $(RES_DRAWABLE_XLARGE_XHDPI) $(RES_DRAWABLE_SW600DP_MDPI) $(RES_DRAWABLE_SW600DP_HDPI) $(RES_DRAWABLE_SW600DP_XHDPI) $(RES_COLOR) $(RES_MENU)
+RESOURCES=$(RES_LAYOUT) $(RES_LAYOUT_LAND_V14) $(RES_LAYOUT_XLARGE) $(RES_LAYOUT_SW600DP) $(RES_VALUES) $(RES_VALUES_V11) $(RES_VALUES_XLARGE) $(RES_VALUES_SW600DP) $(RES_VALUES_LAND_V14) $(RES_VALUES_SW600DP_V14) $(RES_XML) $(RES_ANIM) $(RES_DRAWABLE_NODPI) $(RES_DRAWABLE_BASE) $(RES_DRAWABLE_LDPI) $(RES_DRAWABLE_HDPI) $(RES_DRAWABLE_MDPI_V11) $(RES_DRAWABLE_HDPI_V11) $(RES_DRAWABLE_XHDPI_V11) $(RES_DRAWABLE_LAND_V14) $(RES_DRAWABLE_LAND_MDPI_V14) $(RES_DRAWABLE_LAND_HDPI_V14) $(RES_DRAWABLE_LAND_XHDPI_V14) $(RES_DRAWABLE_XLARGE_MDPI) $(RES_DRAWABLE_XLARGE_HDPI) $(RES_DRAWABLE_XLARGE_XHDPI) $(RES_DRAWABLE_SW600DP_MDPI) $(RES_DRAWABLE_SW600DP_HDPI) $(RES_DRAWABLE_SW600DP_XHDPI) $(RES_COLOR) $(RES_MENU) $(RES_RAW)
 
 RES_DIRS= \
   res/layout              \
@@ -991,11 +1016,29 @@ android-preqs = \
   Makefile.in \
   $(call mkdir_deps,db,sync/repositories/android) \
   $(SYNC_MANIFEST_FRAGMENTS) \
+  WebAppManifestFragment.xml.in \
+  WebAppsFragments.java \
   $(NULL)
 
 $(android-tgts): % : %.in $(android-preqs)
 	$(PYTHON) $(topsrcdir)/config/Preprocessor.py \
-             $(AUTOMATION_PPARGS) $(DEFINES) $(ACDEFINES) $< > $@
+             $(AUTOMATION_PPARGS) -DOBJDIR="`pwd`" $(DEFINES) $(ACDEFINES) $< > $@
+
+# Add a predefined number of WebApp<num> classes to the WebApps class.
+# These are used so that each webapp can launch in its own process
+# Keep this number in sync with the max web apps in WebAppAllocator.java
+NUM_WEB_APPS=10
+WebAppManifestFragment.xml.in: WebAppManifestFragment.xml.frag
+	@rm -f $@
+	@for n in `$(PYTHON) -c "for x in range($(NUM_WEB_APPS)): print x"`; do \
+		cat $< | sed s,@APPNUM@,$$n,g >> $@ ; \
+	done
+
+WebAppsFragments.java: WebAppsFragment.java.frag
+	@rm -f $@
+	@for n in `$(PYTHON) -c "for x in range($(NUM_WEB_APPS)): print x"`; do \
+		cat $< | sed s,@APPNUM@,$$n,g >> $@ ; \
+	done
 
 res/drawable/icon.png: $(MOZ_APP_ICON)
 	$(NSINSTALL) -D res/drawable
