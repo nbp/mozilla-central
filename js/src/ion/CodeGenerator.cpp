@@ -737,18 +737,19 @@ CodeGenerator::emitCallInvokeFunction(LApplyArgsGeneric *apply, Register extraSt
 // Do not bailout after the execution of this function since the stack no longer
 // correspond to what is expected by the snapshots.
 void
-CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
+CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSpace)
 {
     // Holds the function nargs. Initially undefined.
     Register argcreg = ToRegister(apply->getArgc());
 
-    Label loop, end;
-    Register count = ToRegister(apply->getTempObject());
-    Register copyreg = ToRegister(apply->getTempCopy());
+    Register count = extraStackSpace;
+    Register copyreg = ToRegister(apply->getTempObject());
     size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
+    Label end;
 
-    masm.branchTestPtr(Assembler::Zero, argcreg, argcreg, &end);
+    // Initialize the loop counter AND Compute the stack usage (if == 0)
     masm.movePtr(argcreg, count);
+    masm.branchTestPtr(Assembler::Zero, argcreg, argcreg, &end);
 
     // Copy arguments.
     {
@@ -765,6 +766,12 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply)
         masm.subPtr(Imm32(1), count);
         masm.branchTestPtr(Assembler::NonZero, count, count, &loop);
     }
+
+    // Compute the stack usage.
+    masm.movePtr(argcreg, count);
+    masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), count);
+
+    // Join with all arguments copied and the extra stack usage computed.
     masm.bind(&end);
 
     // Push this.
@@ -806,7 +813,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     // correct.
 
     // Copy the arguments of the current function.
-    emitPushArguments(apply);
+    emitPushArguments(apply, copyreg);
 
     // masm.checkStackAlignment();
 
@@ -814,8 +821,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     if (apply->hasSingleTarget() &&
         apply->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT)
     {
-        masm.movePtr(argcreg, copyreg);
-        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
         emitCallInvokeFunction(apply, copyreg);
         emitPopArguments(apply, copyreg);
         return true;
@@ -847,10 +852,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
     // Call with an Ion frame or a rectifier frame.
     {
-        // Copy the stack usage in copyreg
-        masm.movePtr(argcreg, copyreg);
-        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
-
         // Create the frame descriptor.
         unsigned pushed = masm.framePushed();
         masm.addPtr(Imm32(pushed), copyreg);
@@ -917,8 +918,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     // Handle uncompiled or native functions.
     masm.bind(&invoke);
     {
-        masm.movePtr(argcreg, copyreg);
-        masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), copyreg);
         emitCallInvokeFunction(apply, copyreg);
         masm.syncPoint(&end);
         masm.jump(&end);
