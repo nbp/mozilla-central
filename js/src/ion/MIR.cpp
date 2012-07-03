@@ -499,7 +499,7 @@ MCall::addArg(size_t argnum, MPassArg *arg)
     // The operand vector is initialized in reverse order by the IonBuilder.
     // It cannot be checked for consistency until all arguments are added.
     arg->setArgnum(argnum);
-    return MNode::initOperand(argnum + NumNonArgumentOperands, arg->toDefinition());
+    MNode::initOperand(argnum + NumNonArgumentOperands, arg->toDefinition());
 }
 
 void
