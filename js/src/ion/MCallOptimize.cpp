@@ -104,6 +104,10 @@ IonBuilder::discardCallArgs(uint32 argc, MDefinitionVector &argv, MBasicBlock *b
         passArg->replaceAllUsesWith(wrapped);
         block->discard(passArg);
 
+        // We do not support giving the argument object as argument yet.
+        if (wrapped->type() == MIRType_ArgObj)
+            return abort("NYI: escaping of the argument object.");
+
         // Remember contents in vector.
         argv[i] = wrapped;
     }

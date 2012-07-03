@@ -2721,10 +2721,6 @@ IonBuilder::jsop_notearg()
     MDefinition *def = current->pop();
     MPassArg *arg = MPassArg::New(def);
 
-    // We do not support giving the argument object as argument yet.
-    if (def->type() == MIRType_ArgObj)
-        return abort("NYI: escaping of the argument object.");
-
     current->add(arg);
     current->push(arg);
     return true;
@@ -3302,8 +3298,14 @@ IonBuilder::makeCallBarrier(HandleFunction target, uint32 argc,
 
     // Add explicit arguments.
     // Bytecode order: Function, This, Arg0, Arg1, ..., ArgN, Call.
-    for (int32 i = argc; i > 0; i--)
-        call->addArg(i, current->pop()->toPassArg());
+    for (int32 i = argc; i > 0; i--) {
+        MPassArg *arg = current->pop()->toPassArg();
+        call->addArg(i, arg);
+
+        // We do not support giving the argument object as argument yet.
+        if (arg->getArgument()->type() == MIRType_ArgObj)
+            return abort("NYI: escaping of the argument object.");
+    }
 
     // Place an MPrepareCall before the first passed argument, before we
     // potentially perform rearrangement.
