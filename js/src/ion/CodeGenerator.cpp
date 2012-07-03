@@ -808,7 +808,10 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     {
         Label loop;
         masm.bind(&loop);
-        BaseIndex disp(StackPointer, argcreg, ScaleFromShift(sizeof(Value)), argvOffset - sizeof(Value));
+
+        // We remove sizeof(void*) from argvOffset because withtout it we target
+        // the address after the memory area that we want to copy.
+        BaseIndex disp(StackPointer, argcreg, ScaleFromShift(sizeof(Value)), argvOffset - sizeof(void*));
 
         // Do not use Push here because other this account to 1 in the framePushed
         // instead of 0.  These push are only counted by argcreg.
