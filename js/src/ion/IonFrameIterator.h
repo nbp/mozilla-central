@@ -199,6 +199,10 @@ class IonFrameIterator
 
     uintptr_t *spillBase() const;
     MachineState machineState() const;
+
+#ifdef DEBUG
+    void dump() const;
+#endif
 };
 
 class IonActivationIterator
@@ -297,7 +301,7 @@ class InlineFrameIterator
     unsigned numActualArgs() const;
 
     template <class Op>
-    inline bool forEachCanonicalActualArg(Op op, unsigned start, unsigned count);
+    inline bool forEachCanonicalActualArg(Op op, unsigned start, unsigned count) const;
 
     JSScript *script() const {
         return script_;
@@ -312,6 +316,10 @@ class InlineFrameIterator
     bool isConstructing() const;
     JSObject *thisObject() const;
     InlineFrameIterator operator++();
+
+#ifdef DEBUG
+    void dump() const;
+#endif
 };
 
 } // namespace ion

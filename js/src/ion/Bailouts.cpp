@@ -92,6 +92,26 @@ InlineFrameIterator::InlineFrameIterator(const IonBailoutIterator *iter)
     }
 }
 
+#ifdef DEBUG
+
+void
+IonBailoutIterator::dump() const
+{
+    if (type_ == IonFrame_JS) {
+        InlineFrameIterator frames(this);
+        for (;;) {
+            frames.dump();
+            if (!frames.more())
+                break;
+            ++frames;
+        }
+    } else {
+        IonFrameIterator::dump();
+    }
+}
+
+#endif // DEBUG
+
 void
 StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
 {

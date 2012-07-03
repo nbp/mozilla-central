@@ -230,6 +230,10 @@ class IonBailoutIterator : public IonFrameIterator
             return topIonScript_;
         return IonFrameIterator::ionScript();
     }
+
+#ifdef DEBUG
+    void dump() const;
+#endif
 };
 
 bool EnsureHasCallObject(JSContext *cx, StackFrame *fp);

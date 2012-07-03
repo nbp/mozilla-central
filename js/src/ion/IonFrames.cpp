@@ -46,6 +46,7 @@
 #include "jsfun.h"
 #include "IonCompartment.h"
 #include "IonFrames-inl.h"
+#include "IonFrameIterator-inl.h"
 #include "Safepoints.h"
 #include "IonSpewer.h"
 #include "IonMacroAssembler.h"
@@ -977,4 +978,107 @@ SnapshotIterator::warnUnreadableSlot()
 {
     fprintf(stderr, "Warning! Tried to access unreadable IonMonkey slot (possible f.arguments).\n");
 }
+
+#ifdef DEBUG
+
+void
+IonFrameIterator::dump() const
+{
+    switch (type_) {
+      case IonFrame_Entry:
+        fprintf(stderr, " Entry frame\n");
+        fprintf(stderr, "  Frame size: %u\n", unsigned(current()->prevFrameLocalSize()));
+        break;
+      case IonFrame_JS:
+      {
+        InlineFrameIterator frames(this);
+        for (;;) {
+            frames.dump();
+            if (!frames.more())
+                break;
+            ++frames;
+        }
+        break;
+      }
+      case IonFrame_Rectifier:
+      case IonFrame_Bailed_Rectifier:
+        fprintf(stderr, " Rectifier frame\n");
+        fprintf(stderr, "  Frame size: %u\n", unsigned(current()->prevFrameLocalSize()));
+        break;
+      case IonFrame_Bailed_JS:
+        fprintf(stderr, "Warning! Bailed JS frames are not observable.\n");
+        break;
+      case IonFrame_Exit:
+        break;
+      case IonFrame_Osr:
+        fprintf(stderr, "Warning! OSR frame are not defined yet.\n");
+        break;
+    };
+    fputc('\n', stderr);
+}
+
+struct DumpOp {
+    DumpOp(unsigned int i) : i_(i) {}
+
+    unsigned int i_;
+    void operator()(const Value& v) {
+        fprintf(stderr, "  actual (arg %d): ", i_);
+        js_DumpValue(v);
+        i_++;
+    }
+};
+
+void
+InlineFrameIterator::dump() const
+{
+    if (more())
+        fprintf(stderr, " JS frame (inlined)\n");
+    else
+        fprintf(stderr, " JS frame\n");
+
+    bool isFunction = false;
+    if (isFunctionFrame()) {
+        isFunction = true;
+        fprintf(stderr, "  callee fun: ");
+        js_DumpValue(ObjectValue(*callee()));
+    } else {
+        fprintf(stderr, "  global frame, no callee\n");
+    }
+
+    fprintf(stderr, "  file %s line %u\n",
+            script()->filename, (unsigned) script()->lineno);
+
+    fprintf(stderr, "  script = %p, pc = %p\n", (void*) script(), pc());
+    fprintf(stderr, "  current op: %s\n", js_CodeName[*pc()]);
+
+    if (!more()) {
+        numActualArgs();
+    }
+
+    SnapshotIterator si = snapshotIterator();
+    fprintf(stderr, "  slots: %u\n", si.slots() - 1);
+    for (unsigned i = 0; i < si.slots() - 1; i++) {
+        if (isFunction) {
+            if (i == 0)
+                fprintf(stderr, "  scope chain: ");
+            else if (i == 1)
+                fprintf(stderr, "  this: ");
+            else if (i - 2 < callee()->nargs)
+                fprintf(stderr, "  formal (arg %d): ", i - 2);
+            else {
+                if (i - 2 == callee()->nargs && numActualArgs() > callee()->nargs) {
+                    DumpOp d(callee()->nargs);
+                    forEachCanonicalActualArg(d, d.i_, numActualArgs());
+                }
+
+                fprintf(stderr, "  slot %d: ", i - 2 - callee()->nargs);
+            }
+        } else
+            fprintf(stderr, "  slot %u: ", i);
+        js_DumpValue(si.maybeRead());
+    }
+
+    fputc('\n', stderr);
+}
+#endif // DEBUG
 
