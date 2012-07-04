@@ -901,6 +901,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     bool buildFakeExitFrame(const Register &scratch, uint32 *offset);
 
     void callWithExitFrame(IonCode *target);
+    void callWithExitFrame(IonCode *target, Register dynStack);
 
     // Makes an Ion call using the only two methods that it is sane for
     // indep code to make a call
@@ -908,6 +909,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
 
     void reserveStack(uint32 amount);
     void freeStack(uint32 amount);
+    void freeStack(Register amount);
 
     void add32(Imm32 imm, Register dest);
     void sub32(Imm32 imm, Register dest);
