@@ -795,17 +795,17 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     // Holds the function nargs. Initially undefined.
     Register argcreg = ToRegister(apply->getArgc());
 
-    Register count = extraStackSpace;
     Register copyreg = ToRegister(apply->getTempObject());
     size_t argvOffset = frameSize() + IonJSFrameLayout::offsetOfActualArgs();
     Label end;
 
     // Initialize the loop counter AND Compute the stack usage (if == 0)
-    masm.movePtr(argcreg, count);
+    masm.movePtr(argcreg, extraStackSpace);
     masm.branchTestPtr(Assembler::Zero, argcreg, argcreg, &end);
 
     // Copy arguments.
     {
+        Register count = extraStackSpace; // <- argcreg
         Label loop;
         masm.bind(&loop);
 
@@ -829,8 +829,8 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     }
 
     // Compute the stack usage.
-    masm.movePtr(argcreg, count);
-    masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), count);
+    masm.movePtr(argcreg, extraStackSpace);
+    masm.lshiftPtr(Imm32::ShiftOf(ScaleFromShift(sizeof(Value))), extraStackSpace);
 
     // Join with all arguments copied and the extra stack usage computed.
     masm.bind(&end);
