@@ -289,48 +289,44 @@ LIRGenerator::visitCall(MCall *call)
 bool
 LIRGenerator::visitApplyArgs(MApplyArgs *apply)
 {
-    JS_ASSERT(CallTempReg0 != CallTempReg1);
-    JS_ASSERT(CallTempReg0 != ArgumentsRectifierReg);
-    JS_ASSERT(CallTempReg1 != ArgumentsRectifierReg);
     JS_ASSERT(apply->getFunction()->type() == MIRType_Object);
 
-    // Height of the current argument vector.
-    //uint32 argslot = getArgumentSlotForCall();
     JSFunction *target = apply->getSingleTarget();
 
-    if (target && target->isNative()) {
-        IonSpew(IonSpew_Abort, "native.apply(., arguments) is not supported yet.");
-        return false;
-        // JS_NOT_REACHED("track un-implemented versions");
-    } else {
-        LApplyArgsGeneric *lir = new LApplyArgsGeneric(
-            useFixed(apply->getFunction(), CallTempReg3),
-            useFixed(apply->getArgc(), CallTempReg0),
-            tempFixed(CallTempReg1),
-            tempFixed(CallTempReg2));
+    // Assert if we cannot build a rectifier frame.
+    JS_STATIC_ASSERT(CallTempReg0 != ArgumentsRectifierReg);
+    JS_STATIC_ASSERT(CallTempReg1 != ArgumentsRectifierReg);
 
-        MDefinition *self = apply->getThis();
-        size_t index = LApplyArgsGeneric::ThisIndex;
-        if (!ensureDefined(self))
-            return false;
+    // Assert if the return value is already erased.
+    JS_STATIC_ASSERT(CallTempReg2 != JSReturnReg_Type);
+    JS_STATIC_ASSERT(CallTempReg2 != JSReturnReg_Data);
+
+    LApplyArgsGeneric *lir = new LApplyArgsGeneric(
+        useFixed(apply->getFunction(), CallTempReg3),
+        useFixed(apply->getArgc(), CallTempReg0),
+        tempFixed(CallTempReg1),  // object register
+        tempFixed(CallTempReg2)); // copy register
+
+    MDefinition *self = apply->getThis();
+    size_t index = LApplyArgsGeneric::ThisIndex;
+    if (!ensureDefined(self))
+        return false;
 
 #if defined(JS_NUNBOX32)
-        lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
-        lir->setOperand(index + 1, LUse(CallTempReg5, VirtualRegisterOfPayload(self)));
+    lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
+    lir->setOperand(index + 1, LUse(CallTempReg5, VirtualRegisterOfPayload(self)));
 #elif defined(JS_PUNBOX64)
-        lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
+    lir->setOperand(index + 0, LUse(CallTempReg4, self->virtualRegister()));
 #endif
 
-        // Bailout is only needed in the case of possible non-JSFunction callee.
-        if (!target && !assignSnapshot(lir))
-            return false;
+    // Bailout is only needed in the case of possible non-JSFunction callee.
+    if (!target && !assignSnapshot(lir))
+        return false;
 
-        if (!defineReturn(lir, apply))
-            return false;
-        if (!assignSafepoint(lir, apply))
-            return false;
-    }
-
+    if (!defineReturn(lir, apply))
+        return false;
+    if (!assignSafepoint(lir, apply))
+        return false;
     return true;
 }
 
