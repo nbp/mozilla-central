@@ -3181,8 +3181,8 @@ IonBuilder::jsop_funapply(uint32 argc)
         return makeCall(native, argc, false);
 
     // Reject when called with an Array or object.
-    MPassArg *passVp = current->peek(-1)->toPassArg();
-    if (passVp->getArgument()->type() != MIRType_ArgObj)
+    types::TypeSet *argObjTypes = oracle->getCallArg(script, argc, 2, pc);
+    if (oracle->isArgumentObject(argObjTypes) != DefinitelyArguments)
         return makeCall(native, argc, false);
 
     // Extract call target.
@@ -3191,7 +3191,7 @@ IonBuilder::jsop_funapply(uint32 argc)
     RootedFunction target(cx, (funobj && funobj->isFunction()) ? funobj->toFunction() : NULL);
 
     // Vp
-    passVp = current->pop()->toPassArg();
+    MPassArg *passVp = current->pop()->toPassArg();
     passVp->replaceAllUsesWith(passVp->getArgument());
     passVp->block()->discard(passVp);
 
