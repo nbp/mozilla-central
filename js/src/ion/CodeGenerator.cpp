@@ -976,7 +976,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     {
         emitCallInvokeFunction(apply, copyreg);
         masm.syncPoint(&end);
-        masm.jump(&end);
     }
 
     // Pop arguments and continue.
