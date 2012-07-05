@@ -129,7 +129,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, Value *vp)
         // detecting its use early.
         JSScript *script = iter.script();
         if (!script->hasIonScript())
-            ion::disbaleIonScript(script);
+            ion::forbidIonCompilation(script);
 #endif
 
         *vp = ObjectValue(*argsobj);
