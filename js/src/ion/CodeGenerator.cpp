@@ -882,7 +882,7 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         return true;
     }
 
-    LabelWithStack end, invoke;
+    Label end, invoke;
 
     // Guard that calleereg is a non-native function:
     // Non-native iff (callee->flags & JSFUN_KINDMASK >= JSFUN_INTERPRETED).
@@ -891,7 +891,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         Register kind = objreg;
         Address flags(calleereg, offsetof(JSFunction, flags));
         masm.load16ZeroExtend_mask(flags, Imm32(JSFUN_KINDMASK), kind);
-        masm.syncPoint(&invoke);
         masm.branch32(Assembler::LessThan, kind, Imm32(JSFUN_INTERPRETED), &invoke);
     } else {
         // Native single targets are handled by LCallNative.
@@ -903,7 +902,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
     masm.movePtr(Address(objreg, offsetof(JSScript, ion)), objreg);
 
     // Guard that the IonScript has been compiled.
-    masm.syncPoint(&invoke);
     masm.branchPtr(Assembler::BelowOrEqual, objreg, ImmWord(ION_DISABLED_SCRIPT), &invoke);
 
     // Call with an Ion frame or a rectifier frame.
@@ -967,19 +965,17 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         // The return address has already been removed from the Ion frame.
         int prefixGarbage = sizeof(IonJSFrameLayout) - sizeof(void *);
         masm.adjustStack(prefixGarbage);
-        masm.syncPoint(&end);
         masm.jump(&end);
     }
 
     // Handle uncompiled or native functions.
-    masm.bind(&invoke);
     {
+        masm.bind(&invoke);
         emitCallInvokeFunction(apply, copyreg);
-        masm.syncPoint(&end);
     }
 
     // Pop arguments and continue.
-    masm.noSyncBind(&end);
+    masm.bind(&end);
     emitPopArguments(apply, copyreg);
 
     return true;

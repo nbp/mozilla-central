@@ -484,22 +484,6 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Checks if an OSR frame is the previous frame, and if so, removes it.
     void maybeRemoveOsrFrame(Register scratch);
-
-    using MacroAssemblerSpecific::bind;
-    void syncPoint(LabelWithStack *label) {
-        if (!label->isSynced())
-            label->setFramePushed(framePushed());
-        JS_ASSERT(label->getFramePushed() == framePushed());
-    }
-    void bind(LabelWithStack *label) {
-        syncPoint(label);
-        MacroAssemblerSpecific::bind(label);
-        framePushed_ = label->getFramePushed();
-    }
-    void noSyncBind(LabelWithStack *label) {
-        MacroAssemblerSpecific::bind(label);
-        setFramePushed(label->getFramePushed());
-    }
 };
 
 } // namespace ion
