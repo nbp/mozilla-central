@@ -423,6 +423,10 @@ class MacroAssemblerX64 : public MacroAssemblerX86Shared
         testq(lhs, rhs);
         j(cond, label);
     }
+    void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
+        subPtr(imm, lhs);
+        j(cond, label);
+    }
 
     void movePtr(const Register &src, const Register &dest) {
         movq(src, dest);

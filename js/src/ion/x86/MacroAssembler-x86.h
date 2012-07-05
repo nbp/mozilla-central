@@ -452,6 +452,10 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
         testl(lhs, rhs);
         j(cond, label);
     }
+    void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
+        subPtr(imm, lhs);
+        j(cond, label);
+    }
 
     void movePtr(ImmWord imm, Register dest) {
         movl(Imm32(imm.value), dest);

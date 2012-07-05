@@ -705,6 +705,10 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     void branchPtr(Condition cond, Register lhs, ImmWord imm, Label *label) {
         branch32(cond, lhs, Imm32(imm.value), label);
     }
+    void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
+        subPtr(imm, lhs);
+        branch32(cond, lhs, imm, label);
+    }
     void moveValue(const Value &val, Register type, Register data);
 
     CodeOffsetJump jumpWithPatch(RepatchLabel *label, Condition cond = Always);

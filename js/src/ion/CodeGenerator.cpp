@@ -832,8 +832,7 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
             masm.push(copyreg);
         }
 
-        masm.subPtr(Imm32(1), count);
-        masm.j(Assembler::NonZero, &loop);
+        masm.decBranchPtr(Assembler::NonZero, count, Imm32(1), &loop);
     }
 
     // Compute the stack usage.
