@@ -1201,7 +1201,7 @@ class MCall
 
 // fun.apply(self, arguments)
 class MApplyArgs
-  : public MAryInstruction<3>,
+  : public MTernaryInstruction,
     public MixPolicy<ObjectPolicy<0>, MixPolicy<IntPolicy<1>, BoxPolicy<2> > >
 {
   protected:
@@ -1209,11 +1209,9 @@ class MApplyArgs
     CompilerRootFunction target_;
 
     MApplyArgs(JSFunction *target, MDefinition *fun, MDefinition *argc, MDefinition *self)
-      : target_(target)
+      : MTernaryInstruction(fun, argc, self),
+        target_(target)
     {
-        initOperand(0, fun);
-        initOperand(1, argc);
-        initOperand(2, self);
         setResultType(MIRType_Value);
     }
 
@@ -1236,6 +1234,11 @@ class MApplyArgs
     }
     MDefinition *getThis() const {
         return getOperand(2);
+    }
+
+    bool congruentTo(MDefinition *const &) const
+    {
+        return false;
     }
 
     TypePolicy *typePolicy() {
