@@ -915,26 +915,31 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
         masm.Push(calleereg);
         masm.Push(copyreg); // descriptor
 
-        Label thunk, rejoin;
+        Label underflow, rejoin;
 
+        // Check whether the provided arguments satisfy target argc.
         if (!apply->hasSingleTarget()) {
-            // Check whether the provided arguments satisfy target argc.
             masm.load16ZeroExtend(Address(calleereg, offsetof(JSFunction, nargs)), copyreg);
-            masm.cmp32(copyreg, argcreg);
-            masm.j(Assembler::Above, &thunk);
+            masm.cmp32(argcreg, copyreg);
+            masm.j(Assembler::Below, &underflow);
+        } else {
+            masm.cmp32(argcreg, Imm32(apply->getSingleTarget()->nargs));
+            masm.j(Assembler::Below, &underflow);
         }
 
         // No argument fixup needed. Load the start of the target IonCode.
         {
             masm.movePtr(Address(objreg, offsetof(IonScript, method_)), objreg);
             masm.movePtr(Address(objreg, IonCode::OffsetOfCode()), objreg);
+
+            // Skip the construction of the rectifier frame because we have no
+            // underflow.
+            masm.jump(&rejoin);
         }
 
         // Argument fixup needed. Get ready to call the argumentsRectifier.
-        if (!apply->hasSingleTarget()) {
-            // Skip this thunk unless an explicit jump target.
-            masm.jump(&rejoin);
-            masm.bind(&thunk);
+        {
+            masm.bind(&underflow);
 
             // Hardcode the address of the argumentsRectifier code.
             IonCompartment *ion = gen->ionCompartment();
