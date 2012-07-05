@@ -1373,6 +1373,7 @@ int js::ion::LabelBase::id_count = 0;
 
 void ion::disbaleIonScript(JSScript *script)
 {
-    IonSpew(IonSpew_Abort, "Disable Ion of script %s:%d", script->filename, script->lineno);
+    IonSpew(IonSpew_Abort, "Disabling Ion compilation of script %s:%d",
+            script->filename, script->lineno);
     script->ion = ION_DISABLED_SCRIPT;
 }
