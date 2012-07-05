@@ -3301,10 +3301,6 @@ IonBuilder::makeCallBarrier(HandleFunction target, uint32 argc,
     for (int32 i = argc; i > 0; i--) {
         MPassArg *arg = current->pop()->toPassArg();
         call->addArg(i, arg);
-
-        // We do not support giving the argument object as argument yet.
-        if (arg->getArgument()->type() == MIRType_ArgObj)
-            return abort("NYI: escaping of the argument object.");
     }
 
     // Place an MPrepareCall before the first passed argument, before we
