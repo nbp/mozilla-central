@@ -193,6 +193,9 @@ class TypeOracle
         return MIRType_Value;
     }
 
+    virtual LazyArgumentsType isArgumentObject(types::TypeSet *obj) {
+        return MaybeArguments;
+    }
     virtual LazyArgumentsType propertyReadMagicArguments(JSScript *script, jsbytecode *pc) {
         return MaybeArguments;
     }
@@ -280,6 +283,7 @@ class TypeInferenceOracle : public TypeOracle
     bool canEnterInlinedFunction(JSFunction *callee);
     MIRType aliasedVarType(JSScript *script, jsbytecode *pc);
 
+    LazyArgumentsType isArgumentObject(types::TypeSet *obj);
     LazyArgumentsType propertyReadMagicArguments(JSScript *script, jsbytecode *pc);
     LazyArgumentsType elementReadMagicArguments(JSScript *script, jsbytecode *pc);
     LazyArgumentsType elementWriteMagicArguments(JSScript *script, jsbytecode *pc);
