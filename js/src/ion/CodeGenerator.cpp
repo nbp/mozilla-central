@@ -836,16 +836,14 @@ CodeGenerator::emitPushArguments(LApplyArgsGeneric *apply, Register extraStackSp
     masm.bind(&end);
 
     // Push |this|.
-    masm.Push(ToValue(apply, LApplyArgsGeneric::ThisIndex));
+    masm.addPtr(Imm32(sizeof(Value)), extraStackSpace);
+    masm.pushValue(ToValue(apply, LApplyArgsGeneric::ThisIndex));
 }
 
 void
 CodeGenerator::emitPopArguments(LApplyArgsGeneric *apply, Register extraStackSpace)
 {
-    // Pop |this|
-    masm.freeStack(sizeof(Value));
-
-    // Arguments
+    // Pop |this| and Arguments.
     masm.freeStack(extraStackSpace);
 }
 
