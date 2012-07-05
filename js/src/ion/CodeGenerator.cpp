@@ -954,8 +954,6 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
         masm.bind(&rejoin);
 
-        // masm.checkStackAlignment();
-
         // Finally call the function in objreg, as assigned by one of the paths above.
         masm.callIon(objreg);
         if (!markSafepoint(apply))
