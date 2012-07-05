@@ -166,6 +166,32 @@ IonBuilder::getSingleCallTarget(uint32 argc, jsbytecode *pc)
     return obj->toFunction();
 }
 
+uint32_t
+IonBuilder::getPolyCallTargets(uint32 argc, jsbytecode *pc,
+                               AutoObjectVector &targets, uint32_t maxTargets)
+{
+    types::TypeSet *calleeTypes = oracle->getCallTarget(script, argc, pc);
+    if (!calleeTypes)
+        return 0;
+
+    if (calleeTypes->baseFlags() != 0)
+        return 0;
+
+    unsigned objCount = calleeTypes->getObjectCount();
+
+    if (objCount == 0 || objCount > maxTargets)
+        return 0;
+
+    for(unsigned i = 0; i < objCount; i++) {
+        JSObject *obj = calleeTypes->getSingleObject(i);
+        if (!obj || !obj->isFunction())
+            return 0;
+        targets.append(obj);
+    }
+
+    return (uint32_t) objCount;
+}
+
 bool
 IonBuilder::canInlineTarget(JSFunction *target)
 {
@@ -360,7 +386,8 @@ IonBuilder::processIterators()
 
 bool
 IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoint,
-                        MDefinition *thisDefn, MDefinitionVector &argv)
+                        MDefinition *thisDefn, MDefinitionVector &argv,
+                        InlinePolymorphism polymorphism)
 {
     IonSpew(IonSpew_MIR, "Inlining script %s:%d (%p)",
             script->filename, script->lineno, (void *)script);
@@ -376,12 +403,32 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
     current->setCallerResumePoint(callerResumePoint);
 
     // Connect the entrance block to the last block in the caller's graph.
-    MBasicBlock *predecessor = callerResumePoint->block();
-    predecessor->end(MGoto::New(current));
+    MBasicBlock *predecessor = callerBuilder->current;
+    if (polymorphism == Inline_Monomorphic) {
+        JS_ASSERT(predecessor == callerResumePoint->block());
+        predecessor->end(MGoto::New(current));
+    } else if (polymorphism == Inline_Polymorphic) {
+        predecessor->end(MInlineFunctionGuard::New(NULL, NULL, current, NULL));
+    } else {
+        JS_ASSERT(polymorphism == Inline_PolymorphicFinal);
+        // The predecessor should already be terminated with the proper instruction
+        JS_ASSERT(predecessor->lastIns() && predecessor->lastIns()->isInlineFunctionGuard());
+        MInlineFunctionGuard *guardIns = predecessor->lastIns()->toInlineFunctionGuard();
+        guardIns->setFallbackBlock(current);
+    }
     if (!current->addPredecessorWithoutPhis(predecessor))
         return false;
 
-    JS_ASSERT(predecessor->numSuccessors() == 1);
+#ifdef DEBUG
+    if(polymorphism == Inline_Monomorphic) {
+        // Predecessor should end with a Goto.
+        JS_ASSERT(predecessor->numSuccessors() == 1);
+    } else {
+        // Predecessor should end with a InlineFunctionGuard.
+        JS_ASSERT(predecessor->numSuccessors() == 2);
+    }
+#endif
+
     JS_ASSERT(current->numPredecessors() == 1);
 
     // Explicitly pass Undefined for missing arguments.
@@ -2726,45 +2773,47 @@ IonBuilder::jsop_notearg()
     return true;
 }
 
-bool
-IonBuilder::jsop_call_inline(IonBuilder &inlineBuilder, HandleFunction callee,
-                             uint32 argc, bool constructing)
+class AutoAccumulateExits
 {
-#ifdef DEBUG
-    uint32 origStackDepth = current->stackDepth();
-#endif
+    MIRGraph &graph_;
+    MIRGraphExits *prev_;
 
-    // |top| jumps into the callee subgraph -- save it for later use.
-    MBasicBlock *top = current;
+  public:
+    AutoAccumulateExits(MIRGraph &graph, MIRGraphExits &exits) : graph_(graph) {
+        prev_ = graph_.exitAccumulator();
+        graph_.setExitAccumulator(&exits);
+    }
+    ~AutoAccumulateExits() {
+        graph_.setExitAccumulator(prev_);
+    }
+};
 
-    // Add the function constant before the resume point which map call
-    // arguments.
-    MConstant *constFun = MConstant::New(ObjectValue(*callee));
-    current->add(constFun);
 
-    // This resume point collects outer variables only.  It is used to recover
-    // the stack state before the current bytecode.
-    MResumePoint *inlineResumePoint =
-        MResumePoint::New(top, pc, callerResumePoint_, MResumePoint::Outer);
-    if (!inlineResumePoint)
+bool
+IonBuilder::jsop_call_inline(HandleFunction callee, uint32 argc, bool constructing,
+                             MConstant *constFun, MResumePoint *inlineResumePoint,
+                             MDefinitionVector &argv, MBasicBlock *bottom,
+                             Vector<MDefinition *, 8, IonAllocPolicy> &retvalDefns,
+                             InlinePolymorphism polymorphism)
+{
+    // Compilation information is allocated for the duration of the current tempLifoAlloc
+    // lifetime.
+    CompileInfo *info = cx->tempLifoAlloc().new_<CompileInfo>(
+                            callee->script(), callee, (jsbytecode *)NULL);
+    if (!info)
         return false;
 
-    // We do not inline JSOP_FUNCALL for now.
-    JS_ASSERT(argc == GET_ARGC(inlineResumePoint->pc()));
+    MIRGraphExits saveExits;
+    AutoAccumulateExits aae(graph(), saveExits);
 
-    // Gather up the arguments and |this| to the inline function.
-    // Note that we leave the callee on the simulated stack for the
-    // duration of the call.
-    MDefinitionVector argv;
-    if (!discardCallArgs(argc, argv, top))
+    TypeInferenceOracle oracle;
+    if (!oracle.init(cx, callee->script()))
         return false;
 
-    // Replace the potential object load by the corresponding constant version
-    // which is inlined here. We do this to ensure that on a bailout, we can get
-    // back to the caller by iterating over the stack.
-    inlineResumePoint->replaceOperand(inlineResumePoint->numOperands() - (argc + 2), constFun);
-    current->pop();
-    current->push(constFun);
+    RootedObject scopeChain(NULL);
+
+    IonBuilder inlineBuilder(cx, scopeChain, temp(), graph(), &oracle,
+                             *info, inliningDepth + 1, loopDepth_);
 
     // Create |this| on the caller-side for inlined constructors.
     MDefinition *thisDefn = NULL;
@@ -2777,20 +2826,13 @@ IonBuilder::jsop_call_inline(IonBuilder &inlineBuilder, HandleFunction callee,
     }
 
     // Build the graph.
-    if (!inlineBuilder.buildInline(this, inlineResumePoint, thisDefn, argv))
+    if (!inlineBuilder.buildInline(this, inlineResumePoint, thisDefn, argv, polymorphism))
         return false;
 
     MIRGraphExits &exits = *inlineBuilder.graph().exitAccumulator();
 
-    // Create a |bottom| block for all the callee subgraph exits to jump to.
-    JS_ASSERT(types::IsInlinableCall(pc));
-    jsbytecode *postCall = GetNextPc(pc);
-    MBasicBlock *bottom = newBlock(NULL, postCall);
-    bottom->setCallerResumePoint(callerResumePoint_);
-
     // Replace all MReturns with MGotos, and remember the MDefinition that
     // would have been returned.
-    Vector<MDefinition *, 8, IonAllocPolicy> retvalDefns;
     for (MBasicBlock **it = exits.begin(), **end = exits.end(); it != end; ++it) {
         MBasicBlock *exitBlock = *it;
 
@@ -2817,6 +2859,175 @@ IonBuilder::jsop_call_inline(IonBuilder &inlineBuilder, HandleFunction callee,
             return false;
     }
     JS_ASSERT(!retvalDefns.empty());
+    return true;
+}
+
+bool
+IonBuilder::makeInliningDecision(AutoObjectVector &targets)
+{
+    if (inliningDepth >= js_IonOptions.maxInlineDepth)
+        return false;
+
+    // For "small" functions, we should be more aggressive about inlining.
+    // This is based on the following intuition:
+    //  1. The call overhead for a small function will likely be a much
+    //     higher proportion of the runtime of the function than for larger
+    //     functions.
+    //  2. The cost of inlining (in terms of size expansion of the SSA graph),
+    //     and size expansion of the ultimately generated code, will be
+    //     less significant.
+
+    uint32_t totalSize = 0;
+    uint32_t checkUses = js_IonOptions.usesBeforeInlining;
+    bool allFunctionsAreSmall = true;
+    for (size_t i = 0; i < targets.length(); i++) {
+        JSFunction *target = targets[i]->toFunction();
+        if (!target->isInterpreted())
+            return false;
+
+        JSScript *script = target->script();
+        totalSize += script->length;
+        if (totalSize > js_IonOptions.inlineMaxTotalBytecodeLength)
+            return false;
+
+        if (script->length > js_IonOptions.smallFunctionMaxBytecodeLength)
+            allFunctionsAreSmall = false;
+    }
+    if (allFunctionsAreSmall)
+        checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
+
+    if (script->getUseCount() < checkUses) {
+        IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
+        return false;
+    }
+
+    if (!oracle->canInlineCall(script, pc)) {
+        IonSpew(IonSpew_Inlining, "Cannot inline due to uninlineable call site");
+        return false;
+    }
+
+    for (size_t i = 0; i < targets.length(); i++) {
+        if (!canInlineTarget(targets[i]->toFunction())) {
+            IonSpew(IonSpew_Inlining, "Decided not to inline");
+            return false;
+        }
+    }
+
+    return true;
+}
+
+bool
+IonBuilder::inlineScriptedCall(AutoObjectVector &targets, uint32 argc, bool constructing)
+{
+#ifdef DEBUG
+    uint32 origStackDepth = current->stackDepth();
+#endif
+
+    IonSpew(IonSpew_Inlining, "Inlinig %d targets", (int) targets.length());
+    JS_ASSERT(targets.length() > 0);
+
+    // |top| jumps into the callee subgraph -- save it for later use.
+    MBasicBlock *top = current;
+
+    // Add the function constant before the resume point which maps call args.
+    MConstant *constFun = NULL;
+    if (targets.length() == 1) {
+        JSFunction *singleTarget = targets[0]->toFunction();
+        constFun = MConstant::New(ObjectValue(*singleTarget));
+        current->add(constFun);
+    }
+
+    // This resume point collects outer variables only.  It is used to recover
+    // the stack state before the current bytecode.
+    MResumePoint *inlineResumePoint =
+        MResumePoint::New(top, pc, callerResumePoint_, MResumePoint::Outer);
+    if (!inlineResumePoint)
+        return false;
+
+    // We do not inline JSOP_FUNCALL for now.
+    JS_ASSERT(argc == GET_ARGC(inlineResumePoint->pc()));
+
+    // Gather up  the arguments and |this| to the inline function.
+    // Note that we leave the callee on the simulated stack for the
+    // duration of the call.
+    MDefinitionVector argv;
+    if (!discardCallArgs(argc, argv, top))
+        return false;
+
+    // Replace the potential object load by the corresponding constant version
+    // which is inlined here. But only do this if there is exactly one target function.
+    MDefinition *funcDefn = NULL;
+    if (targets.length() == 1) {
+        JS_ASSERT(constFun != NULL);
+        inlineResumePoint->replaceOperand(
+            inlineResumePoint->numOperands() - (argc + 2), constFun);
+        current->pop();
+        current->push(constFun);
+        funcDefn = constFun;
+    } else {
+        funcDefn = current->pop();
+        current->push(funcDefn);
+    }
+
+    // Create a |bottom| block for all the callee subgraph exits to jump to.
+    JS_ASSERT(types::IsInlinableCall(pc));
+    jsbytecode *postCall = GetNextPc(pc);
+    MBasicBlock *bottom = newBlock(NULL, postCall);
+    bottom->setCallerResumePoint(callerResumePoint_);
+
+    Vector<MDefinition *, 8, IonAllocPolicy> retvalDefns;
+
+    // Do the inline build. Return value definitions are stored in retvalDefns.
+    if (targets.length() == 1) {
+        // Monomorphic case is simple - no guards.
+        RootedFunction target(cx, targets[0]->toFunction());
+        if(!jsop_call_inline(target, argc, constructing, constFun, inlineResumePoint,
+                             argv, bottom, retvalDefns, Inline_Monomorphic))
+            return false;
+    } else {
+        // Polymorhpic inline case requires guards.
+        // Polymorphic inline case is not so simple - needs guards.
+        MBasicBlock *entryBlock = top;
+        for (size_t i = 0; i < targets.length(); i++) {
+            // Do the inline function build.
+            current = entryBlock;
+            RootedFunction target(cx, targets[i]->toFunction());
+            InlinePolymorphism poly = (i == targets.length() - 1) ?
+                                        Inline_PolymorphicFinal : Inline_Polymorphic;
+            if (!jsop_call_inline(target, argc, constructing, constFun,
+                                  inlineResumePoint, argv, bottom, retvalDefns, poly))
+                return false;
+
+            JS_ASSERT(entryBlock->lastIns());
+            JS_ASSERT(entryBlock->lastIns()->isInlineFunctionGuard());
+
+            // Build the fallback block, but only if we're not yet at the last case.
+            if (i < targets.length() - 1) {
+                MInlineFunctionGuard *guardIns =
+                    entryBlock->lastIns()->toInlineFunctionGuard();
+                guardIns->setFunction(target);
+                guardIns->setInput(funcDefn);
+                JS_ASSERT(guardIns->functionBlock() != NULL);
+
+                if (i < targets.length() - 2) {
+                    MBasicBlock *fallbackBlock = newBlock(entryBlock, pc);
+                    guardIns->setFallbackBlock(fallbackBlock);
+                    entryBlock = fallbackBlock;
+                }
+            }
+#ifdef DEBUG
+            if (i == targets.length() - 1) {
+                MInlineFunctionGuard *guardIns = entryBlock->lastIns()->toInlineFunctionGuard();
+                JS_ASSERT(guardIns->function() != NULL);
+                JS_ASSERT(guardIns->input() != NULL);
+                JS_ASSERT(guardIns->fallbackBlock() != NULL);
+                JS_ASSERT(guardIns->functionBlock() != NULL);
+            }
+#endif
+        }
+    }
+
+    graph_.moveBlockToEnd(bottom);
 
     if (!bottom->inheritNonPredecessor(top))
         return false;
@@ -2853,97 +3064,6 @@ IonBuilder::jsop_call_inline(IonBuilder &inlineBuilder, HandleFunction callee,
 
     current = bottom;
     return true;
-}
-
-class AutoAccumulateExits
-{
-    MIRGraph &graph_;
-    MIRGraphExits *prev_;
-
-  public:
-    AutoAccumulateExits(MIRGraph &graph, MIRGraphExits &exits) : graph_(graph) {
-        prev_ = graph_.exitAccumulator();
-        graph_.setExitAccumulator(&exits);
-    }
-    ~AutoAccumulateExits() {
-        graph_.setExitAccumulator(prev_);
-    }
-};
-
-static bool IsSmallFunction(JSFunction *target) {
-    if (!target->isInterpreted())
-        return false;
-
-    JSScript *script = target->script();
-    if(script->length > js_IonOptions.smallFunctionMaxBytecodeLength)
-        return false;
-
-    return true;
-}
-
-bool
-IonBuilder::makeInliningDecision(HandleFunction target)
-{
-    static const size_t INLINING_LIMIT = 3;
-
-    if (inliningDepth >= INLINING_LIMIT)
-        return false;
-
-    // For "small" functions, we should be more aggressive about inlining.
-    // This is based on the following intuition:
-    //  1. The call overhead for a small function will likely be a much
-    //     higher proportion of the runtime of the function than for larger
-    //     functions.
-    //  2. The cost of inlining (in terms of size expansion of the SSA graph),
-    //     and size expansion of the ultimately generated code, will be
-    //     less significant.
-
-    uint32 checkUses = js_IonOptions.usesBeforeInlining;
-    if (IsSmallFunction(target))
-        checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
-
-    if (script->getUseCount() < checkUses) {
-        IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
-        return false;
-    }
-
-    if (!oracle->canInlineCall(script, pc)) {
-        IonSpew(IonSpew_Inlining, "Cannot inline due to uninlineable call site");
-        return false;
-    }
-
-    if (!canInlineTarget(target)) {
-        IonSpew(IonSpew_Inlining, "Decided not to inline");
-        return false;
-    }
-
-    return true;
-}
-
-bool
-IonBuilder::inlineScriptedCall(HandleFunction target, uint32 argc, bool constructing)
-{
-    IonSpew(IonSpew_Inlining, "Recursively building");
-
-    // Compilation information is allocated for the duration of the current tempLifoAlloc
-    // lifetime.
-    CompileInfo *info = cx->tempLifoAlloc().new_<CompileInfo>(target->script(),
-                                                              target, (jsbytecode *)NULL);
-    if (!info)
-        return false;
-
-    MIRGraphExits exits;
-    AutoAccumulateExits aae(graph(), exits);
-
-    TypeInferenceOracle oracle;
-    if (!oracle.init(cx, target->script()))
-        return false;
-
-    RootedObject scopeChain(NULL);
-
-    IonBuilder inlineBuilder(cx, scopeChain, temp(), graph(), &oracle,
-                             *info, inliningDepth + 1, loopDepth_);
-    return jsop_call_inline(inlineBuilder, target, argc, constructing);
 }
 
 void
@@ -3230,14 +3350,17 @@ IonBuilder::jsop_funapply(uint32 argc)
 }
 
 bool
-IonBuilder::jsop_call_fun_barrier(HandleFunction target, uint32 argc, 
+IonBuilder::jsop_call_fun_barrier(AutoObjectVector &targets, uint32_t numTargets,
+                                  uint32 argc, 
                                   bool constructing,
                                   types::TypeSet *types,
                                   types::TypeSet *barrier)
 {
     // Attempt to inline native and scripted functions.
-    if (inliningEnabled() && target) {
-        if (target->isNative()) {
+    if (inliningEnabled()) {
+        // Inline a single native call if possible.
+        if(numTargets == 1 && targets[0]->toFunction()->isNative()) {
+            RootedFunction target(cx, targets[0]->toFunction());
             switch (inlineNativeCall(target->native(), argc, constructing)) {
               case InliningStatus_Inlined:
                 return true;
@@ -3248,10 +3371,11 @@ IonBuilder::jsop_call_fun_barrier(HandleFunction target, uint32 argc,
             }
         }
 
-        if (makeInliningDecision(target))
-            return inlineScriptedCall(target, argc, constructing);
+        if (numTargets > 0 && makeInliningDecision(targets))
+            return inlineScriptedCall(targets, argc, constructing);
     }
 
+    RootedFunction target(cx, numTargets == 1 ? targets[0]->toFunction() : NULL);
     return makeCallBarrier(target, argc, constructing, types, barrier);
 }
 
@@ -3259,10 +3383,11 @@ bool
 IonBuilder::jsop_call(uint32 argc, bool constructing)
 {
     // Acquire known call target if existent.
-    RootedFunction target(cx, getSingleCallTarget(argc, pc));
+    AutoObjectVector targets(cx);
+    uint32_t numTargets = getPolyCallTargets(argc, pc, targets, 4);
     types::TypeSet *barrier;
     types::TypeSet *types = oracle->returnTypeSet(script, pc, &barrier);
-    return jsop_call_fun_barrier(target, argc, constructing, types, barrier);
+    return jsop_call_fun_barrier(targets, numTargets, argc, constructing, types, barrier);
 }
 
 bool
@@ -3298,10 +3423,8 @@ IonBuilder::makeCallBarrier(HandleFunction target, uint32 argc,
 
     // Add explicit arguments.
     // Bytecode order: Function, This, Arg0, Arg1, ..., ArgN, Call.
-    for (int32 i = argc; i > 0; i--) {
-        MPassArg *arg = current->pop()->toPassArg();
-        call->addArg(i, arg);
-    }
+    for (int32 i = argc; i > 0; i--)
+        call->addArg(i, current->pop()->toPassArg());
 
     // Place an MPrepareCall before the first passed argument, before we
     // potentially perform rearrangement.
