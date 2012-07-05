@@ -92,8 +92,6 @@ InlineFrameIterator::InlineFrameIterator(const IonBailoutIterator *iter)
     }
 }
 
-#ifdef DEBUG
-
 void
 IonBailoutIterator::dump() const
 {
@@ -109,8 +107,6 @@ IonBailoutIterator::dump() const
         IonFrameIterator::dump();
     }
 }
-
-#endif // DEBUG
 
 void
 StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)

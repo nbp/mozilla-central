@@ -200,9 +200,7 @@ class IonFrameIterator
     uintptr_t *spillBase() const;
     MachineState machineState() const;
 
-#ifdef DEBUG
     void dump() const;
-#endif
 };
 
 class IonActivationIterator
@@ -317,9 +315,7 @@ class InlineFrameIterator
     JSObject *thisObject() const;
     InlineFrameIterator operator++();
 
-#ifdef DEBUG
     void dump() const;
-#endif
 };
 
 } // namespace ion

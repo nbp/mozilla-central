@@ -979,8 +979,6 @@ SnapshotIterator::warnUnreadableSlot()
     fprintf(stderr, "Warning! Tried to access unreadable IonMonkey slot (possible f.arguments).\n");
 }
 
-#ifdef DEBUG
-
 void
 IonFrameIterator::dump() const
 {
@@ -1040,7 +1038,11 @@ InlineFrameIterator::dump() const
     if (isFunctionFrame()) {
         isFunction = true;
         fprintf(stderr, "  callee fun: ");
-        js_DumpValue(ObjectValue(*callee()));
+#ifdef DEBUG
+        js_DumpObject(callee());
+#else
+        fputc('?\n', stderr);
+#endif
     } else {
         fprintf(stderr, "  global frame, no callee\n");
     }
@@ -1075,10 +1077,12 @@ InlineFrameIterator::dump() const
             }
         } else
             fprintf(stderr, "  slot %u: ", i);
+#ifdef DEBUG
         js_DumpValue(si.maybeRead());
+#else
+        fputc('?\n', stderr);
+#endif
     }
 
     fputc('\n', stderr);
 }
-#endif // DEBUG
-
