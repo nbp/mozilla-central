@@ -1,3 +1,2 @@
 From: Nicolas Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Inline fun.apply when used with lazy arguments (Bug 735402, r=)
-
+Subject: Inline fun.apply when used with lazy arguments (Bug 735402, r=dvander)
