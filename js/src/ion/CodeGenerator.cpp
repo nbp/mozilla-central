@@ -875,7 +875,8 @@ CodeGenerator::visitApplyArgsGeneric(LApplyArgsGeneric *apply)
 
     // If the function is known to be uncompilable, only emit the call to InvokeFunction.
     if (apply->hasSingleTarget() &&
-        apply->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT)
+        (!apply->getSingleTarget()->isInterpreted() ||
+         apply->getSingleTarget()->script()->ion == ION_DISABLED_SCRIPT))
     {
         emitCallInvokeFunction(apply, copyreg);
         emitPopArguments(apply, copyreg);
