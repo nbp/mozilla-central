@@ -1021,7 +1021,11 @@ struct DumpOp {
     unsigned int i_;
     void operator()(const Value& v) {
         fprintf(stderr, "  actual (arg %d): ", i_);
+#ifdef DEBUG
         js_DumpValue(v);
+#else
+        fputc('?\n', stderr);
+#endif
         i_++;
     }
 };
