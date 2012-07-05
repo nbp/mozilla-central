@@ -342,12 +342,8 @@ EnsureExitFrame(IonCommonFrameLayout *frame)
         return;
     }
 
-    if (frame->prevType() == IonFrame_JS) {
-        frame->changePrevType(IonFrame_Bailed_JS);
-        return;
-    }
-
-    JS_NOT_REACHED("invalid");
+    JS_ASSERT(frame->prevType() == IonFrame_JS);
+    frame->changePrevType(IonFrame_Bailed_JS);
 }
 
 uint32
