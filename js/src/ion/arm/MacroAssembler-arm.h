@@ -707,7 +707,7 @@ class MacroAssemblerARMCompat : public MacroAssemblerARM
     }
     void decBranchPtr(Condition cond, const Register &lhs, Imm32 imm, Label *label) {
         subPtr(imm, lhs);
-        branch32(cond, lhs, imm, label);
+        branch32(cond, lhs, Imm32(0), label);
     }
     void moveValue(const Value &val, Register type, Register data);
 
