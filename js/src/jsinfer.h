@@ -14,6 +14,7 @@
 #include "jsalloc.h"
 #include "jsfriendapi.h"
 #include "jsprvtd.h"
+#include "jsopcode.h"
 
 #include "ds/LifoAlloc.h"
 #include "gc/Barrier.h"
@@ -182,6 +183,8 @@ public:
      * recompilation is always triggered.
      */
     virtual void newObjectState(JSContext *cx, TypeObject *object, bool force) {}
+
+    virtual void print(Sprinter *sp) = 0;
 };
 
 /* Flags and other state stored in TypeSet::flags */
@@ -1108,12 +1111,14 @@ typedef HashMap<AllocationSiteKey,ReadBarriered<TypeObject>,AllocationSiteKey,Sy
 struct RecompileInfo
 {
     JSScript *script;
+    jsbytecode *pc;
     bool constructing : 1;
     bool barriers : 1;
     uint32_t chunkIndex:30;
 
     bool operator == (const RecompileInfo &o) const {
         return script == o.script
+            && pc == o.pc
             && constructing == o.constructing
             && barriers == o.barriers
             && chunkIndex == o.chunkIndex;
@@ -1123,8 +1128,9 @@ struct RecompileInfo
     {
     }
 
-    explicit RecompileInfo(JSScript *script)
+    explicit RecompileInfo(JSScript *script, jsbytecode *pc)
       : script(script),
+        pc(pc),
         constructing(false),
         barriers(false),
         chunkIndex(0)

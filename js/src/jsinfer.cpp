@@ -249,9 +249,9 @@ types::InferSpew(SpewChannel channel, const char *fmt, ...)
 
     va_list ap;
     va_start(ap, fmt);
-    fprintf(stdout, "[infer] ");
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
+    fprintf(stderr, "[infer] ");
+    vfprintf(stderr, fmt, ap);
+    fprintf(stderr, "\n");
     va_end(ap);
 }
 
@@ -361,10 +361,15 @@ TypeSet::add(JSContext *cx, TypeConstraint *constraint, bool callExisting)
 
     JS_ASSERT(cx->compartment->activeInference);
 
-    InferSpew(ISpewOps, "addConstraint: %sT%p%s %sC%p%s %s",
-              InferSpewColor(this), this, InferSpewColorReset(),
-              InferSpewColor(constraint), constraint, InferSpewColorReset(),
-              constraint->kind());
+    {
+        Sprinter sprinter(cx);
+        if (sprinter.init()) {
+        constraint->print(&sprinter);
+        InferSpew(ISpewOps, "addConstraint: %sT%p%s %s%s%s",
+                  InferSpewColor(this), this, InferSpewColorReset(),
+                  InferSpewColor(constraint), sprinter.string(), InferSpewColorReset());
+        }
+    }
 
     JS_ASSERT(constraint->next == NULL);
     constraint->next = constraintList;
@@ -407,47 +412,47 @@ void
 TypeSet::print(JSContext *cx)
 {
     if (flags & TYPE_FLAG_OWN_PROPERTY)
-        printf(" [own]");
+        fprintf(stderr, " [own]");
     if (flags & TYPE_FLAG_CONFIGURED_PROPERTY)
-        printf(" [configured]");
+        fprintf(stderr, " [configured]");
 
     if (isDefiniteProperty())
-        printf(" [definite:%d]", definiteSlot());
+        fprintf(stderr, " [definite:%d]", definiteSlot());
 
     if (baseFlags() == 0 && !baseObjectCount()) {
-        printf(" missing");
+        fprintf(stderr, " missing");
         return;
     }
 
     if (flags & TYPE_FLAG_UNKNOWN)
-        printf(" unknown");
+        fprintf(stderr, " unknown");
     if (flags & TYPE_FLAG_ANYOBJECT)
-        printf(" object");
+        fprintf(stderr, " object");
 
     if (flags & TYPE_FLAG_UNDEFINED)
-        printf(" void");
+        fprintf(stderr, " void");
     if (flags & TYPE_FLAG_NULL)
-        printf(" null");
+        fprintf(stderr, " null");
     if (flags & TYPE_FLAG_BOOLEAN)
-        printf(" bool");
+        fprintf(stderr, " bool");
     if (flags & TYPE_FLAG_INT32)
-        printf(" int");
+        fprintf(stderr, " int");
     if (flags & TYPE_FLAG_DOUBLE)
-        printf(" float");
+        fprintf(stderr, " float");
     if (flags & TYPE_FLAG_STRING)
-        printf(" string");
+        fprintf(stderr, " string");
     if (flags & TYPE_FLAG_LAZYARGS)
-        printf(" lazyargs");
+        fprintf(stderr, " lazyargs");
 
     uint32_t objectCount = baseObjectCount();
     if (objectCount) {
-        printf(" object[%u]", objectCount);
+        fprintf(stderr, " object[%u]", objectCount);
 
         unsigned count = getObjectCount();
         for (unsigned i = 0; i < count; i++) {
             TypeObjectKey *object = getObject(i);
             if (object)
-                printf(" %s", TypeString(Type::ObjectType(object)));
+                fprintf(stderr, " %s", TypeString(Type::ObjectType(object)));
         }
     }
 }
@@ -500,6 +505,11 @@ public:
         /* Basic subset constraint, move all types to the target. */
         target->addType(cx, type);
     }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "%s of TypeSet %p", kind(), target);
+    }
 };
 
 void
@@ -534,6 +544,22 @@ public:
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Value v = IdToValue(id);
+
+        Sprint(sp, "%s property ", (assign ? "write" : "read"));
+        if (v.isInt32())
+            Sprint(sp, "%d", v.toInt32());
+        else if (v.isDouble())
+            Sprint(sp, "%g", v.toDouble());
+        else if (v.isString())
+            Sprint(sp, "%p", v.toString());
+        else
+            Sprint(sp, "<something>");
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, pc - script->code);
+    }
 };
 
 void
@@ -573,6 +599,22 @@ public:
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Value v = IdToValue(id);
+
+        Sprint(sp, "call property ");
+        if (v.isInt32())
+            Sprint(sp, "%d", v.toInt32());
+        else if (v.isDouble())
+            Sprint(sp, "%g", v.toDouble());
+        else if (v.isString())
+            Sprint(sp, "%p", v.toString());
+        else
+            Sprint(sp, "<something>");
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, callpc - script->code);
+    }
 };
 
 void
@@ -614,6 +656,12 @@ public:
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "set elem obj T%p value T%s", objectTypes, valueTypes);
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, pc - script->code);
+    }
 };
 
 void
@@ -640,6 +688,11 @@ public:
     {}
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "call");
+    }
 };
 
 void
@@ -668,6 +721,12 @@ public:
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "arith result T%p and other operand T%p", target, other);
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, pc - script->code);
+    }
 };
 
 void
@@ -688,6 +747,11 @@ public:
     {}
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "transform this to T%p", target);
+    }
 };
 
 void
@@ -713,6 +777,12 @@ public:
     {}
 
     void newType(JSContext *cx, TypeSet *source, Type type);
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "propagate this <type> <types: T%p>", types);
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, callpc - script->code);
+    }
 };
 
 void
@@ -760,6 +830,11 @@ public:
         }
 
         target->addType(cx, type);
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "filter <target: T%p> <filter>", target);
     }
 };
 
@@ -891,6 +966,12 @@ public:
     {
         if (!target->hasType(type))
             script->analysis()->addTypeBarrier(cx, pc, target, type);
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "subsetBarrier <target: T%p>", target);
+        Sprint(sp, " (script %s:%d pcoff %d)", script->filename, script->lineno, pc - script->code);
     }
 };
 
@@ -1374,6 +1455,14 @@ public:
         typeAdded = true;
         cx->compartment->types.addPendingRecompile(cx, info);
     }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "freeze ");
+        if (typeAdded)
+            Sprint(sp, "<type added> ");
+        Sprint(sp, "(script %s:%d pcoff %d)", info.script->filename, info.script->lineno, info.pc - info.script->code);
+    }
 };
 
 void
@@ -1415,6 +1504,14 @@ public:
 
         typeUnknown = true;
         cx->compartment->types.addPendingRecompile(cx, info);
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "freeze Type Tag ");
+        if (typeUnknown)
+            Sprint(sp, "<type unknown> ");
+        Sprint(sp, "(script %s:%d pcoff %d)", info.script->filename, info.script->lineno, info.pc - info.script->code);
     }
 };
 
@@ -1506,6 +1603,12 @@ public:
             cx->compartment->types.addPendingRecompile(cx, info);
         }
     }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "freeze object flags %p", flags);
+        Sprint(sp, " (script %s:%d pcoff %d)", info.script->filename, info.script->lineno, info.pc - info.script->code);
+    }
 };
 
 /*
@@ -1555,6 +1658,12 @@ public:
 
         marked = true;
         cx->compartment->types.addPendingRecompile(cx, info);
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "freeze object kind %p", flags);
+        Sprint(sp, " (script %s:%d pcoff %d)", info.script->filename, info.script->lineno, info.pc - info.script->code);
     }
 };
 
@@ -1669,6 +1778,12 @@ public:
             updated = true;
             cx->compartment->types.addPendingRecompile(cx, info);
         }
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "freeze own property");
+        Sprint(sp, " (script %s:%d pcoff %d)", info.script->filename, info.script->lineno, info.pc - info.script->code);
     }
 };
 
@@ -2174,7 +2289,7 @@ TypeCompartment::addPendingRecompile(JSContext *cx, JSScript *script, jsbytecode
     }
 # ifdef JS_ION
     if (script->hasIonScript())
-        addPendingRecompile(cx, RecompileInfo(script));
+        addPendingRecompile(cx, RecompileInfo(script, pc));
 # endif
 #endif
 }
@@ -2383,15 +2498,15 @@ TypeCompartment::print(JSContext *cx, bool force)
     }
 #endif
 
-    printf("Counts: ");
+    fprintf(stderr, "Counts: ");
     for (unsigned count = 0; count < TYPE_COUNT_LIMIT; count++) {
         if (count)
-            printf("/");
-        printf("%u", typeCounts[count]);
+            fprintf(stderr, "/");
+        fprintf(stderr, "%u", typeCounts[count]);
     }
-    printf(" (%u over)\n", typeCountOver);
+    fprintf(stderr, " (%u over)\n", typeCountOver);
 
-    printf("Recompilations: %u\n", recompilations);
+    fprintf(stderr, "Recompilations: %u\n", recompilations);
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -3081,45 +3196,45 @@ TypeObject::clearNewScript(JSContext *cx)
 void
 TypeObject::print(JSContext *cx)
 {
-    printf("%s : %s",
+    fprintf(stderr, "%s : %s",
            TypeObjectString(this),
            proto ? TypeString(Type::ObjectType(proto)) : "(null)");
 
     if (unknownProperties()) {
-        printf(" unknown");
+        fprintf(stderr, " unknown");
     } else {
         if (!hasAnyFlags(OBJECT_FLAG_NON_PACKED_ARRAY))
-            printf(" packed");
+            fprintf(stderr, " packed");
         if (!hasAnyFlags(OBJECT_FLAG_NON_DENSE_ARRAY))
-            printf(" dense");
+            fprintf(stderr, " dense");
         if (!hasAnyFlags(OBJECT_FLAG_NON_TYPED_ARRAY))
-            printf(" typed");
+            fprintf(stderr, " typed");
         if (hasAnyFlags(OBJECT_FLAG_UNINLINEABLE))
-            printf(" uninlineable");
+            fprintf(stderr, " uninlineable");
         if (hasAnyFlags(OBJECT_FLAG_SPECIAL_EQUALITY))
-            printf(" specialEquality");
+            fprintf(stderr, " specialEquality");
         if (hasAnyFlags(OBJECT_FLAG_ITERATED))
-            printf(" iterated");
+            fprintf(stderr, " iterated");
     }
 
     unsigned count = getPropertyCount();
 
     if (count == 0) {
-        printf(" {}\n");
+        fprintf(stderr, " {}\n");
         return;
     }
 
-    printf(" {");
+    fprintf(stderr, " {");
 
     for (unsigned i = 0; i < count; i++) {
         Property *prop = getProperty(i);
         if (prop) {
-            printf("\n    %s:", TypeIdString(prop->id));
+            fprintf(stderr, "\n    %s:", TypeIdString(prop->id));
             prop->types.print(cx);
         }
     }
 
-    printf("\n}\n");
+    fprintf(stderr, "\n}\n");
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -4251,6 +4366,11 @@ public:
     }
 
     void newType(JSContext *cx, TypeSet *source, Type type) {}
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "clear definite setter TO%p", object);
+    }
 };
 
 /*
@@ -4272,6 +4392,11 @@ public:
 
         if (source->baseFlags() || source->getObjectCount() > 1)
             object->clearNewScript(cx);
+    }
+
+    void print(Sprinter *sp)
+    {
+        Sprint(sp, "clear definite single TO%p", object);
     }
 };
 
@@ -4728,30 +4853,30 @@ ScriptAnalysis::printTypes(JSContext *cx)
 #ifdef DEBUG
 
     if (script->function())
-        printf("Function");
+        fprintf(stderr, "Function");
     else if (script->isCachedEval)
-        printf("Eval");
+        fprintf(stderr, "Eval");
     else
-        printf("Main");
-    printf(" #%u %s (line %d):\n", script->id(), script->filename, script->lineno);
+        fprintf(stderr, "Main");
+    fprintf(stderr, " #%u %s (line %d):\n", script->id(), script->filename, script->lineno);
 
-    printf("locals:");
-    printf("\n    return:");
+    fprintf(stderr, "locals:");
+    fprintf(stderr, "\n    return:");
     TypeScript::ReturnTypes(script)->print(cx);
-    printf("\n    this:");
+    fprintf(stderr, "\n    this:");
     TypeScript::ThisTypes(script)->print(cx);
 
     for (unsigned i = 0; script->function() && i < script->function()->nargs; i++) {
-        printf("\n    arg%u:", i);
+        fprintf(stderr, "\n    arg%u:", i);
         TypeScript::ArgTypes(script, i)->print(cx);
     }
     for (unsigned i = 0; i < script->nfixed; i++) {
         if (!trackSlot(LocalSlot(script, i))) {
-            printf("\n    local%u:", i);
+            fprintf(stderr, "\n    local%u:", i);
             TypeScript::LocalTypes(script, i)->print(cx);
         }
     }
-    printf("\n");
+    fprintf(stderr, "\n");
 
     for (unsigned offset = 0; offset < script->length; offset++) {
         if (!maybeCode(offset))
@@ -4766,33 +4891,33 @@ ScriptAnalysis::printTypes(JSContext *cx)
 
         if (js_CodeSpec[*pc].format & JOF_TYPESET) {
             TypeSet *types = script->analysis()->bytecodeTypes(pc);
-            printf("  typeset %d:", (int) (types - script->types->typeArray()));
+            fprintf(stderr, "  typeset %d:", (int) (types - script->types->typeArray()));
             types->print(cx);
-            printf("\n");
+            fprintf(stderr, "\n");
         }
 
         unsigned defCount = GetDefCount(script, offset);
         for (unsigned i = 0; i < defCount; i++) {
-            printf("  type %d:", i);
+            fprintf(stderr, "  type %d:", i);
             pushedTypes(offset, i)->print(cx);
-            printf("\n");
+            fprintf(stderr, "\n");
         }
 
         if (getCode(offset).monitoredTypes)
-            printf("  monitored\n");
+            fprintf(stderr, "  monitored\n");
 
         TypeBarrier *barrier = getCode(offset).typeBarriers;
         if (barrier != NULL) {
-            printf("  barrier:");
+            fprintf(stderr, "  barrier:");
             while (barrier) {
-                printf(" %s", TypeString(barrier->type));
+                fprintf(stderr, " %s", TypeString(barrier->type));
                 barrier = barrier->next;
             }
-            printf("\n");
+            fprintf(stderr, "\n");
         }
     }
 
-    printf("\n");
+    fprintf(stderr, "\n");
 
 #endif /* DEBUG */
 

@@ -364,7 +364,15 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Va
 
         topScript->invalidatedIdempotentCache = true;
 
-        return Invalidate(cx, topScript);
+        jsbytecode *topPc = NULL;
+        {
+            IonFrameIterator iter(cx->runtime->ionTop);
+            ++iter;
+            InlineFrameIterator initer(&iter);
+            topPc = initer.pc();
+        }
+
+        return Invalidate(cx, topScript, topPc);
     }
 
     RootedId id(cx, NameToId(name));

@@ -492,11 +492,14 @@ ion::RecompileForInlining()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = cx->fp()->script();
 
+    IonActivation *activation = cx->runtime->ionActivation;
+    jsbytecode *pc = activation->bailout()->bailoutPc();
+
     IonSpew(IonSpew_Inlining, "Recompiling script to inline calls %s:%d", script->filename,
             script->lineno);
 
     // Invalidate the script to force a recompile.
-    if (!Invalidate(cx, script, /* resetUses */ false))
+    if (!Invalidate(cx, script, pc, /* resetUses */ false))
         return BAILOUT_RETURN_FATAL_ERROR;
 
     // Invalidation should not reset the use count.
@@ -523,6 +526,9 @@ ion::BoundsCheckFailure()
     JSContext *cx = GetIonContext()->cx;
     JSScript *script = cx->fp()->script();
 
+    IonActivation *activation = cx->runtime->ionActivation;
+    jsbytecode *pc = activation->bailout()->bailoutPc();
+
     IonSpew(IonSpew_Bailouts, "Bounds check failure %s:%d", script->filename,
             script->lineno);
 
@@ -531,12 +537,12 @@ ion::BoundsCheckFailure()
 
         // Invalidate the script to force a recompile.
         Vector<types::RecompileInfo> scripts(cx);
-        if (!scripts.append(types::RecompileInfo(script)))
+        if (!scripts.append(types::RecompileInfo(script, pc)))
             return BAILOUT_RETURN_FATAL_ERROR;
 
         IonSpew(IonSpew_Invalidate, "Invalidating due to bounds check failure");
 
-        Invalidate(cx->runtime->defaultFreeOp(), scripts);
+        Invalidate(cx->runtime->defaultFreeOp(), scripts, pc);
     }
 
     return true;

@@ -884,6 +884,7 @@ IonCompile(JSContext *cx, JSScript *script, StackFrame *fp, jsbytecode *osrPc)
         IonSpew(IonSpew_Abort, "IM Compilation failed.");
         return false;
     }
+    IonSpew(IonSpew_MIR, "Compilation succeed.");
 
     return true;
 }
@@ -1319,6 +1320,20 @@ ion::Invalidate(FreeOp *fop, const Vector<types::RecompileInfo> &invalid, bool r
         if (script->hasIonScript()) {
             IonSpew(IonSpew_Invalidate, " Invalidate %s:%u, IonScript %p",
                     script->filename, script->lineno, script->ion);
+
+#if 0
+            while(EnableChannel(IonSpew_Invalidate)) {
+                Sprinter sprinter(cx);
+                if (!sprinter.init())
+                    break;
+                if (!js_DisassembleAtPC(cx, cx->fp()->script(), true, cx->regs().pc, &sprinter))
+                    break;
+                fprintf(IonSpewFile, "%s\n\nTypes:\n", sprinter.string());
+                script->analysis()->printTypes(cx);
+                break;
+            }
+#endif
+
             script->ion->incref();
         }
     }
@@ -1357,12 +1372,12 @@ ion::Invalidate(FreeOp *fop, const Vector<types::RecompileInfo> &invalid, bool r
 }
 
 bool
-ion::Invalidate(JSContext *cx, JSScript *script, bool resetUses)
+ion::Invalidate(JSContext *cx, JSScript *script, jsbytecode *pc, bool resetUses)
 {
     JS_ASSERT(script->hasIonScript());
 
     Vector<types::RecompileInfo> scripts(cx);
-    if (!scripts.append(types::RecompileInfo(script)))
+    if (!scripts.append(types::RecompileInfo(script, pc)))
         return false;
 
     Invalidate(cx->runtime->defaultFreeOp(), scripts, resetUses);

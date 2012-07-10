@@ -278,6 +278,7 @@ IonBuilder::build()
 
     IonSpew(IonSpew_MIR, "Analyzing script %s:%d (%p)",
             script->filename, script->lineno, (void *) script);
+    script->analysis()->printTypes(cx);
 
     if (!initParameters())
         return false;
@@ -394,6 +395,7 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
 {
     IonSpew(IonSpew_MIR, "Inlining script %s:%d (%p)",
             script->filename, script->lineno, (void *)script);
+    script->analysis()->printTypes(cx);
 
     callerBuilder_ = callerBuilder;
     callerResumePoint_ = callerResumePoint;
@@ -471,7 +473,12 @@ IonBuilder::buildInline(IonBuilder *callerBuilder, MResumePoint *callerResumePoi
     // +2 for the scope chain and |this|.
     JS_ASSERT(current->entryResumePoint()->numOperands() == nargs + info().nlocals() + 2);
 
-    return traverseBytecode();
+    if (!traverseBytecode())
+        return false;
+
+    IonSpew(IonSpew_MIR, "Inlining script %s:%d complete",
+            script->filename, script->lineno, (void *)script);
+    return true;
 }
 
 // Apply Type Inference information to parameters early on, unboxing them if
@@ -615,9 +622,11 @@ bool
 IonBuilder::traverseBytecode()
 {
     for (;;) {
+        cx->compartment->types.compiledInfo.pc = pc;
         JS_ASSERT(pc < info().limitPC());
 
         for (;;) {
+            cx->compartment->types.compiledInfo.pc = pc;
             if (!temp().ensureBallast())
                 return false;
 
@@ -668,6 +677,7 @@ IonBuilder::traverseBytecode()
 #ifdef TRACK_SNAPSHOTS
         current->updateTrackedPc(pc);
 #endif
+        cx->compartment->types.compiledInfo.pc = pc;
     }
 
     return true;
@@ -2886,6 +2896,9 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets)
     }
     if (allFunctionsAreSmall)
         checkUses = js_IonOptions.smallFunctionUsesBeforeInlining;
+
+    IonSpew(IonSpew_Inlining, "Check inlining at script %s:%d (pcoff %d)",
+            script->filename, PCToLineNumber(script, pc), pc - script->code);
 
     if (script->getUseCount() < checkUses) {
         IonSpew(IonSpew_Inlining, "Not inlining, caller is not hot");
