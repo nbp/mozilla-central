@@ -1,0 +1,3 @@
+From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
+Subject: Bug 814177 - Split Instanceof codegen. r=
+
