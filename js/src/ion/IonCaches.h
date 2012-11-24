@@ -23,6 +23,7 @@ class IonCacheSetProperty;
 class IonCacheGetElement;
 class IonCacheBindName;
 class IonCacheName;
+class IonCacheFunInstance;
 
 // Common structure encoding the state of a polymorphic inline cache contained
 // in the code for an IonScript. IonCaches are used for polymorphic operations
@@ -87,7 +88,8 @@ class IonCache
         GetElement,
         BindName,
         Name,
-        NameTypeOf
+        NameTypeOf,
+        FunInstance
     };
 
   protected:
@@ -136,6 +138,11 @@ class IonCache
             PropertyName *name;
             TypedOrValueRegisterSpace output;
         } name;
+        struct {
+            Register lhsObject;
+            Register rhsFunction;
+            Register output;
+        } funinstance;
     } u;
 
     // Registers live after the cache, excluding output registers. The initial
@@ -226,6 +233,10 @@ class IonCache
     IonCacheName &toName() {
         JS_ASSERT(kind_ == Name || kind_ == NameTypeOf);
         return *(IonCacheName *)this;
+    }
+    IonCacheFunInstance &toFunInstance() {
+        JS_ASSERT(kind_ == FunInstance);
+        return *(IonCacheFunInstance *)this;
     }
 
     void setScriptedLocation(JSScript *script, jsbytecode *pc) {
@@ -415,6 +426,37 @@ class IonCacheName : public IonCache
                 Shape *shape);
 };
 
+class IonCacheFunInstance : public IonCache
+{
+  public:
+    IonCacheFunInstance(Kind kind,
+                        CodeOffsetJump initialJump,
+                        CodeOffsetLabel rejoinLabel,
+                        CodeOffsetLabel cacheLabel,
+                        RegisterSet liveRegs,
+                        Register lhsObject,
+                        Register rhsFunction,
+                        Register output)
+    {
+        init(kind, liveRegs, initialJump, rejoinLabel, cacheLabel);
+        u.funinstance.lhsObject = lhsObject;
+        u.funinstance.rhsFunction = rhsFunction;
+        u.funinstance.output = output;
+    }
+
+    Register lhsObject() const {
+        return u.name.lhsObject;
+    }
+    Register rhsFunction() const {
+        return u.name.rhsFunction;
+    }
+    Register output() const {
+        return u.name.output;
+    }
+
+    bool attach(JSContext *cx, IonScript *ion, HandleObject lhsObject, HandleObject rhsFunction);
+};
+
 bool
 GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
 
@@ -431,6 +473,10 @@ BindNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain);
 
 bool
 GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);
+
+bool
+GetFunInstanceCache(JSContext *cx, size_t cacheIndex, HandleObject lhsObject, HandleObject rhsFunction,
+                    JSBool *res);
 
 } // namespace ion
 } // namespace js
