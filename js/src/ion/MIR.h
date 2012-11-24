@@ -5315,7 +5315,7 @@ class MInArray
 // Implementation for instanceof operator.
 class MInstanceOf
   : public MBinaryInstruction,
-    public InstanceOfPolicy
+    public MixPolicy<BoxPolicy<0>, ObjectPolicy<1> >
 {
   public:
     MInstanceOf(MDefinition *obj, MDefinition *proto)

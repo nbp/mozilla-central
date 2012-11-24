@@ -804,8 +804,6 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
     jsbytecode *pc;
     cache.getScriptedLocation(&script, &pc);
 
-#error "TODO"
-
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, vp.address(), ion);
 
@@ -1895,50 +1893,6 @@ js::ion::GetNameCache(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
 
     IonCacheName &cache = ion->getCache(cacheIndex).toName();
     RootedPropertyName name(cx, cache.name());
-
-    RootedScript script(cx);
-    jsbytecode *pc;
-    cache.getScriptedLocation(&script, &pc);
-
-    RootedObject obj(cx);
-    RootedObject holder(cx);
-    RootedShape shape(cx);
-    if (!LookupName(cx, name, scopeChain, &obj, &holder, &shape))
-        return false;
-
-    if (cache.stubCount() < MAX_STUBS &&
-        IsCacheableName(cx, scopeChain, obj, holder, shape, pc, cache.outputReg()))
-    {
-        if (!cache.attach(cx, ion, scopeChain, obj, shape))
-            return false;
-        cache.incrementStubCount();
-    }
-
-    if (cache.isTypeOf()) {
-        if (!FetchName<true>(cx, obj, holder, name, shape, vp))
-            return false;
-    } else {
-        if (!FetchName<false>(cx, obj, holder, name, shape, vp))
-            return false;
-    }
-
-    // Monitor changes to cache entry.
-    types::TypeScript::Monitor(cx, script, pc, vp);
-
-    return true;
-}
-
-bool
-js::ion::GetFunInstanceCache(JSContext *cx, size_t cacheIndex,
-                             HandleObject lhsObject, HandleObject rhsFunction,
-                             JSBool *res)
-{
-    AutoFlushCache afc ("GetFunInstanceCache");
-
-    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
-
-    IonCacheFunInstance &cache = ion->getCache(cacheIndex).toFunInstance();
-    RootedPropertyName name(cx, cx->names().classPrototype);
 
     RootedScript script(cx);
     jsbytecode *pc;
