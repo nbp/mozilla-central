@@ -3426,7 +3426,7 @@ CodeGenerator::visitCache(LInstruction *ins)
 
 typedef bool (*GetNameCacheFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
 static const VMFunction GetNameCacheInfo =
-    FunctionInfo<GetNameCacheFn>(GetNameCache);
+    FunctionInfo<GetNameCacheFn>(IonCacheName::fallback);
 
 bool
 CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
@@ -3439,7 +3439,7 @@ CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
 
     bool isTypeOf = mir->accessKind() != MGetNameCache::NAME;
     IonCacheName cache(isTypeOf, ool->getInlineJump(), ool->getInlineLabel(),
-                       masm.labelForPatch(), liveRegs,
+                       masm.labelForPatch(),
                        scopeChain, mir->name(), output);
 
     cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
@@ -3461,7 +3461,7 @@ CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
 
 typedef bool (*GetPropertyCacheFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
 static const VMFunction GetPropertyCacheInfo =
-    FunctionInfo<GetPropertyCacheFn>(GetPropertyCache);
+    FunctionInfo<GetPropertyCacheFn>(IonCacheGetProperty::fallback);
 
 bool
 CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
@@ -3527,7 +3527,8 @@ CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
 }
 
 typedef bool (*GetElementCacheFn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
-static const VMFunction GetElementCacheInfo = FunctionInfo<GetElementCacheFn>(GetElementCache);
+static const VMFunction GetElementCacheInfo =
+    FunctionInfo<GetElementCacheFn>(IonCacheGetElement::fallback);
 
 bool
 CodeGenerator::visitOutOfLineGetElementCache(OutOfLineCache *ool)
@@ -3542,7 +3543,7 @@ CodeGenerator::visitOutOfLineGetElementCache(OutOfLineCache *ool)
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
 
     IonCacheGetElement cache(ool->getInlineJump(), ool->getInlineLabel(),
-                             masm.labelForPatch(), liveRegs,
+                             masm.labelForPatch(),
                              obj, index, output,
                              mir->monitoredResult());
 
@@ -3566,7 +3567,7 @@ CodeGenerator::visitOutOfLineGetElementCache(OutOfLineCache *ool)
 
 typedef JSObject *(*BindNameCacheFn)(JSContext *, size_t, HandleObject);
 static const VMFunction BindNameCacheInfo =
-    FunctionInfo<BindNameCacheFn>(BindNameCache);
+    FunctionInfo<BindNameCacheFn>(IonCacheBindName::fallback);
 
 bool
 CodeGenerator::visitOutOfLineBindNameCache(OutOfLineCache *ool)
@@ -3579,7 +3580,7 @@ CodeGenerator::visitOutOfLineBindNameCache(OutOfLineCache *ool)
 
     const MBindNameCache *mir = ins->mir();
     IonCacheBindName cache(ool->getInlineJump(), ool->getInlineLabel(),
-                           masm.labelForPatch(), liveRegs,
+                           masm.labelForPatch(),
                            scopeChain, mir->name(), output);
     cache.setScriptedLocation(mir->script(), mir->pc());
     size_t cacheIndex = allocateCache(cache);
@@ -3664,7 +3665,7 @@ CodeGenerator::visitCallDeleteProperty(LCallDeleteProperty *lir)
 
 typedef bool (*SetPropertyCacheFn)(JSContext *, size_t, HandleObject, HandleValue, bool);
 static const VMFunction SetPropertyCacheInfo =
-    FunctionInfo<SetPropertyCacheFn>(ion::SetPropertyCache);
+    FunctionInfo<SetPropertyCacheFn>(ion::IonCacheSetProperty::fallback);
 
 bool
 CodeGenerator::visitOutOfLineSetPropertyCache(OutOfLineCache *ool)

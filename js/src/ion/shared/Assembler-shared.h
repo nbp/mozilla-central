@@ -413,7 +413,9 @@ class CodeOffsetLabel
 class CodeLocationJump
 {
     uint8 *raw_;
-    mozilla::DebugOnly<bool> absolute_;
+#ifdef DEBUG
+    bool absolute_;
+#endif
 
 #ifdef JS_SMALL_BRANCH
     uint8 *jumpTableEntry_;
@@ -428,7 +430,9 @@ class CodeLocationJump
 
     void operator = (CodeOffsetJump base) {
         raw_ = (uint8 *) base.offset();
+#ifdef DEBUG
         absolute_ = false;
+#endif
 #ifdef JS_SMALL_BRANCH
         jumpTableEntry_ = (uint8 *) base.jumpTableIndex();
 #endif
