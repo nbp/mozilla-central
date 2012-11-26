@@ -58,8 +58,11 @@ class CodeGeneratorShared : public LInstructionVisitor
     // Mapping from bailout table ID to an offset in the snapshot buffer.
     js::Vector<SnapshotOffset, 0, SystemAllocPolicy> bailouts_;
 
+    // Allocated data space needed at runtime.
+    js::Vector<uint8, 0, SystemAllocPolicy> runtimeData_;
+
     // Vector of information about generated polymorphic inline caches.
-    js::Vector<IonCache, 0, SystemAllocPolicy> cacheList_;
+    js::Vector<uint32, 0, SystemAllocPolicy> cacheList_;
 
     // Vector of all patchable write pre-barrier offsets.
     js::Vector<CodeOffsetLabel, 0, SystemAllocPolicy> barrierOffsets_;
@@ -154,11 +157,31 @@ class CodeGeneratorShared : public LInstructionVisitor
         return frameClass_ == FrameSizeClass::None() ? frameDepth_ : frameClass_.frameSize();
     }
 
+  private:
+    // Ensure the cache is an IonCache while expecting the size of the derived
+    // class.
+    size_t allocateCacheSize(const IonCache &, size_t size) {
+        using namespace mozilla;
+        size_t dataOffset = allocateData(size);
+        size_t index = cacheList_.length();
+        masm.reportMemory(cacheList_.append(dataOffset));
+        return index;
+    }
+
   protected:
 
-    size_t allocateCache(const IonCache &cache) {
-        size_t index = cacheList_.length();
-        masm.reportMemory(cacheList_.append(cache));
+    size_t allocateData(size_t size) {
+        JS_ASSERT(size % sizeof(void *) == 0);
+        size_t dataOffset = runtimeData_.length();
+        masm.reportMemory(runtimeData_.appendN(0, size));
+        return dataOffset;
+    }
+
+    template <typename T>
+    inline size_t allocateCache(const T &cache) {
+        size_t index = allocateCacheSize(cache, sizeof(mozilla::AlignedStorage2<T>));
+        // Use the copy constructor on the allocated space.
+        new (&runtimeData_[cacheList_.back()]) T(cache);
         return index;
     }
 

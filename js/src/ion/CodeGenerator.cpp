@@ -3122,7 +3122,7 @@ CodeGenerator::link()
       IonScript::New(cx, graph.totalSlotCount(), scriptFrameSize, snapshots_.size(),
                      bailouts_.length(), graph.numConstants(),
                      safepointIndices_.length(), osiIndices_.length(),
-                     cacheList_.length(), barrierOffsets_.length(),
+                     cacheList_.length(), runtimeData_.length(), barrierOffsets_.length(),
                      safepoints_.size(), graph.mir().numScripts());
     SetIonScript(script, executionMode, ionScript);
 
@@ -3144,23 +3144,36 @@ CodeGenerator::link()
 
     ionScript->setMethod(code);
     ionScript->setDeoptTable(deoptTable_);
-    if (snapshots_.size())
-        ionScript->copySnapshots(&snapshots_);
-    if (bailouts_.length())
-        ionScript->copyBailoutTable(&bailouts_[0]);
+
+    // Ordered by expected frequency of usage and by sequences of reads.
+
+    // for the execution.
     if (graph.numConstants())
         ionScript->copyConstants(graph.constantPool());
-    if (safepointIndices_.length())
-        ionScript->copySafepointIndices(&safepointIndices_[0], masm);
-    if (osiIndices_.length())
-        ionScript->copyOsiIndices(&osiIndices_[0], masm);
+
+    // for generating caches during the execution.
+    if (runtimeData_.length())
+        ionScript->copyRuntimeData(&runtimeData_[0]);
     if (cacheList_.length())
         ionScript->copyCacheEntries(&cacheList_[0], masm);
-    if (barrierOffsets_.length())
-        ionScript->copyPrebarrierEntries(&barrierOffsets_[0], masm);
+
+    // for marking during GC.
+    if (safepointIndices_.length())
+        ionScript->copySafepointIndices(&safepointIndices_[0], masm);
     if (safepoints_.size())
         ionScript->copySafepoints(&safepoints_);
 
+    // for switching GC modes.
+    if (barrierOffsets_.length())
+        ionScript->copyPrebarrierEntries(&barrierOffsets_[0], masm);
+
+    // for rare cases, such as f.arguments or bailouts.
+    if (bailouts_.length())
+        ionScript->copyBailoutTable(&bailouts_[0]);
+    if (osiIndices_.length())
+        ionScript->copyOsiIndices(&osiIndices_[0], masm);
+    if (snapshots_.size())
+        ionScript->copySnapshots(&snapshots_);
     JS_ASSERT(graph.mir().numScripts() > 0);
     ionScript->copyScriptEntries(graph.mir().scripts());
 
@@ -3424,10 +3437,8 @@ CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
     RegisterSet liveRegs = lir->safepoint()->liveRegs();
     TypedOrValueRegister output(GetValueOutput(lir));
 
-    IonCache::Kind kind = (mir->accessKind() == MGetNameCache::NAME)
-                          ? IonCache::Name
-                          : IonCache::NameTypeOf;
-    IonCacheName cache(kind, ool->getInlineJump(), ool->getInlineLabel(),
+    bool isTypeOf = mir->accessKind() != MGetNameCache::NAME;
+    IonCacheName cache(isTypeOf, ool->getInlineJump(), ool->getInlineLabel(),
                        masm.labelForPatch(), liveRegs,
                        scopeChain, mir->name(), output);
 

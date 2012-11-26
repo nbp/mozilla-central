@@ -159,21 +159,28 @@ struct IonScript
     // Flag set when we bailout, to avoid frequent bailouts.
     bool bailoutExpected_;
 
-    // Offset from the start of the code buffer to its snapshot buffer.
-    uint32 snapshots_;
-    uint32 snapshotsSize_;
-
-    // Table mapping bailout IDs to snapshot offsets.
-    uint32 bailoutTable_;
-    uint32 bailoutEntries_;
-
     // Constant table for constants stored in snapshots.
     uint32 constantTable_;
     uint32 constantEntries_;
 
+    // Any kind of data needed by the runtime, these can be either cache
+    // information or profiling info.
+    uint32 runtimeData_;
+    uint32 runtimeSize_;
+
+    // State for polymorphic caches in the compiled code. All caches are stored
+    // in the runtimeData buffer and indexed by the cacheIndex which give a
+    // relative offset in the runtimeData array.
+    uint32 cacheIndex_;
+    uint32 cacheEntries_;
+
     // Map code displacement to safepoint / OSI-patch-delta.
     uint32 safepointIndexOffset_;
     uint32 safepointIndexEntries_;
+
+    // Offset to and length of the safepoint table in bytes.
+    uint32 safepointsStart_;
+    uint32 safepointsSize_;
 
     // Number of STACK_SLOT_SIZE-length slots this function reserves on the
     // stack.
@@ -183,21 +190,21 @@ struct IonScript
     // with the frame prefix to get a valid IonJSFrameLayout.
     uint32 frameSize_;
 
-    // Map OSI-point displacement to snapshot.
-    uint32 osiIndexOffset_;
-    uint32 osiIndexEntries_;
-
-    // State for polymorphic caches in the compiled code.
-    uint32 cacheList_;
-    uint32 cacheEntries_;
-
     // Offset list for patchable pre-barriers.
     uint32 prebarrierList_;
     uint32 prebarrierEntries_;
 
-    // Offset to and length of the safepoint table in bytes.
-    uint32 safepointsStart_;
-    uint32 safepointsSize_;
+    // Table mapping bailout IDs to snapshot offsets.
+    uint32 bailoutTable_;
+    uint32 bailoutEntries_;
+
+    // Map OSI-point displacement to snapshot.
+    uint32 osiIndexOffset_;
+    uint32 osiIndexEntries_;
+
+    // Offset from the start of the code buffer to its snapshot buffer.
+    uint32 snapshots_;
+    uint32 snapshotsSize_;
 
     // List of compiled/inlined JSScript's.
     uint32 scriptList_;
@@ -206,38 +213,50 @@ struct IonScript
     // Number of references from invalidation records.
     size_t refcount_;
 
+    // Identifier of the compilation which produced this code.
     types::RecompileInfo recompileInfo_;
+
+  private:
+    inline uint8 *bottomBuffer() {
+        return reinterpret_cast<uint8 *>(this);
+    }
+    inline const uint8 *bottomBuffer() const {
+        return reinterpret_cast<const uint8 *>(this);
+    }
 
   public:
     // Number of times this function has tried to call a non-IM compileable function
     uint32 slowCallCount;
 
     SnapshotOffset *bailoutTable() {
-        return (SnapshotOffset *)(reinterpret_cast<uint8 *>(this) + bailoutTable_);
+        return (SnapshotOffset *) &bottomBuffer()[bailoutTable_];
     }
     HeapValue *constants() {
-        return (HeapValue *)(reinterpret_cast<uint8 *>(this) + constantTable_);
+        return (HeapValue *) &bottomBuffer()[constantTable_];
     }
     const SafepointIndex *safepointIndices() const {
         return const_cast<IonScript *>(this)->safepointIndices();
     }
     SafepointIndex *safepointIndices() {
-        return (SafepointIndex *)(reinterpret_cast<uint8 *>(this) + safepointIndexOffset_);
+        return (SafepointIndex *) &bottomBuffer()[safepointIndexOffset_];
     }
     const OsiIndex *osiIndices() const {
         return const_cast<IonScript *>(this)->osiIndices();
     }
     OsiIndex *osiIndices() {
-        return (OsiIndex *)(reinterpret_cast<uint8 *>(this) + osiIndexOffset_);
+        return (OsiIndex *) &bottomBuffer()[osiIndexOffset_];
     }
-    IonCache *cacheList() {
-        return (IonCache *)(reinterpret_cast<uint8 *>(this) + cacheList_);
+    uint32 *cacheIndex() {
+        return (uint32 *) &bottomBuffer()[cacheIndex_];
+    }
+    uint8 *runtimeData() {
+        return  &bottomBuffer()[runtimeData_];
     }
     CodeOffsetLabel *prebarrierList() {
-        return (CodeOffsetLabel *)(reinterpret_cast<uint8 *>(this) + prebarrierList_);
+        return (CodeOffsetLabel *) &bottomBuffer()[prebarrierList_];
     }
     JSScript **scriptList() const {
-        return (JSScript **)(reinterpret_cast<const uint8 *>(this) + scriptList_);
+        return (JSScript **) &bottomBuffer()[scriptList_];
     }
 
   private:
@@ -250,8 +269,8 @@ struct IonScript
     static IonScript *New(JSContext *cx, uint32 frameLocals, uint32 frameSize,
                           size_t snapshotsSize, size_t snapshotEntries,
                           size_t constants, size_t safepointIndexEntries, size_t osiIndexEntries,
-                          size_t cacheEntries, size_t prebarrierEntries, size_t safepointsSize,
-                          size_t scriptEntries);
+                          size_t cacheEntries, size_t runtimeSize, size_t prebarrierEntries,
+                          size_t safepointsSize, size_t scriptEntries);
     static void Trace(JSTracer *trc, IonScript *script);
     static void Destroy(FreeOp *fop, IonScript *script);
 
@@ -362,9 +381,17 @@ struct IonScript
     }
     const OsiIndex *getOsiIndex(uint32 disp) const;
     const OsiIndex *getOsiIndex(uint8 *retAddr) const;
-    inline IonCache &getCache(size_t index);
+    inline IonCache &getCache(uint32 index) {
+        JS_ASSERT(index < cacheEntries_);
+        uint32 offset = cacheIndex()[index];
+        JS_ASSERT(offset < runtimeSize_);
+        return *(IonCache *) &runtimeData()[offset];
+    }
     size_t numCaches() const {
         return cacheEntries_;
+    }
+    size_t runtimeSize() const {
+        return runtimeSize_;
     }
     inline CodeOffsetLabel &getPrebarrier(size_t index);
     size_t numPrebarriers() const {
@@ -377,7 +404,8 @@ struct IonScript
     void copyConstants(const HeapValue *vp);
     void copySafepointIndices(const SafepointIndex *firstSafepointIndex, MacroAssembler &masm);
     void copyOsiIndices(const OsiIndex *firstOsiIndex, MacroAssembler &masm);
-    void copyCacheEntries(const IonCache *caches, MacroAssembler &masm);
+    void copyRuntimeData(const uint8 *data);
+    void copyCacheEntries(const uint32 *caches, MacroAssembler &masm);
     void copyPrebarrierEntries(const CodeOffsetLabel *barriers, MacroAssembler &masm);
     void copySafepoints(const SafepointWriter *writer);
     void copyScriptEntries(JSScript **scripts);

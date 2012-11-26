@@ -18,11 +18,17 @@ struct JSScript;
 namespace js {
 namespace ion {
 
-class IonCacheGetProperty;
-class IonCacheSetProperty;
-class IonCacheGetElement;
-class IonCacheBindName;
-class IonCacheName;
+#define IONCACHE_KIND_LIST(_)                                   \
+    _(GetProperty)                                              \
+    _(SetProperty)                                              \
+    _(GetElement)                                               \
+    _(BindName)                                                 \
+    _(Name)
+
+// Forward declarations of MIR types.
+#define FORWARD_DECLARE(kind) class IonCache##kind;
+ IONCACHE_KIND_LIST(FORWARD_DECLARE)
+#undef FORWARD_DECLARE
 
 // Common structure encoding the state of a polymorphic inline cache contained
 // in the code for an IonScript. IonCaches are used for polymorphic operations
@@ -77,21 +83,54 @@ struct ConstantOrRegisterSpace
     }
 };
 
+// An Ion cache can hold both data or code and may implement updateBaseAddress
+// and reset to update pointer on the code and to garbage collect all
+// information on GC.
 class IonCache
 {
   public:
     enum Kind {
-        Invalid = 0,
-        GetProperty,
-        SetProperty,
-        GetElement,
-        BindName,
-        Name,
-        NameTypeOf
+#   define DEFINE_CACHEKINDS(ickind) Cache_##ickind,
+        IONCACHE_KIND_LIST(DEFINE_CACHEKINDS)
+#   undef DEFINE_CACHEKINDS
+        Cache_Invalid
     };
 
+    // Cache testing and cast.
+#   define CACHEKIND_CASTS(ickind)                                      \
+    bool is##ickind() const {                                           \
+        return kind() == Cache_##ickind;                                \
+    }                                                                   \
+    inline IonCache##ickind &to##ickind();
+
+    IONCACHE_KIND_LIST(CACHEKIND_CASTS)
+#   undef CACHEKIND_CASTS
+
+    virtual Kind kind() const = 0;
+
+  public:
+
+    IonCache() { PodZero(this); }
+    virtual ~IonCache() { }
+
+    // Update labels once the code is copied and finalized.
+    virtual void updateBaseAddress(IonCode *code, MacroAssembler &masm)
+    { }
+
+    // Reset the cache around garbage collection.
+    virtual void reset()
+    { }
+};
+
+#define CACHE_HEADER(ickind)                                            \
+    Kind kind() const {                                                 \
+        return IonCache::Cache_##ickind;                                \
+    }
+
+
+class IonCodeCache : public IonCache
+{
   protected:
-    Kind kind_ : 8;
     bool pure_ : 1;
     bool idempotent_ : 1;
     size_t stubCount_ : 6;
@@ -106,37 +145,6 @@ class IonCache
 #else
     static const size_t REJOIN_LABEL_OFFSET = 0;
 #endif
-    union {
-        struct {
-            Register object;
-            PropertyName *name;
-            TypedOrValueRegisterSpace output;
-            bool allowGetters;
-        } getprop;
-        struct {
-            Register object;
-            PropertyName *name;
-            ConstantOrRegisterSpace value;
-            bool strict;
-        } setprop;
-        struct {
-            Register object;
-            ConstantOrRegisterSpace index;
-            TypedOrValueRegisterSpace output;
-            bool monitoredResult : 1;
-            bool hasDenseArrayStub : 1;
-        } getelem;
-        struct {
-            Register scopeChain;
-            PropertyName *name;
-            Register output;
-        } bindname;
-        struct {
-            Register scopeChain;
-            PropertyName *name;
-            TypedOrValueRegisterSpace output;
-        } name;
-    } u;
 
     // Registers live after the cache, excluding output registers. The initial
     // value of these registers must be preserved by the cache.
@@ -146,11 +154,10 @@ class IonCache
     JSScript *script;
     jsbytecode *pc;
 
-    void init(Kind kind, RegisterSet liveRegs,
+    void init(RegisterSet liveRegs,
               CodeOffsetJump initialJump,
               CodeOffsetLabel rejoinLabel,
               CodeOffsetLabel cacheLabel) {
-        this->kind_ = kind;
         this->liveRegs = liveRegs;
         this->initialJump_ = initialJump;
         this->lastJump_ = initialJump;
@@ -161,11 +168,11 @@ class IonCache
 
   public:
 
-    IonCache() { PodZero(this); }
+    IonCodeCache() { PodZero(this); }
 
+    // Specialize updateBaseAddress and reset function for discarding
+    // out-of-line code caches.
     void updateBaseAddress(IonCode *code, MacroAssembler &masm);
-    
-    // Reset the cache around garbage collection.
     void reset();
 
     CodeLocationJump lastJump() const { return lastJump_; }
@@ -207,27 +214,6 @@ class IonCache
         JS_ASSERT(stubCount_);
     }
 
-    IonCacheGetProperty &toGetProperty() {
-        JS_ASSERT(kind_ == GetProperty);
-        return *(IonCacheGetProperty *)this;
-    }
-    IonCacheSetProperty &toSetProperty() {
-        JS_ASSERT(kind_ == SetProperty);
-        return *(IonCacheSetProperty *)this;
-    }
-    IonCacheGetElement &toGetElement() {
-        JS_ASSERT(kind_ == GetElement);
-        return *(IonCacheGetElement *)this;
-    }
-    IonCacheBindName &toBindName() {
-        JS_ASSERT(kind_ == BindName);
-        return *(IonCacheBindName *)this;
-    }
-    IonCacheName &toName() {
-        JS_ASSERT(kind_ == Name || kind_ == NameTypeOf);
-        return *(IonCacheName *)this;
-    }
-
     void setScriptedLocation(JSScript *script, jsbytecode *pc) {
         JS_ASSERT(!idempotent_);
         this->script = script;
@@ -240,17 +226,17 @@ class IonCache
     }
 };
 
-inline IonCache &
-IonScript::getCache(size_t index) {
-    JS_ASSERT(index < numCaches());
-    return cacheList()[index];
-}
-
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
 
-class IonCacheGetProperty : public IonCache
+class IonCacheGetProperty : public IonCodeCache
 {
+  protected:
+    Register object_;
+    PropertyName *name_;
+    TypedOrValueRegisterSpace output_;
+    bool allowGetters_;
+
   public:
     IonCacheGetProperty(CodeOffsetJump initialJump,
                         CodeOffsetLabel rejoinLabel,
@@ -260,17 +246,19 @@ class IonCacheGetProperty : public IonCache
                         TypedOrValueRegister output,
                         bool allowGetters)
     {
-        init(GetProperty, liveRegs, initialJump, rejoinLabel, cacheLabel);
-        u.getprop.object = object;
-        u.getprop.name = name;
-        u.getprop.output.data() = output;
-        u.getprop.allowGetters = allowGetters;
+        init(liveRegs, initialJump, rejoinLabel, cacheLabel);
+        object_ = object;
+        name_ = name;
+        output_.data() = output;
+        allowGetters_ = allowGetters;
     }
 
-    Register object() const { return u.getprop.object; }
-    PropertyName *name() const { return u.getprop.name; }
-    TypedOrValueRegister output() const { return u.getprop.output.data(); }
-    bool allowGetters() const { return u.getprop.allowGetters; }
+    CACHE_HEADER(GetProperty);
+
+    Register object() const { return object_; }
+    PropertyName *name() const { return name_; }
+    TypedOrValueRegister output() const { return output_.data(); }
+    bool allowGetters() const { return allowGetters_; }
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         const Shape *shape);
@@ -279,8 +267,14 @@ class IonCacheGetProperty : public IonCache
                           const SafepointIndex *safepointIndex, void *returnAddr);
 };
 
-class IonCacheSetProperty : public IonCache
+class IonCacheSetProperty : public IonCodeCache
 {
+  protected:
+    Register object_;
+    PropertyName *name_;
+    ConstantOrRegisterSpace value_;
+    bool strict_;
+
   public:
     IonCacheSetProperty(CodeOffsetJump initialJump,
                         CodeOffsetLabel rejoinLabel,
@@ -290,17 +284,19 @@ class IonCacheSetProperty : public IonCache
                         ConstantOrRegister value,
                         bool strict)
     {
-        init(SetProperty, liveRegs, initialJump, rejoinLabel, cacheLabel);
-        u.setprop.object = object;
-        u.setprop.name = name;
-        u.setprop.value.data() = value;
-        u.setprop.strict = strict;
+        init(liveRegs, initialJump, rejoinLabel, cacheLabel);
+        object_ = object;
+        name_ = name;
+        value_.data() = value;
+        strict_ = strict;
     }
 
-    Register object() const { return u.setprop.object; }
-    PropertyName *name() const { return u.setprop.name; }
-    ConstantOrRegister value() const { return u.setprop.value.data(); }
-    bool strict() const { return u.setprop.strict; }
+    CACHE_HEADER(SetProperty);
+
+    Register object() const { return object_; }
+    PropertyName *name() const { return name_; }
+    ConstantOrRegister value() const { return value_.data(); }
+    bool strict() const { return strict_; }
 
     bool attachNativeExisting(JSContext *cx, IonScript *ion, HandleObject obj, HandleShape shape);
     bool attachSetterCall(JSContext *cx, IonScript *ion, HandleObject obj,
@@ -309,8 +305,15 @@ class IonCacheSetProperty : public IonCache
                             const Shape *newshape, const Shape *propshape);
 };
 
-class IonCacheGetElement : public IonCache
+class IonCacheGetElement : public IonCodeCache
 {
+  protected:
+    Register object_;
+    ConstantOrRegisterSpace index_;
+    TypedOrValueRegisterSpace output_;
+    bool monitoredResult_ : 1;
+    bool hasDenseArrayStub_ : 1;
+
   public:
     IonCacheGetElement(CodeOffsetJump initialJump,
                        CodeOffsetLabel rejoinLabel,
@@ -319,40 +322,47 @@ class IonCacheGetElement : public IonCache
                        Register object, ConstantOrRegister index,
                        TypedOrValueRegister output, bool monitoredResult)
     {
-        init(GetElement, liveRegs, initialJump, rejoinLabel, cacheLabel);
-        u.getelem.object = object;
-        u.getelem.index.data() = index;
-        u.getelem.output.data() = output;
-        u.getelem.monitoredResult = monitoredResult;
-        u.getelem.hasDenseArrayStub = false;
+        init(liveRegs, initialJump, rejoinLabel, cacheLabel);
+        object_ = object;
+        index_.data() = index;
+        output_.data() = output;
+        monitoredResult_ = monitoredResult;
+        hasDenseArrayStub_ = false;
     }
 
+    CACHE_HEADER(GetElement);
+
     Register object() const {
-        return u.getelem.object;
+        return object_;
     }
     ConstantOrRegister index() const {
-        return u.getelem.index.data();
+        return index_.data();
     }
     TypedOrValueRegister output() const {
-        return u.getelem.output.data();
+        return output_.data();
     }
     bool monitoredResult() const {
-        return u.getelem.monitoredResult;
+        return monitoredResult_;
     }
     bool hasDenseArrayStub() const {
-        return u.getelem.hasDenseArrayStub;
+        return hasDenseArrayStub_;
     }
     void setHasDenseArrayStub() {
         JS_ASSERT(!hasDenseArrayStub());
-        u.getelem.hasDenseArrayStub = true;
+        hasDenseArrayStub_ = true;
     }
 
     bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval, PropertyName *name);
     bool attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
 };
 
-class IonCacheBindName : public IonCache
+class IonCacheBindName : public IonCodeCache
 {
+  protected:
+    Register scopeChain_;
+    PropertyName *name_;
+    Register output_;
+
   public:
     IonCacheBindName(CodeOffsetJump initialJump,
                      CodeOffsetLabel rejoinLabel,
@@ -361,30 +371,39 @@ class IonCacheBindName : public IonCache
                      Register scopeChain, PropertyName *name,
                      Register output)
     {
-        init(BindName, liveRegs, initialJump, rejoinLabel, cacheLabel);
-        u.bindname.scopeChain = scopeChain;
-        u.bindname.name = name;
-        u.bindname.output = output;
+        init(liveRegs, initialJump, rejoinLabel, cacheLabel);
+        scopeChain_ = scopeChain;
+        name_ = name;
+        output_ = output;
     }
 
+    CACHE_HEADER(BindName);
+
     Register scopeChainReg() const {
-        return u.bindname.scopeChain;
+        return scopeChain_;
     }
     HandlePropertyName name() const {
-        return HandlePropertyName::fromMarkedLocation(&u.bindname.name);
+        // TODO: are we marking IC?
+        return HandlePropertyName::fromMarkedLocation(&name_);
     }
     Register outputReg() const {
-        return u.bindname.output;
+        return output_;
     }
 
     bool attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain);
     bool attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain, JSObject *holder);
 };
 
-class IonCacheName : public IonCache
+class IonCacheName : public IonCodeCache
 {
+  protected:
+    bool typeOf_;
+    Register scopeChain_;
+    PropertyName *name_;
+    TypedOrValueRegisterSpace output_;
+
   public:
-    IonCacheName(Kind kind,
+    IonCacheName(bool typeOf,
                  CodeOffsetJump initialJump,
                  CodeOffsetLabel rejoinLabel,
                  CodeOffsetLabel cacheLabel,
@@ -392,28 +411,44 @@ class IonCacheName : public IonCache
                  Register scopeChain, PropertyName *name,
                  TypedOrValueRegister output)
     {
-        init(kind, liveRegs, initialJump, rejoinLabel, cacheLabel);
-        u.name.scopeChain = scopeChain;
-        u.name.name = name;
-        u.name.output.data() = output;
+        init(liveRegs, initialJump, rejoinLabel, cacheLabel);
+        typeOf_ = typeOf;
+        scopeChain_ = scopeChain;
+        name_ = name;
+        output_.data() = output;
     }
 
+    CACHE_HEADER(Name);
+
     Register scopeChainReg() const {
-        return u.name.scopeChain;
+        return scopeChain_;
     }
     HandlePropertyName name() const {
-        return HandlePropertyName::fromMarkedLocation(&u.name.name);
+        return HandlePropertyName::fromMarkedLocation(&name_);
     }
     TypedOrValueRegister outputReg() const {
-        return u.name.output.data();
+        return output_.data();
     }
     bool isTypeOf() const {
-        return kind_ == NameTypeOf;
+        return typeOf_;
     }
 
     bool attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject obj,
                 Shape *shape);
 };
+
+#undef CACHE_HEADER
+
+// Implement cache casts now that the compiler can see the inheritance.
+#define CACHE_CASTS(ickind)                                             \
+    IonCache##ickind &IonCache::to##ickind()                            \
+    {                                                                   \
+        JS_ASSERT(is##ickind());                                        \
+        return *static_cast<IonCache##ickind *>(this);                  \
+    }
+IONCACHE_KIND_LIST(CACHE_CASTS)
+#undef OPCODE_CASTS
+
 
 bool
 GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);

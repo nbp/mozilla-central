@@ -432,8 +432,10 @@ IonScript::IonScript()
     frameSize_(0),
     osiIndexOffset_(0),
     osiIndexEntries_(0),
-    cacheList_(0),
+    cacheIndex_(0),
     cacheEntries_(0),
+    runtimeData_(0),
+    runtimeSize_(0),
     prebarrierList_(0),
     prebarrierEntries_(0),
     safepointsStart_(0),
@@ -451,8 +453,8 @@ static const int DataAlignment = 4;
 IonScript *
 IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
-               size_t osiIndices, size_t cacheEntries, size_t prebarrierEntries,
-               size_t safepointsSize, size_t scriptEntries)
+               size_t osiIndices, size_t cacheEntries, size_t runtimeSize,
+               size_t prebarrierEntries, size_t safepointsSize, size_t scriptEntries)
 {
     if (snapshotsSize >= MAX_BUFFER_SIZE ||
         (bailoutEntries >= MAX_BUFFER_SIZE / sizeof(uint32)))
@@ -469,7 +471,8 @@ IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapsh
     size_t paddedConstantsSize = AlignBytes(constants * sizeof(Value), DataAlignment);
     size_t paddedSafepointIndicesSize = AlignBytes(safepointIndices * sizeof(SafepointIndex), DataAlignment);
     size_t paddedOsiIndicesSize = AlignBytes(osiIndices * sizeof(OsiIndex), DataAlignment);
-    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
+    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(uint32), DataAlignment);
+    size_t paddedRuntimeSize = AlignBytes(runtimeSize, DataAlignment);
     size_t paddedPrebarrierEntriesSize =
         AlignBytes(prebarrierEntries * sizeof(CodeOffsetLabel), DataAlignment);
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
@@ -480,6 +483,7 @@ IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapsh
                    paddedSafepointIndicesSize+
                    paddedOsiIndicesSize +
                    paddedCacheEntriesSize +
+                   paddedRuntimeSize +
                    paddedPrebarrierEntriesSize +
                    paddedSafepointSize +
                    paddedScriptSize;
@@ -492,37 +496,48 @@ IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapsh
 
     uint32 offsetCursor = sizeof(IonScript);
 
-    script->snapshots_ = offsetCursor;
-    script->snapshotsSize_ = snapshotsSize;
-    offsetCursor += paddedSnapshotsSize;
+    // Ordered by expected frequency of usage and by sequences of reads.
 
-    script->bailoutTable_ = offsetCursor;
-    script->bailoutEntries_ = bailoutEntries;
-    offsetCursor += paddedBailoutSize;
-
+    // for the execution
     script->constantTable_ = offsetCursor;
     script->constantEntries_ = constants;
     offsetCursor += paddedConstantsSize;
 
+    // for generating caches during the execution.
+    script->runtimeData_ = offsetCursor;
+    script->runtimeSize_ = runtimeSize;
+    offsetCursor += paddedRuntimeSize;
+
+    script->cacheIndex_ = offsetCursor;
+    script->cacheEntries_ = cacheEntries;
+    offsetCursor += paddedCacheEntriesSize;
+
+    // for marking during GC.
     script->safepointIndexOffset_ = offsetCursor;
     script->safepointIndexEntries_ = safepointIndices;
     offsetCursor += paddedSafepointIndicesSize;
+
+    script->safepointsStart_ = offsetCursor;
+    script->safepointsSize_ = safepointsSize;
+    offsetCursor += paddedSafepointSize;
+
+    // for switching GC modes.
+    script->prebarrierList_ = offsetCursor;
+    script->prebarrierEntries_ = prebarrierEntries;
+    offsetCursor += paddedPrebarrierEntriesSize;
+
+    // for rare cases, such as f.arguments or bailouts.
+    script->bailoutTable_ = offsetCursor;
+    script->bailoutEntries_ = bailoutEntries;
+    offsetCursor += paddedBailoutSize;
 
     script->osiIndexOffset_ = offsetCursor;
     script->osiIndexEntries_ = osiIndices;
     offsetCursor += paddedOsiIndicesSize;
 
-    script->cacheList_ = offsetCursor;
-    script->cacheEntries_ = cacheEntries;
-    offsetCursor += paddedCacheEntriesSize;
-
-    script->prebarrierList_ = offsetCursor;
-    script->prebarrierEntries_ = prebarrierEntries;
-    offsetCursor += paddedPrebarrierEntriesSize;
-
-    script->safepointsStart_ = offsetCursor;
-    script->safepointsSize_ = safepointsSize;
-    offsetCursor += paddedSafepointSize;
+    script->snapshots_ = offsetCursor;
+    script->snapshotsSize_ = snapshotsSize;
+    offsetCursor += paddedSnapshotsSize;
 
     script->scriptList_ = offsetCursor;
     script->scriptEntries_ = scriptEntries;
@@ -586,11 +601,9 @@ IonScript::copyScriptEntries(JSScript **scripts)
 void
 IonScript::copySafepointIndices(const SafepointIndex *si, MacroAssembler &masm)
 {
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     SafepointIndex *table = safepointIndices();
     memcpy(table, si, safepointIndexEntries_ * sizeof(SafepointIndex));
     for (size_t i = 0; i < safepointIndexEntries_; i++)
@@ -606,15 +619,19 @@ IonScript::copyOsiIndices(const OsiIndex *oi, MacroAssembler &masm)
 }
 
 void
-IonScript::copyCacheEntries(const IonCache *caches, MacroAssembler &masm)
+IonScript::copyRuntimeData(const uint8 *data)
 {
-    memcpy(cacheList(), caches, numCaches() * sizeof(IonCache));
+    memcpy(runtimeData(), data, runtimeSize());
+}
 
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+void
+IonScript::copyCacheEntries(const uint32 *caches, MacroAssembler &masm)
+{
+    memcpy(cacheIndex(), caches, numCaches() * sizeof(uint32));
+
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     for (size_t i = 0; i < numCaches(); i++)
         getCache(i).updateBaseAddress(method_, masm);
 }

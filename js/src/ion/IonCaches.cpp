@@ -870,7 +870,7 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
 }
 
 void
-IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
+IonCodeCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 {
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
@@ -878,7 +878,7 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 }
 
 void
-IonCache::reset()
+IonCodeCache::reset()
 {
     PatchJump(initialJump_, cacheLabel_);
 
