@@ -186,6 +186,7 @@ class IonCodeCache : public IonCache
         return stubCount_ < MAX_STUBS;
     }
 
+    static IonCode * const CACHE_FLUSHED;
     IonCode *linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion);
     void attachStub(IonCode *code, CodeOffsetJump &rejoinOffset, CodeOffsetJump *exitOffset);
 

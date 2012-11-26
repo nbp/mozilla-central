@@ -84,6 +84,8 @@ CodeOffsetJump::fixup(MacroAssembler *masm)
 #endif
 }
 
+IonCode * const IonCodeCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
+
 IonCode *
 IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 {
@@ -93,7 +95,7 @@ IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
         return NULL;
 
     if (ion->invalidated())
-        return NULL;
+        return IonCodeCache::CACHE_FLUSHED;
 
     return code;
 }
@@ -662,8 +664,8 @@ IonCacheGetProperty::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj
     getprop.generateReadSlot(cx, masm, obj, name(), holder, shape, object(), output(), &failures);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     getprop.rejoinOffset.fixup(&masm);
     getprop.exitOffset.fixup(&masm);
@@ -698,8 +700,8 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
     }
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     getprop.rejoinOffset.fixup(&masm);
     getprop.exitOffset.fixup(&masm);
@@ -945,8 +947,8 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, IonScript *ion,
     masm.bind(&rejoin_);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1118,8 +1120,8 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
     masm.bind(&exit);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1202,8 +1204,8 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject 
     masm.bind(&exit_);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1404,8 +1406,8 @@ IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject ob
     getprop.generateReadSlot(cx, masm, obj, name, holder, shape, object(), output(), &failures, &nonRepatchFailures);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     getprop.rejoinOffset.fixup(&masm);
     getprop.exitOffset.fixup(&masm);
@@ -1471,8 +1473,8 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *ob
     masm.bind(&exit_);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1545,8 +1547,8 @@ IonCacheBindName::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeCha
     masm.bind(&rejoin_);
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1646,8 +1648,8 @@ IonCacheBindName::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scope
     }
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     exitOffset.fixup(&masm);
@@ -1752,8 +1754,8 @@ IonCacheName::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, Han
     }
 
     IonCode *code = linkCode(cx, masm, ion);
-    if (!code)
-        return false;
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
 
     rejoinOffset.fixup(&masm);
     if (failures.bound())
