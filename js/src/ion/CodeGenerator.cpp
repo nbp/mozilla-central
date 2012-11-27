@@ -4206,15 +4206,15 @@ CodeGenerator::visitInArray(LInArray *lir)
 }
 
 bool
-CodeGenerator::visitInstanceOfTypedO(LInstanceOfTypedO *ins)
+CodeGenerator::visitInstanceOfO(LInstanceOfO *ins)
 {
-    return emitInstanceOfTyped(ins, ins->mir()->prototypeObject());
+    return emitInstanceOf(ins, ins->mir()->prototypeObject());
 }
 
 bool
-CodeGenerator::visitInstanceOfTypedV(LInstanceOfTypedV *ins)
+CodeGenerator::visitInstanceOfV(LInstanceOfV *ins)
 {
-    return emitInstanceOfTyped(ins, ins->mir()->prototypeObject());
+    return emitInstanceOf(ins, ins->mir()->prototypeObject());
 }
 
 // Wrap IsDelegate, which takes a Value for the lhs of an instanceof.
@@ -4232,7 +4232,7 @@ typedef bool (*IsDelegateObjectFn)(JSContext *, HandleObject, HandleObject, JSBo
 static const VMFunction IsDelegateObjectInfo = FunctionInfo<IsDelegateObjectFn>(IsDelegateObject);
 
 bool
-CodeGenerator::emitInstanceOfTyped(LInstruction *ins, RawObject prototypeObject)
+CodeGenerator::emitInstanceOf(LInstruction *ins, RawObject prototypeObject)
 {
     // This path implements fun_hasInstance when the function's prototype is
     // known to be prototypeObject.
@@ -4242,16 +4242,16 @@ CodeGenerator::emitInstanceOfTyped(LInstruction *ins, RawObject prototypeObject)
 
     // If the lhs is a primitive, the result is false.
     Register objReg;
-    if (ins->isInstanceOfTypedV()) {
+    if (ins->isInstanceOfV()) {
         Label isObject;
-        ValueOperand lhsValue = ToValue(ins, LInstanceOfTypedV::LHS);
+        ValueOperand lhsValue = ToValue(ins, LInstanceOfV::LHS);
         masm.branchTestObject(Assembler::Equal, lhsValue, &isObject);
         masm.mov(Imm32(0), output);
         masm.jump(&done);
         masm.bind(&isObject);
         objReg = masm.extractObject(lhsValue, output);
     } else {
-        objReg = ToRegister(ins->toInstanceOfTypedO()->lhs());
+        objReg = ToRegister(ins->toInstanceOfO()->lhs());
     }
 
     // Crawl the lhs's prototype chain in a loop to search for prototypeObject.
@@ -4303,11 +4303,11 @@ CodeGenerator::emitInstanceOfTyped(LInstruction *ins, RawObject prototypeObject)
     } else {
         masm.bind(&regenerate);
         lazyEntry = &regenerate;
-        if (ins->isInstanceOfTypedV()) {
-            ValueOperand lhsValue = ToValue(ins, LInstanceOfTypedV::LHS);
+        if (ins->isInstanceOfV()) {
+            ValueOperand lhsValue = ToValue(ins, LInstanceOfV::LHS);
             objReg = masm.extractObject(lhsValue, output);
         } else {
-            objReg = ToRegister(ins->toInstanceOfTypedO()->lhs());
+            objReg = ToRegister(ins->toInstanceOfO()->lhs());
         }
         JS_ASSERT(objReg == output);
         masm.jump(ool->entry());

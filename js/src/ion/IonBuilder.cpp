@@ -6520,7 +6520,7 @@ IonBuilder::jsop_instanceof()
         if (!protoObject)
             break;
 
-        MInstanceOfTyped *ins = new MInstanceOfTyped(obj, protoObject);
+        MInstanceOf *ins = new MInstanceOf(obj, protoObject);
 
         current->add(ins);
         current->push(ins);
