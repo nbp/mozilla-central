@@ -26,7 +26,7 @@ namespace ion {
     _(Name)
 
 // Forward declarations of MIR types.
-#define FORWARD_DECLARE(kind) class IonCache##kind;
+#define FORWARD_DECLARE(kind) class kind##IC;
  IONCACHE_KIND_LIST(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
@@ -80,7 +80,7 @@ class IonCache
     bool is##ickind() const {                                           \
         return kind() == Cache_##ickind;                                \
     }                                                                   \
-    inline IonCache##ickind &to##ickind();
+    inline ickind##IC &to##ickind();
 
     IONCACHE_KIND_LIST(CACHEKIND_CASTS)
 #   undef CACHEKIND_CASTS
@@ -240,7 +240,7 @@ class IonCodeCache : public IonCache
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
 
-class IonCacheGetProperty : public IonCodeCache
+class GetPropertyIC : public IonCodeCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -253,14 +253,14 @@ class IonCacheGetProperty : public IonCodeCache
     bool allowGetters_;
 
   public:
-    IonCacheGetProperty(CodeOffsetJump initialJump,
-                        CodeOffsetLabel rejoinLabel,
-                        CodeOffsetLabel cacheLabel,
-                        RegisterSet liveRegs,
-                        Register object, PropertyName *name,
-                        TypedOrValueRegister output,
-                        bool allowGetters)
-        : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+    GetPropertyIC(CodeOffsetJump initialJump,
+                  CodeOffsetLabel rejoinLabel,
+                  CodeOffsetLabel cacheLabel,
+                  RegisterSet liveRegs,
+                  Register object, PropertyName *name,
+                  TypedOrValueRegister output,
+                  bool allowGetters)
+      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
         liveRegs_(liveRegs),
         object_(object),
         name_(name),
@@ -282,11 +282,10 @@ class IonCacheGetProperty : public IonCodeCache
                           const Shape *shape,
                           const SafepointIndex *safepointIndex, void *returnAddr);
 
-    static bool fallback(JSContext *cx, size_t cacheIndex,
-                         HandleObject obj, MutableHandleValue vp);
+    static bool update(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
 };
 
-class IonCacheSetProperty : public IonCodeCache
+class SetPropertyIC : public IonCodeCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -299,13 +298,13 @@ class IonCacheSetProperty : public IonCodeCache
     bool strict_;
 
   public:
-    IonCacheSetProperty(CodeOffsetJump initialJump,
-                        CodeOffsetLabel rejoinLabel,
-                        CodeOffsetLabel cacheLabel,
-                        RegisterSet liveRegs,
-                        Register object, PropertyName *name,
-                        ConstantOrRegister value,
-                        bool strict)
+    SetPropertyIC(CodeOffsetJump initialJump,
+                  CodeOffsetLabel rejoinLabel,
+                  CodeOffsetLabel cacheLabel,
+                  RegisterSet liveRegs,
+                  Register object, PropertyName *name,
+                  ConstantOrRegister value,
+                  bool strict)
       : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
         liveRegs_(liveRegs),
         object_(object),
@@ -329,10 +328,10 @@ class IonCacheSetProperty : public IonCodeCache
                             const Shape *newshape, const Shape *propshape);
 
     static bool
-    fallback(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value, bool isSetName);
+    update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value, bool isSetName);
 };
 
-class IonCacheGetElement : public IonCodeCache
+class GetElementIC : public IonCodeCache
 {
   protected:
     Register object_;
@@ -342,11 +341,11 @@ class IonCacheGetElement : public IonCodeCache
     bool hasDenseArrayStub_ : 1;
 
   public:
-    IonCacheGetElement(CodeOffsetJump initialJump,
-                       CodeOffsetLabel rejoinLabel,
-                       CodeOffsetLabel cacheLabel,
-                       Register object, ConstantOrRegister index,
-                       TypedOrValueRegister output, bool monitoredResult)
+    GetElementIC(CodeOffsetJump initialJump,
+                 CodeOffsetLabel rejoinLabel,
+                 CodeOffsetLabel cacheLabel,
+                 Register object, ConstantOrRegister index,
+                 TypedOrValueRegister output, bool monitoredResult)
       : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
         object_(object),
         index_(index),
@@ -382,11 +381,11 @@ class IonCacheGetElement : public IonCodeCache
     bool attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
 
     static bool
-    fallback(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
+    update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
                 MutableHandleValue vp);
 };
 
-class IonCacheBindName : public IonCodeCache
+class BindNameIC : public IonCodeCache
 {
   protected:
     Register scopeChain_;
@@ -394,11 +393,11 @@ class IonCacheBindName : public IonCodeCache
     Register output_;
 
   public:
-    IonCacheBindName(CodeOffsetJump initialJump,
-                     CodeOffsetLabel rejoinLabel,
-                     CodeOffsetLabel cacheLabel,
-                     Register scopeChain, PropertyName *name,
-                     Register output)
+    BindNameIC(CodeOffsetJump initialJump,
+               CodeOffsetLabel rejoinLabel,
+               CodeOffsetLabel cacheLabel,
+               Register scopeChain, PropertyName *name,
+               Register output)
       : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
         scopeChain_(scopeChain),
         name_(name),
@@ -423,10 +422,10 @@ class IonCacheBindName : public IonCodeCache
     bool attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain, JSObject *holder);
 
     static JSObject *
-    fallback(JSContext *cx, size_t cacheIndex, HandleObject scopeChain);
+    update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain);
 };
 
-class IonCacheName : public IonCodeCache
+class NameIC : public IonCodeCache
 {
   protected:
     bool typeOf_;
@@ -435,12 +434,12 @@ class IonCacheName : public IonCodeCache
     TypedOrValueRegister output_;
 
   public:
-    IonCacheName(bool typeOf,
-                 CodeOffsetJump initialJump,
-                 CodeOffsetLabel rejoinLabel,
-                 CodeOffsetLabel cacheLabel,
-                 Register scopeChain, PropertyName *name,
-                 TypedOrValueRegister output)
+    NameIC(bool typeOf,
+           CodeOffsetJump initialJump,
+           CodeOffsetLabel rejoinLabel,
+           CodeOffsetLabel cacheLabel,
+           Register scopeChain, PropertyName *name,
+           TypedOrValueRegister output)
       : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
         typeOf_(typeOf),
         scopeChain_(scopeChain),
@@ -468,17 +467,17 @@ class IonCacheName : public IonCodeCache
                 Shape *shape);
 
     static bool
-    fallback(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);
+    update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);
 };
 
 #undef CACHE_HEADER
 
 // Implement cache casts now that the compiler can see the inheritance.
 #define CACHE_CASTS(ickind)                                             \
-    IonCache##ickind &IonCache::to##ickind()                            \
+    ickind##IC &IonCache::to##ickind()                                  \
     {                                                                   \
         JS_ASSERT(is##ickind());                                        \
-        return *static_cast<IonCache##ickind *>(this);                  \
+        return *static_cast<ickind##IC *>(this);                        \
     }
 IONCACHE_KIND_LIST(CACHE_CASTS)
 #undef OPCODE_CASTS

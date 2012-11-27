@@ -714,7 +714,7 @@ struct GetNativePropertyStub
 };
 
 bool
-IonCacheGetProperty::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
+GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                                     const Shape *shape)
 {
     MacroAssembler masm;
@@ -730,7 +730,7 @@ IonCacheGetProperty::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj
 }
 
 bool
-IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
+GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
                                       JSObject *holder, const Shape *shape,
                                       const SafepointIndex *safepointIndex, void *returnAddr)
 {
@@ -760,7 +760,7 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
 
 static bool
 TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
-                           IonCacheGetProperty &cache, HandleObject obj,
+                           GetPropertyIC &cache, HandleObject obj,
                            HandlePropertyName name,
                            const SafepointIndex *safepointIndex,
                            void *returnAddr, bool *isCacheable)
@@ -846,8 +846,8 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
 }
 
 bool
-IonCacheGetProperty::fallback(JSContext *cx, size_t cacheIndex,
-                              HandleObject obj, MutableHandleValue vp)
+GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
+                            HandleObject obj, MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
@@ -855,7 +855,7 @@ IonCacheGetProperty::fallback(JSContext *cx, size_t cacheIndex,
     JSScript *topScript = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
     IonScript *ion = topScript->ionScript();
 
-    IonCacheGetProperty &cache = ion->getCache(cacheIndex).toGetProperty();
+    GetPropertyIC &cache = ion->getCache(cacheIndex).toGetProperty();
     RootedPropertyName name(cx, cache.name());
 
     // Override the return value if we are invalidated (bug 728188).
@@ -951,7 +951,7 @@ IonCodeCache::reset()
 }
 
 bool
-IonCacheSetProperty::attachNativeExisting(JSContext *cx, IonScript *ion,
+SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
                                           HandleObject obj, HandleShape shape)
 {
     MacroAssembler masm;
@@ -991,7 +991,7 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, IonScript *ion,
 }
 
 bool
-IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
+SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
                                       HandleObject obj, HandleObject holder, HandleShape shape,
                                       void *returnAddr)
 {
@@ -1155,7 +1155,7 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
 }
 
 bool
-IonCacheSetProperty::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
+SetPropertyIC::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
                                         const Shape *oldShape, const Shape *newShape,
                                         const Shape *propShape)
 {
@@ -1328,8 +1328,8 @@ IsPropertyAddInlineable(JSContext *cx, HandleObject obj, jsid id, uint32_t oldSl
 }
 
 bool
-IonCacheSetProperty::fallback(JSContext *cx, size_t cacheIndex, HandleObject obj,
-                              HandleValue value, bool isSetName)
+SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
+                            HandleValue value, bool isSetName)
 {
     AutoFlushCache afc ("SetPropertyCache");
 
@@ -1337,7 +1337,7 @@ IonCacheSetProperty::fallback(JSContext *cx, size_t cacheIndex, HandleObject obj
     const SafepointIndex *safepointIndex;
     JSScript *script = GetTopIonJSScript(cx, &safepointIndex, &returnAddr);
     IonScript *ion = script->ion;
-    IonCacheSetProperty &cache = ion->getCache(cacheIndex).toSetProperty();
+    SetPropertyIC &cache = ion->getCache(cacheIndex).toSetProperty();
     RootedPropertyName name(cx, cache.name());
     RootedId id(cx, AtomToId(name));
     RootedShape shape(cx);
@@ -1382,7 +1382,7 @@ IonCacheSetProperty::fallback(JSContext *cx, size_t cacheIndex, HandleObject obj
 }
 
 bool
-IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
+GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
                                   const Value &idval, PropertyName *name)
 {
     RootedObject holder(cx);
@@ -1418,7 +1418,7 @@ IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject ob
 }
 
 bool
-IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
+GetElementIC::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
 {
     JS_ASSERT(obj->isDenseArray());
     JS_ASSERT(idval.isInt32());
@@ -1476,14 +1476,14 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *ob
 }
 
 bool
-IonCacheGetElement::fallback(JSContext *cx, size_t cacheIndex, HandleObject obj,
-                             HandleValue idval, MutableHandleValue res)
+GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
+                           HandleValue idval, MutableHandleValue res)
 {
     AutoFlushCache afc ("GetElementCache");
 
     IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
-    IonCacheGetElement &cache = ion->getCache(cacheIndex).toGetElement();
+    GetElementIC &cache = ion->getCache(cacheIndex).toGetElement();
 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, res.address(), ion);
@@ -1518,7 +1518,7 @@ IonCacheGetElement::fallback(JSContext *cx, size_t cacheIndex, HandleObject obj,
 }
 
 bool
-IonCacheBindName::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain)
+BindNameIC::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain)
 {
     JS_ASSERT(scopeChain->isGlobal());
 
@@ -1588,7 +1588,7 @@ GenerateScopeChainGuards(MacroAssembler &masm, JSObject *scopeChain, JSObject *h
 }
 
 bool
-IonCacheBindName::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain, JSObject *holder)
+BindNameIC::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scopeChain, JSObject *holder)
 {
     JS_ASSERT(IsCacheableNonGlobalScope(scopeChain));
 
@@ -1654,15 +1654,15 @@ IsCacheableScopeChain(JSObject *scopeChain, JSObject *holder)
 }
 
 JSObject *
-IonCacheBindName::fallback(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
+BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 {
     AutoFlushCache afc ("BindNameCache");
 
     IonScript *ion = GetTopIonJSScript(cx)->ionScript();
-    IonCacheBindName &cache = ion->getCache(cacheIndex).toBindName();
+    BindNameIC &cache = ion->getCache(cacheIndex).toBindName();
     HandlePropertyName name = cache.name();
 
-    // IonCacheBindName::slowPath
+    // BindNameIC::slowPath
     RootedObject holder(cx);
     if (scopeChain->isGlobal()) {
         holder = scopeChain;
@@ -1689,7 +1689,7 @@ IonCacheBindName::fallback(JSContext *cx, size_t cacheIndex, HandleObject scopeC
 }
 
 bool
-IonCacheName::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject holder, Shape *shape)
+NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject holder, Shape *shape)
 {
     MacroAssembler masm;
     Label failures;
@@ -1768,14 +1768,14 @@ IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, Handle
 }
 
 bool
-IonCacheName::fallback(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
-                       MutableHandleValue vp)
+NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
+                     MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetNameCache");
 
     IonScript *ion = GetTopIonJSScript(cx)->ionScript();
 
-    IonCacheName &cache = ion->getCache(cacheIndex).toName();
+    NameIC &cache = ion->getCache(cacheIndex).toName();
     RootedPropertyName name(cx, cache.name());
 
     RootedScript script(cx);
