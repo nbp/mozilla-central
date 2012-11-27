@@ -3143,11 +3143,11 @@ class LIn : public LCallInstructionHelper<1, BOX_PIECES+1, 0>
     static const size_t RHS = BOX_PIECES;
 };
 
-class LInstanceOfV : public LCallInstructionHelper<1, BOX_PIECES+1, 0>
+class LCallInstanceOf : public LCallInstructionHelper<1, BOX_PIECES+1, 0>
 {
   public:
-    LIR_HEADER(InstanceOfV);
-    LInstanceOfV(const LAllocation &rhs) {
+    LIR_HEADER(CallInstanceOf);
+    LCallInstanceOf(const LAllocation &rhs) {
         setOperand(RHS, rhs);
     }
 

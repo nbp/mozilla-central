@@ -4151,9 +4151,9 @@ typedef bool (*HasInstanceFn)(JSContext *, HandleObject, HandleValue, JSBool *);
 static const VMFunction HasInstanceInfo = FunctionInfo<HasInstanceFn>(js::HasInstance);
 
 bool
-CodeGenerator::visitInstanceOfV(LInstanceOfV *ins)
+CodeGenerator::visitCallInstanceOf(LCallInstanceOf *ins)
 {
-    ValueOperand lhs = ToValue(ins, LInstanceOfV::LHS);
+    ValueOperand lhs = ToValue(ins, LCallInstanceOf::LHS);
     Register rhs = ToRegister(ins->rhs());
     JS_ASSERT(ToRegister(ins->output()) == ReturnReg);
 
