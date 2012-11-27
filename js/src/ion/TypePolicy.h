@@ -192,7 +192,7 @@ class CallSetElementPolicy : public SingleObjectPolicy
 
 // First operand will be boxed to a Value (except for an object)
 // Second operand (if specified) will forcefully be unboxed to an object
-class InstanceOfPolicy : public TypePolicy
+class InstanceOfTypedPolicy : public TypePolicy
 {
   public:
     bool adjustInputs(MInstruction *def);

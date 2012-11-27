@@ -5248,7 +5248,7 @@ class MInArray
 // Implementation for instanceof operator with specific rhs.
 class MInstanceOfTyped
   : public MUnaryInstruction,
-    public InstanceOfPolicy
+    public InstanceOfTypedPolicy
 {
     CompilerRootObject protoObj_;
 

@@ -379,17 +379,11 @@ CallSetElementPolicy::adjustInputs(MInstruction *ins)
 }
 
 bool
-InstanceOfPolicy::adjustInputs(MInstruction *def)
+InstanceOfTypedPolicy::adjustInputs(MInstruction *def)
 {
     // Box first operand if it isn't object
     if (def->getOperand(0)->type() != MIRType_Object) {
        BoxPolicy<0>::staticAdjustInputs(def);
-    }
-
-    if (def->numOperands() == 2) {
-        // Unbox second operand forcefully to an object,
-        // so it bailouts with other types
-        ObjectPolicy<1>::staticAdjustInputs(def);
     }
 
     return true;
