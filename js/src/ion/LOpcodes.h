@@ -169,6 +169,8 @@
     _(Round)                        \
     _(In)                           \
     _(InArray)                      \
+    _(InstanceOfTypedO)             \
+    _(InstanceOfTypedV)             \
     _(CallInstanceOf)               \
     _(InterruptCheck)               \
     _(FunctionBoundary)             \

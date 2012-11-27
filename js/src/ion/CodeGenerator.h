@@ -168,8 +168,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);
     bool visitBitOpV(LBitOpV *lir);
+    bool emitInstanceOfTyped(LInstruction *ins, RawObject prototypeObject);
     bool visitIn(LIn *ins);
     bool visitInArray(LInArray *ins);
+    bool visitInstanceOfTypedO(LInstanceOfTypedO *ins);
+    bool visitInstanceOfTypedV(LInstanceOfTypedV *ins);
     bool visitCallInstanceOf(LCallInstanceOf *ins);
     bool visitFunctionBoundary(LFunctionBoundary *lir);
     bool visitGetDOMProperty(LGetDOMProperty *lir);

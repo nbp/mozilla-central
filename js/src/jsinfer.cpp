@@ -2008,7 +2008,7 @@ JITCodeHasCheck(HandleScript script, jsbytecode *pc, RecompileKind kind)
     }
 #endif
 
-    if (script->hasAnyIonScript())
+    if (script->hasAnyIonScript() || script->isIonCompilingOffThread())
         return false;
 
     return true;
@@ -5643,8 +5643,6 @@ JSObject::splicePrototype(JSContext *cx, Handle<TaggedProto> proto)
     Rooted<TypeObject*> protoType(cx, NULL);
     if (proto.isObject()) {
         protoType = proto.toObject()->getType(cx);
-        if (!proto.toObject()->getNewType(cx))
-            return false;
     }
 
     if (!cx->typeInferenceEnabled()) {

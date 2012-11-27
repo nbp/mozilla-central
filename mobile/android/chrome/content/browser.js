@@ -1664,6 +1664,9 @@ var SelectionHandler = {
           // Knowing when the page is done drawing is hard, so let's just cancel
           // the selection when the window changes. We should fix this later.
           this.endSelection();
+        } else if (this._activeType == this.TYPE_CURSOR) {
+          //  Hide the cursor if the window changes
+          this.hideThumb();
         }
         break;
       }
@@ -3206,6 +3209,11 @@ Tab.prototype = {
             tabID: this.id
           }
         });
+
+        // For low-memory devices, don't allow reader mode since it takes up a lot of memory.
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=792603 for details.
+        if (Cc["@mozilla.org/xpcom/memory-service;1"].getService(Ci.nsIMemory).isLowMemoryPlatform())
+          return;
 
         // Once document is fully loaded, parse it
         Reader.parseDocumentFromTab(this.id, function (article) {
@@ -6006,18 +6014,15 @@ var PermissionsHelper = {
                          "allowed" : "denied";
           let valueString = Strings.browser.GetStringFromName(typeStrings[valueKey]);
 
-          // If we implement a two-line UI, we will need to pass the label and
-          // value individually and let java handle the formatting
-          let setting = Strings.browser.formatStringFromName("siteSettings.labelToValue",
-                                                             [ label, valueString ], 2);
           permissions.push({
             type: type,
-            setting: setting
+            setting: label,
+            value: valueString
           });
         }
 
         // Keep track of permissions, so we know which ones to clear
-        this._currentPermissions = permissions; 
+        this._currentPermissions = permissions;
 
         let host;
         try {

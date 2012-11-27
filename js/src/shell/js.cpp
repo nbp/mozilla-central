@@ -40,6 +40,7 @@
 #include "jsscript.h"
 #include "jstypedarray.h"
 #include "jstypedarrayinlines.h"
+#include "jsworkers.h"
 #include "jsxml.h"
 #include "jsperf.h"
 
@@ -3581,6 +3582,23 @@ GetMaxArgs(JSContext *cx, unsigned arg, jsval *vp)
     return true;
 }
 
+static JSBool
+GetSelfHostedValue(JSContext *cx, unsigned argc, jsval *vp)
+{
+    CallArgs args = CallArgsFromVp(argc, vp);
+
+    if (argc != 1 || !args[0].isString()) {
+        JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_INVALID_ARGS,
+                             "getSelfHostedValue");
+        return false;
+    }
+    RootedAtom srcAtom(cx, ToAtom(cx, args[0]));
+    if (!srcAtom)
+        return false;
+    RootedPropertyName srcName(cx, srcAtom->asPropertyName());
+    return cx->runtime->cloneSelfHostedValue(cx, srcName, args.rval());
+}
+
 static JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("version", Version, 0, 0,
 "version([number])",
@@ -3892,6 +3910,11 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "  Tone down the frequency with which the dynamic rooting analysis checks for\n"
 "  rooting hazards. This is helpful to reduce the time taken when interpreting\n"
 "  heavily numeric code."),
+
+    JS_FN_HELP("getSelfHostedValue", GetSelfHostedValue, 1, 0,
+"getSelfHostedValue()",
+"  Get a self-hosted value by its name. Note that these values don't get \n"
+"  cached, so repeatedly getting the same value creates multiple distinct clones."),
 
     JS_FS_HELP_END
 };
@@ -4748,6 +4771,12 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
     if (op->getBoolOption('D'))
         enableDisassemblyDumps = true;
 
+#ifdef JS_THREADSAFE
+    int32_t threadCount = op->getIntOption("thread-count");
+    if (threadCount >= 0)
+        cx->runtime->requestHelperThreadCount(threadCount);
+#endif /* JS_THREADSAFE */
+
 #if defined(JS_ION)
     if (op->getBoolOption("no-ion")) {
         enableIon = false;
@@ -4821,7 +4850,9 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
 
     if (const char *str = op->getStringOption("ion-regalloc")) {
         if (strcmp(str, "lsra") == 0)
-            ion::js_IonOptions.lsra = true;
+            ion::js_IonOptions.registerAllocator = ion::RegisterAllocator_LSRA;
+        else if (strcmp(str, "stupid") == 0)
+            ion::js_IonOptions.registerAllocator = ion::RegisterAllocator_Stupid;
         else
             return OptionFailure("ion-regalloc", str);
     }
@@ -4832,8 +4863,8 @@ ProcessArgs(JSContext *cx, JSObject *obj_, OptionParser *op)
 #ifdef JS_THREADSAFE
     if (const char *str = op->getStringOption("ion-parallel-compile")) {
         if (strcmp(str, "on") == 0) {
-            if (GetCPUCount() <= 1) {
-                fprintf(stderr, "Parallel compilation not available on single core machines");
+            if (cx->runtime->helperThreadCount() == 0) {
+                fprintf(stderr, "Parallel compilation not available without helper threads");
                 return EXIT_FAILURE;
             }
             ion::js_IonOptions.parallelCompilation = true;
@@ -5025,6 +5056,10 @@ main(int argc, char **argv, char **envp)
         || !op.addOptionalMultiStringArg("scriptArgs",
                                          "String arguments to bind as |arguments| in the "
                                          "shell's global")
+#ifdef JS_THREADSAFE
+        || !op.addIntOption('\0', "thread-count", "COUNT", "Use COUNT auxiliary threads "
+                            "(default: # of cores - 1)", -1)
+#endif
         || !op.addBoolOption('\0', "ion", "Enable IonMonkey (default)")
         || !op.addBoolOption('\0', "no-ion", "Disable IonMonkey")
         || !op.addStringOption('\0', "ion-gvn", "[mode]",
@@ -5046,7 +5081,8 @@ main(int argc, char **argv, char **envp)
                                "Don't compile very large scripts (default: on, off to disable)")
         || !op.addStringOption('\0', "ion-regalloc", "[mode]",
                                "Specify Ion register allocation:\n"
-                               "  lsra: Linear Scan register allocation (default)")
+                               "  lsra: Linear Scan register allocation (default)\n"
+                               "  stupid: Simple greedy register allocation")
         || !op.addBoolOption('\0', "ion-eager", "Always ion-compile methods")
 #ifdef JS_THREADSAFE
         || !op.addStringOption('\0', "ion-parallel-compile", "on/off",
