@@ -3343,281 +3343,105 @@ CodeGenerator::visitStoreFixedSlotT(LStoreFixedSlotT *ins)
     return true;
 }
 
-// An out-of-line path to call an inline cache function.
-class OutOfLineCache : public OutOfLineCodeBase<CodeGenerator>
+struct NameIC::UpdateData
 {
-    LInstruction *ins;
-    RepatchLabel repatchEntry_;
-    CodeOffsetJump inlineJump;
-    CodeOffsetLabel inlineLabel;
-
-  public:
-    OutOfLineCache(LInstruction *ins)
-      : ins(ins)
-    {}
-
-    void setInlineJump(CodeOffsetJump jump, CodeOffsetLabel label) {
-        inlineJump = jump;
-        inlineLabel = label;
-    }
-
-    CodeOffsetJump getInlineJump() const {
-        return inlineJump;
-    }
-
-    CodeOffsetLabel getInlineLabel() const {
-        return inlineLabel;
-    }
-
-    bool accept(CodeGenerator *codegen) {
-        switch (ins->op()) {
-          case LInstruction::LOp_GetPropertyCacheT:
-          case LInstruction::LOp_GetPropertyCacheV:
-            return codegen->visitOutOfLineCacheGetProperty(this);
-          case LInstruction::LOp_GetElementCacheV:
-            return codegen->visitOutOfLineGetElementCache(this);
-          case LInstruction::LOp_SetPropertyCacheT:
-          case LInstruction::LOp_SetPropertyCacheV:
-            return codegen->visitOutOfLineSetPropertyCache(this);
-          case LInstruction::LOp_BindNameCache:
-            return codegen->visitOutOfLineBindNameCache(this);
-          case LInstruction::LOp_GetNameCache:
-            return codegen->visitOutOfLineGetNameCache(this);
-          default:
-            JS_NOT_REACHED("Bad instruction");
-            return false;
-        }
-    }
-
-    LInstruction *cache() {
-        return ins;
-    }
-    void bind(MacroAssembler *masm) {
-        masm->bind(&repatchEntry_);
-    }
-    RepatchLabel *repatchEntry() {
-        return &repatchEntry_;
-    }
+    typedef ICArgSeq<ICField<CACHE_FIELD(NameIC, Register, scopeChain_)>
+                     > Args;
+    typedef ICStoreValueTo<CACHE_FIELD(NameIC, TypedOrValueRegister, output_)> Output;
+    typedef bool (*Fn)(JSContext *, size_t, HandleObject, MutableHandleValue);
 };
+const VMFunction NameIC::UpdateInfo =
+    FunctionInfo<NameIC::UpdateData::Fn>(NameIC::update);
 
 bool
-CodeGenerator::visitCache(LInstruction *ins)
+CodeGenerator::visitGetNameCache(LGetNameCache *ins)
 {
-    OutOfLineCache *ool = new OutOfLineCache(ins);
-    if (!addOutOfLineCode(ool))
-        return false;
+    Register scopeChain = ToRegister(ins->scopeObj());
+    TypedOrValueRegister output(GetValueOutput(ins));
+    bool isTypeOf = ins->mir()->accessKind() != MGetNameCache::NAME;
 
-#if 0
-    // NOTE: This is currently disabled. OSI and IC interaction are  protected
-    // through other means in ICs, since the nops incur significant overhead.
-    //
-    // ensureOsiSpace();
-#endif
+    NameIC cache(isTypeOf, scopeChain, ins->mir()->name(), output);
 
-    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
-    CodeOffsetLabel label = masm.labelForPatch();
-    masm.bind(ool->rejoin());
-
-    ool->setInlineJump(jump, label);
-    return true;
+    return inlineCache(ins, cache);
 }
 
-typedef bool (*GetNameCacheFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
-static const VMFunction GetNameCacheInfo =
-    FunctionInfo<GetNameCacheFn>(NameIC::update);
+struct GetPropertyIC::UpdateData
+{
+    typedef ICArgSeq<ICField<CACHE_FIELD(GetPropertyIC, Register, object_)>
+                     > Args;
+    typedef ICStoreValueTo<CACHE_FIELD(GetPropertyIC, TypedOrValueRegister, output_)> Output;
+    typedef bool (*Fn)(JSContext *, size_t, HandleObject, MutableHandleValue);
+};
+const VMFunction GetPropertyIC::UpdateInfo =
+    FunctionInfo<GetPropertyIC::UpdateData::Fn>(GetPropertyIC::update);
 
 bool
-CodeGenerator::visitOutOfLineGetNameCache(OutOfLineCache *ool)
-{
-    LGetNameCache *lir = ool->cache()->toGetNameCache();
-    const MGetNameCache *mir = lir->mir();
-    Register scopeChain = ToRegister(lir->scopeObj());
-    RegisterSet liveRegs = lir->safepoint()->liveRegs();
-    TypedOrValueRegister output(GetValueOutput(lir));
+CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
+    RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    Register objReg = ToRegister(ins->getOperand(0));
+    PropertyName *name = ins->mir()->name();
+    bool allowGetters = ins->mir()->allowGetters();
+    TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
 
-    bool isTypeOf = mir->accessKind() != MGetNameCache::NAME;
-    NameIC cache(isTypeOf, ool->getInlineJump(), ool->getInlineLabel(),
-                 masm.labelForPatch(),
-                 scopeChain, mir->name(), output);
+    GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
 
-    cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
-    size_t cacheIndex = allocateCache(cache);
-
-    saveLive(lir);
-
-    pushArg(scopeChain);
-    pushArg(Imm32(cacheIndex));
-    if (!callVM(GetNameCacheInfo, lir))
-        return false;
-
-    masm.storeCallResultValue(output);
-    restoreLive(lir);
-
-    masm.jump(ool->rejoin());
-    return true;
+    return inlineCache(ins, cache);
 }
 
-typedef bool (*GetPropertyCacheFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
-static const VMFunction GetPropertyCacheInfo =
-    FunctionInfo<GetPropertyCacheFn>(GetPropertyIC::update);
-
 bool
-CodeGenerator::visitOutOfLineCacheGetProperty(OutOfLineCache *ool)
-{
-    RegisterSet liveRegs = ool->cache()->safepoint()->liveRegs();
+CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins) {
+    RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    Register objReg = ToRegister(ins->getOperand(0));
+    PropertyName *name = ins->mir()->name();
+    bool allowGetters = ins->mir()->allowGetters();
+    TypedOrValueRegister output(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
 
-    LInstruction *ins = ool->cache();
-    MInstruction *mir = ins->mirRaw()->toInstruction();
+    GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
 
-    TypedOrValueRegister output;
-
-    Register objReg;
-
-    // Define the input and output registers each opcode wants,
-    // and which atom property it should get
-    // Note: because all registers are saved, the output register should be
-    //       a def register, else the result will be overriden by restoreLive(ins)
-    PropertyName *name = NULL;
-    bool allowGetters = false;
-    switch (ins->op()) {
-      case LInstruction::LOp_GetPropertyCacheT:
-        name = ((LGetPropertyCacheT *) ins)->mir()->name();
-        objReg = ToRegister(ins->getOperand(0));
-        output = TypedOrValueRegister(mir->type(), ToAnyRegister(ins->getDef(0)));
-        JS_ASSERT(mir->isGetPropertyCache());
-        allowGetters = mir->toGetPropertyCache()->allowGetters();
-        break;
-      case LInstruction::LOp_GetPropertyCacheV:
-        name = ((LGetPropertyCacheV *) ins)->mir()->name();
-        objReg = ToRegister(ins->getOperand(0));
-        output = TypedOrValueRegister(GetValueOutput(ins));
-        JS_ASSERT(mir->isGetPropertyCache());
-        allowGetters = mir->toGetPropertyCache()->allowGetters();
-        break;
-      default:
-        JS_NOT_REACHED("Bad instruction");
-        return false;
-    }
-
-    GetPropertyIC cache(ool->getInlineJump(), ool->getInlineLabel(),
-                        masm.labelForPatch(), liveRegs,
-                        objReg, name, output, allowGetters);
-
-    if (mir->resumePoint())
-        cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
-    else
-        cache.setIdempotent();
-    size_t cacheIndex = allocateCache(cache);
-
-    saveLive(ins);
-
-    pushArg(objReg);
-    pushArg(Imm32(cacheIndex));
-    if (!callVM(GetPropertyCacheInfo, ins))
-        return false;
-
-    masm.storeCallResultValue(output);
-    restoreLive(ins);
-
-    masm.jump(ool->rejoin());
-
-    return true;
+    return inlineCache(ins, cache);
 }
 
-typedef bool (*GetElementCacheFn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
-static const VMFunction GetElementCacheInfo =
-    FunctionInfo<GetElementCacheFn>(GetElementIC::update);
+struct GetElementIC::UpdateData
+{
+    typedef ICArgSeq<ICField<CACHE_FIELD(GetElementIC, Register, object_)>,
+                     ICField<CACHE_FIELD(GetElementIC, ConstantOrRegister, index_)>
+                     > Args;
+    typedef ICStoreValueTo<CACHE_FIELD(GetElementIC, TypedOrValueRegister, output_)> Output;
+    typedef bool (*Fn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
+};
+const VMFunction GetElementIC::UpdateInfo =
+    FunctionInfo<GetElementIC::UpdateData::Fn>(GetElementIC::update);
 
 bool
-CodeGenerator::visitOutOfLineGetElementCache(OutOfLineCache *ool)
+CodeGenerator::visitGetElementCacheV(LGetElementCacheV *ins)
 {
-    LGetElementCacheV *ins = ool->cache()->toGetElementCacheV();
-    const MGetElementCache *mir = ins->mir();
-
     Register obj = ToRegister(ins->object());
     ConstantOrRegister index = TypedOrValueRegister(ToValue(ins, LGetElementCacheV::Index));
     TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
 
-    RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    GetElementIC cache(obj, index, output, ins->mir()->monitoredResult());
 
-    GetElementIC cache(ool->getInlineJump(), ool->getInlineLabel(),
-                       masm.labelForPatch(),
-                       obj, index, output,
-                       mir->monitoredResult());
-
-    cache.setScriptedLocation(mir->block()->info().script(), mir->resumePoint()->pc());
-    size_t cacheIndex = allocateCache(cache);
-
-    saveLive(ins);
-
-    pushArg(index);
-    pushArg(obj);
-    pushArg(Imm32(cacheIndex));
-    if (!callVM(GetElementCacheInfo, ins))
-        return false;
-
-    masm.storeCallResultValue(output);
-    restoreLive(ins);
-
-    masm.jump(ool->rejoin());
-    return true;
+    return inlineCache(ins, cache);
 }
 
-typedef JSObject *(*BindNameCacheFn)(JSContext *, size_t, HandleObject);
-static const VMFunction BindNameCacheInfo =
-    FunctionInfo<BindNameCacheFn>(BindNameIC::update);
+struct BindNameIC::UpdateData
+{
+    typedef ICArgSeq<ICField<CACHE_FIELD(BindNameIC, Register, scopeChain_)>
+                     > Args;
+    typedef ICStoreRegisterTo<CACHE_FIELD(BindNameIC, Register, output_)> Output;
+    typedef JSObject *(*Fn)(JSContext *, size_t, HandleObject);
+};
+const VMFunction BindNameIC::UpdateInfo =
+    FunctionInfo<BindNameIC::UpdateData::Fn>(BindNameIC::update);
 
 bool
-CodeGenerator::visitOutOfLineBindNameCache(OutOfLineCache *ool)
+CodeGenerator::visitBindNameCache(LBindNameCache *ins)
 {
-    LBindNameCache *ins = ool->cache()->toBindNameCache();
     Register scopeChain = ToRegister(ins->scopeChain());
     Register output = ToRegister(ins->output());
+    BindNameIC cache(scopeChain, ins->mir()->name(), output);
 
-    RegisterSet liveRegs = ins->safepoint()->liveRegs();
-
-    const MBindNameCache *mir = ins->mir();
-    BindNameIC cache(ool->getInlineJump(), ool->getInlineLabel(),
-                     masm.labelForPatch(),
-                     scopeChain, mir->name(), output);
-    cache.setScriptedLocation(mir->script(), mir->pc());
-    size_t cacheIndex = allocateCache(cache);
-
-    saveLive(ins);
-
-    pushArg(scopeChain);
-    pushArg(Imm32(cacheIndex));
-    if (!callVM(BindNameCacheInfo, ins))
-        return false;
-
-    masm.storeCallResult(output);
-    restoreLive(ins);
-
-    masm.jump(ool->rejoin());
-    return true;
-}
-
-ConstantOrRegister
-CodeGenerator::getSetPropertyValue(LInstruction *ins)
-{
-    if (ins->getOperand(1)->isConstant()) {
-        JS_ASSERT(ins->isSetPropertyCacheT());
-        return ConstantOrRegister(*ins->getOperand(1)->toConstant());
-    }
-
-    switch (ins->op()) {
-      case LInstruction::LOp_CallSetProperty:
-        return TypedOrValueRegister(ToValue(ins, LCallSetProperty::Value));
-      case LInstruction::LOp_SetPropertyCacheV:
-        return TypedOrValueRegister(ToValue(ins, LSetPropertyCacheV::Value));
-      case LInstruction::LOp_SetPropertyCacheT: {
-        LSetPropertyCacheT *ins_ = ins->toSetPropertyCacheT();
-        return TypedOrValueRegister(ins_->valueType(), ToAnyRegister(ins->getOperand(1)));
-      }
-      default:
-        JS_NOT_REACHED("Bad opcode");
-        return ConstantOrRegister(UndefinedValue());
-    }
+    return inlineCache(ins, cache);
 }
 
 typedef bool (*SetPropertyFn)(JSContext *, HandleObject,
@@ -3628,7 +3452,7 @@ static const VMFunction SetPropertyInfo =
 bool
 CodeGenerator::visitCallSetProperty(LCallSetProperty *ins)
 {
-    ConstantOrRegister value = getSetPropertyValue(ins);
+    ConstantOrRegister value = TypedOrValueRegister(ToValue(ins, LCallSetProperty::Value));
 
     const Register objReg = ToRegister(ins->getOperand(0));
     bool isSetName = JSOp(*ins->mir()->resumePoint()->pc()) == JSOP_SETNAME;
@@ -3661,44 +3485,46 @@ CodeGenerator::visitCallDeleteProperty(LCallDeleteProperty *lir)
         return callVM(DeletePropertyNonStrictInfo, lir);
 }
 
-typedef bool (*SetPropertyCacheFn)(JSContext *, size_t, HandleObject, HandleValue, bool);
-static const VMFunction SetPropertyCacheInfo =
-    FunctionInfo<SetPropertyCacheFn>(ion::SetPropertyIC::update);
+struct SetPropertyIC::UpdateData
+{
+    typedef ICArgSeq<ICField<CACHE_FIELD(SetPropertyIC, Register, object_)>,
+                     ICField<CACHE_FIELD(SetPropertyIC, ConstantOrRegister, value_)>
+                     > Args;
+    typedef ICStoreNothing Output;
+    typedef bool (*Fn)(JSContext *, size_t, HandleObject, HandleValue);
+};
+const VMFunction SetPropertyIC::UpdateInfo =
+    FunctionInfo<SetPropertyIC::UpdateData::Fn>(SetPropertyIC::update);
 
 bool
-CodeGenerator::visitOutOfLineSetPropertyCache(OutOfLineCache *ool)
-{
-    LInstruction *ins = ool->cache();
-
-    Register objReg = ToRegister(ins->getOperand(0));
+CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins) {
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    Register objReg = ToRegister(ins->getOperand(0));
+    ConstantOrRegister value = TypedOrValueRegister(ToValue(ins, LSetPropertyCacheV::Value));
+    bool isSetName = JSOp(*ins->mir()->resumePoint()->pc()) == JSOP_SETNAME;
 
-    ConstantOrRegister value = getSetPropertyValue(ins);
-    const MSetPropertyCache *mir = ins->mirRaw()->toSetPropertyCache();
+    SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
+                        isSetName, ins->mir()->strict());
 
-    SetPropertyIC cache(ool->getInlineJump(), ool->getInlineLabel(),
-                        masm.labelForPatch(), liveRegs,
-                        objReg, mir->name(), value,
-                        mir->strict());
+    return inlineCache(ins, cache);
+}
 
-    size_t cacheIndex = allocateCache(cache);
-    bool isSetName = JSOp(*mir->resumePoint()->pc()) == JSOP_SETNAME;
+bool
+CodeGenerator::visitSetPropertyCacheT(LSetPropertyCacheT *ins) {
+    RegisterSet liveRegs = ins->safepoint()->liveRegs();
+    Register objReg = ToRegister(ins->getOperand(0));
+    ConstantOrRegister value;
+    bool isSetName = JSOp(*ins->mir()->resumePoint()->pc()) == JSOP_SETNAME;
 
-    saveLive(ins);
+    if (ins->getOperand(1)->isConstant())
+        value = ConstantOrRegister(*ins->getOperand(1)->toConstant());
+    else
+        value = TypedOrValueRegister(ins->valueType(), ToAnyRegister(ins->getOperand(1)));
 
-    pushArg(Imm32(isSetName));
-    pushArg(value);
-    pushArg(objReg);
-    pushArg(Imm32(cacheIndex));
+    SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
+                        isSetName, ins->mir()->strict());
 
-    if (!callVM(SetPropertyCacheInfo, ool->cache()))
-        return false;
-
-    restoreLive(ins);
-
-    masm.jump(ool->rejoin());
-
-    return true;
+    return inlineCache(ins, cache);
 }
 
 typedef bool (*ThrowFn)(JSContext *, HandleValue);

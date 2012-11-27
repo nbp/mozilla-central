@@ -120,7 +120,6 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
                      CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
     JS_ASSERT(canAttachStub());
-    JS_ASSERT_IF(stubCount_, lastJump_.offset() != initialJump_.offset());
     incrementStubCount();
 
     rejoinOffset.fixup(&masm);
@@ -133,6 +132,8 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
     // codeGen, to jump into the newly allocated code.
     PatchJump(lastJump_, CodeLocationLabel(code));
 
+    // If this path is not taken, we are producing an entry which can no longer
+    // go back into the update function.
     if (exitOffset) {
         exitOffset->fixup(&masm);
         CodeLocationJump exitJump(code, *exitOffset);
@@ -144,12 +145,6 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
         // Next time we generate a stub, we will patch the exitJump to try the
         // new stub.
         lastJump_ = exitJump;
-    } else {
-#ifdef DEBUG
-        // Reset the value to the initalJump, such as we assert that we do not
-        // produce another stub.
-        lastJump_ = initialJump_;
-#endif
     }
 
     // Replace the CODE_MARK constant by the address of the generated stub, such
@@ -847,7 +842,7 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
 
 bool
 GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
-                            HandleObject obj, MutableHandleValue vp)
+                      HandleObject obj, MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetPropertyCache");
     const SafepointIndex *safepointIndex;
@@ -1329,7 +1324,7 @@ IsPropertyAddInlineable(JSContext *cx, HandleObject obj, jsid id, uint32_t oldSl
 
 bool
 SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
-                            HandleValue value, bool isSetName)
+                            HandleValue value)
 {
     AutoFlushCache afc ("SetPropertyCache");
 
@@ -1367,7 +1362,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
     const Shape *oldShape = obj->lastProperty();
 
     // Set/Add the property on the object, the inlined cache are setup for the next execution.
-    if (!SetProperty(cx, obj, name, value, cache.strict(), isSetName))
+    if (!SetProperty(cx, obj, name, value, cache.strict(), cache.isSetName()))
         return false;
 
     // The property did not exists before, now we can try again to inline the

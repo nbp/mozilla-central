@@ -132,9 +132,7 @@ class IonCache
 
   public:
 
-    IonCache(CodeOffsetJump initialJump,
-             CodeOffsetLabel rejoinLabel,
-             CodeOffsetLabel cacheLabel)
+    IonCache()
       : pure_(false),
         idempotent_(false),
         stubCount_(0),
@@ -143,6 +141,12 @@ class IonCache
         cacheLabel_(),
         script(NULL),
         pc(NULL)
+    {
+    }
+
+    // Bind a cache to its location in the IonScript.
+    void bind(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel,
+              CodeOffsetLabel cacheLabel)
     {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
@@ -217,10 +221,15 @@ class IonCache
     }
 };
 
-#define CACHE_HEADER(ickind)                                            \
-    Kind kind() const {                                                 \
-        return IonCache::Cache_##ickind;                                \
-    }
+// Define the cache kind and pre-declare data structures used for calling inline
+// caches.
+#define CACHE_HEADER(ickind)                    \
+    Kind kind() const {                         \
+        return IonCache::Cache_##ickind;        \
+    }                                           \
+                                                \
+    struct UpdateData;                          \
+    static const VMFunction UpdateInfo;
 
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
@@ -238,15 +247,11 @@ class GetPropertyIC : public IonCache
     bool allowGetters_;
 
   public:
-    GetPropertyIC(CodeOffsetJump initialJump,
-                  CodeOffsetLabel rejoinLabel,
-                  CodeOffsetLabel cacheLabel,
-                  RegisterSet liveRegs,
+    GetPropertyIC(RegisterSet liveRegs,
                   Register object, PropertyName *name,
                   TypedOrValueRegister output,
                   bool allowGetters)
-      : IonCache(initialJump, rejoinLabel, cacheLabel),
-        liveRegs_(liveRegs),
+      : liveRegs_(liveRegs),
         object_(object),
         name_(name),
         output_(output),
@@ -254,7 +259,7 @@ class GetPropertyIC : public IonCache
     {
     }
 
-    CACHE_HEADER(GetProperty);
+    CACHE_HEADER(GetProperty)
 
     Register object() const { return object_; }
     PropertyName *name() const { return name_; }
@@ -280,30 +285,27 @@ class SetPropertyIC : public IonCache
     Register object_;
     PropertyName *name_; // rooting issues ?!
     ConstantOrRegister value_;
+    bool isSetName_;
     bool strict_;
 
   public:
-    SetPropertyIC(CodeOffsetJump initialJump,
-                  CodeOffsetLabel rejoinLabel,
-                  CodeOffsetLabel cacheLabel,
-                  RegisterSet liveRegs,
-                  Register object, PropertyName *name,
-                  ConstantOrRegister value,
-                  bool strict)
-      : IonCache(initialJump, rejoinLabel, cacheLabel),
-        liveRegs_(liveRegs),
+    SetPropertyIC(RegisterSet liveRegs, Register object, PropertyName *name,
+                  ConstantOrRegister value, bool isSetName, bool strict)
+      : liveRegs_(liveRegs),
         object_(object),
         name_(name),
         value_(value),
+        isSetName_(isSetName),
         strict_(strict)
     {
     }
 
-    CACHE_HEADER(SetProperty);
+    CACHE_HEADER(SetProperty)
 
     Register object() const { return object_; }
     PropertyName *name() const { return name_; }
     ConstantOrRegister value() const { return value_; }
+    bool isSetName() const { return isSetName_; }
     bool strict() const { return strict_; }
 
     bool attachNativeExisting(JSContext *cx, IonScript *ion, HandleObject obj, HandleShape shape);
@@ -313,7 +315,7 @@ class SetPropertyIC : public IonCache
                             const Shape *newshape, const Shape *propshape);
 
     static bool
-    update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value, bool isSetName);
+    update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value);
 };
 
 class GetElementIC : public IonCache
@@ -326,13 +328,9 @@ class GetElementIC : public IonCache
     bool hasDenseArrayStub_ : 1;
 
   public:
-    GetElementIC(CodeOffsetJump initialJump,
-                 CodeOffsetLabel rejoinLabel,
-                 CodeOffsetLabel cacheLabel,
-                 Register object, ConstantOrRegister index,
+    GetElementIC(Register object, ConstantOrRegister index,
                  TypedOrValueRegister output, bool monitoredResult)
-      : IonCache(initialJump, rejoinLabel, cacheLabel),
-        object_(object),
+      : object_(object),
         index_(index),
         output_(output),
         monitoredResult_(monitoredResult),
@@ -340,7 +338,7 @@ class GetElementIC : public IonCache
     {
     }
 
-    CACHE_HEADER(GetElement);
+    CACHE_HEADER(GetElement)
 
     Register object() const {
         return object_;
@@ -378,19 +376,14 @@ class BindNameIC : public IonCache
     Register output_;
 
   public:
-    BindNameIC(CodeOffsetJump initialJump,
-               CodeOffsetLabel rejoinLabel,
-               CodeOffsetLabel cacheLabel,
-               Register scopeChain, PropertyName *name,
-               Register output)
-      : IonCache(initialJump, rejoinLabel, cacheLabel),
-        scopeChain_(scopeChain),
+    BindNameIC(Register scopeChain, PropertyName *name, Register output)
+      : scopeChain_(scopeChain),
         name_(name),
         output_(output)
     {
     }
 
-    CACHE_HEADER(BindName);
+    CACHE_HEADER(BindName)
 
     Register scopeChainReg() const {
         return scopeChain_;
@@ -420,20 +413,16 @@ class NameIC : public IonCache
 
   public:
     NameIC(bool typeOf,
-           CodeOffsetJump initialJump,
-           CodeOffsetLabel rejoinLabel,
-           CodeOffsetLabel cacheLabel,
            Register scopeChain, PropertyName *name,
            TypedOrValueRegister output)
-      : IonCache(initialJump, rejoinLabel, cacheLabel),
-        typeOf_(typeOf),
+      : typeOf_(typeOf),
         scopeChain_(scopeChain),
         name_(name),
         output_(output)
     {
     }
 
-    CACHE_HEADER(Name);
+    CACHE_HEADER(Name)
 
     Register scopeChainReg() const {
         return scopeChain_;

@@ -28,6 +28,10 @@ class MacroAssembler;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
+
+template <class Cache>
+class OutOfLineUpdateCache;
+
 class OutOfLineTruncateSlow;
 
 class CodeGeneratorShared : public LInstructionVisitor
@@ -168,6 +172,13 @@ class CodeGeneratorShared : public LInstructionVisitor
         return index;
     }
 
+    // This is needed by inlineCache to update the cache with the jump
+    // informations provided by the out-of-line path.
+    IonCache *getCache(size_t index) {
+        return reinterpret_cast<IonCache *>(&runtimeData_[cacheList_[index]]);
+    }
+
+
   protected:
 
     size_t allocateData(size_t size) {
@@ -296,6 +307,9 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
+    template <typename Cache>
+    inline bool inlineCache(LInstruction *lir, Cache &cache);
+
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
     bool generateOutOfLineCode();
@@ -312,6 +326,9 @@ class CodeGeneratorShared : public LInstructionVisitor
   public:
     template <class ArgSeq, class StoreOutputTo>
     bool visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo> *ool);
+
+    template <class Cache>
+    bool visitOutOfLineUpdateCache(OutOfLineUpdateCache<Cache> *ool);
 
     bool visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool);
 };
@@ -383,7 +400,7 @@ class OutOfLineCodeBase : public OutOfLineCode
 
 // ArgSeq store arguments for OutOfLineCallVM.
 //
-// OutOfLineCallVM are created with "oolCallVM" function. The last argument of
+// OutOfLineCallVM are created with "oolCallVM" function. The third argument of
 // this function is an instance of a class which provides a "generate" function
 // to call the "pushArg" needed by the VMFunction call.  The list of argument
 // can be created by using the ArgList function which create an empty list of
@@ -422,6 +439,7 @@ class ArgSeq : public SeqType
     }
 };
 
+// Mark the end of an argument list.
 template <>
 class ArgSeq<void, void>
 {
@@ -506,6 +524,7 @@ StoreValueTo_<Output> StoreValueTo(const Output &out)
     return StoreValueTo_<Output>(out);
 }
 
+
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM : public OutOfLineCodeBase<CodeGeneratorShared>
 {
@@ -531,6 +550,7 @@ class OutOfLineCallVM : public OutOfLineCodeBase<CodeGeneratorShared>
     LInstruction *lir() const { return lir_; }
     const VMFunction &function() const { return fun_; }
     const ArgSeq &args() const { return args_; }
+    ArgSeq &args() { return args_; }
     const StoreOutputTo &out() const { return out_; }
 };
 
@@ -561,6 +581,201 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
     masm.jump(ool->rejoin());
     return true;
 }
+
+
+// Inline caches are storing all registers used for the generated out-of-line
+// calls.  These inputs/outputs are used by the following template mechanism to
+// make a call to the update function of each Cache.  As opposed to the ArgSeq
+// class defined previously, these classes are not made to be instantiated nor
+// generated but to be written such as it map fields of the cache data structure
+// to arguments of the update function of the same cache.
+
+
+// Type used to build the argument list based on the declared type, all data are
+// stored in the IonCache structure.  The sequence of argument is built such as
+// the type is declared in the same order as the argument of the function.
+template <typename Cache_, typename Type, Type Cache_::*offset>
+class ICField
+{
+    ICField() {}
+
+  public:
+    typedef Cache_ Cache;
+    static inline void push(CodeGeneratorShared *codegen, Cache *cache) {
+        codegen->pushArg(cache->*offset);
+    }
+
+};
+
+class ICNoField
+{
+    ICNoField() {}
+
+  public:
+    template <typename Cache>
+    static inline void push(CodeGeneratorShared *codegen, Cache *cache) {
+    }
+};
+
+// Fill template parameters without repeating the Cache name.
+#define CACHE_FIELD(Cache, Type, Field)  Cache, Type, &Cache::Field
+
+template <typename A1 = ICNoField,
+          typename A2 = ICNoField,
+          typename A3 = ICNoField,
+          typename A4 = ICNoField>
+class ICArgSeq
+{
+    ICArgSeq() {}
+
+  public:
+    typedef typename A1::Cache Cache;
+    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
+        A4::push(codegen, cache);
+        A3::push(codegen, cache);
+        A2::push(codegen, cache);
+        A1::push(codegen, cache);
+    }
+};
+
+class ICStoreNothing
+{
+    ICStoreNothing() {}
+
+  public:
+    template <typename Cache>
+    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
+    }
+    template <typename Cache>
+    static inline RegisterSet clobbered(Cache *) {
+        return RegisterSet(); // No register gets clobbered
+    }
+};
+
+template <typename Cache, typename Output, Output Cache::* offset>
+class ICStoreRegisterTo
+{
+    ICStoreRegisterTo() {}
+
+  public:
+    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
+        codegen->storeResultTo(cache->*offset);
+    }
+    static inline RegisterSet clobbered(Cache *cache) {
+        RegisterSet set = RegisterSet();
+        set.add(cache->*offset);
+        return set;
+    }
+};
+
+template <typename Cache, typename Output, Output Cache::* offset>
+struct ICStoreValueTo
+{
+    ICStoreValueTo() {}
+
+  public:
+    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
+        codegen->storeResultValueTo(cache->*offset);
+    }
+    static inline RegisterSet clobbered(Cache *cache) {
+        RegisterSet set = RegisterSet();
+        set.add(cache->*offset);
+        return set;
+    }
+};
+
+template <typename Cache>
+class OutOfLineUpdateCache : public OutOfLineCodeBase<CodeGeneratorShared>
+{
+  private:
+    LInstruction *lir_;
+    RepatchLabel repatchEntry_;
+    CodeOffsetJump inlineJump_;
+    CodeOffsetLabel inlineLabel_;
+    size_t cacheIndex_;
+
+  public:
+    OutOfLineUpdateCache(LInstruction *lir, size_t cacheIndex)
+      : lir_(lir),
+        cacheIndex_(cacheIndex)
+    { }
+
+    bool accept(CodeGeneratorShared *codegen) {
+        return codegen->visitOutOfLineUpdateCache(this);
+    }
+
+    void bind(MacroAssembler *masm) {
+        masm->bind(&repatchEntry_);
+    }
+
+    void setInlineJump(CodeOffsetJump jump, CodeOffsetLabel label) {
+        inlineJump_ = jump;
+        inlineLabel_ = label;
+    }
+
+    LInstruction *lir() const {
+        return lir_;
+    }
+    CodeOffsetJump getInlineJump() const {
+        return inlineJump_;
+    }
+    CodeOffsetLabel getInlineLabel() const {
+        return inlineLabel_;
+    }
+    RepatchLabel *repatchEntry() {
+        return &repatchEntry_;
+    }
+    size_t getCacheIndex() {
+        return cacheIndex_;
+    }
+};
+
+template <typename Cache>
+inline bool
+CodeGeneratorShared::inlineCache(LInstruction *lir, Cache &cache)
+{
+    MInstruction *mir = lir->mirRaw()->toInstruction();
+    if (mir->resumePoint())
+        cache.setScriptedLocation(mir->block()->info().script(),
+                                  mir->resumePoint()->pc());
+    else
+        cache.setIdempotent();
+
+    size_t cacheIndex = allocateCache(cache);
+    OutOfLineUpdateCache<Cache> *ool = new OutOfLineUpdateCache<Cache>(lir, cacheIndex);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
+    CodeOffsetLabel label = masm.labelForPatch();
+    masm.bind(ool->rejoin());
+
+    ool->setInlineJump(jump, label);
+    return true;
+}
+
+template <typename Cache>
+bool
+CodeGeneratorShared::visitOutOfLineUpdateCache(OutOfLineUpdateCache<Cache> *ool)
+{
+    AssertCanGC();
+    size_t cacheIndex = ool->getCacheIndex();
+    Cache *cache = static_cast<Cache *>(getCache(cacheIndex));
+    cache->bind(ool->getInlineJump(), ool->getInlineLabel(), masm.labelForPatch());
+
+    LInstruction *lir = ool->lir();
+
+    saveLive(lir);
+    Cache::UpdateData::Args::generate(this, cache);
+    pushArg(Imm32(cacheIndex));
+    if (!callVM(Cache::UpdateInfo, lir))
+        return false;
+    Cache::UpdateData::Output::generate(this, cache);
+    restoreLiveIgnore(lir, Cache::UpdateData::Output::clobbered(cache));
+    masm.jump(ool->rejoin());
+    return true;
+}
+
 
 } // namespace ion
 } // namespace js
