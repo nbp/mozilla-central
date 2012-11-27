@@ -113,30 +113,52 @@ IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 }
 
 const size_t IonCodeCache::MAX_STUBS = 16;
-const ImmWord IonCodeCache::codeMark = ImmWord(uintptr_t(0xdeadc0de));
+const ImmWord IonCodeCache::CODE_MARK = ImmWord(uintptr_t(0xdeadc0de));
 
 void
 IonCodeCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
                          CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
     JS_ASSERT(canAttachStub());
+    JS_ASSERT_IF(stubCount_, lastJump_.offset() != initialJump_.offset());
     incrementStubCount();
 
     rejoinOffset.fixup(&masm);
     CodeLocationJump rejoinJump(code, rejoinOffset);
-    CodeLocationJump lastJump_ = lastJump();
-    PatchJump(lastJump_, CodeLocationLabel(code));
+
+    // Update the success path to continue after the IC initial jump.
     PatchJump(rejoinJump, rejoinLabel());
+
+    // Patch the previous exitJump of the last stub, or the jump from the
+    // codeGen, to jump into the newly allocated code.
+    PatchJump(lastJump_, CodeLocationLabel(code));
+
     if (exitOffset) {
         exitOffset->fixup(&masm);
         CodeLocationJump exitJump(code, *exitOffset);
+
+        // When the last stub fails, it fallback to the ool call which can
+        // produce a stub.
         PatchJump(exitJump, cacheLabel());
-        updateLastJump(exitJump);
+
+        // Next time we generate a stub, we will patch the exitJump to try the
+        // new stub.
+        lastJump_ = exitJump;
+    } else {
+#ifdef DEBUG
+        // Reset the value to the initalJump, such as we assert that we do not
+        // produce another stub.
+        lastJump_ = initialJump_;
+#endif
     }
+
+    // Replace the CODE_MARK constant by the address of the generated stub, such
+    // as it can be kept alive even if the cache is flushed (see
+    // MarkIonExitFrame).
     if (stubLabel) {
         stubLabel->fixup(&masm);
         Assembler::patchDataWithValueCheck(CodeLocationLabel(code, *stubLabel),
-                                           ImmWord(uintptr_t(code)), codeMark);
+                                           ImmWord(uintptr_t(code)), CODE_MARK);
     }
 }
 
@@ -557,7 +579,7 @@ struct GetNativePropertyStub
         // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
         // WARNING: value here.
         // WARNING:
-        stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::codeMark);
+        stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::CODE_MARK);
 
         if (callNative) {
             JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -1054,7 +1076,7 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
     // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
     // WARNING: value here.
     // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::codeMark);
+    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::CODE_MARK);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);

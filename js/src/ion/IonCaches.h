@@ -133,15 +133,21 @@ class IonCodeCache : public IonCache
 
   private:
     static const size_t MAX_STUBS;
-
-    void updateLastJump(CodeLocationJump jump) {
-        lastJump_ = jump;
-    }
-
     void incrementStubCount() {
         // The IC should stop generating stubs before wrapping stubCount.
         stubCount_++;
         JS_ASSERT(stubCount_);
+    }
+
+    CodeLocationLabel cacheLabel() const { return cacheLabel_; }
+    CodeLocationLabel rejoinLabel() const {
+        uint8 *ptr = initialJump_.raw();
+#ifdef JS_CPU_ARM
+        uint32 i = 0;
+        while (i < REJOIN_LABEL_OFFSET)
+            ptr = Assembler::nextInstruction(ptr, &i);
+#endif
+        return CodeLocationLabel(ptr);
     }
 
   public:
@@ -171,19 +177,6 @@ class IonCodeCache : public IonCache
     void updateBaseAddress(IonCode *code, MacroAssembler &masm);
     void reset();
 
-    CodeLocationJump lastJump() const { return lastJump_; }
-    CodeLocationLabel cacheLabel() const { return cacheLabel_; }
-
-    CodeLocationLabel rejoinLabel() const {
-        uint8 *ptr = initialJump_.raw();
-#ifdef JS_CPU_ARM
-        uint32 i = 0;
-        while (i < REJOIN_LABEL_OFFSET)
-            ptr = Assembler::nextInstruction(ptr, &i);
-#endif
-        return CodeLocationLabel(ptr);
-    }
-
     bool canAttachStub() const {
         return stubCount_ < MAX_STUBS;
     }
@@ -191,7 +184,12 @@ class IonCodeCache : public IonCache
     // Value used to identify code which has to be patched with the generated
     // stub address. This address will later be used for marking the stub if it
     // does a call, even if the IC has been flushed.
-    static const ImmWord codeMark;
+    static const ImmWord CODE_MARK;
+#ifdef DEBUG
+    static IonCode *codeMark() {
+        return reinterpret_cast<IonCode *>(const_cast<ImmWord*>(&CODE_MARK)->asPointer());
+    }
+#endif
 
     // Return value of linkCode.
     static IonCode * const CACHE_FLUSHED;
