@@ -96,10 +96,10 @@ IonCache::CacheName(IonCache::Kind kind)
     return names[kind];
 }
 
-IonCode * const IonCodeCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
+IonCode * const IonCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
 
 IonCode *
-IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
+IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 {
     Linker linker(masm);
     IonCode *code = linker.newCode(cx);
@@ -107,17 +107,17 @@ IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
         return NULL;
 
     if (ion->invalidated())
-        return IonCodeCache::CACHE_FLUSHED;
+        return IonCache::CACHE_FLUSHED;
 
     return code;
 }
 
-const size_t IonCodeCache::MAX_STUBS = 16;
-const ImmWord IonCodeCache::CODE_MARK = ImmWord(uintptr_t(0xdeadc0de));
+const size_t IonCache::MAX_STUBS = 16;
+const ImmWord IonCache::CODE_MARK = ImmWord(uintptr_t(0xdeadc0de));
 
 void
-IonCodeCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
-                         CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
+IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
+                     CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
     JS_ASSERT(canAttachStub());
     JS_ASSERT_IF(stubCount_, lastJump_.offset() != initialJump_.offset());
@@ -163,12 +163,12 @@ IonCodeCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &re
 }
 
 bool
-IonCodeCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
-                                const char *attachKind, CodeOffsetJump &rejoinOffset,
-                                CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
+IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
+                            const char *attachKind, CodeOffsetJump &rejoinOffset,
+                            CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
     IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
+    if (code <= IonCache::CACHE_FLUSHED)
         return !!code;
 
     attachStub(masm, code, rejoinOffset, exitOffset, stubLabel);
@@ -579,7 +579,7 @@ struct GetNativePropertyStub
         // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
         // WARNING: value here.
         // WARNING:
-        stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::CODE_MARK);
+        stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
 
         if (callNative) {
             JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -934,7 +934,7 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
 }
 
 void
-IonCodeCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
+IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 {
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
@@ -942,7 +942,7 @@ IonCodeCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 }
 
 void
-IonCodeCache::reset()
+IonCache::reset()
 {
     PatchJump(initialJump_, cacheLabel_);
 
@@ -1076,7 +1076,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
     // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
     // WARNING: value here.
     // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::CODE_MARK);
+    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);

@@ -89,28 +89,8 @@ class IonCache
 
   public:
 
-    IonCache() { PodZero(this); }
-    virtual ~IonCache() { }
-
-    // Update labels once the code is copied and finalized.
-    virtual void updateBaseAddress(IonCode *code, MacroAssembler &masm)
-    { }
-
-    // Reset the cache around garbage collection.
-    virtual void reset()
-    { }
-
     static const char *CacheName(Kind kind);
-};
 
-#define CACHE_HEADER(ickind)                                            \
-    Kind kind() const {                                                 \
-        return IonCache::Cache_##ickind;                                \
-    }
-
-
-class IonCodeCache : public IonCache
-{
   protected:
     bool pure_ : 1;
     bool idempotent_ : 1;
@@ -152,11 +132,10 @@ class IonCodeCache : public IonCache
 
   public:
 
-    IonCodeCache(CodeOffsetJump initialJump,
-                 CodeOffsetLabel rejoinLabel,
-                 CodeOffsetLabel cacheLabel)
-      : IonCache(),
-        pure_(false),
+    IonCache(CodeOffsetJump initialJump,
+             CodeOffsetLabel rejoinLabel,
+             CodeOffsetLabel cacheLabel)
+      : pure_(false),
         idempotent_(false),
         stubCount_(0),
         initialJump_(),
@@ -172,9 +151,10 @@ class IonCodeCache : public IonCache
         JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
     }
 
-    // Specialize updateBaseAddress and reset function for discarding
-    // out-of-line code caches.
+    // Update labels once the code is copied and finalized.
     void updateBaseAddress(IonCode *code, MacroAssembler &masm);
+
+    // Reset the cache around garbage collection.
     void reset();
 
     bool canAttachStub() const {
@@ -237,10 +217,15 @@ class IonCodeCache : public IonCache
     }
 };
 
+#define CACHE_HEADER(ickind)                                            \
+    Kind kind() const {                                                 \
+        return IonCache::Cache_##ickind;                                \
+    }
+
 // Subclasses of IonCache for the various kinds of caches. These do not define
 // new data members; all caches must be of the same size.
 
-class GetPropertyIC : public IonCodeCache
+class GetPropertyIC : public IonCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -260,7 +245,7 @@ class GetPropertyIC : public IonCodeCache
                   Register object, PropertyName *name,
                   TypedOrValueRegister output,
                   bool allowGetters)
-      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+      : IonCache(initialJump, rejoinLabel, cacheLabel),
         liveRegs_(liveRegs),
         object_(object),
         name_(name),
@@ -285,7 +270,7 @@ class GetPropertyIC : public IonCodeCache
     static bool update(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
 };
 
-class SetPropertyIC : public IonCodeCache
+class SetPropertyIC : public IonCache
 {
   protected:
     // Registers live after the cache, excluding output registers. The initial
@@ -305,7 +290,7 @@ class SetPropertyIC : public IonCodeCache
                   Register object, PropertyName *name,
                   ConstantOrRegister value,
                   bool strict)
-      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+      : IonCache(initialJump, rejoinLabel, cacheLabel),
         liveRegs_(liveRegs),
         object_(object),
         name_(name),
@@ -331,7 +316,7 @@ class SetPropertyIC : public IonCodeCache
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value, bool isSetName);
 };
 
-class GetElementIC : public IonCodeCache
+class GetElementIC : public IonCache
 {
   protected:
     Register object_;
@@ -346,7 +331,7 @@ class GetElementIC : public IonCodeCache
                  CodeOffsetLabel cacheLabel,
                  Register object, ConstantOrRegister index,
                  TypedOrValueRegister output, bool monitoredResult)
-      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+      : IonCache(initialJump, rejoinLabel, cacheLabel),
         object_(object),
         index_(index),
         output_(output),
@@ -385,7 +370,7 @@ class GetElementIC : public IonCodeCache
                 MutableHandleValue vp);
 };
 
-class BindNameIC : public IonCodeCache
+class BindNameIC : public IonCache
 {
   protected:
     Register scopeChain_;
@@ -398,7 +383,7 @@ class BindNameIC : public IonCodeCache
                CodeOffsetLabel cacheLabel,
                Register scopeChain, PropertyName *name,
                Register output)
-      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+      : IonCache(initialJump, rejoinLabel, cacheLabel),
         scopeChain_(scopeChain),
         name_(name),
         output_(output)
@@ -425,7 +410,7 @@ class BindNameIC : public IonCodeCache
     update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain);
 };
 
-class NameIC : public IonCodeCache
+class NameIC : public IonCache
 {
   protected:
     bool typeOf_;
@@ -440,7 +425,7 @@ class NameIC : public IonCodeCache
            CodeOffsetLabel cacheLabel,
            Register scopeChain, PropertyName *name,
            TypedOrValueRegister output)
-      : IonCodeCache(initialJump, rejoinLabel, cacheLabel),
+      : IonCache(initialJump, rejoinLabel, cacheLabel),
         typeOf_(typeOf),
         scopeChain_(scopeChain),
         name_(name),
