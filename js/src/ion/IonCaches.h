@@ -99,6 +99,8 @@ class IonCache
     // Reset the cache around garbage collection.
     virtual void reset()
     { }
+
+    static const char *CacheName(Kind kind);
 };
 
 #define CACHE_HEADER(ickind)                                            \
@@ -186,9 +188,31 @@ class IonCodeCache : public IonCache
         return stubCount_ < MAX_STUBS;
     }
 
+    // Value used to identify code which has to be patched with the generated
+    // stub address. This address will later be used for marking the stub if it
+    // does a call, even if the IC has been flushed.
+    static const ImmWord codeMark;
+
+    // Return value of linkCode.
     static IonCode * const CACHE_FLUSHED;
+
+    // Use the Linker to link the generated code and check if any
+    // monitoring/allocation caused an invalidation of the running ion
+    // script. If there is no allocation issue, but the code cannot be attached
+    // later, this function will return CACHE_FLUSHED.  If there is any fatal
+    // error, this function will return a NULL pointer.
     IonCode *linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion);
-    void attachStub(IonCode *code, CodeOffsetJump &rejoinOffset, CodeOffsetJump *exitOffset);
+
+    // Fixup variables and update jumps in the list of stubs.  Increment the
+    // number of attached stubs accordingly.
+    void attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
+                    CodeOffsetJump *exitOffset, CodeOffsetLabel *stubOffset = NULL);
+
+    // Combine both linkCode and attachStub into one function. In addition, it
+    // produces a spew augmented with the attachKind string.
+    bool linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
+                           const char *attachKind, CodeOffsetJump &rejoinOffset,
+                           CodeOffsetJump *exitOffset, CodeOffsetLabel *stubOffset = NULL);
 
     bool pure() {
         return pure_;

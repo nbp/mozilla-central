@@ -84,6 +84,18 @@ CodeOffsetJump::fixup(MacroAssembler *masm)
 #endif
 }
 
+const char *
+IonCache::CacheName(IonCache::Kind kind)
+{
+    static const char *names[] =
+    {
+#define NAME(x) #x,
+        IONCACHE_KIND_LIST(NAME)
+#undef NAME
+    };
+    return names[kind];
+}
+
 IonCode * const IonCodeCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
 
 IonCode *
@@ -101,21 +113,47 @@ IonCodeCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 }
 
 const size_t IonCodeCache::MAX_STUBS = 16;
+const ImmWord IonCodeCache::codeMark = ImmWord(uintptr_t(0xdeadc0de));
 
 void
-IonCodeCache::attachStub(IonCode *code, CodeOffsetJump &rejoinOffset, CodeOffsetJump *exitOffset)
+IonCodeCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
+                         CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
     JS_ASSERT(canAttachStub());
     incrementStubCount();
+
+    rejoinOffset.fixup(&masm);
     CodeLocationJump rejoinJump(code, rejoinOffset);
     CodeLocationJump lastJump_ = lastJump();
     PatchJump(lastJump_, CodeLocationLabel(code));
     PatchJump(rejoinJump, rejoinLabel());
     if (exitOffset) {
+        exitOffset->fixup(&masm);
         CodeLocationJump exitJump(code, *exitOffset);
         PatchJump(exitJump, cacheLabel());
         updateLastJump(exitJump);
     }
+    if (stubLabel) {
+        stubLabel->fixup(&masm);
+        Assembler::patchDataWithValueCheck(CodeLocationLabel(code, *stubLabel),
+                                           ImmWord(uintptr_t(code)), codeMark);
+    }
+}
+
+bool
+IonCodeCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
+                                const char *attachKind, CodeOffsetJump &rejoinOffset,
+                                CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
+{
+    IonCode *code = linkCode(cx, masm, ion);
+    if (code <= IonCodeCache::CACHE_FLUSHED)
+        return !!code;
+
+    attachStub(masm, code, rejoinOffset, exitOffset, stubLabel);
+
+    IonSpew(IonSpew_InlineCaches, "Generated %s %s stub at %p",
+            attachKind, CacheName(kind()), code->raw());
+    return true;
 }
 
 static bool
@@ -519,7 +557,7 @@ struct GetNativePropertyStub
         // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
         // WARNING: value here.
         // WARNING:
-        stubCodePatchOffset = masm.PushWithPatch(ImmWord(uintptr_t(-1)));
+        stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::codeMark);
 
         if (callNative) {
             JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -663,18 +701,10 @@ IonCacheGetProperty::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj
     GetNativePropertyStub getprop;
     getprop.generateReadSlot(cx, masm, obj, name(), holder, shape, object(), output(), &failures);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    getprop.rejoinOffset.fixup(&masm);
-    getprop.exitOffset.fixup(&masm);
-    attachStub(code, getprop.rejoinOffset, &getprop.exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated native GETPROP stub at %p %s", code->raw(),
-            idempotent() ? "(idempotent)" : "(not idempotent)");
-
-    return true;
+    const char *attachKind = "non idempotent reading";
+    if (idempotent())
+        attachKind = "idempotent reading";
+    return linkAndAttachStub(cx, masm, ion, attachKind, getprop.rejoinOffset, &getprop.exitOffset);
 }
 
 bool
@@ -699,22 +729,11 @@ IonCacheGetProperty::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *o
          return false;
     }
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    getprop.rejoinOffset.fixup(&masm);
-    getprop.exitOffset.fixup(&masm);
-    getprop.stubCodePatchOffset.fixup(&masm);
-
-    Assembler::patchDataWithValueCheck(CodeLocationLabel(code, getprop.stubCodePatchOffset),
-                                       ImmWord(uintptr_t(code)), ImmWord(uintptr_t(-1)));
-    attachStub(code, getprop.rejoinOffset, &getprop.exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated native GETPROP stub at %p %s", code->raw(),
-            idempotent() ? "(idempotent)" : "(not idempotent)");
-
-    return true;
+    const char *attachKind = "non idempotent calling";
+    if (idempotent())
+        attachKind = "idempotent calling";
+    return linkAndAttachStub(cx, masm, ion, attachKind, getprop.rejoinOffset, &getprop.exitOffset,
+               &getprop.stubCodePatchOffset);
 }
 
 static bool
@@ -946,17 +965,7 @@ IonCacheSetProperty::attachNativeExisting(JSContext *cx, IonScript *ion,
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated native SETPROP setting case stub at %p", code->raw());
-
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "setting", rejoinOffset, &exitOffset);
 }
 
 bool
@@ -1045,7 +1054,7 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
     // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
     // WARNING: value here.
     // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(ImmWord(uintptr_t(-1)));
+    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCodeCache::codeMark);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);
@@ -1119,21 +1128,8 @@ IonCacheSetProperty::attachSetterCall(JSContext *cx, IonScript *ion,
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit);
     masm.bind(&exit);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    stubCodePatchOffset.fixup(&masm);
-
-    Assembler::patchDataWithValueCheck(CodeLocationLabel(code, stubCodePatchOffset),
-                                       ImmWord(uintptr_t(code)), ImmWord(uintptr_t(-1)));
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated SETPROP calling case stub at %p", code->raw());
-
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "calling", rejoinOffset, &exitOffset,
+                             &stubCodePatchOffset);
 }
 
 bool
@@ -1203,17 +1199,7 @@ IonCacheSetProperty::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject 
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated native SETPROP adding case stub at %p", code->raw());
-
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "adding", rejoinOffset, &exitOffset);
 }
 
 static bool
@@ -1403,18 +1389,10 @@ IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject ob
     masm.branchTestValue(Assembler::NotEqual, val, idval, &nonRepatchFailures);
 
     GetNativePropertyStub getprop;
-    getprop.generateReadSlot(cx, masm, obj, name, holder, shape, object(), output(), &failures, &nonRepatchFailures);
+    getprop.generateReadSlot(cx, masm, obj, name, holder, shape, object(), output(), &failures,
+                             &nonRepatchFailures);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    getprop.rejoinOffset.fixup(&masm);
-    getprop.exitOffset.fixup(&masm);
-    attachStub(code, getprop.rejoinOffset, &getprop.exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated GETELEM property stub at %p", code->raw());
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "property", getprop.rejoinOffset, &getprop.exitOffset);
 }
 
 bool
@@ -1472,18 +1450,7 @@ IonCacheGetElement::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *ob
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    setHasDenseArrayStub();
-    IonSpew(IonSpew_InlineCaches, "Generated GETELEM dense array stub at %p", code->raw());
-
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "dense array", rejoinOffset, &exitOffset);
 }
 
 bool
@@ -1546,16 +1513,7 @@ IonCacheBindName::attachGlobal(JSContext *cx, IonScript *ion, JSObject *scopeCha
     CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin_);
     masm.bind(&rejoin_);
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated BINDNAME global stub at %p", code->raw());
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "global", rejoinOffset, &exitOffset);
 }
 
 static inline void
@@ -1647,16 +1605,7 @@ IonCacheBindName::attachNonGlobal(JSContext *cx, IonScript *ion, JSObject *scope
         masm.bind(&exit_);
     }
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, &exitOffset);
-
-    IonSpew(IonSpew_InlineCaches, "Generated BINDNAME non-global stub at %p", code->raw());
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "non-global", rejoinOffset, &exitOffset);
 }
 
 static bool
@@ -1753,17 +1702,8 @@ IonCacheName::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, Han
         masm.bind(&exit);
     }
 
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCodeCache::CACHE_FLUSHED)
-        return !!code;
-
-    rejoinOffset.fixup(&masm);
-    if (failures.bound())
-        exitOffset.fixup(&masm);
-    attachStub(code, rejoinOffset, (failures.bound() ? &exitOffset : NULL));
-
-    IonSpew(IonSpew_InlineCaches, "Generated NAME stub at %p", code->raw());
-    return true;
+    return linkAndAttachStub(cx, masm, ion, "generic", rejoinOffset,
+                             (failures.bound() ? &exitOffset : NULL));
 }
 
 static bool
