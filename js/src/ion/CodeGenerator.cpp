@@ -3147,10 +3147,6 @@ CodeGenerator::link()
 
     // Ordered by expected frequency of usage and by sequences of reads.
 
-    // for the execution.
-    if (graph.numConstants())
-        ionScript->copyConstants(graph.constantPool());
-
     // for generating caches during the execution.
     if (runtimeData_.length())
         ionScript->copyRuntimeData(&runtimeData_[0]);
@@ -3174,6 +3170,8 @@ CodeGenerator::link()
         ionScript->copyOsiIndices(&osiIndices_[0], masm);
     if (snapshots_.size())
         ionScript->copySnapshots(&snapshots_);
+    if (graph.numConstants())
+        ionScript->copyConstants(graph.constantPool());
     JS_ASSERT(graph.mir().numScripts() > 0);
     ionScript->copyScriptEntries(graph.mir().scripts());
 

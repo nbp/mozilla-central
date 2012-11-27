@@ -159,10 +159,6 @@ struct IonScript
     // Flag set when we bailout, to avoid frequent bailouts.
     bool bailoutExpected_;
 
-    // Constant table for constants stored in snapshots.
-    uint32 constantTable_;
-    uint32 constantEntries_;
-
     // Any kind of data needed by the runtime, these can be either cache
     // information or profiling info.
     uint32 runtimeData_;
@@ -205,6 +201,10 @@ struct IonScript
     // Offset from the start of the code buffer to its snapshot buffer.
     uint32 snapshots_;
     uint32 snapshotsSize_;
+
+    // Constant table for constants stored in snapshots.
+    uint32 constantTable_;
+    uint32 constantEntries_;
 
     // List of compiled/inlined JSScript's.
     uint32 scriptList_;

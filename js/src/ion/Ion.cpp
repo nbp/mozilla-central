@@ -420,8 +420,6 @@ IonScript::IonScript()
     invalidateEpilogueOffset_(0),
     invalidateEpilogueDataOffset_(0),
     bailoutExpected_(false),
-    constantTable_(0),
-    constantEntries_(0),
     runtimeData_(0),
     runtimeSize_(0),
     cacheIndex_(0),
@@ -440,6 +438,8 @@ IonScript::IonScript()
     osiIndexEntries_(0),
     snapshots_(0),
     snapshotsSize_(0),
+    constantTable_(0),
+    constantEntries_(0),
     scriptList_(0),
     scriptEntries_(0),
     refcount_(0),
@@ -498,11 +498,6 @@ IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapsh
 
     // Ordered by expected frequency of usage and by sequences of reads.
 
-    // for the execution
-    script->constantTable_ = offsetCursor;
-    script->constantEntries_ = constants;
-    offsetCursor += paddedConstantsSize;
-
     // for generating caches during the execution.
     script->runtimeData_ = offsetCursor;
     script->runtimeSize_ = runtimeSize;
@@ -538,6 +533,10 @@ IonScript::New(JSContext *cx, uint32 frameSlots, uint32 frameSize, size_t snapsh
     script->snapshots_ = offsetCursor;
     script->snapshotsSize_ = snapshotsSize;
     offsetCursor += paddedSnapshotsSize;
+
+    script->constantTable_ = offsetCursor;
+    script->constantEntries_ = constants;
+    offsetCursor += paddedConstantsSize;
 
     script->scriptList_ = offsetCursor;
     script->scriptEntries_ = scriptEntries;
