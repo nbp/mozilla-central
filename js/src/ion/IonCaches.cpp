@@ -905,7 +905,6 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
     }
 
     if (!cache.idempotent()) {
-        JS_ASSERT(!cache.idempotent());
         RootedScript script(cx);
         jsbytecode *pc;
         cache.getScriptedLocation(&script, &pc);
