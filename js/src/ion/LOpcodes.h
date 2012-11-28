@@ -169,7 +169,9 @@
     _(Round)                        \
     _(In)                           \
     _(InArray)                      \
+    _(InstanceOfO)                  \
     _(InstanceOfV)                  \
+    _(CallInstanceOf)               \
     _(InterruptCheck)               \
     _(FunctionBoundary)             \
     _(GetDOMProperty)               \

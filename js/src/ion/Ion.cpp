@@ -21,6 +21,7 @@
 #include "jsworkers.h"
 #include "IonCompartment.h"
 #include "CodeGenerator.h"
+#include "StupidAllocator.h"
 
 #if defined(JS_CPU_X86)
 # include "x86/Lowering-x86.h"
@@ -884,6 +885,17 @@ CompileBackEnd(MIRGenerator *mir)
             return NULL;
     }
 
+    if (js_IonOptions.licm) {
+        LICM licm(mir, graph);
+        if (!licm.analyze())
+            return NULL;
+        IonSpewPass("LICM");
+        AssertGraphCoherency(graph);
+
+        if (mir->shouldCancel("LICM"))
+            return NULL;
+    }
+
     if (js_IonOptions.rangeAnalysis) {
         RangeAnalysis r(graph);
         if (!r.addBetaNobes())
@@ -918,17 +930,6 @@ CompileBackEnd(MIRGenerator *mir)
 
     if (mir->shouldCancel("DCE"))
         return NULL;
-
-    if (js_IonOptions.licm) {
-        LICM licm(mir, graph);
-        if (!licm.analyze())
-            return NULL;
-        IonSpewPass("LICM");
-        AssertGraphCoherency(graph);
-
-        if (mir->shouldCancel("LICM"))
-            return NULL;
-    }
 
     if (js_IonOptions.edgeCaseAnalysis) {
         EdgeCaseAnalysis edgeCaseAnalysis(mir, graph);
@@ -965,15 +966,46 @@ CompileBackEnd(MIRGenerator *mir)
     if (mir->shouldCancel("Generate LIR"))
         return NULL;
 
-    if (js_IonOptions.lsra) {
+    AllocationIntegrityState integrity(*lir);
+
+    switch (js_IonOptions.registerAllocator) {
+      case RegisterAllocator_LSRA: {
+#ifdef DEBUG
+        integrity.record();
+#endif
+
         LinearScanAllocator regalloc(mir, &lirgen, *lir);
         if (!regalloc.go())
             return NULL;
-        IonSpewPass("Allocate Registers", &regalloc);
 
-        if (mir->shouldCancel("Allocate Registers"))
+#ifdef DEBUG
+        integrity.check(false);
+#endif
+
+        IonSpewPass("Allocate Registers [LSRA]", &regalloc);
+        break;
+      }
+
+      case RegisterAllocator_Stupid: {
+        // Use the integrity checker to populate safepoint information, so
+        // run it in all builds.
+        integrity.record();
+
+        StupidAllocator regalloc(mir, &lirgen, *lir);
+        if (!regalloc.go())
             return NULL;
+        if (!integrity.check(true))
+            return NULL;
+        IonSpewPass("Allocate Registers [Stupid]");
+        break;
+      }
+
+      default:
+        JS_NOT_REACHED("Bad regalloc");
     }
+
+    if (mir->shouldCancel("Allocate Registers"))
+        return NULL;
 
     CodeGenerator *codegen = js_new<CodeGenerator>(mir, lir);
     if (!codegen || !codegen->generate()) {
@@ -1146,7 +1178,13 @@ SequentialCompileContext::compile(IonBuilder *builder, MIRGraph *graph,
     }
     builder->clearForBackEnd();
 
-    if (js_IonOptions.parallelCompilation && OffThreadCompilationAvailable(cx)) {
+    // Try to compile the script off thread, if possible. Compilation cannot be
+    // performed off thread during an incremental GC, as doing so may trip
+    // incremental read barriers.
+    if (js_IonOptions.parallelCompilation &&
+        OffThreadCompilationAvailable(cx) &&
+        !cx->compartment->needsBarrier())
+    {
         builder->script()->ion = ION_COMPILING_SCRIPT;
 
         if (!StartOffThreadIonCompile(cx, builder)) {
@@ -1896,8 +1934,6 @@ ion::FinishInvalidation(FreeOp *fop, JSScript *script)
 void
 ion::MarkFromIon(JSRuntime *rt, Value *vp)
 {
-    JS_ASSERT_IF(vp->isMarkable(),
-                 ((gc::Cell*)vp->toGCThing())->compartment()->needsBarrier());
     gc::MarkValueUnbarriered(&rt->gcMarker, vp, "write barrier");
 }
 

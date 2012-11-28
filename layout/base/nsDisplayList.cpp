@@ -666,7 +666,6 @@ nsDisplayListBuilder::~nsDisplayListBuilder() {
 
   nsCSSRendering::EndFrameTreesLocked();
 
-  PL_FreeArenaPool(&mPool);
   PL_FinishArenaPool(&mPool);
   MOZ_COUNT_DTOR(nsDisplayListBuilder);
 }
@@ -1422,8 +1421,23 @@ void nsDisplayList::Sort(nsDisplayListBuilder* aBuilder,
   ::Sort(this, Count(), aCmp, aClosure);
 }
 
-bool nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
-                                          nsRegion* aVisibleRegion) {
+/* static */ bool
+nsDisplayItem::ForceActiveLayers()
+{
+  static bool sForce = false;
+  static bool sForceCached = false;
+
+  if (!sForceCached) {
+    Preferences::AddBoolVarCache(&sForce, "layers.force-active", false);
+    sForceCached = true;
+  }
+
+  return sForce;
+}
+
+bool
+nsDisplayItem::RecomputeVisibility(nsDisplayListBuilder* aBuilder,
+                                   nsRegion* aVisibleRegion) {
   bool snap;
   nsRect bounds = GetBounds(aBuilder, &snap);
 
@@ -2700,7 +2714,8 @@ already_AddRefed<Layer>
 nsDisplayOpacity::BuildLayer(nsDisplayListBuilder* aBuilder,
                              LayerManager* aManager,
                              const ContainerParameters& aContainerParameters) {
-  if (mFrame->GetStyleDisplay()->mOpacity == 0) {
+  if (mFrame->GetStyleDisplay()->mOpacity == 0 && mFrame->GetContent() &&
+      !nsLayoutUtils::HasAnimationsForCompositor(mFrame->GetContent(), eCSSProperty_opacity)) {
     return nullptr;
   }
   nsRefPtr<Layer> container = aManager->GetLayerBuilder()->
