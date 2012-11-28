@@ -620,10 +620,7 @@ class ICNoField
 // Fill template parameters without repeating the Cache name.
 #define CACHE_FIELD(Cache, Type, Field)  Cache, Type, &Cache::Field
 
-template <typename A1 = ICNoField,
-          typename A2 = ICNoField,
-          typename A3 = ICNoField,
-          typename A4 = ICNoField>
+template <typename A1 = ICNoField, typename A2 = ICNoField>
 class ICArgSeq
 {
     ICArgSeq() {}
@@ -631,8 +628,6 @@ class ICArgSeq
   public:
     typedef typename A1::Cache Cache;
     static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
-        A4::push(codegen, cache);
-        A3::push(codegen, cache);
         A2::push(codegen, cache);
         A1::push(codegen, cache);
     }
@@ -690,8 +685,6 @@ class OutOfLineUpdateCache : public OutOfLineCodeBase<CodeGeneratorShared>
   private:
     LInstruction *lir_;
     RepatchLabel repatchEntry_;
-    CodeOffsetJump inlineJump_;
-    CodeOffsetLabel inlineLabel_;
     size_t cacheIndex_;
 
   public:
@@ -708,19 +701,8 @@ class OutOfLineUpdateCache : public OutOfLineCodeBase<CodeGeneratorShared>
         masm->bind(&repatchEntry_);
     }
 
-    void setInlineJump(CodeOffsetJump jump, CodeOffsetLabel label) {
-        inlineJump_ = jump;
-        inlineLabel_ = label;
-    }
-
     LInstruction *lir() const {
         return lir_;
-    }
-    CodeOffsetJump getInlineJump() const {
-        return inlineJump_;
-    }
-    CodeOffsetLabel getInlineLabel() const {
-        return inlineLabel_;
     }
     RepatchLabel *repatchEntry() {
         return &repatchEntry_;
@@ -750,7 +732,8 @@ CodeGeneratorShared::inlineCache(LInstruction *lir, Cache &cache)
     CodeOffsetLabel label = masm.labelForPatch();
     masm.bind(ool->rejoin());
 
-    ool->setInlineJump(jump, label);
+    Cache *allocatedCache = static_cast<Cache *>(getCache(cacheIndex));
+    allocatedCache->bindInline(jump, label);
     return true;
 }
 
@@ -761,7 +744,7 @@ CodeGeneratorShared::visitOutOfLineUpdateCache(OutOfLineUpdateCache<Cache> *ool)
     AssertCanGC();
     size_t cacheIndex = ool->getCacheIndex();
     Cache *cache = static_cast<Cache *>(getCache(cacheIndex));
-    cache->bind(ool->getInlineJump(), ool->getInlineLabel(), masm.labelForPatch());
+    cache->bindOutOfLine(masm.labelForPatch());
 
     LInstruction *lir = ool->lir();
 

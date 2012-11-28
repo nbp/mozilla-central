@@ -710,7 +710,7 @@ struct GetNativePropertyStub
 
 bool
 GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                                    const Shape *shape)
+                              const Shape *shape)
 {
     MacroAssembler masm;
     RepatchLabel failures;
@@ -726,8 +726,8 @@ GetPropertyIC::attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSOb
 
 bool
 GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
-                                      JSObject *holder, const Shape *shape,
-                                      const SafepointIndex *safepointIndex, void *returnAddr)
+                                JSObject *holder, const Shape *shape,
+                                const SafepointIndex *safepointIndex, void *returnAddr)
 {
     MacroAssembler masm;
     RepatchLabel failures;
@@ -939,6 +939,8 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 void
 IonCache::reset()
 {
+    // Skip all generated stub by patching the original stub to go directly to
+    // the update function.
     PatchJump(initialJump_, cacheLabel_);
 
     this->stubCount_ = 0;
@@ -947,7 +949,7 @@ IonCache::reset()
 
 bool
 SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
-                                          HandleObject obj, HandleShape shape)
+                                    HandleObject obj, HandleShape shape)
 {
     MacroAssembler masm;
 
@@ -987,8 +989,8 @@ SetPropertyIC::attachNativeExisting(JSContext *cx, IonScript *ion,
 
 bool
 SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
-                                      HandleObject obj, HandleObject holder, HandleShape shape,
-                                      void *returnAddr)
+                                HandleObject obj, HandleObject holder, HandleShape shape,
+                                void *returnAddr)
 {
     MacroAssembler masm;
 
@@ -1151,8 +1153,8 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
 
 bool
 SetPropertyIC::attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj,
-                                        const Shape *oldShape, const Shape *newShape,
-                                        const Shape *propShape)
+                                  const Shape *oldShape, const Shape *newShape,
+                                  const Shape *propShape)
 {
     MacroAssembler masm;
 
@@ -1324,7 +1326,7 @@ IsPropertyAddInlineable(JSContext *cx, HandleObject obj, jsid id, uint32_t oldSl
 
 bool
 SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
-                            HandleValue value)
+                      HandleValue value)
 {
     AutoFlushCache afc ("SetPropertyCache");
 
@@ -1378,7 +1380,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
 
 bool
 GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
-                                  const Value &idval, PropertyName *name)
+                            const Value &idval, PropertyName *name)
 {
     RootedObject holder(cx);
     RootedShape shape(cx);
@@ -1472,7 +1474,7 @@ GetElementIC::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, con
 
 bool
 GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
-                           HandleValue idval, MutableHandleValue res)
+                     HandleValue idval, MutableHandleValue res)
 {
     AutoFlushCache afc ("GetElementCache");
 
@@ -1764,7 +1766,7 @@ IsCacheableName(JSContext *cx, HandleObject scopeChain, HandleObject obj, Handle
 
 bool
 NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
-                     MutableHandleValue vp)
+               MutableHandleValue vp)
 {
     AutoFlushCache afc ("GetNameCache");
 

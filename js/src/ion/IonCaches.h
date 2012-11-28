@@ -25,9 +25,9 @@ namespace ion {
     _(BindName)                                                 \
     _(Name)
 
-// Forward declarations of MIR types.
+// Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class kind##IC;
- IONCACHE_KIND_LIST(FORWARD_DECLARE)
+IONCACHE_KIND_LIST(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
 // Common structure encoding the state of a polymorphic inline cache contained
@@ -61,10 +61,61 @@ namespace ion {
 // or coalesced by LICM or GVN. This also constrains the stubs which can be
 // generated for the cache.
 
-
-// An Ion cache can hold both data or code and may implement updateBaseAddress
-// and reset to update pointer on the code and to garbage collect all
-// information on GC.
+// * IonCache usage
+//
+// An IonCache is the base structure of a cache which is generating code stubs
+// with its update function. A cache derive from the IonCache use CACHE_HEADER
+// to pre-declare a few members such as UpdateInfo (VMFunction) and UpdateData
+// (out-of-line code generation data).  It must at least provide an update
+// function which prototype should match UpdateData::Fn type. The update
+// function expect at least 2 arguments, the first one is the JSContext*, and
+// the second one is the cacheIndex. The rest of the prototype is restricted by
+// the VMFunction call mechanism.
+//
+// examples:
+// [1]   bool      update(JSContext *, size_t, HandleObject, HandleValue)
+// [2]   JSObject *update(JSContext *, size_t, HandleObject, HandleValue)
+// [3]   bool      update(JSContext *, size_t, HandleObject, MutableHandleValue)
+//
+// To use the generic mechanism for calling inline caches, the UpdateData
+// structure of the cache must define UpdateData::Args and UpdateData::Output in
+// the CodeGenerator files.  UpdateData::Args should be a typedef on
+// ICArgSeq<...> which is a "variadic" template where each parameter decribe
+// where to find argument used to call the update function.
+//
+// For the update function (1), we can expect the following typedef inside the
+// UpdateData structure of the MyIC cache:
+//
+//    typedef ICArgSeq<ICField<CACHE_FIELD(MyIC, Register, object_)>,
+//                     ICField<CACHE_FIELD(MyIC, ConstantOrRegister, value_)>
+//                     > Args;
+//
+// where object_ is a Register field on MyIC which contains the location of the
+// register with which the update function should be called.  As it is first in
+// the ICArgSeq, it will be used for the first argument after the cacheIndex,
+// i-e the HandleObject argument.  The value_ field will be used for the
+// HandleValue argument.  A similar Args typedef will be used for update
+// function (2).
+//
+// The return type of the update function is expressed with UpdateData::Output
+// typedef which is either defined to ICStoreNothing, ICStoreRegisterTo or
+// ICStoreValueTo.  for the 3 examples of the update functions we will expect
+// something similar to:
+//
+// [1]  typedef ICStoreNothing Output;
+// [2]  typedef ICStoreRegisterTo<CACHE_FIELD(MyIC, Register, output_)> Output;
+// [3]  typedef ICStoreValueTo<CACHE_FIELD(MyIC, TypedOrValueRegister, output_)> Output;
+//
+// where output_ is a field of MyIC which contains the location of the result of
+// the LIR instructions to which this inline cache is attached to.
+//
+// Once all fields are declared, the cache can be invoke simply with the
+// "inlineCache" function of the CodeGeneratorShared which will allocate the
+// cache, bind it to its code location, set it as idempotent (if there is no
+// resume point) and generate an out-of-line call to the update
+// function. Warning, once the call to "inlineCache" function is done any
+// modification to the inline cache would not be ignored.
+//
 class IonCache
 {
   public:
@@ -144,15 +195,21 @@ class IonCache
     {
     }
 
-    // Bind a cache to its location in the IonScript.
-    void bind(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel,
-              CodeOffsetLabel cacheLabel)
-    {
+    // Bind inline boundaries of the cache. This include the patchable jump
+    // location and the location where the successful exit rejoin the inline
+    // path.
+    void bindInline(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
-        cacheLabel_ = cacheLabel;
 
         JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
+    }
+
+    // Bind out-of-line boundaries of the cache. This include the location of
+    // the update function call.  This location will be set to the exitJump of
+    // the last generated stub.
+    void bindOutOfLine(CodeOffsetLabel cacheLabel) {
+        cacheLabel_ = cacheLabel;
     }
 
     // Update labels once the code is copied and finalized.
@@ -167,15 +224,18 @@ class IonCache
 
     // Value used to identify code which has to be patched with the generated
     // stub address. This address will later be used for marking the stub if it
-    // does a call, even if the IC has been flushed.
+    // does a call, even if all the stub of the IC have been flushed.
     static const ImmWord CODE_MARK;
+
 #ifdef DEBUG
+    // Cast mark to a pointer such as it can be compared to what is read from
+    // the stack during the marking phase.
     static IonCode *codeMark() {
         return reinterpret_cast<IonCode *>(const_cast<ImmWord*>(&CODE_MARK)->asPointer());
     }
 #endif
 
-    // Return value of linkCode.
+    // Return value of linkCode (see linkCode).
     static IonCode * const CACHE_FLUSHED;
 
     // Use the Linker to link the generated code and check if any
