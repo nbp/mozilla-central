@@ -64,13 +64,13 @@ IONCACHE_KIND_LIST(FORWARD_DECLARE)
 // * IonCache usage
 //
 // An IonCache is the base structure of a cache which is generating code stubs
-// with its update function. A cache derive from the IonCache use CACHE_HEADER
-// to pre-declare a few members such as UpdateInfo (VMFunction) and UpdateData
-// (out-of-line code generation data).  It must at least provide an update
-// function which prototype should match UpdateData::Fn type. The update
-// function expect at least 2 arguments, the first one is the JSContext*, and
-// the second one is the cacheIndex. The rest of the prototype is restricted by
-// the VMFunction call mechanism.
+// with its update function. A cache derive from the IonCache class and use
+// CACHE_HEADER to pre-declare a few members such as UpdateInfo (VMFunction) and
+// UpdateData (out-of-line code generation traits). It must at least provide a
+// static update function which prototype should match UpdateData::Fn type. The
+// update function expect at least 2 arguments, the first one is the JSContext*,
+// and the second one is the cacheIndex. The rest of the prototype is restricted
+// by the VMFunction call mechanism.
 //
 // examples:
 // [1]   bool      update(JSContext *, size_t, HandleObject, HandleValue)
@@ -80,8 +80,8 @@ IONCACHE_KIND_LIST(FORWARD_DECLARE)
 // To use the generic mechanism for calling inline caches, the UpdateData
 // structure of the cache must define UpdateData::Args and UpdateData::Output in
 // the CodeGenerator files.  UpdateData::Args should be a typedef on
-// ICArgSeq<...> which is a "variadic" template where each parameter decribe
-// where to find argument used to call the update function.
+// ICArgSeq<...> which is a "variadic" template where each parameter decribes
+// where to find an argument used to call the update function.
 //
 // For the update function (1), we can expect the following typedef inside the
 // UpdateData structure of the MyIC cache:
@@ -98,24 +98,38 @@ IONCACHE_KIND_LIST(FORWARD_DECLARE)
 // function (2).
 //
 // The return type of the update function is expressed with UpdateData::Output
-// typedef which is either defined to ICStoreNothing, ICStoreRegisterTo or
-// ICStoreValueTo.  for the 3 examples of the update functions we will expect
-// something similar to:
+// typedef which is either defined to ICStoreNothing, ICStoreRegisterTo<...> or
+// ICStoreValueTo<...>.  for the 3 examples of the update functions we will
+// expect something similar to:
 //
-// [1]  typedef ICStoreNothing Output;
-// [2]  typedef ICStoreRegisterTo<CACHE_FIELD(MyIC, Register, output_)> Output;
-// [3]  typedef ICStoreValueTo<CACHE_FIELD(MyIC, TypedOrValueRegister, output_)> Output;
+// [1] typedef ICStoreNothing Output;
+// [2] typedef ICStoreRegisterTo<CACHE_FIELD(MyIC, Register, output_)> Output;
+// [3] typedef ICStoreValueTo<CACHE_FIELD(MyIC, TypedOrValueRegister, output_)> Output;
 //
 // where output_ is a field of MyIC which contains the location of the result of
 // the LIR instructions to which this inline cache is attached to.
 //
-// Once all fields are declared, the cache can be invoke simply with the
+// Once all typedefs are defined, the cache can be invoke simply with the
 // "inlineCache" function of the CodeGeneratorShared which will allocate the
 // cache, bind it to its code location, set it as idempotent (if there is no
 // resume point) and generate an out-of-line call to the update
-// function. Warning, once the call to "inlineCache" function is done any
-// modification to the inline cache would not be ignored.
+// function.
 //
+// Code generator example:
+//
+//     Register objReg = ...;
+//     ConstantOrRegister valueInput = ...;
+//     Register outputReg = ...;
+//
+//     MyIC cache(objReg, valueInput, outputReg);
+//     if (!inlineCache(ins, cache))
+//         return false;
+//
+// Warning: Once the call to "inlineCache" function is done any modification to
+// the cache variable would not be ignored at runtime.
+//
+// All inputs and output location used for calling the update function should
+// also be useful inputs for generated stubs.
 class IonCache
 {
   public:
