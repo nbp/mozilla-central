@@ -750,7 +750,7 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
     if (idempotent())
         attachKind = "idempotent calling";
     return linkAndAttachStub(cx, masm, ion, attachKind, getprop.rejoinOffset, &getprop.exitOffset,
-               &getprop.stubCodePatchOffset);
+                             &getprop.stubCodePatchOffset);
 }
 
 static bool
