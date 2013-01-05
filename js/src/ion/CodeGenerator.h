@@ -29,6 +29,8 @@ class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
 
+class OutOfLineUpdateCache;
+
 class CodeGenerator : public CodeGeneratorSpecific
 {
     bool generateArgumentsChecks();
@@ -194,6 +196,13 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitSetPropertyCacheV(LSetPropertyCacheV *ins);
     bool visitSetPropertyCacheT(LSetPropertyCacheT *ins);
     bool visitGetNameCache(LGetNameCache *ins);
+
+    IonCache *updateCachePrefix(size_t cacheIndex);
+    bool visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic);
+    bool visitSetPropertyIC(OutOfLineUpdateCache *ool, SetPropertyIC *ic);
+    bool visitGetElementIC(OutOfLineUpdateCache *ool, GetElementIC *ic);
+    bool visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic);
+    bool visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic);
 
   private:
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

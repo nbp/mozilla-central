@@ -178,7 +178,6 @@ class CodeGeneratorShared : public LInstructionVisitor
         return reinterpret_cast<IonCache *>(&runtimeData_[cacheList_[index]]);
     }
 
-
   protected:
 
     size_t allocateData(size_t size) {
@@ -307,8 +306,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    template <typename Cache>
-    inline bool inlineCache(LInstruction *lir, Cache &cache);
+    inline bool inlineCache(LInstruction *lir, size_t cacheIndex);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
@@ -581,184 +579,6 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
     masm.jump(ool->rejoin());
     return true;
 }
-
-
-// Inline caches are storing all registers used for the generated out-of-line
-// calls.  These inputs/outputs are used by the following template mechanism to
-// make a call to the update function of each Cache.  As opposed to the ArgSeq
-// class defined previously, these classes are not made to be instantiated nor
-// generated but to be written such as it map fields of the cache data structure
-// to arguments of the update function of the same cache.
-
-
-// Type used to build the argument list based on the declared type, all data are
-// stored in the IonCache structure.  The sequence of argument is built such as
-// the type is declared in the same order as the argument of the function.
-template <typename Cache_, typename Type, Type Cache_::*offset>
-class ICField
-{
-    ICField() {}
-
-  public:
-    typedef Cache_ Cache;
-    static inline void push(CodeGeneratorShared *codegen, Cache *cache) {
-        codegen->pushArg(cache->*offset);
-    }
-
-};
-
-class ICNoField
-{
-    ICNoField() {}
-
-  public:
-    template <typename Cache>
-    static inline void push(CodeGeneratorShared *codegen, Cache *cache) {
-    }
-};
-
-// Fill template parameters without repeating the Cache name.
-#define CACHE_FIELD(Cache, Type, Field)  Cache, Type, &Cache::Field
-
-template <typename A1 = ICNoField, typename A2 = ICNoField>
-class ICArgSeq
-{
-    ICArgSeq() {}
-
-  public:
-    typedef typename A1::Cache Cache;
-    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
-        A2::push(codegen, cache);
-        A1::push(codegen, cache);
-    }
-};
-
-class ICStoreNothing
-{
-    ICStoreNothing() {}
-
-  public:
-    template <typename Cache>
-    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
-    }
-    template <typename Cache>
-    static inline RegisterSet clobbered(Cache *) {
-        return RegisterSet(); // No register gets clobbered
-    }
-};
-
-template <typename Cache, typename Output, Output Cache::* offset>
-class ICStoreRegisterTo
-{
-    ICStoreRegisterTo() {}
-
-  public:
-    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
-        codegen->storeResultTo(cache->*offset);
-    }
-    static inline RegisterSet clobbered(Cache *cache) {
-        RegisterSet set = RegisterSet();
-        set.add(cache->*offset);
-        return set;
-    }
-};
-
-template <typename Cache, typename Output, Output Cache::* offset>
-struct ICStoreValueTo
-{
-    ICStoreValueTo() {}
-
-  public:
-    static inline void generate(CodeGeneratorShared *codegen, Cache *cache) {
-        codegen->storeResultValueTo(cache->*offset);
-    }
-    static inline RegisterSet clobbered(Cache *cache) {
-        RegisterSet set = RegisterSet();
-        set.add(cache->*offset);
-        return set;
-    }
-};
-
-template <typename Cache>
-class OutOfLineUpdateCache : public OutOfLineCodeBase<CodeGeneratorShared>
-{
-  private:
-    LInstruction *lir_;
-    RepatchLabel repatchEntry_;
-    size_t cacheIndex_;
-
-  public:
-    OutOfLineUpdateCache(LInstruction *lir, size_t cacheIndex)
-      : lir_(lir),
-        cacheIndex_(cacheIndex)
-    { }
-
-    bool accept(CodeGeneratorShared *codegen) {
-        return codegen->visitOutOfLineUpdateCache(this);
-    }
-
-    void bind(MacroAssembler *masm) {
-        masm->bind(&repatchEntry_);
-    }
-
-    LInstruction *lir() const {
-        return lir_;
-    }
-    RepatchLabel *repatchEntry() {
-        return &repatchEntry_;
-    }
-    size_t getCacheIndex() {
-        return cacheIndex_;
-    }
-};
-
-template <typename Cache>
-inline bool
-CodeGeneratorShared::inlineCache(LInstruction *lir, Cache &cache)
-{
-    MInstruction *mir = lir->mirRaw()->toInstruction();
-    if (mir->resumePoint())
-        cache.setScriptedLocation(mir->block()->info().script(),
-                                  mir->resumePoint()->pc());
-    else
-        cache.setIdempotent();
-
-    size_t cacheIndex = allocateCache(cache);
-    OutOfLineUpdateCache<Cache> *ool = new OutOfLineUpdateCache<Cache>(lir, cacheIndex);
-    if (!addOutOfLineCode(ool))
-        return false;
-
-    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
-    CodeOffsetLabel label = masm.labelForPatch();
-    masm.bind(ool->rejoin());
-
-    Cache *allocatedCache = static_cast<Cache *>(getCache(cacheIndex));
-    allocatedCache->bindInline(jump, label);
-    return true;
-}
-
-template <typename Cache>
-bool
-CodeGeneratorShared::visitOutOfLineUpdateCache(OutOfLineUpdateCache<Cache> *ool)
-{
-    AssertCanGC();
-    size_t cacheIndex = ool->getCacheIndex();
-    Cache *cache = static_cast<Cache *>(getCache(cacheIndex));
-    cache->bindOutOfLine(masm.labelForPatch());
-
-    LInstruction *lir = ool->lir();
-
-    saveLive(lir);
-    Cache::UpdateData::Args::generate(this, cache);
-    pushArg(Imm32(cacheIndex));
-    if (!callVM(Cache::UpdateInfo, lir))
-        return false;
-    Cache::UpdateData::Output::generate(this, cache);
-    restoreLiveIgnore(lir, Cache::UpdateData::Output::clobbered(cache));
-    masm.jump(ool->rejoin());
-    return true;
-}
-
 
 } // namespace ion
 } // namespace js

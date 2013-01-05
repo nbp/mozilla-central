@@ -30,6 +30,19 @@ namespace ion {
 IONCACHE_KIND_LIST(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
+class IonCacheVisitor
+{
+  public:
+#define VISIT_INS(op)                                               \
+    virtual bool visit##op##IC(CodeGenerator *codegen, op##IC *) {  \
+        JS_NOT_REACHED("NYI: " #op "IC");                           \
+        return false;                                               \
+    }
+
+    IONCACHE_KIND_LIST(VISIT_INS)
+#undef VISIT_INS
+};
+
 // Common structure encoding the state of a polymorphic inline cache contained
 // in the code for an IonScript. IonCaches are used for polymorphic operations
 // where multiple implementations may be required.
@@ -151,6 +164,8 @@ class IonCache
 #   undef CACHEKIND_CASTS
 
     virtual Kind kind() const = 0;
+
+    virtual bool accept(CodeGenerator *codegen, IonCacheVisitor *visitor) = 0;
 
   public:
 
@@ -297,12 +312,15 @@ class IonCache
 
 // Define the cache kind and pre-declare data structures used for calling inline
 // caches.
-#define CACHE_HEADER(ickind)                    \
-    Kind kind() const {                         \
-        return IonCache::Cache_##ickind;        \
-    }                                           \
-                                                \
-    struct UpdateData;                          \
+#define CACHE_HEADER(ickind)                                        \
+    Kind kind() const {                                             \
+        return IonCache::Cache_##ickind;                            \
+    }                                                               \
+                                                                    \
+    bool accept(CodeGenerator *codegen, IonCacheVisitor *visitor) { \
+        return visitor->visit##ickind##IC(codegen, this);           \
+    }                                                               \
+                                                                    \
     static const VMFunction UpdateInfo;
 
 // Subclasses of IonCache for the various kinds of caches. These do not define
