@@ -69,10 +69,36 @@ class OutOfLineUpdateCache :
 
 };
 
-IonCache *
-CodeGenerator::updateCachePrefix(size_t cacheIndex)
+// This function is declared here because it needs to instantiate an
+// OutOfLineUpdateCache, but we want to keep it visible inside the
+// CodeGeneratorShared such as we can specialize inline caches in function of
+// the architecture.
+bool
+CodeGeneratorShared::inlineCache(LInstruction *lir, size_t cacheIndex)
 {
-    AssertCanGC();
+    IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
+    MInstruction *mir = lir->mirRaw()->toInstruction();
+    if (mir->resumePoint())
+        cache->setScriptedLocation(mir->block()->info().script(),
+                                   mir->resumePoint()->pc());
+    else
+        cache->setIdempotent();
+
+    OutOfLineUpdateCache *ool = new OutOfLineUpdateCache(lir, cacheIndex);
+    if (!addOutOfLineCode(ool))
+        return false;
+
+    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
+    CodeOffsetLabel label = masm.labelForPatch();
+    masm.bind(ool->rejoin());
+
+    cache->bindInline(jump, label);
+    return true;
+}
+
+IonCache *
+CodeGeneratorShared::updateCachePrefix(size_t cacheIndex)
+{
     IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
     cache->bindOutOfLine(masm.labelForPatch());
     return cache;
@@ -3479,8 +3505,8 @@ CodeGenerator::visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic)
     pushArg(Imm32(ool->getCacheIndex()));
     if (!callVM(NameIC::UpdateInfo, lir))
         return false;
-    StoreValueTo(cache->outputReg()).generate(this);
-    restoreLiveIgnore(lir, StoreValueTo(cache->outputReg()).clobbered());
+    StoreValueTo(ic->outputReg()).generate(this);
+    restoreLiveIgnore(lir, StoreValueTo(ic->outputReg()).clobbered());
 
     masm.jump(ool->rejoin());
     return true;
@@ -3525,8 +3551,8 @@ CodeGenerator::visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic)
     pushArg(Imm32(ool->getCacheIndex()));
     if (!callVM(GetPropertyIC::UpdateInfo, lir))
         return false;
-    StoreValueTo(cache->output()).generate(this);
-    restoreLiveIgnore(lir, StoreValueTo(cache->output()).clobbered());
+    StoreValueTo(ic->output()).generate(this);
+    restoreLiveIgnore(lir, StoreValueTo(ic->output()).clobbered());
 
     masm.jump(ool->rejoin());
     return true;
@@ -3560,8 +3586,8 @@ CodeGenerator::visitGetElementIC(OutOfLineUpdateCache *ool, GetElementIC *ic)
     pushArg(Imm32(ool->getCacheIndex()));
     if (!callVM(GetElementIC::UpdateInfo, lir))
         return false;
-    StoreValueTo(cache->output()).generate(this);
-    restoreLiveIgnore(lir, StoreValueTo(cache->output()).clobbered());
+    StoreValueTo(ic->output()).generate(this);
+    restoreLiveIgnore(lir, StoreValueTo(ic->output()).clobbered());
 
     masm.jump(ool->rejoin());
     return true;
@@ -3574,7 +3600,7 @@ CodeGenerator::visitBindNameCache(LBindNameCache *ins)
     Register output = ToRegister(ins->output());
     BindNameIC cache(scopeChain, ins->mir()->name(), output);
 
-    return inlineCache(ins, cache);
+    return inlineCache(ins, allocateCache(cache));
 }
 
 typedef JSObject *(*BindNameICFn)(JSContext *, size_t, HandleObject);
@@ -3592,8 +3618,8 @@ CodeGenerator::visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic)
     pushArg(Imm32(ool->getCacheIndex()));
     if (!callVM(BindNameIC::UpdateInfo, lir))
         return false;
-    StoreValueTo(cache->outputReg()).generate(this);
-    restoreLiveIgnore(lir, StoreValueTo(cache->outputReg()).clobbered());
+    StoreRegisterTo(ic->outputReg()).generate(this);
+    restoreLiveIgnore(lir, StoreValueTo(ic->outputReg()).clobbered());
 
     masm.jump(ool->rejoin());
     return true;

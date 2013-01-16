@@ -25,12 +25,10 @@ namespace ion {
 class OutOfLineCode;
 class CodeGenerator;
 class MacroAssembler;
+class IonCache;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
-
-template <class Cache>
-class OutOfLineUpdateCache;
 
 class OutOfLineTruncateSlow;
 
@@ -307,6 +305,7 @@ class CodeGeneratorShared : public LInstructionVisitor
                                     const StoreOutputTo &out);
 
     inline bool inlineCache(LInstruction *lir, size_t cacheIndex);
+    IonCache *updateCachePrefix(size_t cacheIndex);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
@@ -324,9 +323,6 @@ class CodeGeneratorShared : public LInstructionVisitor
   public:
     template <class ArgSeq, class StoreOutputTo>
     bool visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo> *ool);
-
-    template <class Cache>
-    bool visitOutOfLineUpdateCache(OutOfLineUpdateCache<Cache> *ool);
 
     bool visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool);
 };

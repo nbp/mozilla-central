@@ -497,28 +497,5 @@ CodeGeneratorShared::markArgumentSlots(LSafepoint *safepoint)
     return true;
 }
 
-bool
-CodeGeneratorShared::inlineCache(LInstruction *lir, size_t cacheIndex)
-{
-    IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
-    MInstruction *mir = lir->mirRaw()->toInstruction();
-    if (mir->resumePoint())
-        cache->setScriptedLocation(mir->block()->info().script(),
-                                   mir->resumePoint()->pc());
-    else
-        cache->setIdempotent();
-
-    OutOfLineUpdateCache *ool = new OutOfLineUpdateCache(lir, cacheIndex);
-    if (!addOutOfLineCode(ool))
-        return false;
-
-    CodeOffsetJump jump = masm.jumpWithPatch(ool->repatchEntry());
-    CodeOffsetLabel label = masm.labelForPatch();
-    masm.bind(ool->rejoin());
-
-    allocatedCache->bindInline(jump, label);
-    return true;
-}
-
 } // namespace ion
 } // namespace js
