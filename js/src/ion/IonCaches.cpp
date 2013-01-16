@@ -802,6 +802,7 @@ GetPropertyIC::attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *o
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
+    JS_ASSERT(!hasDenseArrayLengthStub_);
     hasDenseArrayLengthStub_ = true;
     return linkAndAttachStub(cx, masm, ion, "dense array length", rejoinOffset, &exitOffset);
 }
@@ -843,6 +844,7 @@ GetPropertyIC::attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *o
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
+    JS_ASSERT(!hasTypedArrayLengthStub_);
     hasTypedArrayLengthStub_ = true;
     return linkAndAttachStub(cx, masm, ion, "typed array length", rejoinOffset, &exitOffset);
 }
@@ -960,7 +962,7 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
         return false;
     }
 
-    if (!isCacheable && !cache.idempotent() && cx->names().length == name) {
+    if (!isCacheable && canAttachStub() && !cache.idempotent() && cx->names().length == name) {
         if (cache.output().type() != MIRType_Value && cache.output().type() != MIRType_Int32) {
             // The next execution should cause an invalidation because the type
             // does not fit.
@@ -1582,6 +1584,7 @@ GetElementIC::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, con
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
+    setHasDenseArrayStub();
     return linkAndAttachStub(cx, masm, ion, "dense array", rejoinOffset, &exitOffset);
 }
 
