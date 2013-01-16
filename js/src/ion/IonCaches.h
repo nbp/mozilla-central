@@ -73,76 +73,46 @@ class IonCacheVisitor
 // for a cache, the cache itself may be marked as idempotent and become hoisted
 // or coalesced by LICM or GVN. This also constrains the stubs which can be
 // generated for the cache.
-
+//
 // * IonCache usage
 //
 // An IonCache is the base structure of a cache which is generating code stubs
 // with its update function. A cache derive from the IonCache class and use
 // CACHE_HEADER to pre-declare a few members such as UpdateInfo (VMFunction) and
-// UpdateData (out-of-line code generation traits). It must at least provide a
-// static update function which prototype should match UpdateData::Fn type. The
-// update function expect at least 2 arguments, the first one is the JSContext*,
-// and the second one is the cacheIndex. The rest of the prototype is restricted
-// by the VMFunction call mechanism.
+// the accept function. The name of the derived cache must be registered in the
+// IONCACHE_KIND_LIST used to provide convertion operations and to provide
+// default accessors.
 //
-// examples:
-// [1]   bool      update(JSContext *, size_t, HandleObject, HandleValue)
-// [2]   JSObject *update(JSContext *, size_t, HandleObject, HandleValue)
-// [3]   bool      update(JSContext *, size_t, HandleObject, MutableHandleValue)
+// A cache must at least provide a static update function which will usualy have
+// a JSContext*, followed by the cache index. The rest of the arguments of the
+// update function are usualy corresponding to the register inputs of the cache,
+// as it must perform the same operation as any of the stubs that it might
+// produce. The update function call is handled by the visit function of
+// CodeGenerator corresponding to this IC.
 //
-// To use the generic mechanism for calling inline caches, the UpdateData
-// structure of the cache must define UpdateData::Args and UpdateData::Output in
-// the CodeGenerator files.  UpdateData::Args should be a typedef on
-// ICArgSeq<...> which is a "variadic" template where each parameter decribes
-// where to find an argument used to call the update function.
+// The CodeGenerator visit function, as opposed to other visit functions, has
+// two arguments. The first one is the OutOfLineUpdateCache which stores the LIR
+// instruction. The second one is the IC object.  This function would be called
+// once the IC is registered with the inlineCache function of the
+// CodeGeneratorShared.
 //
-// For the update function (1), we can expect the following typedef inside the
-// UpdateData structure of the MyIC cache:
+// To register a cache, you must call the inlineCache function as follow:
 //
-//    typedef ICArgSeq<ICField<CACHE_FIELD(MyIC, Register, object_)>,
-//                     ICField<CACHE_FIELD(MyIC, ConstantOrRegister, value_)>
-//                     > Args;
-//
-// where object_ is a Register field on MyIC which contains the location of the
-// register with which the update function should be called.  As it is first in
-// the ICArgSeq, it will be used for the first argument after the cacheIndex,
-// i-e the HandleObject argument.  The value_ field will be used for the
-// HandleValue argument.  A similar Args typedef will be used for update
-// function (2).
-//
-// The return type of the update function is expressed with UpdateData::Output
-// typedef which is either defined to ICStoreNothing, ICStoreRegisterTo<...> or
-// ICStoreValueTo<...>.  for the 3 examples of the update functions we will
-// expect something similar to:
-//
-// [1] typedef ICStoreNothing Output;
-// [2] typedef ICStoreRegisterTo<CACHE_FIELD(MyIC, Register, output_)> Output;
-// [3] typedef ICStoreValueTo<CACHE_FIELD(MyIC, TypedOrValueRegister, output_)> Output;
-//
-// where output_ is a field of MyIC which contains the location of the result of
-// the LIR instructions to which this inline cache is attached to.
-//
-// Once all typedefs are defined, the cache can be invoke simply with the
-// "inlineCache" function of the CodeGeneratorShared which will allocate the
-// cache, bind it to its code location, set it as idempotent (if there is no
-// resume point) and generate an out-of-line call to the update
-// function.
-//
-// Code generator example:
-//
-//     Register objReg = ...;
-//     ConstantOrRegister valueInput = ...;
-//     Register outputReg = ...;
-//
-//     MyIC cache(objReg, valueInput, outputReg);
-//     if (!inlineCache(ins, cache))
+//     MyCodeIC cache(inputReg1, inputValueReg2, outputReg);
+//     if (!inlineCache(lir, allocateCache(cache)))
 //         return false;
 //
-// Warning: Once the call to "inlineCache" function is done any modification to
-// the cache variable would not be ignored at runtime.
+// Once the cache is allocated with the allocateCache function, any modification
+// made to the cache would be ignored.
 //
-// All inputs and output location used for calling the update function should
-// also be useful inputs for generated stubs.
+// The inlineCache function will produce a patchable jump at the location where
+// it is called. This jump will execute generated stubs and fallback on the code
+// of the visitMyCodeIC function if no stub match.
+//
+//   Warning: As the inlineCache function fallback on a VMCall, calls to
+// inlineCache should not be in the same path as another VMCall or in the same
+// path of another inlineCache as this is not supported by the invalidation
+// procedure.
 class IonCache
 {
   public:
@@ -251,20 +221,25 @@ class IonCache
         return stubCount_ < MAX_STUBS;
     }
 
-    // Value used to identify code which has to be patched with the generated
-    // stub address. This address will later be used for marking the stub if it
-    // does a call, even if all the stub of the IC have been flushed.
+    // Value used instead of the IonCode self-reference of generated stubs. This
+    // value is needed for marking calls made inside stubs. This value would be
+    // replaced by the attachStub function after the allocation of the
+    // IonCode. Such self-reference is used when a marking phase happen within
+    // such calls, in which case we need to keep the stub path alive even if the
+    // IonScript is invalidated or if the IC is flushed.
     static const ImmWord CODE_MARK;
 
 #ifdef DEBUG
-    // Cast mark to a pointer such as it can be compared to what is read from
-    // the stack during the marking phase.
+    // Cast code mark to a pointer such as it can be compared to what is read
+    // from the stack during the marking phase.
     static IonCode *codeMark() {
         return reinterpret_cast<IonCode *>(const_cast<ImmWord*>(&CODE_MARK)->asPointer());
     }
 #endif
 
-    // Return value of linkCode (see linkCode).
+    // Return value of linkCode (see linkCode). This special value is used to
+    // identify the fact that the cache might have been flushed or that the
+    // IonScript might be invalidated since we entered the update function.
     static IonCode * const CACHE_FLUSHED;
 
     // Use the Linker to link the generated code and check if any

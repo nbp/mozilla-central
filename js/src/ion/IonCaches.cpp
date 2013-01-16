@@ -103,6 +103,7 @@ IonCode * const IonCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
 IonCode *
 IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 {
+    AssertCanGC();
     Linker linker(masm);
     IonCode *code = linker.newCode(cx);
     if (!code)
@@ -731,7 +732,6 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
                                 JSObject *holder, HandleShape shape,
                                 const SafepointIndex *safepointIndex, void *returnAddr)
 {
-    AssertCanGC();
     MacroAssembler masm;
     RepatchLabel failures;
 
@@ -1805,7 +1805,6 @@ BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 bool
 NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject holder, HandleShape shape)
 {
-    AssertCanGC();
     MacroAssembler masm;
     Label failures;
 

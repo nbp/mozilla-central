@@ -29,7 +29,6 @@ class OutOfLineUnboxDouble;
 class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
-
 class OutOfLineUpdateCache;
 
 class CodeGenerator : public CodeGeneratorSpecific

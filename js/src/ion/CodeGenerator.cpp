@@ -31,6 +31,8 @@ using mozilla::Maybe;
 namespace js {
 namespace ion {
 
+// This out-of-line cache is used to do a double dispatch including it-self and
+// the wrapped IonCache.
 class OutOfLineUpdateCache :
   public OutOfLineCodeBase<CodeGenerator>,
   public IonCacheVisitor
@@ -46,11 +48,6 @@ class OutOfLineUpdateCache :
         cacheIndex_(cacheIndex)
     { }
 
-    bool accept(CodeGenerator *codegen) {
-        IonCache *cache = codegen->updateCachePrefix(cacheIndex_);
-        return cache->accept(codegen, this);
-    }
-
     void bind(MacroAssembler *masm) {
         masm->bind(&repatchEntry_);
     }
@@ -65,6 +62,13 @@ class OutOfLineUpdateCache :
         return &repatchEntry_;
     }
 
+    // Dispatch to ICs' accept functions.
+    bool accept(CodeGenerator *codegen) {
+        IonCache *cache = codegen->updateCachePrefix(cacheIndex_);
+        return cache->accept(codegen, this);
+    }
+
+    // ICs' visit functions delegating the work to the CodeGen visit funtions.
 #define VISIT_CACHE_FUNCTION(op)                                \
     bool visit##op##IC(CodeGenerator *codegen, op##IC *ic) {    \
         return codegen->visit##op##IC(this, ic);                \
@@ -72,7 +76,6 @@ class OutOfLineUpdateCache :
 
     IONCACHE_KIND_LIST(VISIT_CACHE_FUNCTION)
 #undef VISIT_CACHE_FUNCTION
-
 };
 
 // This function is declared here because it needs to instantiate an
