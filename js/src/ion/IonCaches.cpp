@@ -870,11 +870,6 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
     if (cache.idempotent() && !checkObj->hasIdempotentProtoChain())
         return true;
 
-    // We have reached the stub limit, try to see if we can avoid the stub limit
-    // by recompiling with a non-idempotent cache.
-    // if (!cache.canAttachStub())
-    //     return true;
-
     RootedShape shape(cx);
     RootedObject holder(cx);
     if (!JSObject::lookupProperty(cx, checkObj, name, &holder, &shape))
