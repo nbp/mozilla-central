@@ -1025,15 +1025,28 @@ function readStringFromFile(file) {
 
 function handleUpdateFailure(update, errorCode) {
   update.errorCode = parseInt(errorCode);
+  if (update.errorCode == FOTA_GENERAL_ERROR ||
+      update.errorCode == FOTA_UNKNOWN_ERROR) {
+    // In the case of FOTA update errors, don't reset the state to pending. This
+    // causes the FOTA update path to try again, which is not necessarily what
+    // we want.
+    update.statusText = gUpdateBundle.GetStringFromName("statusFailed");
+
+    Cc["@mozilla.org/updates/update-prompt;1"].
+      createInstance(Ci.nsIUpdatePrompt).
+      showUpdateError(update);
+    writeStatusFile(getUpdatesDir(), STATE_FAILED + ": " + errorCode);
+    cleanupActiveUpdate();
+    return true;
+  }
+
   if (update.errorCode == WRITE_ERROR || 
       update.errorCode == WRITE_ERROR_ACCESS_DENIED ||
       update.errorCode == WRITE_ERROR_SHARING_VIOLATION_SIGNALED ||
       update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPROCESSFORPID ||
       update.errorCode == WRITE_ERROR_SHARING_VIOLATION_NOPID ||
       update.errorCode == WRITE_ERROR_CALLBACK_APP ||
-      update.errorCode == FILESYSTEM_MOUNT_READWRITE_ERROR ||
-      update.errorCode == FOTA_GENERAL_ERROR ||
-      update.errorCode == FOTA_UNKNOWN_ERROR) {
+      update.errorCode == FILESYSTEM_MOUNT_READWRITE_ERROR) {
     Cc["@mozilla.org/updates/update-prompt;1"].
       createInstance(Ci.nsIUpdatePrompt).
       showUpdateError(update);
@@ -1251,7 +1264,8 @@ function Update(update) {
   this.showPrompt = false;
   this.showSurvey = false;
   this.showNeverForVersion = false;
-  this.channel = "default"
+  this.channel = "default";
+  this.promptWaitTime = getPref("getIntPref", PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
 
   // Null <update>, assume this is a message container and do no
   // further initialization
@@ -1314,6 +1328,11 @@ function Update(update) {
       this.showNeverForVersion = attr.value == "true";
     else if (attr.name == "showPrompt")
       this.showPrompt = attr.value == "true";
+    else if (attr.name == "promptWaitTime")
+    {
+      if(!isNaN(attr.value))
+        this.promptWaitTime = parseInt(attr.value);
+    }
     else if (attr.name == "showSurvey")
       this.showSurvey = attr.value == "true";
     else if (attr.name == "version") {
@@ -1453,6 +1472,7 @@ Update.prototype = {
     update.setAttribute("serviceURL", this.serviceURL);
     update.setAttribute("showNeverForVersion", this.showNeverForVersion);
     update.setAttribute("showPrompt", this.showPrompt);
+    update.setAttribute("promptWaitTime", this.promptWaitTime);
     update.setAttribute("showSurvey", this.showSurvey);
     update.setAttribute("type", this.type);
     // for backwards compatibility in case the user downgrades
@@ -3602,9 +3622,9 @@ Downloader.prototype = {
         LOG("Downloader:onStopRequest - verification of patch failed, " +
             "downloading complete update patch");
         this._update.isCompleteUpdate = true;
-        var status = this.downloadUpdate(this._update);
+        let updateStatus = this.downloadUpdate(this._update);
 
-        if (status == STATE_NONE) {
+        if (updateStatus == STATE_NONE) {
           cleanupActiveUpdate();
         } else {
           allFailed = false;
@@ -3631,6 +3651,14 @@ Downloader.prototype = {
             prompter.showUpdateError(this._update);
           }
         }
+
+#ifdef MOZ_WIDGET_GONK
+        // We always forward errors in B2G, since Gaia controls the update UI
+        var prompter = Cc["@mozilla.org/updates/update-prompt;1"].
+                       createInstance(Ci.nsIUpdatePrompt);
+        prompter.showUpdateError(this._update);
+#endif
+
         // Prevent leaking the update object (bug 454964).
         this._update = null;
       }
@@ -3932,11 +3960,11 @@ UpdatePrompt.prototype = {
       return;
     }
 
-    // Give the user x seconds to react before showing the big UI
-    var promptWaitTime = getPref("getIntPref", PREF_APP_UPDATE_PROMPTWAITTIME, 43200);
+    // Give the user x seconds to react before prompting as defined by
+    // promptWaitTime
     observer.timer = Cc["@mozilla.org/timer;1"].
                      createInstance(Ci.nsITimer);
-    observer.timer.initWithCallback(observer, promptWaitTime * 1000,
+    observer.timer.initWithCallback(observer, update.promptWaitTime * 1000,
                                     observer.timer.TYPE_ONE_SHOT);
   },
 

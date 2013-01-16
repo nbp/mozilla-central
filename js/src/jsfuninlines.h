@@ -17,9 +17,9 @@
 #include "vm/String-inl.h"
 
 inline bool
-JSFunction::inStrictMode() const
+JSFunction::strict() const
 {
-    return nonLazyScript()->strictModeCode;
+    return nonLazyScript()->strict;
 }
 
 inline void
@@ -29,7 +29,7 @@ JSFunction::initAtom(JSAtom *atom)
 }
 
 inline void
-JSFunction::setGuessedAtom(JSAtom *atom)
+JSFunction::setGuessedAtom(js::UnrootedAtom atom)
 {
     JS_ASSERT(atom_ == NULL);
     JS_ASSERT(atom != NULL);

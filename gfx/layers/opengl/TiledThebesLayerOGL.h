@@ -100,6 +100,7 @@ private:
   const BasicTiledLayerBuffer* mMainMemoryTiledBuffer;
   gfxSize mFrameResolution;
 
+  GLenum GetTileType(TiledTexture aTile);
   void GetFormatAndTileForImageFormat(gfxASurface::gfxImageFormat aFormat,
                                       GLenum& aOutFormat,
                                       GLenum& aOutType);
@@ -132,6 +133,7 @@ public:
   void PaintedTiledLayerBuffer(const BasicTiledLayerBuffer* mTiledBuffer);
   void ProcessUploadQueue();
   void ProcessLowPrecisionUploadQueue();
+  const nsIntRegion& GetValidLowPrecisionRegion() const { return mLowPrecisionVideoMemoryTiledBuffer.GetValidRegion(); }
 
   void MemoryPressure();
 

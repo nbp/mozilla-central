@@ -7,14 +7,16 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
 import org.mozilla.gecko.util.GeckoEventListener;
+import org.mozilla.gecko.sync.setup.SyncAccounts;
 
-import org.json.JSONException;
 import org.json.JSONObject;
 
+import android.accounts.Account;
+import android.accounts.AccountManager;
+import android.accounts.OnAccountsUpdateListener;
 import android.content.ContentResolver;
 import android.content.Intent;
 import android.net.Uri;
-import android.os.SystemClock;
 import android.util.Log;
 import android.widget.Toast;
 
@@ -35,6 +37,9 @@ public class Tabs implements GeckoEventListener {
     // Keeps track of how much has happened since we last updated our persistent tab store.
     private volatile int mScore = 0;
 
+    private AccountManager mAccountManager;
+    private OnAccountsUpdateListener mAccountListener = null;
+
     public static final int LOADURL_NONE = 0;
     public static final int LOADURL_NEW_TAB = 1;
     public static final int LOADURL_USER_ENTERED = 2;
@@ -50,8 +55,6 @@ public class Tabs implements GeckoEventListener {
     private static AtomicInteger sTabId = new AtomicInteger(0);
 
     private GeckoApp mActivity;
-
-    static private int sThumbnailWidth = -1;
 
     private Tabs() {
         registerEventListener("SessionHistory:New");
@@ -69,26 +72,23 @@ public class Tabs implements GeckoEventListener {
         registerEventListener("Reader:Share");
     }
 
-    static public void setThumbnailWidth(int val) {
-      // Round this to the next highest power of two
-      sThumbnailWidth = (int)(Math.pow( 2, Math.ceil(Math.log(val)/Math.log(2) )));
-    }
-
-    static public int getThumbnailWidth() {
-        if (sThumbnailWidth < 0) {
-            sThumbnailWidth = (int) (GeckoApp.mAppContext.getResources().getDimension(R.dimen.tab_thumbnail_width));
-        }
-        return sThumbnailWidth & ~0x1;
-    }
-
-    static public int getThumbnailHeight() {
-        return Math.round(getThumbnailWidth() * getThumbnailAspectRatio()) & ~0x1;
-    }
-
-    static public float getThumbnailAspectRatio() { return 0.714f; }
-
     public void attachToActivity(GeckoApp activity) {
         mActivity = activity;
+        mAccountManager = AccountManager.get(mActivity);
+
+        // The listener will run on the background thread (see 2nd argument)
+        mAccountManager.addOnAccountsUpdatedListener(mAccountListener = new OnAccountsUpdateListener() {
+            public void onAccountsUpdated(Account[] accounts) {
+                persistAllTabs();
+            }
+        }, GeckoAppShell.getHandler(), false);
+    }
+
+    public void detachFromActivity(GeckoApp activity) {
+        if (mAccountListener != null) {
+            mAccountManager.removeOnAccountsUpdatedListener(mAccountListener);
+            mAccountListener = null;
+        }
     }
 
     public int getCount() {
@@ -114,7 +114,6 @@ public class Tabs implements GeckoEventListener {
             Tab tab = getTab(id);
             mOrder.remove(tab);
             mTabs.remove(id);
-            tab.freeBuffer();
         }
     }
 
@@ -132,9 +131,7 @@ public class Tabs implements GeckoEventListener {
         mSelectedTab = tab;
         mActivity.runOnUiThread(new Runnable() { 
             public void run() {
-                mActivity.hideFormAssistPopup();
                 if (isSelectedTab(tab)) {
-                    String url = tab.getURL();
                     notifyListeners(tab, TabEvents.SELECTED);
 
                     if (oldTab != null)
@@ -330,12 +327,13 @@ public class Tabs implements GeckoEventListener {
     }
 
     public void refreshThumbnails() {
+        final ThumbnailHelper helper = ThumbnailHelper.getInstance();
         Iterator<Tab> iterator = mTabs.values().iterator();
         while (iterator.hasNext()) {
             final Tab tab = iterator.next();
             GeckoAppShell.getHandler().post(new Runnable() {
                 public void run() {
-                    mActivity.getAndProcessThumbnailForTab(tab);
+                    helper.getAndProcessThumbnailFor(tab);
                 }
             });
         }
@@ -429,7 +427,9 @@ public class Tabs implements GeckoEventListener {
         final Iterable<Tab> tabs = getTabsInOrder();
         GeckoAppShell.getHandler().post(new Runnable() {
             public void run() {
-                TabsAccessor.persistLocalTabs(getContentResolver(), tabs);
+                boolean syncIsSetup = SyncAccounts.syncAccountsExist(mActivity);
+                if (syncIsSetup)
+                    TabsAccessor.persistLocalTabs(getContentResolver(), tabs);
             }
         });
     }

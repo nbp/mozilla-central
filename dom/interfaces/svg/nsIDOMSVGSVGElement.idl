@@ -7,13 +7,8 @@
 
 interface nsIDOMSVGAnimatedLength;
 interface nsIDOMSVGRect;
-interface nsIDOMSVGViewSpec;
-interface nsIDOMSVGPoint;
 interface nsIDOMSVGNumber;
 interface nsIDOMSVGLength;
-interface nsIDOMSVGAngle;
-interface nsIDOMSVGMatrix;
-interface nsIDOMSVGTransform;
 
 // undef the GetCurrentTime macro defined in WinBase.h from the MS Platform SDK
 %{C++
@@ -22,7 +17,7 @@ interface nsIDOMSVGTransform;
 #endif
 %}
 
-[scriptable, uuid(BEC06C4F-3EF7-486E-A8F5-F375EE5CB5A8)]
+[scriptable, uuid(4670a204-4ef1-455f-9595-9847b077c624)]
 interface nsIDOMSVGSVGElement
   : nsIDOMSVGElement
 /*
@@ -47,20 +42,17 @@ interface nsIDOMSVGSVGElement
   readonly attribute nsIDOMSVGAnimatedLength y;
   readonly attribute nsIDOMSVGAnimatedLength width;
   readonly attribute nsIDOMSVGAnimatedLength height;
-  attribute DOMString         contentScriptType;
-      // raises DOMException on setting
-  attribute DOMString         contentStyleType;
-      // raises DOMException on setting
-  readonly attribute nsIDOMSVGRect     viewport;
+  // readonly attribute nsIDOMSVGRect     viewport;
   readonly attribute float pixelUnitToMillimeterX;
   readonly attribute float pixelUnitToMillimeterY;
   readonly attribute float screenPixelToMillimeterX;
   readonly attribute float screenPixelToMillimeterY;
   readonly attribute boolean useCurrentView;
-  readonly attribute nsIDOMSVGViewSpec currentView;
+  // readonly attribute nsIDOMSVGViewSpec currentView;
   attribute float currentScale;
       // raises DOMException on setting
-  readonly attribute nsIDOMSVGPoint currentTranslate;
+  //  SVGPoint
+  readonly attribute nsISupports currentTranslate;
 
   unsigned long suspendRedraw(in unsigned long max_wait_milliseconds);
   void          unsuspendRedraw(in unsigned long suspend_handle_id);
@@ -72,19 +64,26 @@ interface nsIDOMSVGSVGElement
   boolean       animationsPaused();
   float         getCurrentTime();
   void          setCurrentTime(in float seconds);
+  /*
   nsIDOMNodeList getIntersectionList(in nsIDOMSVGRect rect,
                                      in nsIDOMSVGElement referenceElement);
   nsIDOMNodeList getEnclosureList(in nsIDOMSVGRect rect, in nsIDOMSVGElement referenceElement);
   boolean       checkIntersection(in nsIDOMSVGElement element, in nsIDOMSVGRect rect);
   boolean       checkEnclosure(in nsIDOMSVGElement element, in nsIDOMSVGRect rect);
   void          deSelectAll();
+  */
   nsIDOMSVGNumber       createSVGNumber();
   nsIDOMSVGLength       createSVGLength();
-  nsIDOMSVGAngle        createSVGAngle();
-  nsIDOMSVGPoint        createSVGPoint();
-  nsIDOMSVGMatrix       createSVGMatrix();
+  // SVGAngle
+  nsISupports           createSVGAngle();
+  // SVGPoint
+  nsISupports           createSVGPoint();
+  // SVGMatrix
+  nsISupports           createSVGMatrix();
   nsIDOMSVGRect         createSVGRect();
-  nsIDOMSVGTransform    createSVGTransform();
-  nsIDOMSVGTransform    createSVGTransformFromMatrix(in nsIDOMSVGMatrix matrix);
+  // SVGTransform
+  nsISupports           createSVGTransform();
+  // SVGTransform                                       SVGMatrix
+  nsISupports           createSVGTransformFromMatrix(in nsISupports matrix);
   nsIDOMElement         getElementById(in DOMString elementId);
 };

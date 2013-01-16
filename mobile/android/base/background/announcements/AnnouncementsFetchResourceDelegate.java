@@ -15,21 +15,24 @@ import org.json.simple.JSONObject;
 import org.mozilla.gecko.sync.ExtendedJSONObject;
 import org.mozilla.gecko.sync.Logger;
 import org.mozilla.gecko.sync.NonArrayJSONException;
+import org.mozilla.gecko.sync.net.AuthHeaderProvider;
 import org.mozilla.gecko.sync.net.BaseResource;
+import org.mozilla.gecko.sync.net.BaseResourceDelegate;
 import org.mozilla.gecko.sync.net.Resource;
-import org.mozilla.gecko.sync.net.SyncResourceDelegate;
 import org.mozilla.gecko.sync.net.SyncResponse;
 
+import ch.boye.httpclientandroidlib.Header;
 import ch.boye.httpclientandroidlib.HttpResponse;
 import ch.boye.httpclientandroidlib.client.ClientProtocolException;
 import ch.boye.httpclientandroidlib.client.methods.HttpRequestBase;
 import ch.boye.httpclientandroidlib.impl.client.DefaultHttpClient;
 import ch.boye.httpclientandroidlib.impl.cookie.DateUtils;
+import ch.boye.httpclientandroidlib.protocol.HTTP;
 
 /**
  * Converts HTTP resource callbacks into AnnouncementsFetchDelegate callbacks.
  */
-public class AnnouncementsFetchResourceDelegate extends SyncResourceDelegate {
+public class AnnouncementsFetchResourceDelegate extends BaseResourceDelegate {
   private static final String ACCEPT_HEADER = "application/json;charset=utf-8";
 
   private static final String LOG_TAG = "AnnounceFetchRD";
@@ -56,11 +59,10 @@ public class AnnouncementsFetchResourceDelegate extends SyncResourceDelegate {
     request.addHeader("Connection", "close");
 
     // Set If-Modified-Since to avoid re-fetching content.
-    final long ifModifiedSince = delegate.getLastFetch();
-    if (ifModifiedSince > 0) {
-      final String imsHeader = DateUtils.formatDate(new Date(ifModifiedSince));
-      Logger.info(LOG_TAG, "If-Modified-Since: " + imsHeader);
-      request.addHeader("If-Modified-Since", imsHeader);
+    final String ifModifiedSince = delegate.getLastDate();
+    if (ifModifiedSince != null) {
+      Logger.info(LOG_TAG, "If-Modified-Since: " + ifModifiedSince);
+      request.addHeader("If-Modified-Since", ifModifiedSince);
     }
 
     // Just in case.
@@ -87,15 +89,29 @@ public class AnnouncementsFetchResourceDelegate extends SyncResourceDelegate {
 
   @Override
   public void handleHttpResponse(HttpResponse response) {
-    SyncResponse r = new SyncResponse(response);    // For convenience.
+    final Header dateHeader = response.getFirstHeader(HTTP.DATE_HEADER);
+    String date = null;
+    if (dateHeader != null) {
+      // Note that we are deliberately not validating the server time here.
+      // We pass it directly back to the server; we don't care about the
+      // contents, and if we reject a value we essentially re-initialize
+      // the client, which will cause stale announcements to be re-fetched.
+      date = dateHeader.getValue();
+    }
+    if (date == null) {
+      // Use local clock, because skipping is better than re-fetching.
+      date = DateUtils.formatDate(new Date());
+      Logger.warn(LOG_TAG, "No fetch date; using local time " + date);
+    }
 
+    final SyncResponse r = new SyncResponse(response);    // For convenience.
     try {
       final int statusCode = r.getStatusCode();
       Logger.debug(LOG_TAG, "Got announcements response: " + statusCode);
 
       if (statusCode == 204 || statusCode == 304) {
         BaseResource.consumeEntity(response);
-        delegate.onNoNewAnnouncements(startTime);
+        delegate.onNoNewAnnouncements(startTime, date);
         return;
       }
 
@@ -107,7 +123,7 @@ public class AnnouncementsFetchResourceDelegate extends SyncResourceDelegate {
           delegate.onRemoteError(e);
           return;
         }
-        delegate.onNewAnnouncements(snippets, startTime);
+        delegate.onNewAnnouncements(snippets, startTime, date);
         return;
       }
 
@@ -157,7 +173,7 @@ public class AnnouncementsFetchResourceDelegate extends SyncResourceDelegate {
    * We never want this to be an authenticated request.
    */
   @Override
-  public String getCredentials() {
+  public AuthHeaderProvider getAuthHeaderProvider() {
     return null;
   }
 }

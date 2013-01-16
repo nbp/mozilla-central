@@ -456,7 +456,7 @@ public class GeckoSmsManager
           String message = bundle.getString("message");
           long timestamp = System.currentTimeMillis();
 
-          int id = GeckoAppShell.saveMessageInSentbox(number, message, timestamp);
+          int id = saveSentMessage(number, message, timestamp);
 
           GeckoAppShell.notifySmsSent(id, number, message, timestamp,
                                       bundle.getInt("requestId"));
@@ -483,10 +483,6 @@ public class GeckoSmsManager
 
       return;
     }
-  }
-
-  public int getNumberOfMessagesForText(String aText) {
-    return SmsManager.getDefault().divideMessage(aText).size();
   }
 
   public void send(String aNumber, String aMessage, int aRequestId) {

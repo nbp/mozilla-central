@@ -74,17 +74,22 @@
               'sources!': [
                 'filter_ar_fast_q12.c',
               ],
-            }],
-            ['arm_neon==1', {
-              'sources': [
-                'cross_correlation_neon.s',
-                'downsample_fast_neon.s',
-                'min_max_operations_neon.s',
-                'vector_scaling_operations_neon.s',
+              'conditions': [
+                ['0==1 and arm_neon==1', {
+                  'sources': [
+                    'cross_correlation_neon.s',
+                    'downsample_fast_neon.s',
+                    'min_max_operations_neon.s',
+                    'vector_scaling_operations_neon.s',
+                  ],
+                  'sources!': [
+                    'cross_correlation.c',
+                    'downsample_fast.c',
+                  ],
+                }],
               ],
-              'sources!': [
-                'cross_correlation.c',
-                'downsample_fast.c',
+              'defines!': [
+                'WEBRTC_ARCH_ARM_NEON'
               ],
             }],
           ],

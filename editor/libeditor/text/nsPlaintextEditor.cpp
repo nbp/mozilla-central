@@ -121,6 +121,10 @@ NS_IMETHODIMP nsPlaintextEditor::Init(nsIDOMDocument *aDoc,
   NS_ENSURE_TRUE(aDoc, NS_ERROR_NULL_POINTER);
   
   nsresult res = NS_OK, rulesRes = NS_OK;
+  if (mRules) {
+    mRules->DetachEditor();
+    mRules = nullptr;
+  }
   
   if (1)
   {
@@ -313,6 +317,7 @@ nsPlaintextEditor::UpdateMetaCharset(nsIDOMDocument* aDocument,
 
 NS_IMETHODIMP nsPlaintextEditor::InitRules()
 {
+  MOZ_ASSERT(!mRules);
   // instantiate the rules for this text editor
   mRules = new nsTextEditRules();
   return mRules->Init(this);
@@ -1324,13 +1329,11 @@ nsPlaintextEditor::PasteAsQuotation(int32_t aSelectionType)
   nsCOMPtr<nsIClipboard> clipboard(do_GetService("@mozilla.org/widget/clipboard;1", &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // Create generic Transferable for getting the data
-  nsCOMPtr<nsITransferable> trans = do_CreateInstance("@mozilla.org/widget/transferable;1", &rv);
+  // Get the nsITransferable interface for getting the data from the clipboard
+  nsCOMPtr<nsITransferable> trans;
+  rv = PrepareTransferable(getter_AddRefs(trans));
   if (NS_SUCCEEDED(rv) && trans)
   {
-    // We only handle plaintext pastes here
-    trans->AddDataFlavor(kUnicodeMime);
-
     // Get the Data from the clipboard
     clipboard->GetData(trans, aSelectionType);
 
@@ -1352,7 +1355,8 @@ nsPlaintextEditor::PasteAsQuotation(int32_t aSelectionType)
 #ifdef DEBUG_clipboard
     printf("Got flavor [%s]\n", flav);
 #endif
-    if (0 == nsCRT::strcmp(flav, kUnicodeMime))
+    if (0 == nsCRT::strcmp(flav, kUnicodeMime) ||
+        0 == nsCRT::strcmp(flav, kMozTextInternal))
     {
       nsCOMPtr<nsISupportsString> textDataObj ( do_QueryInterface(genericDataObj) );
       if (textDataObj && len > 0)

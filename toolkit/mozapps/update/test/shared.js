@@ -27,6 +27,7 @@ const PREF_APP_UPDATE_IDLETIME            = "app.update.idletime";
 const PREF_APP_UPDATE_LOG                 = "app.update.log";
 const PREF_APP_UPDATE_NEVER_BRANCH        = "app.update.never.";
 const PREF_APP_UPDATE_PROMPTWAITTIME      = "app.update.promptWaitTime";
+const PREF_APP_UPDATE_SERVICE_ENABLED     = "app.update.service.enabled";
 const PREF_APP_UPDATE_SHOW_INSTALLED_UI   = "app.update.showInstalledUI";
 const PREF_APP_UPDATE_SILENT              = "app.update.silent";
 const PREF_APP_UPDATE_URL                 = "app.update.url";
@@ -447,12 +448,26 @@ function cleanUpdatesDir(aDir) {
         }
         cleanUpdatesDir(entry);
         entry.permissions = PERMS_DIRECTORY;
-        entry.remove(true);
+        try {
+          entry.remove(true);
+        }
+        catch (e) {
+          dump("Unable to remove directory\npath: " + entry.path +
+               "\nException: " + e + "\n");
+          throw(e);
+        }
       }
     }
     else {
       entry.permissions = PERMS_FILE;
-      entry.remove(false);
+      try {
+        entry.remove(false);
+      }
+      catch (e) {
+        dump("Unable to remove file\npath: " + entry.path + "\nException: " +
+             e + "\n");
+        throw(e);
+      }
     }
   }
 }

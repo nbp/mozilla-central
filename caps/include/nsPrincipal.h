@@ -72,6 +72,7 @@ public:
   NS_IMETHOD GetIsInBrowserElement(bool* aIsInBrowserElement);
   NS_IMETHOD GetUnknownAppId(bool* aUnknownAppId);
   NS_IMETHOD GetIsNullPrincipal(bool* aIsNullPrincipal);
+  NS_IMETHOD GetBaseDomain(nsACString& aBaseDomain);
 #ifdef DEBUG
   virtual void dumpImpl();
 #endif
@@ -154,6 +155,7 @@ public:
   NS_IMETHOD GetIsInBrowserElement(bool* aIsInBrowserElement);
   NS_IMETHOD GetUnknownAppId(bool* aUnknownAppId);
   NS_IMETHOD GetIsNullPrincipal(bool* aIsNullPrincipal);
+  NS_IMETHOD GetBaseDomain(nsACString& aBaseDomain);
 #ifdef DEBUG
   virtual void dumpImpl();
 #endif
@@ -167,8 +169,8 @@ private:
 #define NS_PRINCIPAL_CLASSNAME  "principal"
 #define NS_PRINCIPAL_CONTRACTID "@mozilla.org/principal;1"
 #define NS_PRINCIPAL_CID \
-  { 0x36102b6b, 0x7b62, 0x451a, \
-    { 0xa1, 0xc8, 0xa0, 0xd4, 0x56, 0xc9, 0x2d, 0xc5 }}
+  { 0x09b7e598, 0x490d, 0x423f, \
+    { 0xa8, 0xa6, 0x2e, 0x6c, 0x4e, 0xc8, 0x77, 0x50 }}
 
 #define NS_EXPANDEDPRINCIPAL_CLASSNAME  "expandedprincipal"
 #define NS_EXPANDEDPRINCIPAL_CONTRACTID "@mozilla.org/expandedprincipal;1"

@@ -185,7 +185,8 @@ class MarionetteTestRunner(object):
                  es_server=None, rest_server=None, logger=None,
                  testgroup="marionette", noWindow=False, logcat_dir=None,
                  xml_output=None, repeat=0, perf=False, perfserv=None,
-                 gecko_path=None, testvars=None, tree=None):
+                 gecko_path=None, testvars=None, tree=None, load_early=False,
+                 device=None):
         self.address = address
         self.emulator = emulator
         self.emulatorBinary = emulatorBinary
@@ -211,10 +212,12 @@ class MarionetteTestRunner(object):
         self.perf = perf
         self.perfserv = perfserv
         self.gecko_path = gecko_path
-        self.testvars = None
+        self.testvars = {}
         self.tree = tree
+        self.load_early = load_early
+        self.device = device
 
-        if testvars is not None:
+        if testvars:
             if not os.path.exists(testvars):
                 raise Exception('--testvars file does not exist')
 
@@ -238,6 +241,7 @@ class MarionetteTestRunner(object):
                 os.mkdir(self.logcat_dir)
 
         # for XML output
+        self.testvars['xml_output'] = self.xml_output
         self.results = []
 
     def reset_test_stats(self):
@@ -295,7 +299,8 @@ class MarionetteTestRunner(object):
                                          baseurl=self.baseurl,
                                          noWindow=self.noWindow,
                                          logcat_dir=self.logcat_dir,
-                                         gecko_path=self.gecko_path)
+                                         gecko_path=self.gecko_path,
+                                         load_early=self.load_early)
         else:
             raise Exception("must specify binary, address or emulator")
 
@@ -363,6 +368,8 @@ class MarionetteTestRunner(object):
                 print e
 
         if self.xml_output:
+            if not os.path.exists(os.path.dirname(self.xml_output)):
+                os.makedirs(os.path.dirname(self.xml_output))
             with open(self.xml_output, 'w') as f:
                 f.write(self.generate_xml(self.results))
 
@@ -482,92 +489,70 @@ class MarionetteTestRunner(object):
 
     def generate_xml(self, results_list):
 
-        def _extract_xml(test, text='', result='Pass'):
+        def _extract_xml(test, text='', result='passed'):
             cls_name = test.__class__.__name__
 
-            # if the test class is not already created, create it
-            if cls_name not in classes:
-                cls = doc.createElement('class')
-                cls.setAttribute('name', cls_name)
-                assembly.appendChild(cls)
-                classes[cls_name] = cls
+            testcase = doc.createElement('testcase')
+            testcase.setAttribute('classname', cls_name)
+            testcase.setAttribute('name', unicode(test).split()[0])
+            testcase.setAttribute('time', str(test.duration))
+            testsuite.appendChild(testcase)
 
-            t = doc.createElement('test')
-            t.setAttribute('name', unicode(test).split()[0])
-            t.setAttribute('result', result)
-
-            if result == 'Fail':
-                f = doc.createElement('failure')
-                st = doc.createElement('stack-trace')
-                st.appendChild(doc.createTextNode(text))
-
-                f.appendChild(st)
-                t.appendChild(f)
-
-            elif result == 'Skip':
-                r = doc.createElement('reason')
-                msg = doc.createElement('message')
-                msg.appendChild(doc.createTextNode(text))
-
-                r.appendChild(msg)
-                t.appendChild(r)
-
-            cls = classes[cls_name]
-            cls.appendChild(t)
+            if result in ['failure', 'error', 'skipped']:
+                f = doc.createElement(result)
+                f.setAttribute('message', 'test %s' % result)
+                f.appendChild(doc.createTextNode(text))
+                testcase.appendChild(f)
 
         doc = dom.Document()
 
-        assembly = doc.createElement('assembly')
-        assembly.setAttribute('name', 'Tests')
-        assembly.setAttribute('time', str(self.elapsedtime))
-        assembly.setAttribute('total', str(sum([results.testsRun for
-                                                    results in results_list])))
-        assembly.setAttribute('passed', str(sum([results.passed for
-                                                     results in results_list])))
+        testsuite = doc.createElement('testsuite')
+        testsuite.setAttribute('name', 'Marionette')
+        testsuite.setAttribute('time', str(self.elapsedtime.total_seconds()))
+        testsuite.setAttribute('tests', str(sum([results.testsRun for
+                                                 results in results_list])))
 
         def failed_count(results):
-            count = len(results.failures) + len(results.errors)
+            count = len(results.failures)
             if hasattr(results, 'unexpectedSuccesses'):
                 count += len(results.unexpectedSuccesses)
             return count
 
-        assembly.setAttribute('failed', str(sum([failed_count(results)
-                                                 for results in results_list])))
+        testsuite.setAttribute('failures', str(sum([failed_count(results)
+                                               for results in results_list])))
+        testsuite.setAttribute('errors', str(sum([len(results.errors)
+                                             for results in results_list])))
         if hasattr(results, 'skipped'):
-            assembly.setAttribute('skipped', str(sum([len(results.skipped) +
-                                                      len(results.expectedFailures)
-                                                      for results in results_list])))
+            testsuite.setAttribute('skips', str(sum([len(results.skipped) +
+                                                     len(results.expectedFailures)
+                                                     for results in results_list])))
 
         for results in results_list:
-            classes = {} # str -> xml class element
 
             for tup in results.errors:
-                _extract_xml(*tup, result='Fail')
+                _extract_xml(*tup, result='error')
 
             for tup in results.failures:
-                _extract_xml(*tup, result='Fail')
+                _extract_xml(*tup, result='failure')
 
             if hasattr(results, 'unexpectedSuccesses'):
                 for test in results.unexpectedSuccesses:
                     # unexpectedSuccesses is a list of Testcases only, no tuples
-                    _extract_xml(test, text='TEST-UNEXPECTED-PASS', result='Fail')
+                    _extract_xml(test, text='TEST-UNEXPECTED-PASS', result='failure')
 
             if hasattr(results, 'skipped'):
                 for tup in results.skipped:
-                    _extract_xml(*tup, result='Skip')
+                    _extract_xml(*tup, result='skipped')
 
             if hasattr(results, 'expectedFailures'):
                 for tup in results.expectedFailures:
-                    _extract_xml(*tup, result='Skip')
+                    _extract_xml(*tup, result='skipped')
 
             for test in results.tests_passed:
                 _extract_xml(test)
 
-            for cls in classes.itervalues():
-                assembly.appendChild(cls)
-
-        doc.appendChild(assembly)
-        return doc.toxml(encoding='utf-8')
+        doc.appendChild(testsuite)
+        return doc.toprettyxml(encoding='utf-8')
 
 
 def parse_options():
@@ -612,6 +597,8 @@ def parse_options():
                       help='directory to store logcat dump files')
     parser.add_option('--address', dest='address', action='store',
                       help='host:port of running Gecko instance to connect to')
+    parser.add_option('--device', dest='device', action='store',
+                      help='serial ID of a device to use for adb / fastboot')
     parser.add_option('--type', dest='type', action='store',
                       default='browser+b2g',
                       help = "The type of test to run, can be a combination "
@@ -650,6 +637,11 @@ def parse_options():
     parser.add_option('--tree', dest='tree', action='store',
                       default='b2g',
                       help='the tree that the revsion parameter refers to')
+    parser.add_option('--load-early', dest='load_early', action='store_true',
+                      default=False,
+                      help='on an emulator, causes Marionette to load earlier '
+                      'in the startup process than it otherwise would; needed '
+                      'for testing WebAPIs')
 
     options, tests = parser.parse_args()
 
@@ -660,6 +652,11 @@ def parse_options():
     if not options.emulator and not options.address and not options.bin:
         parser.print_usage()
         print "must specify --binary, --emulator or --address"
+        parser.exit()
+
+    if options.load_early and not options.emulator:
+        parser.print_usage()
+        print "must specify --load-early on when using --emulator"
         parser.exit()
 
     # default to storing logcat output for emulator runs
@@ -702,7 +699,9 @@ def startTestRunner(runner_class, options, tests):
                           perf=options.perf,
                           perfserv=options.perfserv,
                           gecko_path=options.gecko_path,
-                          testvars=options.testvars)
+                          testvars=options.testvars,
+                          load_early=options.load_early,
+                          device=options.device)
     runner.run_tests(tests, testtype=options.type)
     return runner
 
@@ -714,5 +713,3 @@ def cli(runner_class=MarionetteTestRunner):
 
 if __name__ == "__main__":
     cli()
-
-

@@ -68,32 +68,35 @@ ic::GetGlobalName(VMFrame &f, ic::GetGlobalNameIC *ic)
 
     RecompilationMonitor monitor(f.cx);
 
-    Shape *shape = obj->nativeLookup(f.cx, NameToId(name));
-
-    if (monitor.recompiled()) {
-        stubs::Name(f);
-        return;
-    }
-
-    if (!shape ||
-        !shape->hasDefaultGetter() ||
-        !shape->hasSlot())
+    uint32_t slot;
     {
-        if (shape)
-            PatchGetFallback(f, ic);
-        stubs::Name(f);
-        return;
+        RootedShape shape(f.cx, obj->nativeLookup(f.cx, NameToId(name)));
+
+        if (monitor.recompiled()) {
+            stubs::Name(f);
+            return;
+        }
+
+        if (!shape ||
+            !shape->hasDefaultGetter() ||
+            !shape->hasSlot())
+        {
+            if (shape)
+                PatchGetFallback(f, ic);
+            stubs::Name(f);
+            return;
+        }
+        slot = shape->slot();
+
+        /* Patch shape guard. */
+        Repatcher repatcher(f.chunk());
+        repatcher.repatch(ic->fastPathStart.dataLabelPtrAtOffset(ic->shapeOffset), obj->lastProperty());
+
+        /* Patch loads. */
+        uint32_t index = obj->dynamicSlotIndex(slot);
+        JSC::CodeLocationLabel label = ic->fastPathStart.labelAtOffset(ic->loadStoreOffset);
+        repatcher.patchAddressOffsetForValueLoad(label, index * sizeof(Value));
     }
-    uint32_t slot = shape->slot();
-
-    /* Patch shape guard. */
-    Repatcher repatcher(f.chunk());
-    repatcher.repatch(ic->fastPathStart.dataLabelPtrAtOffset(ic->shapeOffset), obj->lastProperty());
-
-    /* Patch loads. */
-    uint32_t index = obj->dynamicSlotIndex(slot);
-    JSC::CodeLocationLabel label = ic->fastPathStart.labelAtOffset(ic->loadStoreOffset);
-    repatcher.patchAddressOffsetForValueLoad(label, index * sizeof(Value));
 
     /* Do load anyway... this time. */
     stubs::Name(f);
@@ -117,14 +120,14 @@ PatchSetFallback(VMFrame &f, ic::SetGlobalNameIC *ic)
 }
 
 void
-SetGlobalNameIC::patchInlineShapeGuard(Repatcher &repatcher, Shape *shape)
+SetGlobalNameIC::patchInlineShapeGuard(Repatcher &repatcher, UnrootedShape shape)
 {
     JSC::CodeLocationDataLabelPtr label = fastPathStart.dataLabelPtrAtOffset(shapeOffset);
     repatcher.repatch(label, shape);
 }
 
 static LookupStatus
-UpdateSetGlobalName(VMFrame &f, ic::SetGlobalNameIC *ic, JSObject *obj, Shape *shape)
+UpdateSetGlobalName(VMFrame &f, ic::SetGlobalNameIC *ic, JSObject *obj, UnrootedShape shape)
 {
     /* Give globals a chance to appear. */
     if (!shape)
@@ -162,12 +165,14 @@ ic::SetGlobalName(VMFrame &f, ic::SetGlobalNameIC *ic)
 
     RecompilationMonitor monitor(f.cx);
 
-    Shape *shape = obj->nativeLookup(f.cx, NameToId(name));
+    {
+        UnrootedShape shape = obj->nativeLookup(f.cx, NameToId(name));
 
-    if (!monitor.recompiled()) {
-        LookupStatus status = UpdateSetGlobalName(f, ic, obj, shape);
-        if (status == Lookup_Error)
-            THROW();
+        if (!monitor.recompiled()) {
+            LookupStatus status = UpdateSetGlobalName(f, ic, obj, shape);
+            if (status == Lookup_Error)
+                THROW();
+        }
     }
 
     stubs::SetName(f, name);
@@ -378,6 +383,11 @@ ic::Equality(VMFrame &f, ic::EqualityICInfo *ic)
 
     return ic->stub(f);
 }
+
+// Disable PGO as a precaution (see bug 791214).
+#if defined(_MSC_VER)
+# pragma optimize("g", off)
+#endif
 
 static void * JS_FASTCALL
 SlowCallFromIC(VMFrame &f, ic::CallICInfo *ic)
@@ -884,7 +894,7 @@ class CallCompiler : public BaseCompiler
         masm.storePtr(ImmPtr((void *) ic.frameSize.rejoinState(f.pc(), false)),
                       FrameAddress(offsetof(VMFrame, stubRejoin)));
 
-        masm.bumpStubCount(f.script().get(nogc), f.pc(), Registers::tempCallReg());
+        masm.bumpStubCount(f.script(), f.pc(), Registers::tempCallReg());
 
         /* Try and compile. On success we get back the nmap pointer. */
         void *compilePtr = JS_FUNC_TO_DATA_PTR(void *, stubs::CompileFunction);
@@ -1001,7 +1011,7 @@ class CallCompiler : public BaseCompiler
         /* Guard that it's the same script. */
         Address scriptAddr(ic.funObjReg, JSFunction::offsetOfNativeOrScript());
         Jump funGuard = masm.branchPtr(Assembler::NotEqual, scriptAddr,
-                                       ImmPtr(obj->toFunction()->nonLazyScript().get(nogc)));
+                                       ImmPtr(obj->toFunction()->nonLazyScript()));
         Jump done = masm.jump();
 
         LinkerHelper linker(masm, JSC::JAEGER_CODE);
@@ -1259,9 +1269,8 @@ class CallCompiler : public BaseCompiler
             return NULL;
         }
 
-        AutoAssertNoGC nogc;
         JS_ASSERT(fun);
-        JSScript *script = fun->nonLazyScript().get(nogc);
+        UnrootedScript script = fun->nonLazyScript();
         JS_ASSERT(script);
 
         uint32_t flags = callingNew ? StackFrame::CONSTRUCTING : 0;
@@ -1424,6 +1433,10 @@ ic::SplatApplyArgs(VMFrame &f)
     return true;
 }
 
+#if defined(_MSC_VER)
+# pragma optimize("", on)
+#endif
+
 void
 ic::GenerateArgumentCheckStub(VMFrame &f)
 {
@@ -1433,7 +1446,7 @@ ic::GenerateArgumentCheckStub(VMFrame &f)
     JITScript *jit = f.jit();
     StackFrame *fp = f.fp();
     JSFunction *fun = fp->fun();
-    JSScript *script = fun->nonLazyScript().get(nogc);
+    UnrootedScript script = fun->nonLazyScript();
 
     if (jit->argsCheckPool)
         jit->resetArgsCheck();

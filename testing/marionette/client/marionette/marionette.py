@@ -100,7 +100,7 @@ class Marionette(object):
                  emulator=None, sdcard=None, emulatorBinary=None,
                  emulatorImg=None, emulator_res='480x800', gecko_path=None,
                  connectToRunningEmulator=False, homedir=None, baseurl=None,
-                 noWindow=False, logcat_dir=None):
+                 noWindow=False, logcat_dir=None, busybox=None, load_early=False):
         self.host = host
         self.port = self.local_port = port
         self.bin = bin
@@ -114,10 +114,13 @@ class Marionette(object):
         self.baseurl = baseurl
         self.noWindow = noWindow
         self.logcat_dir = logcat_dir
-        self.gecko_path = gecko_path
         self._test_name = None
 
         if bin:
+            port = int(self.port)
+            if not Marionette.is_port_available(port, host=self.host):
+                ex_msg = "%s:%d is unavailable." % (self.host, port)
+                raise MarionetteException(message=ex_msg)
             self.instance = GeckoInstance(host=self.host, port=self.port,
                                           bin=self.bin, profile=self.profile)
             self.instance.start()
@@ -146,9 +149,9 @@ class Marionette(object):
         self.client = MarionetteClient(self.host, self.port)
 
         if emulator:
-            self.emulator.wait_for_system_message(self)
-        if self.gecko_path:
-            self.emulator.install_gecko(self.gecko_path, self)
+            self.emulator.setup(self, gecko_path=gecko_path,
+                                load_early=load_early,
+                                busybox=busybox)
 
     def __del__(self):
         if self.emulator:
@@ -157,6 +160,18 @@ class Marionette(object):
             self.instance.close()
         for qemu in self.extra_emulators:
             qemu.emulator.close()
+
+    @staticmethod
+    def is_port_available(port, host=''):
+        port = int(port)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind((host, port))
+            return True
+        except socket.error:
+            return False
+        finally:
+            s.close()
 
     @classmethod
     def getMarionetteOrExit(cls, *args, **kwargs):
@@ -194,10 +209,6 @@ class Marionette(object):
             self.session = None
             self.window = None
             self.client.close()
-            if self.emulator:
-                port = self.emulator.restart(self.local_port)
-                if port is not None:
-                    self.port = self.client.port = port
             raise TimeoutException(message='socket.timeout', status=ErrorCodes.TIMEOUT, stacktrace=None)
 
         # Process any emulator commands that are sent from a script
@@ -280,7 +291,7 @@ class Marionette(object):
             # should be here.
             pass
         if returncode is not None:
-            print ('TEST-UNEXPECTED-FAIL - PROCESS CRASH - %s has terminated with exit code %d' %
+            print ('PROCESS-CRASH | %s | abnormal termination with exit code %d' %
                 (name, returncode))
         return returncode is not None
 
@@ -360,11 +371,11 @@ class Marionette(object):
         self.window = window_id
         return response
 
-    def switch_to_frame(self, frame=None):
+    def switch_to_frame(self, frame=None, focus=True):
         if isinstance(frame, HTMLElement):
-            response = self._send_message('switchToFrame', 'ok', element=frame.id)
+            response = self._send_message('switchToFrame', 'ok', element=frame.id, focus=focus)
         else:
-            response = self._send_message('switchToFrame', 'ok', value=frame)
+            response = self._send_message('switchToFrame', 'ok', value=frame, focus=focus)
         return response
 
     def get_url(self):
@@ -421,7 +432,7 @@ class Marionette(object):
 
         return unwrapped
 
-    def execute_js_script(self, script, script_args=None, timeout=True, new_sandbox=True, special_powers=False):
+    def execute_js_script(self, script, script_args=None, async=True, new_sandbox=True, special_powers=False):
         if script_args is None:
             script_args = []
         args = self.wrapArguments(script_args)
@@ -429,7 +440,7 @@ class Marionette(object):
                                       'value',
                                       value=script,
                                       args=args,
-                                      timeout=timeout,
+                                      async=async,
                                       newSandbox=new_sandbox,
                                       specialPowers=special_powers)
         return self.unwrapValue(response)
@@ -495,6 +506,60 @@ class Marionette(object):
             js = f.read()
         return self._send_message('importScript', 'ok', script=js)
 
+    def add_cookie(self, cookie):
+        """
+           Adds a cookie to your current session.
+
+           :Args:
+           - cookie_dict: A dictionary object, with required keys - "name" and "value";
+           optional keys - "path", "domain", "secure", "expiry"
+
+           Usage:
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar'})
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar', 'path' : '/'})
+              driver.add_cookie({'name' : 'foo', 'value' : 'bar', 'path' : '/',
+                                 'secure':True})
+        """
+        return self._send_message('addCookie', 'ok', cookie=cookie)
+
+    def delete_all_cookies(self):
+        """
+            Delete all cookies in the scope of the session.
+            :Usage:
+                driver.delete_all_cookies()
+        """
+        return self._send_message('deleteAllCookies', 'ok')
+
+    def delete_cookie(self, name):
+        """
+            Delete a cookie by its name
+            :Usage:
+                driver.delete_cookie('foo')
+
+        """
+        return self._send_message('deleteCookie', 'ok', name=name);
+
+    def get_cookie(self, name):
+        """
+            Get a single cookie by name. Returns the cookie if found, None if not.
+
+            :Usage:
+                driver.get_cookie('my_cookie')
+        """
+        cookies = self.get_cookies()
+        for cookie in cookies:
+            if cookie['name'] == name:
+                return cookie
+        return None
+
+    def get_cookies(self):
+        return self._send_message("getAllCookies", "value")
+
     @property
     def application_cache(self):
         return ApplicationCache(self)
+
+    def screenshot(self, element=None, highlights=None):
+        if element is not None:
+            element = element.id
+        return self._send_message("screenShot", 'value', element=element, highlights=highlights)

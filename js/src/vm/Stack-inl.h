@@ -132,9 +132,8 @@ StackFrame::resetInlinePrev(StackFrame *prevfp, jsbytecode *prevpc)
 
 inline void
 StackFrame::initCallFrame(JSContext *cx, JSFunction &callee,
-                          JSScript *script, uint32_t nactual, StackFrame::Flags flagsArg)
+                          UnrootedScript script, uint32_t nactual, StackFrame::Flags flagsArg)
 {
-    AutoAssertNoGC nogc;
     JS_ASSERT((flagsArg & ~(CONSTRUCTING |
                             LOWERED_CALL_APPLY |
                             OVERFLOW_ARGS |
@@ -244,9 +243,6 @@ StackFrame::unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing)
 {
     JS_ASSERT(i < numFormalArgs());
     JS_ASSERT_IF(checkAliasing, !script()->argsObjAliasesFormals());
-    if (checkAliasing && script()->formalIsAliased(i)) {
-        while (true) {}
-    }
     JS_ASSERT_IF(checkAliasing, !script()->formalIsAliased(i));
     return formals()[i];
 }
@@ -384,7 +380,12 @@ STATIC_POSTCONDITION(!return || ubound(from) >= nvals)
 JS_ALWAYS_INLINE bool
 StackSpace::ensureSpace(JSContext *cx, MaybeReportError report, Value *from, ptrdiff_t nvals) const
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     assertInvariants();
     JS_ASSERT(from >= firstUnused());
 #ifdef XP_WIN
@@ -410,9 +411,14 @@ StackSpace::getStackLimit(JSContext *cx, MaybeReportError report)
 
 JS_ALWAYS_INLINE StackFrame *
 ContextStack::getCallFrame(JSContext *cx, MaybeReportError report, const CallArgs &args,
-                           JSFunction *fun, JSScript *script, StackFrame::Flags *flags) const
+                           JSFunction *fun, HandleScript script, StackFrame::Flags *flags) const
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     JS_ASSERT(fun->nonLazyScript() == script);
     unsigned nformal = fun->nargs;
 
@@ -451,10 +457,15 @@ ContextStack::getCallFrame(JSContext *cx, MaybeReportError report, const CallArg
 
 JS_ALWAYS_INLINE bool
 ContextStack::pushInlineFrame(JSContext *cx, FrameRegs &regs, const CallArgs &args,
-                              JSFunction &callee, JSScript *script,
+                              JSFunction &callee, HandleScript script,
                               InitialFrameFlags initial, MaybeReportError report)
 {
-    AssertCanGC();
+    mozilla::Maybe<AutoAssertNoGC> maybeNoGC;
+    if (report)
+        AssertCanGC();
+    else
+        maybeNoGC.construct();
+
     JS_ASSERT(onTop());
     JS_ASSERT(regs.sp == args.end());
     /* Cannot assert callee == args.callee() since this is called from LeaveTree. */
@@ -478,7 +489,7 @@ ContextStack::pushInlineFrame(JSContext *cx, FrameRegs &regs, const CallArgs &ar
 
 JS_ALWAYS_INLINE bool
 ContextStack::pushInlineFrame(JSContext *cx, FrameRegs &regs, const CallArgs &args,
-                              JSFunction &callee, JSScript *script,
+                              JSFunction &callee, HandleScript script,
                               InitialFrameFlags initial, Value **stackLimit)
 {
     AssertCanGC();
@@ -490,7 +501,7 @@ ContextStack::pushInlineFrame(JSContext *cx, FrameRegs &regs, const CallArgs &ar
 
 JS_ALWAYS_INLINE StackFrame *
 ContextStack::getFixupFrame(JSContext *cx, MaybeReportError report,
-                            const CallArgs &args, JSFunction *fun, JSScript *script,
+                            const CallArgs &args, JSFunction *fun, HandleScript script,
                             void *ncode, InitialFrameFlags initial, Value **stackLimit)
 {
     AssertCanGC();
@@ -533,7 +544,7 @@ ContextStack::popFrameAfterOverflow()
     regs.popFrame(fp->actuals() + fp->numActualArgs());
 }
 
-inline JSScript *
+inline UnrootedScript
 ContextStack::currentScript(jsbytecode **ppc,
                             MaybeAllowCrossCompartment allowCrossCompartment) const
 {
@@ -553,7 +564,7 @@ ContextStack::currentScript(jsbytecode **ppc,
         RootedScript script(cx_);
         ion::GetPcScript(cx_, &script, ppc);
         if (!allowCrossCompartment && script->compartment() != cx_->compartment)
-            return NULL;
+            return UnrootedScript(NULL);
         return script;
     }
 #endif
@@ -564,18 +575,18 @@ ContextStack::currentScript(jsbytecode **ppc,
         mjit::JITChunk *chunk = fp->jit()->chunk(regs.pc);
         JS_ASSERT(inlined->inlineIndex < chunk->nInlineFrames);
         mjit::InlineFrame *frame = &chunk->inlineFrames()[inlined->inlineIndex];
-        RawScript script = frame->fun->nonLazyScript().get(nogc);
+        UnrootedScript script = frame->fun->nonLazyScript();
         if (!allowCrossCompartment && script->compartment() != cx_->compartment)
-            return NULL;
+            return UnrootedScript(NULL);
         if (ppc)
             *ppc = script->code + inlined->pcOffset;
         return script;
     }
 #endif
 
-    RawScript script = fp->script().get(nogc);
+    UnrootedScript script = fp->script();
     if (!allowCrossCompartment && script->compartment() != cx_->compartment)
-        return NULL;
+        return UnrootedScript(NULL);
 
     if (ppc)
         *ppc = fp->pcQuadratic(*this);

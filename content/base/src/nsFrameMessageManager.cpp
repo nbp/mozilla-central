@@ -7,7 +7,7 @@
 
 #include "nsFrameMessageManager.h"
 
-#include "AppProcessPermissions.h"
+#include "AppProcessChecker.h"
 #include "ContentChild.h"
 #include "ContentParent.h"
 #include "nsContentUtils.h"
@@ -107,8 +107,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsFrameMessageManager)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIFrameScriptLoader,
                                      mChrome && !mIsProcessManager)
 
-  /* Message senders in the chrome process support nsIPermissionChecker. */
-  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIPermissionChecker,
+  /* Message senders in the chrome process support nsIProcessChecker. */
+  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIProcessChecker,
                                      mChrome && !mIsBroadcaster)
 
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO_CONDITIONAL(ChromeMessageBroadcaster,
@@ -231,7 +231,7 @@ GetParamsForMessage(JSContext* aCx,
   NS_ENSURE_TRUE(!json.IsEmpty(), false);
 
   jsval val = JSVAL_NULL;
-  NS_ENSURE_TRUE(JS_ParseJSON(aCx, static_cast<const jschar*>(PromiseFlatString(json).get()),
+  NS_ENSURE_TRUE(JS_ParseJSON(aCx, static_cast<const jschar*>(json.get()),
                               json.Length(), &val), false);
 
   return WriteStructuredClone(aCx, val, aBuffer, aClosure);
@@ -423,12 +423,14 @@ nsFrameMessageManager::Atob(const nsAString& aAsciiString,
   return NS_OK;
 }
 
-// nsIPermissionChecker
+// nsIProcessChecker
 
-NS_IMETHODIMP
-nsFrameMessageManager::AssertPermission(const nsAString& aPermission, bool* aHasPermission)
+nsresult
+nsFrameMessageManager::AssertProcessInternal(ProcessCheckerType aType,
+                                             const nsAString& aCapability,
+                                             bool* aValid)
 {
-  *aHasPermission = false;
+  *aValid = false;
 
   // This API is only supported for message senders in the chrome process.
   if (!mChrome || mIsBroadcaster) {
@@ -437,8 +439,35 @@ nsFrameMessageManager::AssertPermission(const nsAString& aPermission, bool* aHas
   if (!mCallback) {
     return NS_ERROR_NOT_AVAILABLE;
   }
-  *aHasPermission = mCallback->CheckPermission(aPermission);
+  switch (aType) {
+    case PROCESS_CHECKER_PERMISSION:
+      *aValid = mCallback->CheckPermission(aCapability);
+      break;
+    case PROCESS_CHECKER_MANIFEST_URL:
+      *aValid = mCallback->CheckManifestURL(aCapability);
+      break;
+    default:
+      break;
+  }
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsFrameMessageManager::AssertPermission(const nsAString& aPermission,
+                                        bool* aHasPermission)
+{
+  return AssertProcessInternal(PROCESS_CHECKER_PERMISSION,
+                               aPermission,
+                               aHasPermission);
+}
+
+NS_IMETHODIMP
+nsFrameMessageManager::AssertContainApp(const nsAString& aManifestURL,
+                                        bool* aHasManifestURL)
+{
+  return AssertProcessInternal(PROCESS_CHECKER_MANIFEST_URL,
+                               aManifestURL,
+                               aHasManifestURL);
 }
 
 class MMListenerRemover
@@ -535,7 +564,7 @@ nsFrameMessageManager::ReceiveMessage(nsISupports* aTarget,
         }
         JSString* jsMessage =
           JS_NewUCStringCopyN(ctx,
-                              static_cast<const jschar*>(PromiseFlatString(aMessage).get()),
+                              static_cast<const jschar*>(aMessage.BeginReading()),
                               aMessage.Length());
         NS_ENSURE_TRUE(jsMessage, NS_ERROR_OUT_OF_MEMORY);
         JS_DefineProperty(ctx, param, "target", targetv, NULL, NULL, JSPROP_ENUMERATE);
@@ -1019,6 +1048,16 @@ nsFrameScriptExecutor::Traverse(nsFrameScriptExecutor *tmp,
   }
 }
 
+// static
+void
+nsFrameScriptExecutor::Unlink(nsFrameScriptExecutor* aTmp)
+{
+  if (aTmp->mCx) {
+    JSAutoRequest ar(aTmp->mCx);
+    JS_SetGlobalObject(aTmp->mCx, nullptr);
+  }
+}
+
 NS_IMPL_ISUPPORTS1(nsScriptCacheCleaner, nsIObserver)
 
 nsFrameMessageManager* nsFrameMessageManager::sChildProcessManager = nullptr;
@@ -1090,6 +1129,11 @@ public:
     return true;
   }
 
+  bool CheckManifestURL(const nsAString& aManifestURL)
+  {
+    // In a single-process scenario, the child always has all capabilities.
+    return true;
+  }
 };
 
 

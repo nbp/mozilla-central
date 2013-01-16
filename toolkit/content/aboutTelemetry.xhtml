@@ -28,7 +28,7 @@
     <header id="page-description">
       <h1>&aboutTelemetry.pageTitle;</h1>
 
-      <h2>&aboutTelemetry.pageSubtitle;</h2>
+      <h2 id="page-subtitle"></h2>
 
       <p id="description-enabled">&aboutTelemetry.telemetryEnabled;</p>
       <p id="description-disabled">&aboutTelemetry.telemetryDisabled;</p>
@@ -78,6 +78,20 @@
       <div id="simple-measurements" class="data hidden">
         <table id="simple-measurements-table">
         </table>
+      </div>
+    </section>
+
+    <section id="late-writes-section" class="data-section">
+      <h1 class="section-name">&aboutTelemetry.lateWritesSection;</h1>
+      <span class="toggle-caption">&aboutTelemetry.toggleOn;</span>
+      <span class="toggle-caption hidden">&aboutTelemetry.toggleOff;</span>
+      <span class="empty-caption hidden">&aboutTelemetry.emptySection;</span>
+      <div id="late-writes" class="data hidden">
+        <!-- FIXME: add fetch-symbols and hide-symbols -->
+        <br/>
+        <br/>
+        <div id="late-writes-data">
+        </div>
       </div>
     </section>
 

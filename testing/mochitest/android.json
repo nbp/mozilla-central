@@ -120,6 +120,7 @@
  "content/xul/content/test/test_bug486990.xul": "TIMED_OUT",
  "docshell/test/navigation/test_bug13871.html": "RANDOM",
  "docshell/test/navigation/test_bug430723.html": "TIMED_OUT",
+ "docshell/test/navigation/test_popup-navigates-children.html": "bug 783589",
  "docshell/test/navigation/test_sessionhistory.html": "RANDOM",
  "docshell/test/test_bug344861.html": "",
  "docshell/test/test_bug94514.html": "TIMED_OUT",
@@ -127,6 +128,7 @@
  "docshell/test/test_bug598895.html": "",
  "docshell/test/test_bug637644.html": "",
  "docshell/test/test_bug668513.html": "RANDOM",
+ "docshell/test/test_framedhistoryframes.html": "bug 784321",
  "dom/browser-element/mochitest/test_browserElement_oop_SecurityChange.html": "TIMED_OUT, bug 766586",
  "dom/browser-element/mochitest/test_browserElement_inproc_AppFramePermission.html": "",
  "dom/browser-element/mochitest/test_browserElement_inproc_AppWindowNamespace.html": "TIMED_OUT, bug 783509",
@@ -304,6 +306,7 @@
  "toolkit/components/passwordmgr/test/test_master_password_cleanup.html": "",
  "toolkit/components/passwordmgr/test/test_notifications.html": "",
  "toolkit/components/passwordmgr/test/test_notifications_popup.html": "",
+ "toolkit/components/passwordmgr/test/test_privbrowsing_perwindowpb.html": "",
  "toolkit/components/passwordmgr/test/test_prompt.html": "TIMED_OUT",
  "toolkit/components/passwordmgr/test/test_prompt_async.html": "TIMED_OUT",
  "toolkit/components/passwordmgr/test/test_xhr.html": "TIMED_OUT",
@@ -326,6 +329,7 @@
  "uriloader/exthandler/tests/mochitest/test_handlerApps.xhtml": "",
  "widget/tests/test_bug760802.html": "",
  "dom/tests/mochitest/ajax/offline": "SLOW_DIRECTORY",
- "layout/base/tests": "SLOW_DIRECTORY"
+ "layout/base/tests": "SLOW_DIRECTORY",
+ "Harness_sanity/test_bug816847.html": "No test app installed"
  }
 }

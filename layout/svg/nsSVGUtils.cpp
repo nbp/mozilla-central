@@ -48,7 +48,7 @@
 #include "nsSVGPathGeometryElement.h"
 #include "nsSVGPathGeometryFrame.h"
 #include "nsSVGPaintServerFrame.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "nsSVGTextContainerFrame.h"
 #include "nsTextFrame.h"
 #include "SVGContentUtils.h"
@@ -329,7 +329,7 @@ nsSVGUtils::CoordToFloat(nsPresContext *aPresContext,
     return nsPresContext::AppUnitsToFloatCSSPixels(aCoord.GetCoordValue());
 
   case eStyleUnit_Percent: {
-      nsSVGSVGElement* ctx = aContent->GetCtx();
+      SVGSVGElement* ctx = aContent->GetCtx();
       return ctx ? aCoord.GetPercentValue() * ctx->GetLength(SVGContentUtils::XY) : 0.0f;
     }
   default:
@@ -452,7 +452,7 @@ nsSVGUtils::InvalidateBounds(nsIFrame *aFrame, bool aDuringUpdate,
         aFrame->GetStyleDisplay()->IsScrollableOverflow()) {
       // Clip rect to the viewport established by this inner-<svg>:
       float x, y, width, height;
-      static_cast<nsSVGSVGElement*>(aFrame->GetContent())->
+      static_cast<SVGSVGElement*>(aFrame->GetContent())->
         GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
       if (width <= 0.0f || height <= 0.0f) {
         return; // Nothing to invalidate
@@ -560,19 +560,6 @@ nsSVGUtils::ScheduleReflowSVG(nsIFrame *aFrame)
     outerSVGFrame, nsIPresShell::eResize, dirtyBit);
 }
 
-void
-nsSVGUtils::InvalidateAndScheduleReflowSVG(nsIFrame *aFrame)
-{
-  // If this is triggered, the callers should be fixed to call us much
-  // earlier. If we try to mark dirty bits on frames while we're in the
-  // process of removing them, things will get messed up.
-  NS_ASSERTION(!OuterSVGIsCallingReflowSVG(aFrame),
-               "Must not call under nsISVGChildFrame::ReflowSVG!");
-
-  InvalidateBounds(aFrame, false);
-  ScheduleReflowSVG(aFrame);
-}
-
 bool
 nsSVGUtils::NeedsReflowSVG(nsIFrame *aFrame)
 {
@@ -629,7 +616,7 @@ nsSVGUtils::ObjectSpace(const gfxRect &aRect, const nsSVGLength2 *aLength)
     // Multiply first to avoid precision errors:
     return axis * aLength->GetAnimValInSpecifiedUnits() / 100;
   }
-  return aLength->GetAnimValue(static_cast<nsSVGSVGElement*>(nullptr)) * axis;
+  return aLength->GetAnimValue(static_cast<SVGSVGElement*>(nullptr)) * axis;
 }
 
 float
@@ -1863,4 +1850,42 @@ nsSVGUtils::SetupCairoStroke(nsIFrame* aFrame, gfxContext* aContext,
   SetupCairoStrokeHitGeometry(aFrame, aContext, aObjectPaint);
 
   return SetupCairoStrokePaint(aFrame, aContext, aObjectPaint);
+}
+
+bool
+nsSVGUtils::PaintSVGGlyph(Element* aElement, gfxContext* aContext,
+                          gfxFont::DrawMode aDrawMode,
+                          gfxTextObjectPaint* aObjectPaint)
+{
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  nsISVGChildFrame* svgFrame = do_QueryFrame(frame);
+  MOZ_ASSERT(!frame || svgFrame, "Non SVG frame for SVG glyph");
+  if (svgFrame) {
+    nsRenderingContext context;
+    context.Init(frame->PresContext()->DeviceContext(), aContext);
+    context.AddUserData(&gfxTextObjectPaint::sUserDataKey, aObjectPaint, nullptr);
+    nsresult rv = svgFrame->PaintSVG(&context, nullptr);
+    if (NS_SUCCEEDED(rv)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
+nsSVGUtils::GetSVGGlyphExtents(Element* aElement,
+                               const gfxMatrix& aSVGToAppSpace,
+                               gfxRect* aResult)
+{
+  nsIFrame* frame = aElement->GetPrimaryFrame();
+  nsISVGChildFrame* svgFrame = do_QueryFrame(frame);
+  MOZ_ASSERT(!frame || svgFrame, "Non SVG frame for SVG glyph");
+  if (svgFrame) {
+    *aResult = svgFrame->GetBBoxContribution(aSVGToAppSpace,
+      nsSVGUtils::eBBoxIncludeFill | nsSVGUtils::eBBoxIncludeFillGeometry |
+      nsSVGUtils::eBBoxIncludeStroke | nsSVGUtils::eBBoxIncludeStrokeGeometry |
+      nsSVGUtils::eBBoxIncludeMarkers);
+    return true;
+  }
+  return false;
 }

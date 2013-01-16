@@ -926,6 +926,38 @@ void ShadowImageLayerOGL::UploadSharedYCbCrToTexture(ShmemYCbCrImage& aImage,
   UploadYUVToTexture(gl(), data, &mYUVTexture[0], &mYUVTexture[1], &mYUVTexture[2]);
 }
 
+void ShadowImageLayerOGL::UploadSharedRGBToTexture(ipc::Shmem *aShmem,
+                                                   nsIntRect aPictureRect,
+                                                   uint32_t aRgbFormat)
+{
+  mPictureRect = aPictureRect;
+
+  if (aPictureRect.width != mSize.width ||
+      aPictureRect.height != mSize.height ||
+      !mRGBTexture.IsAllocated()) {
+    mSize = gfxIntSize(aPictureRect.width, aPictureRect.height);
+
+    if (!mRGBTexture.IsAllocated()) {
+      mRGBTexture.Allocate(gl());
+    }
+
+    gl()->MakeCurrent();
+    SetClamping(gl(), mRGBTexture.GetTextureID());
+  }
+
+  gfxASurface::gfxImageFormat rgbFormat = (gfxASurface::gfxImageFormat)aRgbFormat;
+  GLuint texture = mRGBTexture.GetTextureID();
+  uint32_t stride = gfxASurface::BytesPerPixel(rgbFormat) * aPictureRect.width;
+  nsRefPtr<gfxASurface> surface = new gfxImageSurface(aShmem->get<uint8_t>(),
+                                                      mSize,
+                                                      stride,
+                                                      rgbFormat);
+
+  gl()->UploadSurfaceToTexture(surface,
+                               nsIntRect(0, 0, mSize.width, mSize.height),
+                               texture, true);
+}
+
 
 void
 ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
@@ -939,8 +971,8 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
     ImageContainerParent::SetCompositorIDForImage(mImageContainerID,
                                                   mOGLManager->GetCompositorID());
     uint32_t imgVersion = ImageContainerParent::GetSharedImageVersion(mImageContainerID);
+    SharedImage* img = ImageContainerParent::GetSharedImage(mImageContainerID);
     if (imgVersion != mImageVersion) {
-      SharedImage* img = ImageContainerParent::GetSharedImage(mImageContainerID);
       if (img && (img->type() == SharedImage::TYUVImage)) {
         UploadSharedYUVToTexture(img->get_YUVImage());
   
@@ -951,23 +983,29 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
         UploadSharedYCbCrToTexture(shmemImage, img->get_YCbCrImage().picture());
 
         mImageVersion = imgVersion;
-#ifdef MOZ_WIDGET_GONK
-      } else if (img
-                 && (img->type() == SharedImage::TSurfaceDescriptor)
-                 && (img->get_SurfaceDescriptor().type() == SurfaceDescriptor::TSurfaceDescriptorGralloc)) {
-        const SurfaceDescriptorGralloc& desc = img->get_SurfaceDescriptor().get_SurfaceDescriptorGralloc();
-        sp<GraphicBuffer> graphicBuffer = GrallocBufferActor::GetFrom(desc);
-        mSize = gfxIntSize(graphicBuffer->getWidth(), graphicBuffer->getHeight());
-        if (!mExternalBufferTexture.IsAllocated()) {
-          mExternalBufferTexture.Allocate(gl());
-        }
-        gl()->MakeCurrent();
-        gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
-        gl()->BindExternalBuffer(mExternalBufferTexture.GetTextureID(), graphicBuffer->getNativeBuffer());
+      } else if (img && (img->type() == SharedImage::TRGBImage)) {
+        UploadSharedRGBToTexture(&img->get_RGBImage().data(),
+                                 img->get_RGBImage().picture(),
+                                 img->get_RGBImage().rgbFormat());
         mImageVersion = imgVersion;
-#endif
       }
     }
+#ifdef MOZ_WIDGET_GONK
+    if (img
+        && (img->type() == SharedImage::TSurfaceDescriptor)
+        && (img->get_SurfaceDescriptor().type() == SurfaceDescriptor::TSurfaceDescriptorGralloc)) {
+      const SurfaceDescriptorGralloc& desc = img->get_SurfaceDescriptor().get_SurfaceDescriptorGralloc();
+      sp<GraphicBuffer> graphicBuffer = GrallocBufferActor::GetFrom(desc);
+      mSize = gfxIntSize(graphicBuffer->getWidth(), graphicBuffer->getHeight());
+      if (!mExternalBufferTexture.IsAllocated()) {
+        mExternalBufferTexture.Allocate(gl());
+      }
+      gl()->MakeCurrent();
+      gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+      gl()->BindExternalBuffer(mExternalBufferTexture.GetTextureID(), graphicBuffer->getNativeBuffer());
+      mImageVersion = imgVersion;
+    }
+#endif
   }
 
 
@@ -990,20 +1028,26 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
 
     if (gl()->CanUploadNonPowerOfTwo()) {
       do {
-        TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
-        colorProgram->SetLayerQuadRect(mTexImage->GetTileRect());
-        mOGLManager->BindAndDrawQuad(colorProgram);
+        nsIntRect rect = mTexImage->GetTileRect();
+        if (!rect.IsEmpty()) {
+          TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
+          colorProgram->SetLayerQuadRect(rect);
+          mOGLManager->BindAndDrawQuad(colorProgram);
+        }
       } while (mTexImage->NextTile());
     } else {
       do {
-        TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
-        colorProgram->SetLayerQuadRect(mTexImage->GetTileRect());
-        // We can't use BindAndDrawQuad because that always uploads the whole texture from 0.0f -> 1.0f
-        // in x and y. We use BindAndDrawQuadWithTextureRect to actually draw a subrect of the texture
-        mOGLManager->BindAndDrawQuadWithTextureRect(colorProgram,
-                                                    nsIntRect(0, 0, mTexImage->GetTileRect().width,
-                                                                    mTexImage->GetTileRect().height),
-                                                    mTexImage->GetTileRect().Size());
+        nsIntRect rect = mTexImage->GetTileRect();
+        if (!rect.IsEmpty()) {
+          TextureImage::ScopedBindTextureAndApplyFilter texBind(mTexImage, LOCAL_GL_TEXTURE0);
+          colorProgram->SetLayerQuadRect(rect);
+          // We can't use BindAndDrawQuad because that always uploads the whole texture from 0.0f -> 1.0f
+          // in x and y. We use BindAndDrawQuadWithTextureRect to actually draw a subrect of the texture
+          mOGLManager->BindAndDrawQuadWithTextureRect(colorProgram,
+                                                      nsIntRect(0, 0, mTexImage->GetTileRect().width,
+                                                                mTexImage->GetTileRect().height),
+                                                      mTexImage->GetTileRect().Size());
+        }
       } while (mTexImage->NextTile());
     }
 #ifdef MOZ_WIDGET_GONK
@@ -1026,7 +1070,11 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
     program->LoadMask(GetMaskLayer());
 
     mOGLManager->BindAndDrawQuad(program);
+
+    // Make sure that we release the underlying external image
+    gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
     gl()->fBindTexture(LOCAL_GL_TEXTURE_EXTERNAL, 0);
+    mExternalBufferTexture.Release();
 #endif
   } else if (mSharedHandle) {
     GLContext::SharedHandleDetails handleDetails;
@@ -1061,6 +1109,26 @@ ShadowImageLayerOGL::RenderLayer(int aPreviousFrameBuffer,
     mOGLManager->BindAndDrawQuad(program, mInverted);
     gl()->fBindTexture(handleDetails.mTarget, 0);
     gl()->DetachSharedHandle(mShareType, mSharedHandle);
+  } else if (mRGBTexture.IsAllocated()) {
+    gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
+    gl()->fBindTexture(LOCAL_GL_TEXTURE_2D, mRGBTexture.GetTextureID());
+    gl()->ApplyFilterToBoundTexture(mFilter);
+
+    ShaderProgramOGL *shader = mOGLManager->GetProgram(RGBALayerProgramType, GetMaskLayer());
+    shader->Activate();
+
+    shader->SetLayerQuadRect(nsIntRect(0, 0,
+                                           mPictureRect.width,
+                                           mPictureRect.height));
+    shader->SetTextureUnit(0);
+    shader->SetLayerTransform(GetEffectiveTransform());
+    shader->SetLayerOpacity(GetEffectiveOpacity());
+    shader->SetRenderOffset(aOffset);
+    shader->LoadMask(GetMaskLayer());
+
+    mOGLManager->BindAndDrawQuadWithTextureRect(shader,
+                                                mPictureRect,
+                                                nsIntSize(mSize.width, mSize.height));
   } else {
     gl()->fActiveTexture(LOCAL_GL_TEXTURE0);
     gl()->fBindTexture(LOCAL_GL_TEXTURE_2D, mYUVTexture[0].GetTextureID());
@@ -1121,6 +1189,7 @@ ShadowImageLayerOGL::CleanupResources()
   mYUVTexture[0].Release();
   mYUVTexture[1].Release();
   mYUVTexture[2].Release();
+  mRGBTexture.Release();
   mTexImage = nullptr;
 }
 

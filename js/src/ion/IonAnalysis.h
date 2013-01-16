@@ -22,8 +22,16 @@ class MIRGraph;
 bool
 SplitCriticalEdges(MIRGraph &graph);
 
+enum Observability {
+    ConservativeObservability,
+    AggressiveObservability
+};
+
 bool
-EliminatePhis(MIRGenerator *mir, MIRGraph &graph);
+EliminatePhis(MIRGenerator *mir, MIRGraph &graph, Observability observe);
+
+bool
+EliminateDeadResumePointOperands(MIRGenerator *mir, MIRGraph &graph);
 
 bool
 EliminateDeadCode(MIRGenerator *mir, MIRGraph &graph);
@@ -43,8 +51,11 @@ BuildPhiReverseMapping(MIRGraph &graph);
 void
 AssertGraphCoherency(MIRGraph &graph);
 
+void
+AssertExtendedGraphCoherency(MIRGraph &graph);
+
 bool
-EliminateRedundantBoundsChecks(MIRGraph &graph);
+EliminateRedundantChecks(MIRGraph &graph);
 
 class MDefinition;
 
@@ -52,9 +63,9 @@ class MDefinition;
 struct SimpleLinearSum
 {
     MDefinition *term;
-    int32 constant;
+    int32_t constant;
 
-    SimpleLinearSum(MDefinition *term, int32 constant)
+    SimpleLinearSum(MDefinition *term, int32_t constant)
         : term(term), constant(constant)
     {}
 };
@@ -69,9 +80,9 @@ ExtractLinearInequality(MTest *test, BranchDirection direction,
 struct LinearTerm
 {
     MDefinition *term;
-    int32 scale;
+    int32_t scale;
 
-    LinearTerm(MDefinition *term, int32 scale)
+    LinearTerm(MDefinition *term, int32_t scale)
       : term(term), scale(scale)
     {
     }
@@ -93,12 +104,12 @@ class LinearSum
             terms_.append(other.terms_[i]);
     }
 
-    bool multiply(int32 scale);
+    bool multiply(int32_t scale);
     bool add(const LinearSum &other);
-    bool add(MDefinition *term, int32 scale);
-    bool add(int32 constant);
+    bool add(MDefinition *term, int32_t scale);
+    bool add(int32_t constant);
 
-    int32 constant() const { return constant_; }
+    int32_t constant() const { return constant_; }
     size_t numTerms() const { return terms_.length(); }
     LinearTerm term(size_t i) const { return terms_[i]; }
 
@@ -106,7 +117,7 @@ class LinearSum
 
   private:
     Vector<LinearTerm, 2, IonAllocPolicy> terms_;
-    int32 constant_;
+    int32_t constant_;
 };
 
 } // namespace ion

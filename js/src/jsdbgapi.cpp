@@ -8,6 +8,9 @@
 /*
  * JS debugging API.
  */
+
+#include "mozilla/DebugOnly.h"
+
 #include <string.h>
 #include "jsprvtd.h"
 #include "jstypes.h"
@@ -45,7 +48,6 @@
 #include "vm/Stack-inl.h"
 
 #include "jsautooplen.h"
-#include "mozilla/Util.h"
 
 using namespace js;
 using namespace js::gc;
@@ -324,7 +326,7 @@ JS_ClearAllWatchPoints(JSContext *cx)
 /************************************************************************/
 
 JS_PUBLIC_API(unsigned)
-JS_PCToLineNumber(JSContext *cx, JSScript *script, jsbytecode *pc)
+JS_PCToLineNumber(JSContext *cx, RawScript script, jsbytecode *pc)
 {
     return js::PCToLineNumber(script, pc);
 }
@@ -448,8 +450,19 @@ JS_ReleaseFunctionLocalNameArray(JSContext *cx, void *mark)
 JS_PUBLIC_API(JSScript *)
 JS_GetFunctionScript(JSContext *cx, JSFunction *fun)
 {
-    AutoAssertNoGC nogc;
-    return fun->maybeNonLazyScript().get(nogc);
+    if (fun->isNative())
+        return NULL;
+    UnrootedScript script;
+    if (fun->isInterpretedLazy()) {
+        RootedFunction rootedFun(cx, fun);
+        AutoCompartment funCompartment(cx, rootedFun);
+        script = JSFunction::getOrCreateScript(cx, rootedFun);
+        if (!script)
+            MOZ_CRASH();
+    } else {
+        script = fun->nonLazyScript();
+    }
+    return script;
 }
 
 JS_PUBLIC_API(JSNative)
@@ -497,8 +510,7 @@ JS_BrokenFrameIterator(JSContext *cx, JSStackFrame **iteratorp)
 JS_PUBLIC_API(JSScript *)
 JS_GetFrameScript(JSContext *cx, JSStackFrame *fpArg)
 {
-    AutoAssertNoGC nogc;
-    return Valueify(fpArg)->script().get(nogc);
+    return Valueify(fpArg)->script();
 }
 
 JS_PUBLIC_API(jsbytecode *)
@@ -543,7 +555,7 @@ JS_SetTopFrameAnnotation(JSContext *cx, void *annotation)
     // because we will never EnterIon on a frame with an annotation.
     fp->setAnnotation(annotation);
 
-    RawScript script = fp->script().get(nogc);
+    UnrootedScript script = fp->script();
 
     ReleaseAllJITCode(cx->runtime->defaultFreeOp());
 
@@ -800,7 +812,7 @@ JS_EvaluateInStackFrame(JSContext *cx, JSStackFrame *fp,
 /* This all should be reworked to avoid requiring JSScopeProperty types. */
 
 static JSBool
-GetPropertyDesc(JSContext *cx, JSObject *obj_, Shape *shape, JSPropertyDesc *pd)
+GetPropertyDesc(JSContext *cx, JSObject *obj_, HandleShape shape, JSPropertyDesc *pd)
 {
     assertSameCompartment(cx, obj_);
     pd->id = IdToJsval(shape->propid());
@@ -903,7 +915,7 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
             goto bad;
         if (!js_AddRoot(cx, &pd[i].value, NULL))
             goto bad;
-        Shape *shape = const_cast<Shape *>(&r.front());
+        RootedShape shape(cx, const_cast<Shape *>(&r.front()));
         if (!GetPropertyDesc(cx, obj, shape, &pd[i]))
             goto bad;
         if ((pd[i].flags & JSPD_ALIAS) && !js_AddRoot(cx, &pd[i].alias, NULL))
@@ -1013,7 +1025,7 @@ JS_GetFunctionTotalSize(JSContext *cx, JSFunction *fun)
     size_t nbytes = sizeof *fun;
     nbytes += JS_GetObjectTotalSize(cx, fun);
     if (fun->isInterpreted())
-        nbytes += JS_GetScriptTotalSize(cx, fun->nonLazyScript().get(nogc));
+        nbytes += JS_GetScriptTotalSize(cx, fun->nonLazyScript());
     if (fun->displayAtom())
         nbytes += GetAtomTotalSize(cx, fun->displayAtom());
     return nbytes;
@@ -1205,8 +1217,8 @@ JS::DescribeStack(JSContext *cx, unsigned maxFrames)
 
     for (ScriptFrameIter i(cx); !i.done(); ++i) {
         FrameDescription desc;
-        desc.script = i.script().get(nogc);
-        desc.lineno = PCToLineNumber(i.script().get(nogc), i.pc());
+        desc.script = i.script();
+        desc.lineno = PCToLineNumber(i.script(), i.pc());
         desc.fun = i.maybeCallee();
         if (!frames.append(desc))
             return NULL;

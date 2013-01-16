@@ -23,9 +23,11 @@ const PC_MANAGER_CID = Components.ID("{7293e901-2be3-4c02-b4bd-cbef6fc24f78}");
 // a page is torn down. (Maps inner window ID to an array of PC objects).
 function GlobalPCList() {
   this._list = [];
+  this._networkdown = false; // XXX Need to query current state somehow
   Services.obs.addObserver(this, "inner-window-destroyed", true);
   Services.obs.addObserver(this, "profile-change-net-teardown", true);
   Services.obs.addObserver(this, "network:offline-about-to-go-offline", true);
+  Services.obs.addObserver(this, "network:offline-status-changed", true);
 }
 GlobalPCList.prototype = {
   QueryInterface: XPCOMUtils.generateQI([Ci.nsIObserver,
@@ -79,7 +81,7 @@ GlobalPCList.prototype = {
                topic == "network:offline-about-to-go-offline") {
       // Delete all peerconnections on shutdown - synchronously (we need
       // them to be done deleting transports before we return)!
-      // Also kill them if "Work Offline" is selected - more can be created 
+      // Also kill them if "Work Offline" is selected - more can be created
       // while offline, but attempts to connect them should fail.
       let array;
       while ((array = this._list.pop()) != undefined) {
@@ -89,6 +91,15 @@ GlobalPCList.prototype = {
           pc._pc = null;
         });
       };
+      this._networkdown = true;
+    }
+    else if (topic == "network:offline-status-changed") {
+      if (data == "offline") {
+	// this._list shold be empty here
+        this._networkdown = true;
+      } else if (data == "online") {
+        this._networkdown = false;
+      }
     }
   },
 };
@@ -122,7 +133,8 @@ IceCandidate.prototype = {
     if (candidateInitDict !== undefined) {
       this.candidate = candidateInitDict.candidate || null;
       this.sdpMid = candidateInitDict.sdbMid || null;
-      this.sdpMLineIndex = candidateInitDict.sdpMLineIndex || null;
+      this.sdpMLineIndex = candidateInitDict.sdpMLineIndex === null ?
+            null : candidateInitDict.sdpMLineIndex + 1;
     } else {
       this.candidate = this.sdpMid = this.sdpMLineIndex = null;
     }
@@ -198,6 +210,7 @@ function PeerConnection() {
   this.onstatechange = null;
   this.ongatheringchange = null;
   this.onicechange = null;
+  this.localDescription = null;
   this.remoteDescription = null;
 
   // Data channel.
@@ -227,6 +240,9 @@ PeerConnection.prototype = {
     }
     if (this._win) {
       throw new Error("Constructor already called");
+    }
+    if (_globalPCList._networkdown) {
+      throw new Error("Can't create RTPPeerConnections when the network is down");
     }
 
     this._pc = Cc["@mozilla.org/peerconnection;1"].
@@ -374,10 +390,6 @@ PeerConnection.prototype = {
   },
 
   setLocalDescription: function(desc, onSuccess, onError) {
-    if (this._onSetLocalDescriptionSuccess) {
-      throw new Error("setLocalDescription already called");
-    }
-
     this._onSetLocalDescriptionSuccess = onSuccess;
     this._onSetLocalDescriptionFailure = onError;
 
@@ -404,10 +416,6 @@ PeerConnection.prototype = {
   },
 
   setRemoteDescription: function(desc, onSuccess, onError) {
-    if (this._onSetRemoteDescriptionSuccess) {
-      throw new Error("setRemoteDescription already called");
-    }
-
     this._onSetRemoteDescriptionSuccess = onSuccess;
     this._onSetRemoteDescriptionFailure = onError;
 
@@ -425,6 +433,11 @@ PeerConnection.prototype = {
         );
         break;
     }
+
+    this.localDescription = {
+      type: desc.type, sdp: desc.sdp,
+      __exposedProps__: { type: "rw", sdp: "rw"}
+    };
 
     this.remoteDescription = {
       type: desc.type, sdp: desc.sdp,
@@ -444,15 +457,16 @@ PeerConnection.prototype = {
 
   addIceCandidate: function(cand) {
     if (!cand) {
-      throw "Invalid candidate passed to addIceCandidate!";
+      throw "NULL candidate passed to addIceCandidate!";
     }
-    if (!cand.candidate || !cand.sdpMid || !cand.sdpMLineIndex) {
+
+    if (!cand.candidate || !cand.sdpMLineIndex) {
       throw "Invalid candidate passed to addIceCandidate!";
     }
 
     this._queueOrRun({
       func: this._pc.addIceCandidate,
-      args: [cand.candidate, cand.sdpMid, cand.sdpMLineIndex],
+      args: [cand.candidate, cand.sdpMid || "", cand.sdpMLineIndex],
       wait: false
     });
   },

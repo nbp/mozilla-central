@@ -4,8 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "nsCache.h"
 #include <limits.h>
+
+#include "mozilla/DebugOnly.h"
+
+#include "nsCache.h"
 
 // include files for ftruncate (or equivalent)
 #if defined(XP_UNIX)
@@ -46,7 +49,6 @@
 
 #include "nsThreadUtils.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/Util.h"
 
 static const char DISK_CACHE_DEVICE_ID[] = { "disk" };
 using namespace mozilla;
@@ -844,10 +846,8 @@ nsDiskCacheDevice::OnDataSizeChange(nsCacheEntry * entry, int32_t deltaSize)
     uint32_t  newSizeK =  ((newSize + 0x3FF) >> 10);
 
     // If the new size is larger than max. file size or larger than
-    // 1/8 the cache capacity (which is in KiB's), and the entry has
-    // not been marked for file storage, doom the entry and abort.
-    if (EntryIsTooBig(newSize) &&
-        entry->StoragePolicy() != nsICache::STORE_ON_DISK_AS_FILE) {
+    // 1/8 the cache capacity (which is in KiB's), doom the entry and abort.
+    if (EntryIsTooBig(newSize)) {
 #ifdef DEBUG
         nsresult rv =
 #endif

@@ -91,9 +91,10 @@ public:
 
   void NotifyConsumptionChanged(MediaStreamGraph* aGraph, Consumption aConsuming)
   {
-    const char* state;
-
     DOM_CAMERA_LOGT("%s:%d : this=%p\n", __func__, __LINE__, this);
+
+#ifdef PR_LOGGING
+    const char* state;
 
     switch (aConsuming) {
       case NOT_CONSUMED:
@@ -110,6 +111,7 @@ public:
     }
 
     DOM_CAMERA_LOGA("camera viewfinder is %s\n", state);
+#endif
     nsCOMPtr<nsIRunnable> previewControl;
 
     switch (aConsuming) {
@@ -210,7 +212,7 @@ DOMCameraPreview::Start()
    * This reference is removed in SetStateStopped().
    */
   NS_ADDREF_THIS();
-  mState = STARTING;
+  DOM_CAMERA_SETSTATE(STARTING);
   mCameraControl->StartPreview(this);
 }
 
@@ -219,7 +221,7 @@ DOMCameraPreview::SetStateStarted()
 {
   NS_ASSERTION(NS_IsMainThread(), "SetStateStarted() not called from main thread");
 
-  mState = STARTED;
+  DOM_CAMERA_SETSTATE(STARTED);
   DOM_CAMERA_LOGI("Preview stream started\n");
 }
 
@@ -247,7 +249,7 @@ DOMCameraPreview::StopPreview()
   }
 
   DOM_CAMERA_LOGI("Stopping preview stream\n");
-  mState = STOPPING;
+  DOM_CAMERA_SETSTATE(STOPPING);
   mCameraControl->StopPreview();
   mInput->EndTrack(TRACK_VIDEO);
   mInput->Finish();
@@ -258,7 +260,12 @@ DOMCameraPreview::SetStateStopped()
 {
   NS_ASSERTION(NS_IsMainThread(), "SetStateStopped() not called from main thread");
 
-  mState = STOPPED;
+  // see bug 809259 and bug 817367.
+  if (mState != STOPPING) {
+    mInput->EndTrack(TRACK_VIDEO);
+    mInput->Finish();
+  }
+  DOM_CAMERA_SETSTATE(STOPPED);
   DOM_CAMERA_LOGI("Preview stream stopped\n");
 
   /**

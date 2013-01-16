@@ -28,6 +28,11 @@
 #define snprintf _snprintf
 #define strcasecmp _stricmp
 #endif
+
+#ifdef MOZ_WIDGET_GONK
+#include "BootAnimation.h"
+#endif
+
 #include "BinaryPath.h"
 
 #include "nsXPCOMPrivate.h" // for MAXPATHLEN and XPCOM_DLL
@@ -139,6 +144,11 @@ static int do_main(int argc, char* argv[])
     argc -= 2;
   }
 
+#ifdef MOZ_WIDGET_GONK
+  /* Called to start the boot animation */
+  (void) NativeWindow();
+#endif
+
   if (appini) {
     nsXREAppData *appData;
     rv = XRE_CreateAppData(appini, &appData);
@@ -157,10 +167,6 @@ static int do_main(int argc, char* argv[])
 int main(int argc, char* argv[])
 {
   char exePath[MAXPATHLEN];
-
-#if defined(MOZ_X11)
-  putenv("MOZ_USE_OMTC=1");
-#endif
 
   nsresult rv = mozilla::BinaryPath::Get(argv[0], exePath);
   if (NS_FAILED(rv)) {

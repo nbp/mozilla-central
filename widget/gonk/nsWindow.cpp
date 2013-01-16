@@ -13,8 +13,11 @@
  * limitations under the License.
  */
 
+#include "mozilla/DebugOnly.h"
+
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+
 #include <fcntl.h>
 
 #include "android/log.h"
@@ -24,6 +27,7 @@
 #include "mozilla/Hal.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/FileUtils.h"
+#include "BootAnimation.h"
 #include "Framebuffer.h"
 #include "gfxContext.h"
 #include "gfxPlatform.h"
@@ -64,7 +68,6 @@ static nsRefPtr<GLContext> sGLContext;
 static nsTArray<nsWindow *> sTopWindows;
 static nsWindow *gWindowToRedraw = nullptr;
 static nsWindow *gFocusedWindow = nullptr;
-static android::FramebufferNativeWindow *gNativeWindow = nullptr;
 static bool sFramebufferOpen;
 static bool sUsingOMTC;
 static bool sUsingHwc;
@@ -73,37 +76,6 @@ static nsRefPtr<gfxASurface> sOMTCSurface;
 static pthread_t sFramebufferWatchThread;
 
 namespace {
-
-static int
-CancelBufferNoop(ANativeWindow* aWindow, android_native_buffer_t* aBuffer)
-{
-    return 0;
-}
-
-android::FramebufferNativeWindow*
-NativeWindow()
-{
-    if (!gNativeWindow) {
-        // Some gralloc HALs need this in order to open the
-        // framebuffer device after we restart with the screen off.
-        //
-        // NB: this *must* run BEFORE allocating the
-        // FramebufferNativeWindow.  Do not separate these two C++
-        // statements.
-        hal::SetScreenEnabled(true);
-
-        // We (apparently) don't have a way to tell if allocating the
-        // fbs succeeded or failed.
-        gNativeWindow = new android::FramebufferNativeWindow();
-
-        // Bug 776742: FrambufferNativeWindow doesn't set the cancelBuffer
-        // function pointer, causing EGL to segfault when the window surface
-        // is destroyed (i.e. on process exit). This workaround stops us
-        // from hard crashing in that situation.
-        gNativeWindow->cancelBuffer = CancelBufferNoop;
-    }
-    return gNativeWindow;
-}
 
 static uint32_t
 EffectiveScreenRotation()
@@ -181,8 +153,10 @@ nsWindow::nsWindow()
         }
 
         nsIntSize screenSize;
-        mozilla::DebugOnly<bool> gotFB = Framebuffer::GetSize(&screenSize);
-        MOZ_ASSERT(gotFB);
+        bool gotFB = Framebuffer::GetSize(&screenSize);
+        if (!gotFB) {
+            NS_RUNTIMEABORT("Failed to get size from framebuffer, aborting...");
+        }
         gScreenBounds = nsIntRect(nsIntPoint(0, 0), screenSize);
 
         char propValue[PROPERTY_VALUE_MAX];
@@ -242,6 +216,8 @@ nsWindow::DoDraw(void)
         LOG("  no window to draw, bailing");
         return;
     }
+
+    StopBootAnimation();
 
     nsIntRegion region = gWindowToRedraw->mDirtyRegion;
     gWindowToRedraw->mDirtyRegion.SetEmpty();
@@ -399,30 +375,31 @@ nsWindow::ConstrainPosition(bool aAllowSlop,
 }
 
 NS_IMETHODIMP
-nsWindow::Move(int32_t aX,
-               int32_t aY)
+nsWindow::Move(double aX,
+               double aY)
 {
     return NS_OK;
 }
 
 NS_IMETHODIMP
-nsWindow::Resize(int32_t aWidth,
-                 int32_t aHeight,
-                 bool    aRepaint)
+nsWindow::Resize(double aWidth,
+                 double aHeight,
+                 bool   aRepaint)
 {
     return Resize(0, 0, aWidth, aHeight, aRepaint);
 }
 
 NS_IMETHODIMP
-nsWindow::Resize(int32_t aX,
-                 int32_t aY,
-                 int32_t aWidth,
-                 int32_t aHeight,
-                 bool    aRepaint)
+nsWindow::Resize(double aX,
+                 double aY,
+                 double aWidth,
+                 double aHeight,
+                 bool   aRepaint)
 {
-    mBounds = nsIntRect(aX, aY, aWidth, aHeight);
+    mBounds = nsIntRect(NSToIntRound(aX), NSToIntRound(aY),
+                        NSToIntRound(aWidth), NSToIntRound(aHeight));
     if (mWidgetListener)
-        mWidgetListener->WindowResized(this, aWidth, aHeight);
+        mWidgetListener->WindowResized(this, mBounds.width, mBounds.height);
 
     if (aRepaint && gWindowToRedraw)
         gWindowToRedraw->Invalidate(sVirtualBounds);

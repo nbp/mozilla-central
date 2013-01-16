@@ -37,8 +37,10 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StaticPtr.h"
 #include "Connection.h"
+#include "nsIObserverService.h"
 #ifdef MOZ_B2G_RIL
 #include "MobileConnection.h"
+#include "mozilla/dom/CellBroadcast.h"
 #endif
 #include "nsIIdleObserver.h"
 #include "nsIPermissionManager.h"
@@ -58,6 +60,10 @@
 #endif
 #include "nsIDOMCameraManager.h"
 #include "DOMCameraManager.h"
+
+#ifdef MOZ_AUDIO_CHANNEL_MANAGER
+#include "AudioChannelManager.h"
+#endif
 
 #include "nsIDOMGlobalPropertyInitializer.h"
 
@@ -97,6 +103,10 @@ Navigator::Navigator(nsPIDOMWindow* aWindow)
 {
   NS_ASSERTION(aWindow->IsInnerWindow(),
                "Navigator must get an inner window!");
+  nsCOMPtr<nsIObserverService> obsService =
+    mozilla::services::GetObserverService();
+  if (obsService)
+    obsService->AddObserver(this, "plugin-info-updated", false);
 }
 
 Navigator::~Navigator()
@@ -113,6 +123,7 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsINavigatorBattery)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
+  NS_INTERFACE_MAP_ENTRY(nsIObserver)
 #ifdef MOZ_MEDIA_NAVIGATOR
   NS_INTERFACE_MAP_ENTRY(nsINavigatorUserMedia)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
@@ -123,6 +134,7 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorNetwork)
 #ifdef MOZ_B2G_RIL
   NS_INTERFACE_MAP_ENTRY(nsIMozNavigatorMobileConnection)
+  NS_INTERFACE_MAP_ENTRY(nsIMozNavigatorCellBroadcast)
 #endif
 #ifdef MOZ_B2G_BT
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorBluetooth)
@@ -131,6 +143,9 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorSystemMessages)
 #ifdef MOZ_TIME_MANAGER
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorTime)
+#endif
+#ifdef MOZ_AUDIO_CHANNEL_MANAGER
+  NS_INTERFACE_MAP_ENTRY(nsIMozNavigatorAudioChannelManager)
 #endif
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(Navigator)
 NS_INTERFACE_MAP_END
@@ -142,6 +157,12 @@ void
 Navigator::Invalidate()
 {
   mWindow = nullptr;
+
+  nsCOMPtr<nsIObserverService> obsService =
+    mozilla::services::GetObserverService();
+  if (obsService) {
+    obsService->RemoveObserver(this, "plugin-info-updated");
+  }
 
   if (mPlugins) {
     mPlugins->Invalidate();
@@ -194,6 +215,10 @@ Navigator::Invalidate()
     mMobileConnection->Shutdown();
     mMobileConnection = nullptr;
   }
+
+  if (mCellBroadcast) {
+    mCellBroadcast = nullptr;
+  }
 #endif
 
 #ifdef MOZ_B2G_BT
@@ -207,6 +232,12 @@ Navigator::Invalidate()
 #ifdef MOZ_SYS_MSG
   if (mMessagesManager) {
     mMessagesManager = nullptr;
+  }
+#endif
+
+#ifdef MOZ_AUDIO_CHANNEL_MANAGER
+  if (mAudioChannelManager) {
+    mAudioChannelManager = nullptr;
   }
 #endif
 
@@ -229,6 +260,19 @@ Navigator::GetWindow()
   return win;
 }
 
+//*****************************************************************************
+//    Navigator::nsIObserver
+//*****************************************************************************
+
+NS_IMETHODIMP
+Navigator::Observe(nsISupports *aSubject, const char *aTopic,
+                   const PRUnichar *aData) {
+  if (!nsCRT::strcmp(aTopic, "plugin-info-updated") && mPlugins) {
+    mPlugins->Refresh(false);
+  }
+
+  return NS_OK;
+}
 
 //*****************************************************************************
 //    Navigator::nsIDOMNavigator
@@ -733,7 +777,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(win, NS_OK);
 
-  nsIDOMDocument* domDoc = win->GetExtantDocument();
+  nsCOMPtr<nsIDOMDocument> domDoc = win->GetExtantDocument();
   NS_ENSURE_TRUE(domDoc, NS_ERROR_FAILURE);
 
   bool hidden = true;
@@ -1154,6 +1198,31 @@ Navigator::GetMozSms(nsIDOMMozSmsManager** aSmsManager)
 #ifdef MOZ_B2G_RIL
 
 //*****************************************************************************
+//    Navigator::nsIMozNavigatorCellBroadcast
+//*****************************************************************************
+
+NS_IMETHODIMP
+Navigator::GetMozCellBroadcast(nsIDOMMozCellBroadcast** aCellBroadcast)
+{
+  *aCellBroadcast = nullptr;
+
+  if (!mCellBroadcast) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_OK);
+
+    if (!CheckPermission("cellbroadcast")) {
+      return NS_OK;
+    }
+
+    nsresult rv = NS_NewCellBroadcast(window, getter_AddRefs(mCellBroadcast));
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  NS_ADDREF(*aCellBroadcast = mCellBroadcast);
+  return NS_OK;
+}
+
+//*****************************************************************************
 //    nsNavigator::nsIDOMNavigatorTelephony
 //*****************************************************************************
 
@@ -1433,6 +1502,27 @@ Navigator::CheckPermission(const char* type)
   permMgr->TestPermissionFromWindow(window, type, &permission);
   return permission == nsIPermissionManager::ALLOW_ACTION;
 }
+
+//*****************************************************************************
+//    Navigator::nsINavigatorAudioChannelManager
+//*****************************************************************************
+#ifdef MOZ_AUDIO_CHANNEL_MANAGER
+NS_IMETHODIMP
+Navigator::GetMozAudioChannelManager(nsIAudioChannelManager** aAudioChannelManager)
+{
+  *aAudioChannelManager = nullptr;
+
+  if (!mAudioChannelManager) {
+    nsCOMPtr<nsPIDOMWindow> window = do_QueryReferent(mWindow);
+    NS_ENSURE_TRUE(window, NS_OK);
+    mAudioChannelManager = new system::AudioChannelManager();
+    mAudioChannelManager->Init(window);
+  }
+
+  NS_ADDREF(*aAudioChannelManager = mAudioChannelManager);
+  return NS_OK;
+}
+#endif
 
 } // namespace dom
 } // namespace mozilla

@@ -55,7 +55,7 @@ NSPR_VERSION=4
 dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 PERL_VERSION=5.006
-PYTHON_VERSION=2.6
+PYTHON_VERSION=2.7
 WINDRES_VERSION=2.14.90
 W32API_VERSION=3.14
 
@@ -665,7 +665,7 @@ else
     AC_MSG_RESULT([yes])
 fi
 
-MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python2.6 python2.5 python)
+MOZ_PATH_PROGS(PYTHON, $PYTHON python2.7 python)
 if test -z "$PYTHON"; then
     AC_MSG_ERROR([python was not found in \$PATH])
 fi
@@ -1194,6 +1194,13 @@ if test "$GNU_CC"; then
     DSO_PIC_CFLAGS='-fPIC'
     ASFLAGS="$ASFLAGS -fPIC"
 
+    AC_MSG_CHECKING([for --build-id option to ld])
+    _SAVE_LDFLAGS=$LDFLAGS
+    LDFLAGS="$LDFLAGS -Wl,--build-id"
+    AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
+                  AC_MSG_RESULT([no])
+                  LDFLAGS=$_SAVE_LDFLAGS)
+
     # Turn on GNU-specific warnings:
     # -Wall - turn on a lot of warnings
     # -pedantic - this is turned on below
@@ -1397,8 +1404,6 @@ dnl System overrides of the defaults for host
 dnl ========================================================
 case "$host" in
 *mingw*)
-    # we need Python 2.6 on Windows
-    PYTHON_VERSION=2.6
     if test -n "$_WIN32_MSVC"; then
         HOST_AR=lib
         HOST_AR_FLAGS='-NOLOGO -OUT:"$@"'
@@ -1458,8 +1463,7 @@ case "$host" in
     ;;
 esac
 
-dnl We require version 2.4 or newer of Python to build,
-dnl and 2.5 or newer on Windows.
+dnl We require version 2.7 of Python to build.
 AC_MSG_CHECKING([for Python version >= $PYTHON_VERSION but not 3.x])
 changequote(,)
 $PYTHON -c "import sys; sys.exit(sys.version[:3] < sys.argv[1] or sys.version[:2] != '2.')" $PYTHON_VERSION
@@ -3466,6 +3470,7 @@ MOZ_ARG_ENABLE_BOOL(sm-fail-on-warnings,
 
 AC_SUBST(FAIL_ON_WARNINGS)
 
+dnl ========================================================
 dnl = Enable trace malloc
 dnl ========================================================
 NS_TRACE_MALLOC=${MOZ_TRACE_MALLOC}
@@ -3479,6 +3484,27 @@ if test "$NS_TRACE_MALLOC"; then
   AC_DEFINE(NS_TRACE_MALLOC)
 fi
 AC_SUBST(NS_TRACE_MALLOC)
+
+dnl ========================================================
+dnl = Enable DMD
+dnl ========================================================
+
+MOZ_ARG_ENABLE_BOOL(dmd,
+[  --enable-dmd            Enable DMD; also enables jemalloc and replace-malloc],
+    MOZ_DMD=1,
+    MOZ_DMD= )
+
+if test "$NS_TRACE_MALLOC"; then        # trace-malloc disables DMD
+    MOZ_DMD=
+fi
+if test "$MOZ_DMD"; then
+    AC_DEFINE(MOZ_DMD)
+
+    if test "${CPU_ARCH}" = "arm"; then
+        CFLAGS="$CFLAGS -funwind-tables"
+        CXXFLAGS="$CXXFLAGS -funwind-tables"
+    fi
+fi
 
 dnl ========================================================
 dnl = Enable jemalloc
@@ -3830,9 +3856,9 @@ if test -z "$SKIP_LIBRARY_CHECKS"; then
     AC_LANG_RESTORE
 fi
 
-# Demangle only for debug or trace-malloc builds
+# Demangle only for debug or trace-malloc or DMD builds
 MOZ_DEMANGLE_SYMBOLS=
-if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$HAVE_DEMANGLE" && test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_DEMANGLE_SYMBOLS=1
     AC_DEFINE(MOZ_DEMANGLE_SYMBOLS)
 fi
@@ -4072,6 +4098,29 @@ else
 fi
 
 dnl ========================================================
+dnl = Disable -fstrict-aliasing on Linux/Android with GCC 4.4 and earlier.
+dnl = See bug 821502.
+dnl ========================================================
+case "$target" in
+*-android*|*-linuxandroid*|*-*linux*)
+    if test "$GNU_CC"; then
+        changequote(,)
+        GCC_VERSION_FULL=`echo "$CXX_VERSION" | $PERL -pe 's/^.*gcc version ([^ ]*).*/$1/'`
+        GCC_VERSION=`echo "$GCC_VERSION_FULL" | $PERL -pe '(split(/\./))[0]>=4&&s/(^\d*\.\d*).*/$1/;'`
+        changequote([,])
+
+        GCC_MAJOR_VERSION=`echo ${GCC_VERSION} | $AWK -F\. '{ print $1 }'`
+        GCC_MINOR_VERSION=`echo ${GCC_VERSION} | $AWK -F\. '{ print $2 }'`
+
+        dnl GCC 3.x isn't supported, so we don't need to check for that.
+        if test "$GCC_MAJOR_VERSION" -eq "4" -a "$GCC_MINOR_VERSION" -lt "5" ; then
+            CFLAGS="$CFLAGS -fno-strict-aliasing"
+            CXXFLAGS="$CXXFLAGS -fno-strict-aliasing"
+        fi
+    fi
+esac
+
+dnl ========================================================
 dnl = Link js shell to system readline
 dnl ========================================================
 MOZ_ARG_ENABLE_BOOL(readline,
@@ -4132,7 +4181,7 @@ if test "$JS_HAS_CTYPES"; then
   AC_DEFINE(JS_HAS_CTYPES)
 fi
 
-if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC"; then
+if test "$MOZ_DEBUG" -o "$NS_TRACE_MALLOC" -o "$MOZ_DMD"; then
     MOZ_COMPONENTS_VERSION_SCRIPT_LDFLAGS=
 fi
 

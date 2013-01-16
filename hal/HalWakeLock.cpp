@@ -54,17 +54,6 @@ static bool sInitialized = false;
 static bool sIsShuttingDown = false;
 
 static PLDHashOperator
-RemoveChildFromList(const nsAString& aKey, ProcessLockTable* aTable, void* aUserArg)
-{
-  MOZ_ASSERT(aUserArg);
-
-  uint64_t childID = *static_cast<uint64_t*>(aUserArg);
-  aTable->Remove(childID);
-
-  return PL_DHASH_NEXT;
-}
-
-static PLDHashOperator
 CountWakeLocks(const uint64_t& aKey, LockCount aCount, void* aUserArg)
 {
   MOZ_ASSERT(aUserArg);
@@ -74,6 +63,33 @@ CountWakeLocks(const uint64_t& aKey, LockCount aCount, void* aUserArg)
   totalCount->numHidden += aCount.numHidden;
 
   return PL_DHASH_NEXT;
+}
+
+static PLDHashOperator
+RemoveChildFromList(const nsAString& aKey, nsAutoPtr<ProcessLockTable>& aTable,
+                    void* aUserArg)
+{
+  MOZ_ASSERT(aUserArg);
+
+  PLDHashOperator op = PL_DHASH_NEXT;
+  uint64_t childID = *static_cast<uint64_t*>(aUserArg);
+  if (aTable->Get(childID, NULL)) {
+    aTable->Remove(childID);
+    if (sActiveListeners) {
+      LockCount totalCount;
+      WakeLockInformation info;
+      aTable->EnumerateRead(CountWakeLocks, &totalCount);
+      if (!totalCount.numLocks) {
+        op = PL_DHASH_REMOVE;
+      }
+      info.numLocks() = totalCount.numLocks;
+      info.numHidden() = totalCount.numHidden;
+      info.topic() = aKey;
+      NotifyWakeLockChange(info);
+    }
+  }
+
+  return op;
 }
 
 class ClearHashtableOnShutdown MOZ_FINAL : public nsIObserver {
@@ -122,7 +138,7 @@ CleanupOnContentShutdown::Observe(nsISupports* aSubject, const char* aTopic, con
   nsresult rv = props->GetPropertyAsUint64(NS_LITERAL_STRING("childID"),
                                            &childID);
   if (NS_SUCCEEDED(rv)) {
-    sLockTable->EnumerateRead(RemoveChildFromList, &childID);
+    sLockTable->Enumerate(RemoveChildFromList, &childID);
   } else {
     NS_WARNING("ipc:content-shutdown message without childID property");
   }
@@ -162,6 +178,8 @@ ModifyWakeLockInternal(const nsAString& aTopic,
                        hal::WakeLockControl aHiddenAdjust,
                        uint64_t aProcessID)
 {
+  MOZ_ASSERT(NS_IsMainThread());
+
   if (sIsShuttingDown) {
     return;
   }

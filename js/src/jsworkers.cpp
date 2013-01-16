@@ -4,6 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "jsworkers.h"
 
 #if JS_ION
@@ -16,12 +18,6 @@ using namespace js;
 using mozilla::DebugOnly;
 
 #ifdef JS_PARALLEL_COMPILATION
-
-bool
-js::OffThreadCompilationAvailable(JSContext *cx)
-{
-    return cx->runtime->useHelperThreads();
-}
 
 bool
 js::StartOffThreadIonCompile(JSContext *cx, ion::IonBuilder *builder)
@@ -92,7 +88,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     /* Cancel any pending entries for which processing hasn't started. */
     for (size_t i = 0; i < state.ionWorklist.length(); i++) {
         ion::IonBuilder *builder = state.ionWorklist[i];
-        if (CompiledScriptMatches(compartment, script, builder->script().unsafeGet())) {
+        if (CompiledScriptMatches(compartment, script, builder->script())) {
             FinishOffThreadIonCompile(builder);
             state.ionWorklist[i--] = state.ionWorklist.back();
             state.ionWorklist.popBack();
@@ -103,7 +99,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     for (size_t i = 0; i < state.numThreads; i++) {
         const WorkerThread &helper = state.threads[i];
         while (helper.ionBuilder &&
-               CompiledScriptMatches(compartment, script, helper.ionBuilder->script().unsafeGet()))
+               CompiledScriptMatches(compartment, script, helper.ionBuilder->script()))
         {
             helper.ionBuilder->cancel();
             state.wait(WorkerThreadState::MAIN);
@@ -115,7 +111,7 @@ js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
     /* Cancel code generation for any completed entries. */
     for (size_t i = 0; i < compilations.length(); i++) {
         ion::IonBuilder *builder = compilations[i];
-        if (CompiledScriptMatches(compartment, script, builder->script().unsafeGet())) {
+        if (CompiledScriptMatches(compartment, script, builder->script())) {
             ion::FinishOffThreadBuilder(builder);
             compilations[i--] = compilations.back();
             compilations.popBack();
@@ -315,8 +311,8 @@ WorkerThread::threadLoop()
 
         ionBuilder = state.ionWorklist.popCopy();
 
-        ion::ExecutionMode executionMode = ionBuilder->info().executionMode();
-        JS_ASSERT(GetIonScript(ionBuilder->script().unsafeGet(), executionMode) == ION_COMPILING_SCRIPT);
+        DebugOnly<ion::ExecutionMode> executionMode = ionBuilder->info().executionMode();
+        JS_ASSERT(GetIonScript(ionBuilder->script(), executionMode) == ION_COMPILING_SCRIPT);
 
         state.unlock();
 
@@ -356,12 +352,6 @@ js::StartOffThreadIonCompile(JSContext *cx, ion::IonBuilder *builder)
 void
 js::CancelOffThreadIonCompile(JSCompartment *compartment, JSScript *script)
 {
-}
-
-bool
-js::OffThreadCompilationAvailable(JSContext *cx)
-{
-    return false;
 }
 
 #endif /* JS_PARALLEL_COMPILATION */

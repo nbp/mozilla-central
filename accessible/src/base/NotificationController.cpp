@@ -9,7 +9,7 @@
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
 #include "nsCoreUtils.h"
-#include "DocAccessible.h"
+#include "DocAccessible-inl.h"
 #include "nsEventShell.h"
 #include "FocusManager.h"
 #include "Role.h"
@@ -66,8 +66,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(NotificationController)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(NotificationController)
-  NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mDocument");
-  cb.NoteXPCOMChild(static_cast<nsIAccessible*>(tmp->mDocument.get()));
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocument)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mHangingChildDocuments)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mContentInsertions)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mEvents)
@@ -108,7 +107,7 @@ NotificationController::Shutdown()
 void
 NotificationController::QueueEvent(AccEvent* aEvent)
 {
-  NS_ASSERTION(aEvent->mAccessible && aEvent->mAccessible->IsApplication() ||
+  NS_ASSERTION((aEvent->mAccessible && aEvent->mAccessible->IsApplication()) ||
                aEvent->GetDocAccessible() == mDocument,
                "Queued event belongs to another document!");
 
@@ -214,6 +213,10 @@ NotificationController::WillRefresh(mozilla::TimeStamp aTime)
                  "Pending content insertions while initial accessible tree isn't created!");
   }
 
+  // Initialize scroll support if needed.
+  if (!(mDocument->mDocFlags & DocAccessible::eScrollInitialized))
+    mDocument->AddScrollListener();
+
   // Process content inserted notifications to update the tree. Process other
   // notifications like DOM events and then flush event queue. If any new
   // notifications are queued during this processing then they will be processed
@@ -318,8 +321,8 @@ NotificationController::WillRefresh(mozilla::TimeStamp aTime)
 void
 NotificationController::CoalesceEvents()
 {
-  uint32_t numQueuedEvents = mEvents.Length();
-  int32_t tail = numQueuedEvents - 1;
+  NS_ASSERTION(mEvents.Length(), "There should be at least one pending event!");
+  uint32_t tail = mEvents.Length() - 1;
   AccEvent* tailEvent = mEvents[tail];
 
   switch(tailEvent->mEventRule) {
@@ -395,8 +398,7 @@ NotificationController::CoalesceEvents()
     case AccEvent::eCoalesceSelectionChange:
     {
       AccSelChangeEvent* tailSelChangeEvent = downcast_accEvent(tailEvent);
-      int32_t index = tail - 1;
-      for (; index >= 0; index--) {
+      for (uint32_t index = tail - 1; index < tail; index--) {
         AccEvent* thisEvent = mEvents[index];
         if (thisEvent->mEventRule == tailEvent->mEventRule) {
           AccSelChangeEvent* thisSelChangeEvent =
@@ -509,7 +511,7 @@ NotificationController::CoalesceReorderEvents(AccEvent* aTailEvent)
 void
 NotificationController::CoalesceSelChangeEvents(AccSelChangeEvent* aTailEvent,
                                                 AccSelChangeEvent* aThisEvent,
-                                                int32_t aThisIndex)
+                                                uint32_t aThisIndex)
 {
   aTailEvent->mPreceedingCount = aThisEvent->mPreceedingCount + 1;
 
@@ -639,8 +641,7 @@ NotificationController::CoalesceTextChangeEventsFor(AccShowEvent* aTailEvent,
 void
 NotificationController::CreateTextChangeEventFor(AccMutationEvent* aEvent)
 {
-  DocAccessible* document = aEvent->GetDocAccessible();
-  Accessible* container = document->GetContainerAccessible(aEvent->mNode);
+  Accessible* container = aEvent->mAccessible->Parent();
   if (!container)
     return;
 

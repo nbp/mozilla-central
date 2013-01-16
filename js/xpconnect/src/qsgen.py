@@ -80,9 +80,6 @@
 #
 # - There are many features of IDL that XPConnect supports but qsgen does not,
 #   including dependent types, arrays, and out parameters.
-#
-# - Since quick stubs are JSPropertyOps, we have to do additional work to make
-#   __lookup[GS]etter__ work on them.
 
 
 import xpidl
@@ -277,8 +274,7 @@ def readConfigFile(filename, includePath, cachedir):
         iface = getInterface(interfaceName, errorLoc='looking for %r' % memberId)
 
         if not iface.attributes.scriptable:
-            raise UserError("Interface %s is not scriptable. "
-                            "IDL file: %r." % (interfaceName, idlFile))
+            raise UserError("Interface %s is not scriptable." % interfaceName)
 
         if memberName == '*':
             if not add:
@@ -287,8 +283,6 @@ def readConfigFile(filename, includePath, cachedir):
             # Stub all scriptable members of this interface.
             for member in iface.members:
                 if member.kind in ('method', 'attribute') and not member.noscript:
-                    cmc = conf.customMethodCalls.get(interfaceName + "_" + header.methodNativeName(member), None)
-
                     addStubMember(iface.name + '.' + member.name, member)
 
                     if member.iface not in stubbedInterfaces:
@@ -305,8 +299,6 @@ def readConfigFile(filename, includePath, cachedir):
                 if member in iface.stubMembers:
                     raise UserError("Member %s is specified more than once."
                                     % memberId)
-
-                cmc = conf.customMethodCalls.get(interfaceName + "_" + header.methodNativeName(member), None)
 
                 addStubMember(memberId, member)
                 if member.iface not in stubbedInterfaces:
@@ -598,7 +590,8 @@ def writeResultDecl(f, type, varname):
             f.write("    nsString %s;\n" % varname)
             return
         elif name == '[jsval]':
-            return  # nothing to declare; see special case in outParamForm
+            f.write("    jsval %s;\n" % varname)
+            return
     elif t.kind in ('interface', 'forward'):
         f.write("    nsCOMPtr<%s> %s;\n" % (type.name, varname))
         return
@@ -608,15 +601,11 @@ def writeResultDecl(f, type, varname):
 
 def outParamForm(name, type):
     type = unaliasType(type)
-    # If we start allowing [jsval] return types here, we need to tack
-    # the return value onto the arguments list in the callers,
-    # possibly, and handle properly returning it too.  See bug 604198.
-    assert getBuiltinOrNativeTypeName(type) is not '[jsval]'
     if type.kind == 'builtin':
         return '&' + name
     elif type.kind == 'native':
         if getBuiltinOrNativeTypeName(type) == '[jsval]':
-            return 'vp'
+            return '&' + name
         elif type.modifier == 'ref':
             return name
         else:
@@ -675,9 +664,8 @@ resultConvTemplates = {
         "    return xpc::StringToJsval(cx, result, ${jsvalPtr});\n",
 
     '[jsval]':
-        # Here there's nothing to convert, because the result has already been
-        # written directly to *rv. See the special case in outParamForm.
-        "    return JS_TRUE;\n"
+        "    ${jsvalRef} = result;\n"
+        "    return JS_WrapValue(cx, ${jsvalPtr});\n"
     }
 
 def isVariantType(t):
@@ -1292,7 +1280,6 @@ def writeStubFile(filename, headerFilename, conf, interfaces):
 
     try:
         f.write(stubTopTemplate % os.path.basename(headerFilename))
-        N = 256
         resulttypes = []
         for iface in interfaces:
             resulttypes.extend(writeIncludesForInterface(iface))

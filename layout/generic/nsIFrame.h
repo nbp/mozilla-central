@@ -62,7 +62,7 @@ class nsIAtom;
 class nsPresContext;
 class nsIPresShell;
 class nsRenderingContext;
-class nsIView;
+class nsView;
 class nsIWidget;
 class nsIDOMRange;
 class nsISelectionController;
@@ -253,10 +253,6 @@ typedef uint64_t nsFrameState;
 // This bit acts as a loop flag for recursive paint server drawing.
 #define NS_FRAME_DRAWING_AS_PAINTSERVER             NS_FRAME_STATE_BIT(33)
 
-// Marks the frame as having a changed transform between processing
-// nsChangeHint_UpdateTransformLayer and calling FinishAndStoreOverflow.
-#define NS_FRAME_TRANSFORM_CHANGED                  NS_FRAME_STATE_BIT(34)
-
 // Frame is a display root and the retained layer tree needs to be updated
 // at the next paint via display list construction.
 // Only meaningful for display roots, so we don't really need a global state
@@ -299,10 +295,6 @@ typedef uint64_t nsFrameState;
 // alpha children. With BasicLayers we avoid creating these, so we mark
 // the frames for future reference.
 #define NS_FRAME_NO_COMPONENT_ALPHA                 NS_FRAME_STATE_BIT(45)
-
-// Frame has a cached rasterization of anV
-// nsDisplayBackground display item
-#define NS_FRAME_HAS_CACHED_BACKGROUND              NS_FRAME_STATE_BIT(46)
 
 // The frame is a descendant of nsSVGTextFrame2 and is thus used for SVG
 // text layout.
@@ -1315,6 +1307,18 @@ public:
   void RecomputePerspectiveChildrenOverflow(const nsStyleContext* aStartStyle, const nsRect* aBounds);
 
   /**
+   * Returns the number of ancestors between this and the root of our frame tree
+   */
+  uint32_t GetDepthInFrameTree() {
+    uint32_t result = 0;
+    for (nsIFrame* ancestor = GetParent(); ancestor;
+         ancestor = ancestor->GetParent()) {
+      result++;
+    }
+    return result;
+  }
+
+  /**
    * Event handling of GUI events.
    *
    * @param   aEvent event structure describing the type of event and rge widget
@@ -1945,16 +1949,16 @@ public:
    * GetView returns non-null if and only if |HasView| returns true.
    */
   bool HasView() const { return !!(mState & NS_FRAME_HAS_VIEW); }
-  nsIView* GetView() const;
-  virtual nsIView* GetViewExternal() const;
-  nsresult SetView(nsIView* aView);
+  nsView* GetView() const;
+  virtual nsView* GetViewExternal() const;
+  nsresult SetView(nsView* aView);
 
   /**
    * Find the closest view (on |this| or an ancestor).
    * If aOffset is non-null, it will be set to the offset of |this|
    * from the returned view.
    */
-  nsIView* GetClosestView(nsPoint* aOffset = nullptr) const;
+  nsView* GetClosestView(nsPoint* aOffset = nullptr) const;
 
   /**
    * Find the closest ancestor (excluding |this| !) that has a view
@@ -2022,7 +2026,7 @@ public:
    * has a view. Also returns the containing view or null in case of error
    */
   NS_IMETHOD  GetOffsetFromView(nsPoint&  aOffset,
-                                nsIView** aView) const = 0;
+                                nsView** aView) const = 0;
 
   /**
    * Returns the nearest widget containing this frame. If this frame has a
@@ -2093,6 +2097,7 @@ public:
     // children. For example, the whitespace between <table>\n<tr>\n<td>
     // will be excluded during the construction of children. 
     eExcludesIgnorableWhitespace =      1 << 13,
+    eSupportsCSSTransforms =            1 << 14,
 
     // These are to allow nsFrame::Init to assert that IsFrameOfType
     // implementations all call the base class method.  They are only
@@ -2111,9 +2116,9 @@ public:
   virtual bool IsFrameOfType(uint32_t aFlags) const
   {
 #ifdef DEBUG
-    return !(aFlags & ~(nsIFrame::eDEBUGAllFrames));
+    return !(aFlags & ~(nsIFrame::eDEBUGAllFrames | nsIFrame::eSupportsCSSTransforms));
 #else
-    return !aFlags;
+    return !(aFlags & ~nsIFrame::eSupportsCSSTransforms);
 #endif
   }
 
@@ -2676,8 +2681,6 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
    */
   virtual bool IsFocusable(int32_t *aTabIndex = nullptr, bool aWithMouse = false);
 
-  void ClearDisplayItemCache();
-
   // BOX LAYOUT METHODS
   // These methods have been migrated from nsIBox and are in the process of
   // being refactored. DO NOT USE OUTSIDE OF XUL.
@@ -2729,7 +2732,7 @@ NS_PTR_TO_INT32(frame->Properties().Get(nsIFrame::ParagraphDepthProperty()))
   virtual nsSize GetMinSizeForScrollArea(nsBoxLayoutState& aBoxLayoutState) = 0;
 
   // Implemented in nsBox, used in nsBoxFrame
-  uint32_t GetOrdinal(nsBoxLayoutState& aBoxLayoutState);
+  uint32_t GetOrdinal();
 
   virtual nscoord GetFlex(nsBoxLayoutState& aBoxLayoutState) = 0;
   virtual nscoord GetBoxAscent(nsBoxLayoutState& aBoxLayoutState) = 0;

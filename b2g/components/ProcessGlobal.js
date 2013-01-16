@@ -22,6 +22,9 @@ const Cu = Components.utils;
 Cu.import('resource://gre/modules/Services.jsm');
 Cu.import('resource://gre/modules/XPCOMUtils.jsm');
 
+// Preloading the CSP jsm in this process early on.
+Cu.import("resource://gre/modules/CSPUtils.jsm");
+
 function debug(msg) {
   log(msg);
 }
@@ -40,6 +43,7 @@ ProcessGlobal.prototype = {
     switch (topic) {
     case 'app-startup': {
       Services.obs.addObserver(this, 'console-api-log-event', false);
+      Services.obs.addObserver(this, 'remote-browser-frame-shown', false);
       break;
     }
     case 'console-api-log-event': {
@@ -52,6 +56,17 @@ ProcessGlobal.prototype = {
       Services.console.logStringMessage(prefix + Array.join(message.arguments,
                                                             ' '));
       break;
+    }
+    case 'remote-browser-frame-shown': {
+      let frameLoader = subject.QueryInterface(Ci.nsIFrameLoader);
+      let mm = frameLoader.messageManager;
+
+      const kFrameScript = "chrome://browser/content/UAO_child.js";
+      try {
+        mm.loadFrameScript(kFrameScript, true);
+      } catch (e) {
+        dump('Error loading ' + kFrameScript + ' as frame script: ' + e + '\n');
+      }
     }
     }
   },

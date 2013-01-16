@@ -12,11 +12,13 @@
 
 #include "nsAutoPtr.h"
 #include "nsBaseWidget.h"
+#include "nsWindowBase.h"
 #include "nsdefs.h"
 #include "nsIdleService.h"
 #include "nsToolkit.h"
 #include "nsString.h"
 #include "nsTArray.h"
+#include "nsEvent.h"
 #include "gfxWindowsSurface.h"
 #include "nsWindowDbg.h"
 #include "cairo.h"
@@ -63,7 +65,7 @@ class ModifierKeyState;
  * Native WIN32 window wrapper.
  */
 
-class nsWindow : public nsBaseWidget
+class nsWindow : public nsWindowBase
 {
   typedef mozilla::TimeStamp TimeStamp;
   typedef mozilla::TimeDuration TimeDuration;
@@ -78,9 +80,11 @@ public:
 
   friend class nsWindowGfx;
 
-  /**
-   * nsIWidget interface
-   */
+  // nsWindowBase
+  virtual void InitEvent(nsGUIEvent& aEvent, nsIntPoint* aPoint = nullptr) MOZ_OVERRIDE;
+  virtual bool DispatchWindowEvent(nsGUIEvent* aEvent) MOZ_OVERRIDE;
+
+  // nsIWidget interface
   NS_IMETHOD              Create(nsIWidget *aParent,
                                  nsNativeWidget aNativeParent,
                                  const nsIntRect &aRect,
@@ -95,9 +99,9 @@ public:
   virtual bool            IsVisible() const;
   NS_IMETHOD              ConstrainPosition(bool aAllowSlop, int32_t *aX, int32_t *aY);
   virtual void            SetSizeConstraints(const SizeConstraints& aConstraints);
-  NS_IMETHOD              Move(int32_t aX, int32_t aY);
-  NS_IMETHOD              Resize(int32_t aWidth, int32_t aHeight, bool aRepaint);
-  NS_IMETHOD              Resize(int32_t aX, int32_t aY, int32_t aWidth, int32_t aHeight, bool aRepaint);
+  NS_IMETHOD              Move(double aX, double aY);
+  NS_IMETHOD              Resize(double aWidth, double aHeight, bool aRepaint);
+  NS_IMETHOD              Resize(double aX, double aY, double aWidth, double aHeight, bool aRepaint);
   NS_IMETHOD              BeginResizeDrag(nsGUIEvent* aEvent, int32_t aHorizontal, int32_t aVertical);
   NS_IMETHOD              PlaceBehind(nsTopLevelWidgetZPlacement aPlacement, nsIWidget *aWidget, bool aActivate);
   NS_IMETHOD              SetSizeMode(int32_t aMode);
@@ -185,13 +189,11 @@ public:
   /**
    * Event helpers
    */
-  void                    InitEvent(nsGUIEvent& event, nsIntPoint* aPoint = nullptr);
   virtual bool            DispatchMouseEvent(uint32_t aEventType, WPARAM wParam,
                                              LPARAM lParam,
                                              bool aIsContextMenuKey = false,
                                              int16_t aButton = nsMouseEvent::eLeftButton,
                                              uint16_t aInputSource = nsIDOMMouseEvent::MOZ_SOURCE_MOUSE);
-  virtual bool            DispatchWindowEvent(nsGUIEvent* event);
   virtual bool            DispatchWindowEvent(nsGUIEvent*event, nsEventStatus &aStatus);
   void                    InitKeyEvent(nsKeyEvent& aKeyEvent,
                                        const NativeKey& aNativeKey,
@@ -214,7 +216,6 @@ public:
    * Window utilities
    */
   nsWindow*               GetTopLevelWindow(bool aStopOnDialogOrPopup);
-  HWND                    GetWindowHandle() { return mWnd; }
   WNDPROC                 GetPrevWindowProc() { return mPrevWndProc; }
   WindowHook&             GetWindowHook() { return mWindowHook; }
   nsWindow*               GetParentWindow(bool aIncludeOwner);
@@ -375,7 +376,7 @@ protected:
                                  const NativeKey& aNativeKey,
                                  const mozilla::widget::ModifierKeyState &aModKeyState,
                                  bool *aEventDispatched,
-                                 uint32_t aFlags = 0);
+                                 const mozilla::widget::EventFlags* aExtraFlags = nullptr);
   LRESULT                 OnKeyDown(const MSG &aMsg,
                                     const mozilla::widget::ModifierKeyState &aModKeyState,
                                     bool *aEventDispatched,
@@ -420,7 +421,7 @@ protected:
   static void             ScheduleHookTimer(HWND aWnd, UINT aMsgId);
   static void             RegisterSpecialDropdownHooks();
   static void             UnregisterSpecialDropdownHooks();
-  static BOOL             DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
+  static bool             DealWithPopups(HWND inWnd, UINT inMsg, WPARAM inWParam, LPARAM inLParam, LRESULT* outResult);
 
   /**
    * Window transparency helpers
@@ -451,6 +452,7 @@ protected:
                                            PAINTSTRUCT ps, HDC aDC);
   static void             ActivateOtherWindowHelper(HWND aWnd);
   void                    ClearCachedResources();
+  nsIWidgetListener*      GetPaintListener();
 
 protected:
   nsCOMPtr<nsIWidget>   mParent;

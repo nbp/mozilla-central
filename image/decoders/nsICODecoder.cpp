@@ -14,7 +14,6 @@
 #include "nsIInputStream.h"
 #include "nsIComponentManager.h"
 #include "RasterImage.h"
-#include "imgIContainerObserver.h"
 
 #include "nsIProperties.h"
 #include "nsISupportsPrimitives.h"
@@ -63,7 +62,7 @@ nsICODecoder::GetNumColors()
 }
 
 
-nsICODecoder::nsICODecoder(RasterImage &aImage, imgIDecoderObserver* aObserver)
+nsICODecoder::nsICODecoder(RasterImage &aImage, imgDecoderObserver* aObserver)
  : Decoder(aImage, aObserver)
 {
   mPos = mImageOffset = mCurrIcon = mNumIcons = mBPP = mRowBytes = 0;
@@ -212,9 +211,9 @@ nsICODecoder::SetHotSpotIfCursor() {
   }
 
   nsCOMPtr<nsISupportsPRUint32> intwrapx = 
-    do_CreateInstance("@mozilla.org/supports-uint32_t;1");
+    do_CreateInstance("@mozilla.org/supports-PRUint32;1");
   nsCOMPtr<nsISupportsPRUint32> intwrapy = 
-    do_CreateInstance("@mozilla.org/supports-uint32_t;1");
+    do_CreateInstance("@mozilla.org/supports-PRUint32;1");
 
   if (intwrapx && intwrapy) {
     intwrapx->SetData(mDirEntry.mXHotspot);

@@ -26,6 +26,7 @@ class nsIStyleSheet;
 class nsIAtom;
 class nsICSSPseudoComparator;
 class nsAttrValue;
+struct TreeMatchContext;
 
 /**
  * An AncestorFilter is used to keep track of ancestors so that we can
@@ -33,43 +34,11 @@ class nsAttrValue;
  * element.
  */
 class NS_STACK_CLASS AncestorFilter {
+  friend struct TreeMatchContext;
  public:
-  /**
-   * Initialize the filter.  If aElement is not null, it and all its
-   * ancestors will be passed to PushAncestor, starting from the root
-   * and going down the tree.
-   */
-  void Init(mozilla::dom::Element *aElement);
-
   /* Maintenance of our ancestor state */
   void PushAncestor(mozilla::dom::Element *aElement);
   void PopAncestor();
-
-  /* Helper class for maintaining the ancestor state */
-  class NS_STACK_CLASS AutoAncestorPusher {
-  public:
-    AutoAncestorPusher(bool aDoPush,
-                       AncestorFilter &aFilter,
-                       mozilla::dom::Element *aElement
-                       MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : mPushed(aDoPush && aElement), mFilter(aFilter)
-    {
-      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
-      if (mPushed) {
-        mFilter.PushAncestor(aElement);
-      }
-    }
-    ~AutoAncestorPusher() {
-      if (mPushed) {
-        mFilter.PopAncestor();
-      }
-    }
-
-  private:
-    bool mPushed;
-    AncestorFilter &mFilter;
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-  };
 
   /* Check whether we might have an ancestor matching one of the given
      atom hashes.  |hashes| must have length hashListLength */
@@ -149,6 +118,129 @@ struct NS_STACK_CLASS TreeMatchContext {
     return mVisitedHandling;
   }
 
+  void AddScopeElement(mozilla::dom::Element* aElement) {
+    NS_PRECONDITION(mHaveSpecifiedScope,
+                    "Should be set before calling AddScopeElement()");
+    mScopes.AppendElement(aElement);
+  }
+  bool IsScopeElement(mozilla::dom::Element* aElement) const {
+    return mScopes.Contains(aElement);
+  }
+  void SetHasSpecifiedScope() {
+    mHaveSpecifiedScope = true;
+  }
+  bool HasSpecifiedScope() const {
+    return mHaveSpecifiedScope;
+  }
+
+  /**
+   * Initialize the ancestor filter and list of style scopes.  If aElement is
+   * not null, it and all its ancestors will be passed to
+   * mAncestorFilter.PushAncestor and PushStyleScope, starting from the root and
+   * going down the tree.
+   */
+  void InitAncestors(mozilla::dom::Element *aElement);
+
+  void PushStyleScope(mozilla::dom::Element* aElement)
+  {
+    NS_PRECONDITION(aElement, "aElement must not be null");
+    if (aElement->IsScopedStyleRoot()) {
+      mStyleScopes.AppendElement(aElement);
+    }
+  }
+
+  void PopStyleScope(mozilla::dom::Element* aElement)
+  {
+    NS_PRECONDITION(aElement, "aElement must not be null");
+    if (mStyleScopes.SafeLastElement(nullptr) == aElement) {
+      mStyleScopes.TruncateLength(mStyleScopes.Length() - 1);
+    }
+  }
+ 
+  bool PopStyleScopeForSelectorMatching(mozilla::dom::Element* aElement)
+  {
+    NS_ASSERTION(mForScopedStyle, "only call PopScopeForSelectorMatching when "
+                                  "mForScopedStyle is true");
+
+    if (!mCurrentStyleScope) {
+      return false;
+    }
+    if (mCurrentStyleScope == aElement) {
+      mCurrentStyleScope = nullptr;
+    }
+    return true;
+  }
+
+  bool SetStyleScopeForSelectorMatching(mozilla::dom::Element* aSubject,
+                                        mozilla::dom::Element* aScope)
+  {
+    mForScopedStyle = !!aScope;
+    if (!aScope) {
+      // This is not for a scoped style sheet; return true, as we want
+      // selector matching to proceed.
+      mCurrentStyleScope = nullptr;
+      return true;
+    }
+    if (aScope == aSubject) {
+      // Although the subject is the same element as the scope, as soon
+      // as we continue with selector matching up the tree we don't want
+      // to match any more elements.  So we return true to indicate that
+      // we want to do the initial selector matching, but set
+      // mCurrentStyleScope to null so that no ancestor elements will match.
+      mCurrentStyleScope = nullptr;
+      return true;
+    }
+    if (mStyleScopes.Contains(aScope)) {
+      // mStyleScopes contains all of the scope elements that are ancestors of
+      // aSubject, so if aScope is in mStyleScopes, then we do want selector
+      // matching to proceed.
+      mCurrentStyleScope = aScope;
+      return true;
+    }
+    // Otherwise, we're not in the scope, and we don't want to proceed
+    // with selector matching.
+    mCurrentStyleScope = nullptr;
+    return false;
+  }
+
+  bool IsWithinStyleScopeForSelectorMatching() const
+  {
+    NS_ASSERTION(mForScopedStyle, "only call IsWithinScopeForSelectorMatching "
+                                  "when mForScopedStyle is true");
+    return mCurrentStyleScope;
+  }
+
+  /* Helper class for maintaining the ancestor state */
+  class NS_STACK_CLASS AutoAncestorPusher {
+  public:
+    AutoAncestorPusher(bool aDoPush,
+                       TreeMatchContext &aTreeMatchContext,
+                       mozilla::dom::Element *aElement
+                       MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : mPushed(aDoPush && aElement),
+        mTreeMatchContext(aTreeMatchContext),
+        mElement(aElement)
+    {
+      MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+      if (mPushed) {
+        mTreeMatchContext.mAncestorFilter.PushAncestor(aElement);
+        mTreeMatchContext.PushStyleScope(aElement);
+      }
+    }
+    ~AutoAncestorPusher() {
+      if (mPushed) {
+        mTreeMatchContext.mAncestorFilter.PopAncestor();
+        mTreeMatchContext.PopStyleScope(mElement);
+      }
+    }
+
+  private:
+    bool mPushed;
+    TreeMatchContext& mTreeMatchContext;
+    mozilla::dom::Element* mElement;
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
+  };
+
   // Is this matching operation for the creation of a style context?
   // (If it is, we need to set slow selector bits on nodes indicating
   // that certain restyling needs to happen.)
@@ -162,10 +254,16 @@ struct NS_STACK_CLASS TreeMatchContext {
   // undefined (it might get set appropriately, or might not).
   bool mHaveRelevantLink;
 
+  // If true, then our contextual reference element set is specified,
+  // and is given by mScopes.
+  bool mHaveSpecifiedScope;
+
   // How matching should be performed.  See the documentation for
   // nsRuleWalker::VisitedHandlingType.
   nsRuleWalker::VisitedHandlingType mVisitedHandling;
 
+  // For matching :scope
+  nsAutoTArray<mozilla::dom::Element*, 1> mScopes;
  public:
   // The document we're working with.
   nsIDocument* const mDocument;
@@ -192,10 +290,21 @@ struct NS_STACK_CLASS TreeMatchContext {
   // Whether this document is using PB mode
   bool mUsingPrivateBrowsing;
 
+  // Whether this TreeMatchContext is being used with an nsCSSRuleProcessor
+  // for an HTML5 scoped style sheet.
+  bool mForScopedStyle;
+
   enum MatchVisited {
     eNeverMatchVisited,
     eMatchVisitedDefault
   };
+
+  // List of ancestor elements that define a style scope (due to having a
+  // <style scoped> child).
+  nsAutoTArray<mozilla::dom::Element*, 1> mStyleScopes;
+
+  // The current style scope element for selector matching.
+  mozilla::dom::Element* mCurrentStyleScope;
 
   // Constructor to use when creating a tree match context for styling
   TreeMatchContext(bool aForStyling,
@@ -204,12 +313,15 @@ struct NS_STACK_CLASS TreeMatchContext {
                    MatchVisited aMatchVisited = eMatchVisitedDefault)
     : mForStyling(aForStyling)
     , mHaveRelevantLink(false)
+    , mHaveSpecifiedScope(false)
     , mVisitedHandling(aVisitedHandling)
     , mDocument(aDocument)
     , mScopedRoot(nullptr)
     , mIsHTMLDocument(aDocument->IsHTML())
     , mCompatMode(aDocument->GetCompatibilityMode())
     , mUsingPrivateBrowsing(false)
+    , mForScopedStyle(false)
+    , mCurrentStyleScope(nullptr)
   {
     if (aMatchVisited != eNeverMatchVisited) {
       nsCOMPtr<nsISupports> container = mDocument->GetContainer();
@@ -228,13 +340,15 @@ struct NS_STACK_CLASS RuleProcessorData {
   RuleProcessorData(nsPresContext* aPresContext,
                     nsRuleWalker* aRuleWalker)
     : mPresContext(aPresContext),
-      mRuleWalker(aRuleWalker)
+      mRuleWalker(aRuleWalker),
+      mScope(nullptr)
   {
     NS_PRECONDITION(mPresContext, "Must have prescontext");
   }
 
   nsPresContext* const mPresContext;
   nsRuleWalker* const mRuleWalker; // Used to add rules to our results.
+  mozilla::dom::Element* mScope;
 };
 
 struct NS_STACK_CLASS ElementDependentRuleProcessorData :

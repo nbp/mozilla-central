@@ -5,6 +5,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/DebugOnly.h"
+
 #include "mozilla/layers/PLayers.h"
 #include "mozilla/layers/ShadowLayers.h"
 #include "mozilla/Telemetry.h"
@@ -16,7 +18,6 @@
 #include "ReadbackLayer.h"
 #include "gfxUtils.h"
 #include "nsPrintfCString.h"
-#include "mozilla/Util.h"
 #include "LayerSorter.h"
 #include "AnimationCommon.h"
 
@@ -289,7 +290,8 @@ Layer::Layer(LayerManager* aManager, void* aImplData) :
   mUseClipRect(false),
   mUseTileSourceRect(false),
   mIsFixedPosition(false),
-  mDebugColorIndex(0)
+  mDebugColorIndex(0),
+  mAnimationGeneration(0)
 {}
 
 Layer::~Layer()
@@ -446,7 +448,8 @@ Layer::SetAnimations(const AnimationArray& aAnimations)
   for (uint32_t i = 0; i < mAnimations.Length(); i++) {
     AnimData* data = mAnimationData.AppendElement();
     InfallibleTArray<css::ComputedTimingFunction*>& functions = data->mFunctions;
-    nsTArray<AnimationSegment> segments = mAnimations.ElementAt(i).segments();
+    const InfallibleTArray<AnimationSegment>& segments =
+      mAnimations.ElementAt(i).segments();
     for (uint32_t j = 0; j < segments.Length(); j++) {
       TimingFunction tf = segments.ElementAt(j).sampleFn();
       css::ComputedTimingFunction* ctf = new css::ComputedTimingFunction();
@@ -545,6 +548,37 @@ Layer::GetEffectiveVisibleRegion()
 }
 
 gfx3DMatrix
+Layer::SnapTransformTranslation(const gfx3DMatrix& aTransform,
+                                gfxMatrix* aResidualTransform)
+{
+  if (aResidualTransform) {
+    *aResidualTransform = gfxMatrix();
+  }
+
+  gfxMatrix matrix2D;
+  gfx3DMatrix result;
+  if (mManager->IsSnappingEffectiveTransforms() &&
+      aTransform.Is2D(&matrix2D) &&
+      !matrix2D.HasNonTranslation() &&
+      matrix2D.HasNonIntegerTranslation()) {
+    gfxPoint snappedTranslation(matrix2D.GetTranslation());
+    snappedTranslation.Round();
+    gfxMatrix snappedMatrix = gfxMatrix().Translate(snappedTranslation);
+    result = gfx3DMatrix::From2D(snappedMatrix);
+    if (aResidualTransform) {
+      // set aResidualTransform so that aResidual * snappedMatrix == matrix2D.
+      // (I.e., appying snappedMatrix after aResidualTransform gives the
+      // ideal transform.)
+      *aResidualTransform =
+        gfxMatrix().Translate(matrix2D.GetTranslation() - snappedTranslation);
+    }
+  } else {
+    result = aTransform;
+  }
+  return result;
+}
+
+gfx3DMatrix
 Layer::SnapTransform(const gfx3DMatrix& aTransform,
                      const gfxRect& aSnapRect,
                      gfxMatrix* aResidualTransform)
@@ -557,26 +591,18 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
   gfx3DMatrix result;
   if (mManager->IsSnappingEffectiveTransforms() &&
       aTransform.Is2D(&matrix2D) &&
-      matrix2D.HasNonIntegerTranslation() &&
-      !matrix2D.IsSingular() &&
-      !matrix2D.HasNonAxisAlignedTransform()) {
-    gfxMatrix snappedMatrix;
-    gfxPoint topLeft = matrix2D.Transform(aSnapRect.TopLeft());
-    topLeft.Round();
-    // first compute scale factors that scale aSnapRect to the snapped rect
-    if (aSnapRect.IsEmpty()) {
-      snappedMatrix.xx = matrix2D.xx;
-      snappedMatrix.yy = matrix2D.yy;
-    } else {
-      gfxPoint bottomRight = matrix2D.Transform(aSnapRect.BottomRight());
-      bottomRight.Round();
-      snappedMatrix.xx = (bottomRight.x - topLeft.x)/aSnapRect.Width();
-      snappedMatrix.yy = (bottomRight.y - topLeft.y)/aSnapRect.Height();
-    }
-    // compute translation factors that will move aSnapRect to the snapped rect
-    // given those scale factors
-    snappedMatrix.x0 = topLeft.x - aSnapRect.X()*snappedMatrix.xx;
-    snappedMatrix.y0 = topLeft.y - aSnapRect.Y()*snappedMatrix.yy;
+      gfxSize(1.0, 1.0) <= aSnapRect.Size() &&
+      matrix2D.PreservesAxisAlignedRectangles()) {
+    gfxPoint transformedTopLeft = matrix2D.Transform(aSnapRect.TopLeft());
+    transformedTopLeft.Round();
+    gfxPoint transformedTopRight = matrix2D.Transform(aSnapRect.TopRight());
+    transformedTopRight.Round();
+    gfxPoint transformedBottomRight = matrix2D.Transform(aSnapRect.BottomRight());
+    transformedBottomRight.Round();
+
+    gfxMatrix snappedMatrix = gfxUtils::TransformRectToRect(aSnapRect,
+      transformedTopLeft, transformedTopRight, transformedBottomRight);
+
     result = gfx3DMatrix::From2D(snappedMatrix);
     if (aResidualTransform && !snappedMatrix.IsSingular()) {
       // set aResidualTransform so that aResidual * snappedMatrix == matrix2D.
@@ -590,6 +616,26 @@ Layer::SnapTransform(const gfx3DMatrix& aTransform,
     result = aTransform;
   }
   return result;
+}
+
+static bool
+AncestorLayerMayChangeTransform(Layer* aLayer)
+{
+  for (Layer* l = aLayer; l; l = l->GetParent()) {
+    if (l->GetContentFlags() & Layer::CONTENT_MAY_CHANGE_TRANSFORM) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool
+Layer::MayResample()
+{
+  gfxMatrix transform2d;
+  return !GetEffectiveTransform().Is2D(&transform2d) ||
+         transform2d.HasNonIntegerTranslation() ||
+         AncestorLayerMayChangeTransform(this);
 }
 
 nsIntRect
@@ -722,7 +768,8 @@ Layer::ComputeEffectiveTransformForMaskLayer(const gfx3DMatrix& aTransformToSurf
 void
 ContainerLayer::FillSpecificAttributes(SpecificLayerAttributes& aAttrs)
 {
-  aAttrs = ContainerLayerAttributes(GetFrameMetrics(), mPreXScale, mPreYScale);
+  aAttrs = ContainerLayerAttributes(GetFrameMetrics(), mPreXScale, mPreYScale,
+                                    mInheritedXScale, mInheritedYScale);
 }
 
 bool
@@ -772,7 +819,7 @@ ContainerLayer::DefaultComputeEffectiveTransforms(const gfx3DMatrix& aTransformT
   gfxMatrix residual;
   gfx3DMatrix idealTransform = GetLocalTransform()*aTransformToSurface;
   idealTransform.ProjectTo2D();
-  mEffectiveTransform = SnapTransform(idealTransform, gfxRect(0, 0, 0, 0), &residual);
+  mEffectiveTransform = SnapTransformTranslation(idealTransform, &residual);
 
   bool useIntermediateSurface;
   if (GetMaskLayer()) {
@@ -867,6 +914,15 @@ void
 LayerManager::StartFrameTimeRecording()
 {
   mLastFrameTime = TimeStamp::Now();
+  mPaintStartTime = mLastFrameTime;
+}
+
+void
+LayerManager::SetPaintStartTime(TimeStamp& aTime)
+{
+  if (!mLastFrameTime.IsNull()) {
+    mPaintStartTime = aTime;
+  }
 }
 
 void
@@ -874,7 +930,8 @@ LayerManager::PostPresent()
 {
   if (!mLastFrameTime.IsNull()) {
     TimeStamp now = TimeStamp::Now();
-    mFrameTimes.AppendElement((now - mLastFrameTime).ToMilliseconds());
+    mFrameIntervals.AppendElement((now - mLastFrameTime).ToMilliseconds());
+    mPaintTimes.AppendElement((now - mPaintStartTime).ToMilliseconds());
     mLastFrameTime = now;
   }
   if (!mTabSwitchStart.IsNull()) {
@@ -884,13 +941,14 @@ LayerManager::PostPresent()
   }
 }
 
-nsTArray<float>
-LayerManager::StopFrameTimeRecording()
+void
+LayerManager::StopFrameTimeRecording(nsTArray<float>& aFrameIntervals, nsTArray<float>& aPaintTimes)
 {
   mLastFrameTime = TimeStamp();
-  nsTArray<float> result = mFrameTimes;
-  mFrameTimes.Clear();
-  return result;
+  aFrameIntervals.SwapElements(mFrameIntervals);
+  aPaintTimes.SwapElements(mPaintTimes);
+  mFrameIntervals.Clear();
+  mPaintTimes.Clear();
 }
 
 void

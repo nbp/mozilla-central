@@ -30,7 +30,6 @@
 #include "nsAutoPtr.h"
 
 #include "nsQuickSort.h"
-#include "prmem.h"
 #include "pldhash.h"
 
 #include "prefapi.h"
@@ -152,6 +151,7 @@ struct CacheData {
     bool defaultValueBool;
     int32_t defaultValueInt;
     uint32_t defaultValueUint;
+    float defaultValueFloat;
   };
 };
 
@@ -159,7 +159,7 @@ static nsTArray<nsAutoPtr<CacheData> >* gCacheData = nullptr;
 static nsRefPtrHashtable<ValueObserverHashKey,
                          ValueObserver>* gObserverTable = nullptr;
 
-NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf, "preferences")
+NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(PreferencesMallocSizeOf)
 
 static size_t
 SizeOfObserverEntryExcludingThis(ValueObserverHashKey* aKey,
@@ -753,10 +753,8 @@ Preferences::WritePrefFile(nsIFile* aFile)
   if (NS_FAILED(rv)) 
       return rv;  
 
-  char** valueArray = (char **)PR_Calloc(sizeof(char *), gHashTable.entryCount);
-  if (!valueArray)
-    return NS_ERROR_OUT_OF_MEMORY;
-  
+  nsAutoArrayPtr<char*> valueArray(new char*[gHashTable.entryCount]);
+  memset(valueArray, 0, gHashTable.entryCount * sizeof(char*));
   pref_saveArgs saveArgs;
   saveArgs.prefArray = valueArray;
   saveArgs.saveTypes = SAVE_ALL;
@@ -778,7 +776,6 @@ Preferences::WritePrefFile(nsIFile* aFile)
       NS_Free(*walker);
     }
   }
-  PR_Free(valueArray);
 
   // tell the safe output stream to overwrite the real prefs file
   // (it'll abort if there were any errors during writing)
@@ -1559,6 +1556,29 @@ Preferences::AddUintVarCache(uint32_t* aCache,
   data->defaultValueUint = aDefault;
   gCacheData->AppendElement(data);
   return RegisterCallback(UintVarChanged, aPref, data);
+}
+
+static int FloatVarChanged(const char* aPref, void* aClosure)
+{
+  CacheData* cache = static_cast<CacheData*>(aClosure);
+  *((float*)cache->cacheLocation) =
+    Preferences::GetFloat(aPref, cache->defaultValueFloat);
+  return 0;
+}
+
+// static
+nsresult
+Preferences::AddFloatVarCache(float* aCache,
+                             const char* aPref,
+                             float aDefault)
+{
+  NS_ASSERTION(aCache, "aCache must not be NULL");
+  *aCache = Preferences::GetFloat(aPref, aDefault);
+  CacheData* data = new CacheData();
+  data->cacheLocation = aCache;
+  data->defaultValueFloat = aDefault;
+  gCacheData->AppendElement(data);
+  return RegisterCallback(FloatVarChanged, aPref, data);
 }
 
 // static

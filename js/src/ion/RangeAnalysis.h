@@ -115,9 +115,9 @@ class Range : public TempObject {
     // To facilitate this trick, we maintain the invariants that:
     // 1) lower_infinite == true implies lower_ == JSVAL_INT_MIN
     // 2) upper_infinite == true implies upper_ == JSVAL_INT_MAX
-    int32 lower_;
+    int32_t lower_;
     bool lower_infinite_;
-    int32 upper_;
+    int32_t upper_;
     bool upper_infinite_;
 
     // Any symbolic lower or upper bound computed for this term.
@@ -179,10 +179,11 @@ class Range : public TempObject {
     static Range * sub(const Range *lhs, const Range *rhs);
     static Range * mul(const Range *lhs, const Range *rhs);
     static Range * and_(const Range *lhs, const Range *rhs);
-    static Range * shl(const Range *lhs, int32 c);
-    static Range * shr(const Range *lhs, int32 c);
+    static Range * shl(const Range *lhs, int32_t c);
+    static Range * shr(const Range *lhs, int32_t c);
 
     static bool precisionLossMul(const Range *lhs, const Range *rhs);
+    static bool negativeZeroMul(const Range *lhs, const Range *rhs);
 
     inline void makeLowerInfinite() {
         lower_infinite_ = true;
@@ -208,11 +209,11 @@ class Range : public TempObject {
         return !isLowerInfinite() && !isUpperInfinite();
     }
 
-    inline int32 lower() const {
+    inline int32_t lower() const {
         return lower_;
     }
 
-    inline int32 upper() const {
+    inline int32_t upper() const {
         return upper_;
     }
 
@@ -222,7 +223,7 @@ class Range : public TempObject {
         } else if (x < JSVAL_INT_MIN) {
             makeLowerInfinite();
         } else {
-            lower_ = (int32)x;
+            lower_ = (int32_t)x;
             lower_infinite_ = false;
         }
     }
@@ -232,7 +233,7 @@ class Range : public TempObject {
         } else if (x < JSVAL_INT_MIN) { // c.c
             upper_ = JSVAL_INT_MIN;
         } else {
-            upper_ = (int32)x;
+            upper_ = (int32_t)x;
             upper_infinite_ = false;
         }
     }

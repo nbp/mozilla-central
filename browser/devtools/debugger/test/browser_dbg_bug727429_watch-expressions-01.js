@@ -19,7 +19,7 @@ function test()
     gTab = aTab;
     gDebuggee = aDebuggee;
     gPane = aPane;
-    gDebugger = gPane.contentWindow;
+    gDebugger = gPane.panelWin;
     gWatch = gDebugger.DebuggerView.WatchExpressions;
 
     gDebugger.DebuggerView.togglePanes({ visible: true, animated: false });
@@ -48,6 +48,20 @@ function test()
       "Empty watch expressions are automatically removed");
 
     addAndCheckExpressions(2, 0, "a", true);
+    gDebugger.editor.focus();
+    is(gWatch.getExpressions().length, 1,
+      "Duplicate watch expressions are automatically removed");
+
+    addAndCheckExpressions(2, 0, "a\t", true);
+    addAndCheckExpressions(2, 0, "a\r", true);
+    addAndCheckExpressions(2, 0, "a\n", true);
+    gDebugger.editor.focus();
+    is(gWatch.getExpressions().length, 1,
+      "Duplicate watch expressions are automatically removed");
+
+    addAndCheckExpressions(2, 0, "\ta", true);
+    addAndCheckExpressions(2, 0, "\ra", true);
+    addAndCheckExpressions(2, 0, "\na", true);
     gDebugger.editor.focus();
     is(gWatch.getExpressions().length, 1,
       "Duplicate watch expressions are automatically removed");
@@ -102,7 +116,7 @@ function test()
     addAndCheckExpressions(total, index, "", true);
 
     for (let i = 0; i < string.length; i++) {
-      EventUtils.sendChar(string[i]);
+      EventUtils.sendChar(string[i], gDebugger);
     }
 
     gDebugger.editor.focus();
@@ -194,7 +208,7 @@ function test()
   }
 
   function removeAndCheckExpression(total, index, string) {
-    gWatch.removeExpression(index);
+    gWatch.removeExpressionAt(index);
 
     is(gWatch.getExpressions().length, total,
       "There should be " + total + " watch expressions available (1)");

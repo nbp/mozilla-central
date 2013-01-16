@@ -26,8 +26,11 @@
 #include "nsCOMArray.h"
 #include "nsDataHashtable.h"
 #include "nsHashKeys.h"
+#include "PermissionMessageUtils.h"
 
 #define CHILD_PROCESS_SHUTDOWN_MESSAGE NS_LITERAL_STRING("child-process-shutdown")
+
+#define CONTENT_PARENT_UNKNOWN_CHILD_ID -1
 
 class mozIApplication;
 class nsConsoleService;
@@ -71,6 +74,13 @@ public:
     static void StartUp();
     /** Shut down the content-process machinery. */
     static void ShutDown();
+    /**
+     * Ensure that all subprocesses are terminated and their OS
+     * resources have been reaped.  This is synchronous and can be
+     * very expensive in general.  It also bypasses the normal
+     * shutdown process.
+     */
+    static void JoinAllSubprocesses();
 
     static ContentParent* GetNewOrUsed(bool aForBrowserElement = false);
 
@@ -92,6 +102,7 @@ public:
     virtual bool DoSendAsyncMessage(const nsAString& aMessage,
                                     const mozilla::dom::StructuredCloneData& aData);
     virtual bool CheckPermission(const nsAString& aPermission);
+    virtual bool CheckManifestURL(const nsAString& aManifestURL);
 
     /** Notify that a tab was destroyed during normal operation. */
     void NotifyTabDestroyed(PBrowserParent* aTab);
@@ -125,6 +136,8 @@ public:
      */
     void KillHard();
 
+    uint64_t ChildID() { return mChildID; }
+
 protected:
     void OnChannelConnected(int32_t pid);
     virtual void ActorDestroy(ActorDestroyReason why);
@@ -135,6 +148,9 @@ private:
     static nsDataHashtable<nsStringHashKey, ContentParent*> *gAppContentParents;
     static nsTArray<ContentParent*>* gNonAppContentParents;
     static nsTArray<ContentParent*>* gPrivateContent;
+
+    static void JoinProcessesIOThread(const nsTArray<ContentParent*>* aProcesses,
+                                      Monitor* aMonitor, bool* aDone);
 
     static void PreallocateAppProcess();
     static void DelayedPreallocateAppProcess();
@@ -261,7 +277,7 @@ private:
 
     virtual bool RecvSetURITitle(const URIParams& uri,
                                  const nsString& title);
-    
+
     virtual bool RecvShowFilePicker(const int16_t& mode,
                                     const int16_t& selectedType,
                                     const bool& addToRecentDocs,
@@ -273,7 +289,7 @@ private:
                                     InfallibleTArray<nsString>* files,
                                     int16_t* retValue,
                                     nsresult* result);
- 
+
     virtual bool RecvShowAlertNotification(const nsString& aImageUrl, const nsString& aTitle,
                                            const nsString& aText, const bool& aTextClickable,
                                            const nsString& aCookie, const nsString& aName);
@@ -286,8 +302,13 @@ private:
     virtual bool RecvAsyncMessage(const nsString& aMsg,
                                   const ClonedMessageData& aData);
 
-    virtual bool RecvAddGeolocationListener();
+    virtual bool RecvFilePathUpdateNotify(const nsString& aType,
+                                          const nsString& aFilePath,
+                                          const nsCString& aReason);
+
+    virtual bool RecvAddGeolocationListener(const IPC::Principal& aPrincipal);
     virtual bool RecvRemoveGeolocationListener();
+    virtual bool RecvSetGeolocationHigherAccuracy(const bool& aEnable);
 
     virtual bool RecvConsoleMessage(const nsString& aMessage);
     virtual bool RecvScriptError(const nsString& aMessage,
@@ -301,6 +322,17 @@ private:
     virtual bool RecvPrivateDocShellsExist(const bool& aExist);
 
     virtual bool RecvFirstIdle();
+
+    virtual bool RecvAudioChannelGetMuted(const AudioChannelType& aType,
+                                          const bool& aElementHidden,
+                                          const bool& aElementWasHidden,
+                                          bool* aValue);
+
+    virtual bool RecvAudioChannelRegisterType(const AudioChannelType& aType);
+    virtual bool RecvAudioChannelUnregisterType(const AudioChannelType& aType,
+                                                const bool& aElementHidden);
+
+    virtual bool RecvAudioChannelChangedNotification();
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 
@@ -321,7 +353,15 @@ private:
     const nsString mAppManifestURL;
     nsRefPtr<nsFrameMessageManager> mMessageManager;
 
+    // True only while this is ready to be used to host remote tabs.
+    // This must not be used for new purposes after mIsAlive goes to
+    // false, but some previously scheduled IPC traffic may still pass
+    // through.
     bool mIsAlive;
+    // True after the OS-level shutdown sequence has been initiated.
+    // After going true, any use of this at all, including lingering
+    // IPC traffic passing through, will cause assertions to fail.
+    bool mIsDestroyed;
     bool mSendPermissionUpdates;
     bool mIsForBrowser;
 

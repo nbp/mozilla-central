@@ -14,7 +14,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.os.Build;
-import android.os.Debug;
 import android.util.Log;
 
 /**
@@ -154,10 +153,8 @@ class MemoryMonitor extends BroadcastReceiver {
             if (GeckoApp.checkLaunchState(GeckoApp.LaunchState.GeckoRunning)) {
                 GeckoAppShell.onLowMemory();
             }
-            ScreenshotHandler.disableScreenshot(false);
             GeckoAppShell.geckoEventSync();
-
-            GeckoApp.mAppContext.getFavicons().clearMemCache();
+            Favicons.getInstance().clearMemCache();
         }
     }
 
@@ -171,10 +168,6 @@ class MemoryMonitor extends BroadcastReceiver {
             newLevel = --mMemoryPressure;
         }
         Log.d(LOGTAG, "Decreased memory pressure to " + newLevel);
-
-        if (newLevel == MEMORY_PRESSURE_NONE) {
-            ScreenshotHandler.enableScreenshot(false);
-        }
 
         return true;
     }

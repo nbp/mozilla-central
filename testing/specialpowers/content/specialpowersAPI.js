@@ -90,13 +90,7 @@ function unwrapIfWrapped(x) {
 };
 
 function isXrayWrapper(x) {
-  try {
-    return /XrayWrapper/.exec(x.toString());
-  } catch(e) {
-    // The toString() implementation could theoretically throw. But it never
-    // throws for Xray, so we can just assume non-xray in that case.
-    return false;
-  }
+  return Cu.isXrayWrapper(x);
 }
 
 function callGetOwnPropertyDescriptor(obj, name) {
@@ -719,6 +713,14 @@ SpecialPowersAPI.prototype = {
     }
   },
 
+  // Disables the app install prompt for the duration of this test. There is
+  // no need to re-enable the prompt at the end of the test.
+  //
+  // The provided callback is invoked once the prompt is disabled.
+  autoConfirmAppInstall: function(cb) {
+    this.pushPrefEnv({set: [['dom.mozApps.auto_confirm_install', true]]}, cb);
+  },
+
   addObserver: function(obs, notification, weak) {
     var obsvc = Cc['@mozilla.org/observer-service;1']
                    .getService(Ci.nsIObserverService);
@@ -1240,15 +1242,15 @@ SpecialPowersAPI.prototype = {
               .spec;
     } else if (arg.manifestURL) {
       // It's a thing representing an app.
-      let tmp = {};
-      Cu.import("resource://gre/modules/Webapps.jsm", tmp);
+      let appsSvc = Cc["@mozilla.org/AppsService;1"]
+                      .getService(Ci.nsIAppsService)
+      let app = appsSvc.getAppByManifestURL(arg.manifestURL); 
 
-      let app = tmp.DOMApplicationRegistry.getAppByManifestURL(arg.manifestURL);
       if (!app) {
         throw "No app for this manifest!";
       }
 
-      appId = app.localId;
+      appId = appsSvc.getAppLocalIdByManifestURL(arg.manifestURL);
       url = app.origin;
       isInBrowserElement = arg.isInBrowserElement || false;
     } else if (arg.nodePrincipal) {

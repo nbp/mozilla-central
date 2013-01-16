@@ -70,12 +70,11 @@ function injectController(doc, topic, data) {
 
 // Loads mozSocial support functions associated with provider into targetWindow
 function attachToWindow(provider, targetWindow) {
-  // If the loaded document isn't from the provider's origin, don't attach
-  // the mozSocial API.
-  let origin = provider.origin;
+  // If the loaded document isn't from the provider's origin (or a protocol
+  // that inherits the principal), don't attach the mozSocial API.
   let targetDocURI = targetWindow.document.documentURIObject;
-  if (provider.origin != targetDocURI.prePath) {
-    let msg = "MozSocialAPI: not attaching mozSocial API for " + origin +
+  if (!provider.isSameOrigin(targetDocURI)) {
+    let msg = "MozSocialAPI: not attaching mozSocial API for " + provider.origin +
               " to " + targetDocURI.spec + " since origins differ."
     Services.console.logStringMessage(msg);
     return;
@@ -125,10 +124,9 @@ function attachToWindow(provider, targetWindow) {
         if (!chromeWindow.SocialFlyout)
           return;
         let url = targetWindow.document.documentURIObject.resolve(toURL);
-        let fullURL = ensureProviderOrigin(provider, url);
-        if (!fullURL)
+        if (!provider.isSameOrigin(url))
           return;
-        chromeWindow.SocialFlyout.open(fullURL, offset, callback);
+        chromeWindow.SocialFlyout.open(url, offset, callback);
       }
     },
     closePanel: {
@@ -229,32 +227,51 @@ function getChromeWindow(contentWin) {
                    .getInterface(Ci.nsIDOMWindow);
 }
 
-function ensureProviderOrigin(provider, url) {
-  // resolve partial URLs and check prePath matches
-  let uri;
-  let fullURL;
-  try {
-    fullURL = Services.io.newURI(provider.origin, null, null).resolve(url);
-    uri = Services.io.newURI(fullURL, null, null);
-  } catch (ex) {
-    Cu.reportError("mozSocial: failed to resolve window URL: " + url + "; " + ex);
-    return null;
-  }
+function isWindowGoodForChats(win) {
+  return win.SocialChatBar && win.SocialChatBar.isAvailable;
+}
 
-  if (provider.origin != uri.prePath) {
-    Cu.reportError("mozSocial: unable to load new location, " +
-                   provider.origin + " != " + uri.prePath);
-    return null;
+function findChromeWindowForChats(preferredWindow) {
+  if (preferredWindow && isWindowGoodForChats(preferredWindow))
+    return preferredWindow;
+  // no good - so let's go hunting.  We are now looking for a navigator:browser
+  // window that is suitable and already has chats open, or failing that,
+  // any suitable navigator:browser window.
+  let first, best, enumerator;
+  // *sigh* - getZOrderDOMWindowEnumerator is broken everywhere other than
+  // Windows.  We use BROKEN_WM_Z_ORDER as that is what the c++ code uses
+  // and a few bugs recommend searching mxr for this symbol to identify the
+  // workarounds - we want this code to be hit in such searches.
+  const BROKEN_WM_Z_ORDER = Services.appinfo.OS != "WINNT";
+  if (BROKEN_WM_Z_ORDER) {
+    // this is oldest to newest and no way to change the order.
+    enumerator = Services.wm.getEnumerator("navigator:browser");
+  } else {
+    // here we explicitly ask for bottom-to-top so we can use the same logic
+    // where BROKEN_WM_Z_ORDER is true.
+    enumerator = Services.wm.getZOrderDOMWindowEnumerator("navigator:browser", false);
   }
-  return fullURL;
+  while (enumerator.hasMoreElements()) {
+    let win = enumerator.getNext();
+    if (win && isWindowGoodForChats(win)) {
+      first = win;
+      if (win.SocialChatBar.hasChats)
+        best = win;
+    }
+  }
+  return best || first;
 }
 
 this.openChatWindow =
  function openChatWindow(chromeWindow, provider, url, callback, mode) {
-  if (!chromeWindow.SocialChatBar)
+  chromeWindow = findChromeWindowForChats(chromeWindow);
+  if (!chromeWindow)
     return;
-  let fullURL = ensureProviderOrigin(provider, url);
-  if (!fullURL)
+  let fullURI = provider.resolveUri(url);
+  if (!provider.isSameOrigin(fullURI))
     return;
-  chromeWindow.SocialChatBar.openChat(provider, fullURL, callback, mode);
+  chromeWindow.SocialChatBar.openChat(provider, fullURI.spec, callback, mode);
+  // getAttention is ignored if the target window is already foreground, so
+  // we can call it unconditionally.
+  chromeWindow.getAttention();
 }

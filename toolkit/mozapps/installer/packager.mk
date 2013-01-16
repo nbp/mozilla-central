@@ -266,7 +266,6 @@ DIST_FILES += \
   libplc4.so \
   libplds4.so \
   libmozsqlite3.so \
-  libsoundtouch.so \
   libnssutil3.so \
   libnss3.so \
   libssl3.so \
@@ -348,9 +347,9 @@ INNER_ROBOCOP_PACKAGE=echo 'Testing is disabled - No Robocop for you'
 endif
 
 ifdef MOZ_OMX_PLUGIN
-OMX_PLUGIN_NAME = libomxplugin.so
+OMX_PLUGIN_NAMES = libomxplugin.so libomxplugingb.so libomxplugingb235.so libomxpluginhc.so libomxpluginsony.so libomxpluginfroyo.so
 else
-OMX_PLUGIN_NAME =
+OMX_PLUGIN_NAMES =
 endif
 
 PKG_SUFFIX      = .apk
@@ -360,7 +359,7 @@ INNER_MAKE_PACKAGE	= \
   cp $(GECKO_APP_AP_PATH)/gecko.ap_ $(_ABS_DIST) && \
   ( cd $(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH) && \
     mkdir -p lib/$(ABI_DIR) && \
-    mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) $(OMX_PLUGIN_NAME) lib/$(ABI_DIR) && \
+    mv libmozglue.so $(MOZ_CHILD_PROCESS_NAME) $(OMX_PLUGIN_NAMES) lib/$(ABI_DIR) && \
     rm -f lib.id && \
     for SOMELIB in *.so ; \
     do \
@@ -384,10 +383,16 @@ INNER_UNMAKE_PACKAGE	= \
   $(UNZIP) $(UNPACKAGE) && \
   mv lib/$(ABI_DIR)/libmozglue.so . && \
   mv lib/$(ABI_DIR)/libomxplugin.so . && \
+  mv lib/$(ABI_DIR)/libomxplugingb.so . && \
+  mv lib/$(ABI_DIR)/libomxplugingb235.so . && \
+  mv lib/$(ABI_DIR)/libomxpluginhc.so . && \
+  mv lib/$(ABI_DIR)/libomxpluginsony.so . && \
+  mv lib/$(ABI_DIR)/libomxpluginfroyo.so . && \
   mv lib/$(ABI_DIR)/*plugin-container* $(MOZ_CHILD_PROCESS_NAME) && \
   rm -rf lib/$(ABI_DIR) && \
   popd
 endif
+
 ifeq ($(MOZ_PKG_FORMAT),DMG)
 PKG_SUFFIX	= .dmg
 PKG_DMG_FLAGS	=
@@ -740,17 +745,11 @@ ifdef MOZ_SIGN_PREPARED_PACKAGE_CMD
 	$(MOZ_SIGN_PREPARED_PACKAGE_CMD) $(DEPTH)/installer-stage && true
 endif
 
-elfhack:
-ifdef USE_ELF_HACK
-	@echo ===
-	@echo === If you get failures below, please file a bug describing the error
-	@echo === and your environment \(compiler and linker versions\), and use
-	@echo === --disable-elf-hack until this is fixed.
-	@echo ===
-	cd $(DIST)/bin; find . -name "*$(DLL_SUFFIX)" | xargs ../../build/unix/elfhack/elfhack
+ifeq (gonk,$(MOZ_WIDGET_TOOLKIT))
+ELF_HACK_FLAGS = --fill
 endif
 
-stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN) elfhack
+stage-package: $(MOZ_PKG_MANIFEST) $(MOZ_PKG_REMOVALS_GEN)
 	@rm -rf $(DIST)/$(PKG_PATH)$(PKG_BASENAME).tar $(DIST)/$(PKG_PATH)$(PKG_BASENAME).dmg $@ $(EXCLUDE_LIST)
 ifndef MOZ_FAST_PACKAGE
 	@rm -rf $(DIST)/$(MOZ_PKG_DIR)
@@ -795,10 +794,10 @@ ifndef STAGE_SDK
 	@$(NSINSTALL) -D $(DIST)/xpt
 	@($(XPIDL_LINK) $(DIST)/xpt/$(MOZ_PKG_APPNAME).xpt $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/components/*.xpt && rm -f $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/components/*.xpt && cp $(DIST)/xpt/$(MOZ_PKG_APPNAME).xpt $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/components && printf "interfaces $(MOZ_PKG_APPNAME).xpt\n" >$(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/components/interfaces.manifest) || echo No *.xpt files found in: $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR)$(_BINPATH)/components/.  Continuing...
 else
-	@cd $(DIST)/bin && tar $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_DIR); tar -xf -)
+	@cd $(DIST)/bin && $(TAR) $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_DIR); tar -xf -)
 endif
 else
-	@cd $(DIST)/bin && tar $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_DIR); tar -xf -)
+	@cd $(DIST)/bin && $(TAR) $(TAR_CREATE_FLAGS) - * | (cd ../$(MOZ_PKG_DIR); tar -xf -)
 	@echo "Linking XPT files..."
 	@rm -rf $(DIST)/xpt
 	@$(NSINSTALL) -D $(DIST)/xpt
@@ -838,6 +837,15 @@ ifndef PKG_SKIP_STRIP
 				-exec $(STRIP) $(STRIP_FLAGS) {} >/dev/null 2>&1 \;
   endif
 endif # PKG_SKIP_STRIP
+ifdef USE_ELF_HACK
+	@echo ===
+	@echo === If you get failures below, please file a bug describing the error
+	@echo === and your environment \(compiler and linker versions\), and use
+	@echo === --disable-elf-hack until this is fixed.
+	@echo ===
+	cd $(DIST)/$(STAGEPATH)$(MOZ_PKG_DIR); find . -name "*$(DLL_SUFFIX)" | xargs ../../build/unix/elfhack/elfhack $(ELF_HACK_FLAGS)
+endif
+
 # We always sign nss because we don't do it from security/manager anymore
 	@$(SIGN_NSS)
 	@echo "Removing unpackaged files..."
@@ -898,17 +906,17 @@ ifeq (bundle,$(MOZ_FS_LAYOUT))
 	$(error "make install" is not supported on this platform. Use "make package" instead.)
 endif
 	$(NSINSTALL) -D $(DESTDIR)$(installdir)
-	(cd $(DIST)/$(MOZ_PKG_DIR) && tar --exclude=precomplete $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/$(MOZ_PKG_DIR) && $(TAR) --exclude=precomplete $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DESTDIR)$(installdir) && tar -xf -)
 	$(NSINSTALL) -D $(DESTDIR)$(bindir)
 	$(RM) -f $(DESTDIR)$(bindir)/$(MOZ_APP_NAME)
 	ln -s $(installdir)/$(MOZ_APP_NAME) $(DESTDIR)$(bindir)
 ifdef INSTALL_SDK # Here comes the hard part
 	$(NSINSTALL) -D $(DESTDIR)$(includedir)
-	(cd $(DIST)/include && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/include && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DESTDIR)$(includedir) && tar -xf -)
 	$(NSINSTALL) -D $(DESTDIR)$(idldir)
-	(cd $(DIST)/idl && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/idl && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DESTDIR)$(idldir) && tar -xf -)
 # SDK directory is the libs + a bunch of symlinks
 	$(NSINSTALL) -D $(DESTDIR)$(sdkdir)/sdk/lib
@@ -917,8 +925,8 @@ ifdef INSTALL_SDK # Here comes the hard part
 	  $(SYSINSTALL) $(IFLAGS1) $(DIST)/include/xpcom-config.h $(DESTDIR)$(sdkdir); \
 	fi
 	find $(DIST)/sdk -name "*.pyc" | xargs rm -f
-	(cd $(DIST)/sdk/lib && tar $(TAR_CREATE_FLAGS) - .) | (cd $(DESTDIR)$(sdkdir)/sdk/lib && tar -xf -)
-	(cd $(DIST)/sdk/bin && tar $(TAR_CREATE_FLAGS) - .) | (cd $(DESTDIR)$(sdkdir)/sdk/bin && tar -xf -)
+	(cd $(DIST)/sdk/lib && $(TAR) $(TAR_CREATE_FLAGS) - .) | (cd $(DESTDIR)$(sdkdir)/sdk/lib && tar -xf -)
+	(cd $(DIST)/sdk/bin && $(TAR) $(TAR_CREATE_FLAGS) - .) | (cd $(DESTDIR)$(sdkdir)/sdk/bin && tar -xf -)
 	$(RM) -f $(DESTDIR)$(sdkdir)/lib $(DESTDIR)$(sdkdir)/bin $(DESTDIR)$(sdkdir)/include $(DESTDIR)$(sdkdir)/include $(DESTDIR)$(sdkdir)/sdk/idl $(DESTDIR)$(sdkdir)/idl
 	ln -s $(sdkdir)/sdk/lib $(DESTDIR)$(sdkdir)/lib
 	ln -s $(installdir) $(DESTDIR)$(sdkdir)/bin
@@ -931,24 +939,24 @@ make-sdk:
 	@echo "Packaging SDK..."
 	$(RM) -rf $(DIST)/$(MOZ_APP_NAME)-sdk
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/bin
-	(cd $(DIST)/sdk-stage && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/sdk-stage && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/bin && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/host/bin
-	(cd $(DIST)/host/bin && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/host/bin && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/host/bin && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/sdk
 	find $(DIST)/sdk -name "*.pyc" | xargs rm -f
-	(cd $(DIST)/sdk && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/sdk && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/sdk && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/include
-	(cd $(DIST)/include && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/include && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/include && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/idl
-	(cd $(DIST)/idl && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/idl && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/idl && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(MOZ_APP_NAME)-sdk/lib
 # sdk/lib is the same as sdk/sdk/lib
-	(cd $(DIST)/sdk/lib && tar $(TAR_CREATE_FLAGS) - .) | \
+	(cd $(DIST)/sdk/lib && $(TAR) $(TAR_CREATE_FLAGS) - .) | \
 	  (cd $(DIST)/$(MOZ_APP_NAME)-sdk/lib && tar -xf -)
 	$(NSINSTALL) -D $(DIST)/$(SDK_PATH)
 	cd $(DIST) && $(MAKE_SDK)

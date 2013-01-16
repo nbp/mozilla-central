@@ -9,6 +9,7 @@
 #define jscompartment_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/GuardObjects.h"
 #include "mozilla/Util.h"
 
 #include "jscntxt.h"
@@ -18,6 +19,7 @@
 #include "jsscope.h"
 
 #include "gc/StoreBuffer.h"
+#include "gc/FindSCCs.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 
@@ -114,9 +116,10 @@ struct TypeInferenceSizes;
 
 namespace js {
 class AutoDebugModeGC;
+class DebugScopes;
 }
 
-struct JSCompartment
+struct JSCompartment : private JS::shadow::Compartment, public js::gc::GraphNodeBase<JSCompartment>
 {
     JSRuntime                    *rt;
     JSPrincipals                 *principals;
@@ -124,22 +127,26 @@ struct JSCompartment
   private:
     friend struct JSRuntime;
     friend struct JSContext;
-    js::GlobalObject             *global_;
+    js::ReadBarriered<js::GlobalObject> global_;
+
+    unsigned                     enterCompartmentDepth;
+
   public:
-    // Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
-    // compartment's global has been collected.  The latter can happen if e.g.
-    // a string in a compartment is rooted but no object is, and thus the
-    // global isn't rooted, and thus the global can be finalized while the
-    // compartment lives on.
-    //
-    // In contrast, JSObject::global() is infallible because marking a JSObject
-    // always marks its global as well.
-    // TODO: add infallible JSScript::global()
-    //
-    js::GlobalObject *maybeGlobal() const {
-        JS_ASSERT_IF(global_, global_->compartment() == this);
-        return global_;
-    }
+    void enter() { enterCompartmentDepth++; }
+    void leave() { enterCompartmentDepth--; }
+
+    /*
+     * Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
+     * compartment's global has been collected.  The latter can happen if e.g.
+     * a string in a compartment is rooted but no object is, and thus the global
+     * isn't rooted, and thus the global can be finalized while the compartment
+     * lives on.
+     *
+     * In contrast, JSObject::global() is infallible because marking a JSObject
+     * always marks its global as well.
+     * TODO: add infallible JSScript::global()
+     */
+    inline js::GlobalObject *maybeGlobal() const;
 
     void initGlobal(js::GlobalObject &global) {
         JS_ASSERT(global.compartment() == this);
@@ -156,7 +163,6 @@ struct JSCompartment
 #endif
 
   private:
-    bool                         needsBarrier_;
     bool                         ionUsingBarriers_;
   public:
 
@@ -192,7 +198,9 @@ struct JSCompartment
     enum CompartmentGCState {
         NoGC,
         Mark,
-        Sweep
+        MarkGray,
+        Sweep,
+        Finished
     };
 
   private:
@@ -202,11 +210,10 @@ struct JSCompartment
 
   public:
     bool isCollecting() const {
-        if (rt->isHeapCollecting()) {
+        if (rt->isHeapCollecting())
             return gcState != NoGC;
-        } else {
+        else
             return needsBarrier();
-        }
     }
 
     bool isPreservingCode() const {
@@ -248,18 +255,32 @@ struct JSCompartment
     }
 
     bool isGCMarking() {
+        if (rt->isHeapCollecting())
+            return gcState == Mark || gcState == MarkGray;
+        else
+            return needsBarrier();
+    }
+
+    bool isGCMarkingBlack() {
         return gcState == Mark;
+    }
+
+    bool isGCMarkingGray() {
+        return gcState == MarkGray;
     }
 
     bool isGCSweeping() {
         return gcState == Sweep;
     }
 
+    bool isGCFinished() {
+        return gcState == Finished;
+    }
+
     size_t                       gcBytes;
     size_t                       gcTriggerBytes;
     size_t                       gcMaxMallocBytes;
     double                       gcHeapGrowthFactor;
-    JSCompartment                *gcNextCompartment;
 
     bool                         hold;
     bool                         isSystemCompartment;
@@ -279,8 +300,11 @@ struct JSCompartment
 
     void                         *data;
     bool                         active;  // GC flag, whether there are active frames
+
+  private:
     js::WrapperMap               crossCompartmentWrappers;
 
+  public:
     /*
      * These flags help us to discover if a compartment that shouldn't be alive
      * manages to outlive a GC.
@@ -335,7 +359,31 @@ struct JSCompartment
     size_t                       gcTriggerMallocAndFreeBytes;
 
     /* During GC, stores the index of this compartment in rt->compartments. */
-    unsigned                     index;
+    unsigned                     gcIndex;
+
+    /*
+     * During GC, stores the head of a list of incoming pointers from gray cells.
+     *
+     * The objects in the list are either cross-compartment wrappers, or
+     * debugger wrapper objects.  The list link is either in the second extra
+     * slot for the former, or a special slot for the latter.
+     */
+    js::RawObject                gcIncomingGrayPointers;
+
+    /* Linked list of live array buffers with >1 view. */
+    JSObject                     *gcLiveArrayBuffers;
+
+    /* Linked list of live weakmaps in this compartment. */
+    js::WeakMapBase              *gcWeakMapList;
+
+    /* This compartment's gray roots. */
+    js::Vector<js::GrayRoot, 0, js::SystemAllocPolicy> gcGrayRoots;
+
+    /*
+     * Whether type objects have been marked by markTypes().  This is used to
+     * determine whether they need to be swept.
+     */
+    bool                         gcTypesMarked;
 
   private:
     /*
@@ -368,6 +416,20 @@ struct JSCompartment
     bool wrap(JSContext *cx, js::PropertyDescriptor *desc);
     bool wrap(JSContext *cx, js::AutoIdVector &props);
 
+    bool putWrapper(const js::CrossCompartmentKey& wrapped, const js::Value& wrapper);
+
+    js::WrapperMap::Ptr lookupWrapper(const js::Value& wrapped) {
+        return crossCompartmentWrappers.lookup(wrapped);
+    }
+
+    void removeWrapper(js::WrapperMap::Ptr p) {
+        crossCompartmentWrappers.remove(p);
+    }
+
+    struct WrapperEnum : public js::WrapperMap::Enum {
+        WrapperEnum(JSCompartment *c) : js::WrapperMap::Enum(c->crossCompartmentWrappers) {}
+    };
+
     void mark(JSTracer *trc);
     void markTypes(JSTracer *trc);
     void discardJitCode(js::FreeOp *fop, bool discardConstraints);
@@ -375,6 +437,8 @@ struct JSCompartment
     void sweep(js::FreeOp *fop, bool releaseTypes);
     void sweepCrossCompartmentWrappers();
     void purge();
+
+    void findOutgoingEdges(js::gc::ComponentFinder<JSCompartment> &finder);
 
     void setGCLastBytes(size_t lastBytes, size_t lastMallocBytes, js::JSGCInvocationKind gckind);
     void reduceGCTriggerBytes(size_t amount);
@@ -406,6 +470,9 @@ struct JSCompartment
 
     js::DtoaCache dtoaCache;
 
+    /* Random number generator state, used by jsmath.cpp. */
+    uint64_t rngState;
+
   private:
     /*
      * Weak reference to each global in this compartment that is a debuggee.
@@ -436,7 +503,12 @@ struct JSCompartment
   public:
     js::GlobalObjectSet &getDebuggees() { return debuggees; }
     bool addDebuggee(JSContext *cx, js::GlobalObject *global);
+    bool addDebuggee(JSContext *cx, js::GlobalObject *global,
+                     js::AutoDebugModeGC &dmgc);
     void removeDebuggee(js::FreeOp *fop, js::GlobalObject *global,
+                        js::GlobalObjectSet::Enum *debuggeesEnum = NULL);
+    void removeDebuggee(js::FreeOp *fop, js::GlobalObject *global,
+                        js::AutoDebugModeGC &dmgc,
                         js::GlobalObjectSet::Enum *debuggeesEnum = NULL);
     bool setDebugModeFromC(JSContext *cx, bool b, js::AutoDebugModeGC &dmgc);
 
@@ -452,7 +524,10 @@ struct JSCompartment
     js::ScriptCountsMap *scriptCountsMap;
 
     js::DebugScriptMap *debugScriptMap;
-	
+
+    /* Bookkeeping information for debug scope objects. */
+    js::DebugScopes *debugScopes;
+
 #ifdef JS_ION
   private:
     js::ion::IonCompartment *ionCompartment_;
@@ -501,25 +576,35 @@ JSContext::typeInferenceEnabled() const
 inline js::Handle<js::GlobalObject*>
 JSContext::global() const
 {
-    return js::Handle<js::GlobalObject*>::fromMarkedLocation(&compartment->global_);
+    /*
+     * It's safe to use |unsafeGet()| here because any compartment that is
+     * on-stack will be marked automatically, so there's no need for a read
+     * barrier on it. Once the compartment is popped, the handle is no longer
+     * safe to use.
+     */
+    return js::Handle<js::GlobalObject*>::fromMarkedLocation(compartment->global_.unsafeGet());
 }
 
 namespace js {
 
-class AssertCompartmentUnchanged {
-  protected:
-    JSContext * const cx;
-    JSCompartment * const oldCompartment;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+class AssertCompartmentUnchanged
+{
   public:
-     AssertCompartmentUnchanged(JSContext *cx JS_GUARD_OBJECT_NOTIFIER_PARAM)
-     : cx(cx), oldCompartment(cx->compartment) {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
+    AssertCompartmentUnchanged(JSContext *cx
+                                MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
+      : cx(cx), oldCompartment(cx->compartment)
+    {
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     ~AssertCompartmentUnchanged() {
         JS_ASSERT(cx->compartment == oldCompartment);
     }
+
+  protected:
+    JSContext * const cx;
+    JSCompartment * const oldCompartment;
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class AutoCompartment
@@ -528,16 +613,8 @@ class AutoCompartment
     JSCompartment * const origin_;
 
   public:
-    AutoCompartment(JSContext *cx, JSObject *target)
-      : cx_(cx),
-        origin_(cx->compartment)
-    {
-        cx_->enterCompartment(target->compartment());
-    }
-
-    ~AutoCompartment() {
-        cx_->leaveCompartment(origin_);
-    }
+    inline AutoCompartment(JSContext *cx, JSObject *target);
+    inline ~AutoCompartment();
 
     JSContext *context() const { return cx_; }
     JSCompartment *origin() const { return origin_; }
@@ -664,22 +741,22 @@ class AutoWrapperVector : public AutoVectorRooter<WrapperValue>
 {
   public:
     explicit AutoWrapperVector(JSContext *cx
-                               JS_GUARD_OBJECT_NOTIFIER_PARAM)
+                               MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
         : AutoVectorRooter<WrapperValue>(cx, WRAPVECTOR)
     {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 class AutoWrapperRooter : private AutoGCRooter {
   public:
     AutoWrapperRooter(JSContext *cx, WrapperValue v
-                      JS_GUARD_OBJECT_NOTIFIER_PARAM)
+                      MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
       : AutoGCRooter(cx, WRAPPER), value(v)
     {
-        JS_GUARD_OBJECT_NOTIFIER_INIT;
+        MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     operator JSObject *() const {
@@ -690,7 +767,7 @@ class AutoWrapperRooter : private AutoGCRooter {
 
   private:
     WrapperValue value;
-    JS_DECL_USE_GUARD_OBJECT_NOTIFIER
+    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
 
 } /* namespace js */

@@ -6,7 +6,6 @@ package org.mozilla.gecko;
 
 import android.content.Context;
 import android.util.AttributeSet;
-import android.util.Log;
 import android.view.animation.Animation;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.RelativeLayout;
@@ -40,13 +39,25 @@ public class AnimatedHeightLayout extends RelativeLayout {
                 public void onAnimationEnd(Animation animation) {
                     post(new Runnable() {
                         public void run() {
-                            getLayoutParams().height = LayoutParams.WRAP_CONTENT;
-                            mAnimating = false;
+                            finishAnimation();
                         }
                     });
                 }
             });
             startAnimation(anim);
+        }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        super.onDetachedFromWindow();
+        finishAnimation();
+    }
+
+    private void finishAnimation() {
+        if (mAnimating) {
+            getLayoutParams().height = LayoutParams.WRAP_CONTENT;
+            mAnimating = false;
         }
     }
 }

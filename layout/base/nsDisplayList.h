@@ -855,7 +855,17 @@ public:
       aInvalidRegion->Or(GetBounds(aBuilder, &snap), geometry->mBounds);
     }
   }
-  
+
+  /**
+   * Called when the area rendered by this display item has changed (been
+   * invalidated or changed geometry) since the last paint. This includes
+   * when the display item was not rendered at all in the last paint.
+   * It does NOT get called when a display item was being rendered and no
+   * longer is, because generally that means there is no display item to
+   * call this method on.
+   */
+  virtual void NotifyRenderingChanged() {}
+
   /**
    * @param aSnap set to true if the edges of the rectangles of the opaque
    * region would be snapped to device pixels when drawing
@@ -1560,7 +1570,8 @@ public:
     : nsDisplayItem(aBuilder, aFrame)
   {}
 
-  virtual already_AddRefed<ImageContainer> GetContainer(nsDisplayListBuilder* aBuilder) = 0;
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder* aBuilder) = 0;
   virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) = 0;
 
   virtual bool SupportsOptimizingToImage() { return true; }
@@ -1886,7 +1897,8 @@ public:
                                          const nsDisplayItemGeometry* aGeometry,
                                          nsRegion* aInvalidRegion) MOZ_OVERRIDE;
   
-  virtual already_AddRefed<ImageContainer> GetContainer(nsDisplayListBuilder *aBuilder) MOZ_OVERRIDE;
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder *aBuilder) MOZ_OVERRIDE;
   virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) MOZ_OVERRIDE;
 
   static nsRegion GetInsideClipRegion(nsDisplayItem* aItem, nsPresContext* aPresContext, uint8_t aClip,
@@ -1895,10 +1907,14 @@ protected:
   typedef class mozilla::layers::ImageContainer ImageContainer;
   typedef class mozilla::layers::ImageLayer ImageLayer;
 
-  bool TryOptimizeToImageLayer(nsDisplayListBuilder* aBuilder);
+  bool TryOptimizeToImageLayer(LayerManager* aManager, nsDisplayListBuilder* aBuilder);
   bool IsSingleFixedPositionImage(nsDisplayListBuilder* aBuilder,
                                   const nsRect& aClipRect,
                                   gfxRect* aDestRect);
+  nsRect GetBoundsInternal();
+
+  void PaintInternal(nsDisplayListBuilder* aBuilder, nsRenderingContext* aCtx,
+                     const nsRect& aBounds, nsRect* aClipRect);
 
   // Cache the result of nsCSSRendering::FindBackground. Always null if
   // mIsThemed is true or if FindBackground returned false.
@@ -1906,6 +1922,8 @@ protected:
   /* If this background can be a simple image layer, we store the format here. */
   nsRefPtr<ImageContainer> mImageContainer;
   gfxRect mDestRect;
+  /* Bounds of this display item */
+  nsRect mBounds;
   uint32_t mLayer;
 
   nsITheme::Transparency mThemeTransparency;
@@ -1955,6 +1973,7 @@ public:
   nsDisplayBoxShadowOuter(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame)
     : nsDisplayItem(aBuilder, aFrame) {
     MOZ_COUNT_CTOR(nsDisplayBoxShadowOuter);
+    mBounds = GetBoundsInternal();
   }
 #ifdef NS_BUILD_REFCNT_LOGGING
   virtual ~nsDisplayBoxShadowOuter() {
@@ -1984,8 +2003,11 @@ public:
     }
   }
 
+  nsRect GetBoundsInternal();
+
 private:
   nsRegion mVisibleRegion;
+  nsRect mBounds;
 };
 
 /**
@@ -2795,6 +2817,29 @@ public:
    */
   static nsRect GetFrameBoundsForTransform(const nsIFrame* aFrame);
 
+  struct FrameTransformProperties
+  {
+    FrameTransformProperties(const nsIFrame* aFrame,
+                             float aAppUnitsPerPixel,
+                             const nsRect* aBoundsOverride);
+    FrameTransformProperties(const nsCSSValueList* aTransformList,
+                             const gfxPoint3D& aToMozOrigin,
+                             const gfxPoint3D& aToPerspectiveOrigin,
+                             nscoord aChildPerspective)
+      : mFrame(nullptr)
+      , mTransformList(aTransformList)
+      , mToMozOrigin(aToMozOrigin)
+      , mToPerspectiveOrigin(aToPerspectiveOrigin)
+      , mChildPerspective(aChildPerspective)
+    {}
+
+    const nsIFrame* mFrame;
+    const nsCSSValueList* mTransformList;
+    const gfxPoint3D mToMozOrigin;
+    const gfxPoint3D mToPerspectiveOrigin;
+    nscoord mChildPerspective;
+  };
+
   /**
    * Given a frame with the -moz-transform property or an SVG transform,
    * returns the transformation matrix for that frame.
@@ -2812,10 +2857,11 @@ public:
                                                  const nsPoint& aOrigin,
                                                  float aAppUnitsPerPixel,
                                                  const nsRect* aBoundsOverride = nullptr,
-                                                 const nsCSSValueList* aTransformOverride = nullptr,
-                                                 gfxPoint3D* aToMozOrigin = nullptr,
-                                                 gfxPoint3D* aToPerspectiveOrigin = nullptr,
-                                                 nscoord* aChildPerspective = nullptr,
+                                                 nsIFrame** aOutAncestor = nullptr);
+  static gfx3DMatrix GetResultingTransformMatrix(const FrameTransformProperties& aProperties,
+                                                 const nsPoint& aOrigin,
+                                                 float aAppUnitsPerPixel,
+                                                 const nsRect* aBoundsOverride = nullptr,
                                                  nsIFrame** aOutAncestor = nullptr);
   /**
    * Return true when we should try to prerender the entire contents of the
@@ -2827,14 +2873,10 @@ public:
   bool CanUseAsyncAnimations(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
 
 private:
-  static gfx3DMatrix GetResultingTransformMatrixInternal(const nsIFrame* aFrame,
+  static gfx3DMatrix GetResultingTransformMatrixInternal(const FrameTransformProperties& aProperties,
                                                          const nsPoint& aOrigin,
                                                          float aAppUnitsPerPixel,
                                                          const nsRect* aBoundsOverride,
-                                                         const nsCSSValueList* aTransformOverride,
-                                                         gfxPoint3D* aToMozOrigin,
-                                                         gfxPoint3D* aToPerspectiveOrigin,
-                                                         nscoord* aChildPerspective,
                                                          nsIFrame** aOutAncestor);
 
   nsDisplayWrapList mStoredList;

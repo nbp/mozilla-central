@@ -13,6 +13,7 @@
 #include "imgIContainer.h"
 #include "imgINotificationObserver.h"
 
+class imgRequestProxy;
 class nsImageBoxFrame;
 
 class nsDisplayXULImage;
@@ -35,6 +36,8 @@ private:
 class nsImageBoxFrame : public nsLeafBoxFrame
 {
 public:
+  typedef mozilla::layers::LayerManager LayerManager;
+
   friend class nsDisplayXULImage;
   NS_DECL_FRAMEARENA_HELPERS
 
@@ -87,7 +90,7 @@ public:
                    const nsRect& aDirtyRect,
                    nsPoint aPt, uint32_t aFlags);
 
-  already_AddRefed<mozilla::layers::ImageContainer> GetContainer();
+  already_AddRefed<mozilla::layers::ImageContainer> GetContainer(LayerManager* aManager);
 protected:
   nsImageBoxFrame(nsIPresShell* aShell, nsStyleContext* aContext);
 
@@ -108,7 +111,7 @@ private:
   // registered with the refresh driver.
   bool mRequestRegistered;
 
-  nsCOMPtr<imgIRequest> mImageRequest;
+  nsRefPtr<imgRequestProxy> mImageRequest;
   nsCOMPtr<imgINotificationObserver> mListener;
 
   int32_t mLoadFlags;
@@ -130,7 +133,8 @@ public:
   }
 #endif
 
-  virtual already_AddRefed<ImageContainer> GetContainer(nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
+  virtual already_AddRefed<ImageContainer> GetContainer(LayerManager* aManager,
+                                                        nsDisplayListBuilder* aBuilder) MOZ_OVERRIDE;
   virtual void ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset) MOZ_OVERRIDE;
   virtual nsRect GetBounds(nsDisplayListBuilder* aBuilder, bool* aSnap)
   {

@@ -30,6 +30,7 @@
 #include "nsIWebNavigation.h"
 #include "nsServiceManagerUtils.h"
 
+using namespace mozilla;
 using namespace mozilla::a11y;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -48,7 +49,7 @@ DocManager::GetDocAccessible(nsIDocument* aDocument)
   // Ensure CacheChildren is called before we query cache.
   ApplicationAcc()->EnsureChildren();
 
-  DocAccessible* docAcc = mDocAccessibleCache.GetWeak(aDocument);
+  DocAccessible* docAcc = GetExistingDocAccessible(aDocument);
   if (docAcc)
     return docAcc;
 
@@ -180,7 +181,7 @@ DocManager::OnStateChange(nsIWebProgress* aWebProgress,
     logging::DocLoad("start document loading", aWebProgress, aRequest, aStateFlags);
 #endif
 
-  DocAccessible* docAcc = mDocAccessibleCache.GetWeak(document);
+  DocAccessible* docAcc = GetExistingDocAccessible(document);
   if (!docAcc)
     return NS_OK;
 
@@ -279,7 +280,7 @@ DocManager::HandleEvent(nsIDOMEvent* aEvent)
     // We're allowed to not remove listeners when accessible document is
     // shutdown since we don't keep strong reference on chrome event target and
     // listeners are removed automatically when chrome event target goes away.
-    DocAccessible* docAccessible = mDocAccessibleCache.GetWeak(document);
+    DocAccessible* docAccessible = GetExistingDocAccessible(document);
     if (docAccessible)
       docAccessible->Shutdown();
 
@@ -311,7 +312,7 @@ DocManager::HandleDOMDocumentLoad(nsIDocument* aDocument,
 {
   // Document accessible can be created before we were notified the DOM document
   // was loaded completely. However if it's not created yet then create it.
-  DocAccessible* docAcc = mDocAccessibleCache.GetWeak(aDocument);
+  DocAccessible* docAcc = GetExistingDocAccessible(aDocument);
   if (!docAcc) {
     docAcc = CreateDocOrRootAccessible(aDocument);
     if (!docAcc)
@@ -329,7 +330,7 @@ DocManager::AddListeners(nsIDocument* aDocument,
   nsIDOMEventTarget *target = window->GetChromeEventHandler();
   nsEventListenerManager* elm = target->GetListenerManager(true);
   elm->AddEventListenerByType(this, NS_LITERAL_STRING("pagehide"),
-                              NS_EVENT_FLAG_CAPTURE);
+                              dom::TrustedEventsAtCapture());
 
 #ifdef A11Y_LOG
   if (logging::IsEnabled(logging::eDocCreate))
@@ -338,7 +339,7 @@ DocManager::AddListeners(nsIDocument* aDocument,
 
   if (aAddDOMContentLoadedListener) {
     elm->AddEventListenerByType(this, NS_LITERAL_STRING("DOMContentLoaded"),
-                                NS_EVENT_FLAG_CAPTURE);
+                                dom::TrustedEventsAtCapture());
 #ifdef A11Y_LOG
     if (logging::IsEnabled(logging::eDocCreate))
       logging::Text("added 'DOMContentLoaded' listener");
@@ -357,7 +358,7 @@ DocManager::CreateDocOrRootAccessible(nsIDocument* aDocument)
 
   // Ignore documents without presshell and not having root frame.
   nsIPresShell* presShell = aDocument->GetShell();
-  if (!presShell || !presShell->GetRootFrame() || presShell->IsDestroying())
+  if (!presShell || presShell->IsDestroying())
     return nullptr;
 
   bool isRootDoc = nsCoreUtils::IsRootDocument(aDocument);
