@@ -29,7 +29,7 @@ def build_dict(env=os.environ):
     known_os = {"Linux": "linux",
                 "WINNT": "win",
                 "Darwin": "mac",
-                "Android": "android"}
+                "Android": "b2g" if env["MOZ_WIDGET_TOOLKIT"] == "gonk" else "android"}
     if o in known_os:
         d["os"] = known_os[o]
     else:
@@ -39,6 +39,10 @@ def build_dict(env=os.environ):
     # Widget toolkit, just pass the value directly through.
     d["toolkit"] = env["MOZ_WIDGET_TOOLKIT"]
     
+    # Application name
+    if 'MOZ_APP_NAME' in env:
+      d["appname"] = env["MOZ_APP_NAME"]
+
     # processor
     p = env["TARGET_CPU"]
     # for universal mac builds, put in a special value

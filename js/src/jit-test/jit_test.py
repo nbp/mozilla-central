@@ -11,17 +11,15 @@ import subprocess
 from subprocess import *
 from threading import Thread
 
-DEBUGGER_INFO = {
-  "gdb": {
-    "interactive": True,
-    "args": "-q --args"
-  },
+def add_libdir_to_path():
+    from os.path import dirname, exists, join, realpath
+    js_src_dir = dirname(dirname(realpath(sys.argv[0])))
+    assert exists(join(js_src_dir,'jsapi.h'))
+    sys.path.append(join(js_src_dir, 'lib'))
+    sys.path.append(join(js_src_dir, 'tests', 'lib'))
 
-  "valgrind": {
-    "interactive": False,
-    "args": "--leak-check=full"
-  }
-}
+add_libdir_to_path()
+from progressbar import ProgressBar, NullProgressBar
 
 # Backported from Python 3.1 posixpath.py
 def _relpath(path, start=None):
@@ -216,8 +214,10 @@ def run_test(test, lib_dir, shell_args):
              for d in os.environ['PATH'].split(os.pathsep)])):
         valgrind_prefix = [ 'valgrind',
                             '-q',
-                            '--smc-check=all',
+                            '--smc-check=all-non-file',
                             '--error-exitcode=1',
+                            '--gen-suppressions=all',
+                            '--show-possibly-lost=no',
                             '--leak-check=full']
         if os.uname()[0] == 'Darwin':
             valgrind_prefix += ['--dsymutil=yes']
@@ -273,13 +273,15 @@ def print_tinderbox(label, test, message=None):
     print result
 
 def run_tests(tests, test_dir, lib_dir, shell_args):
-    pb = None
-    if not OPTIONS.hide_progress and not OPTIONS.show_cmd:
-        try:
-            from progressbar import ProgressBar
-            pb = ProgressBar('', len(tests), 24)
-        except ImportError:
-            pass
+    pb = NullProgressBar()
+    if not OPTIONS.hide_progress and not OPTIONS.show_cmd and ProgressBar.conservative_isatty():
+        fmt = [
+            {'value': 'PASS',    'color': 'green'},
+            {'value': 'FAIL',    'color': 'red'},
+            {'value': 'TIMEOUT', 'color': 'blue'},
+            {'value': 'SKIP',    'color': 'brightgray'},
+        ]
+        pb = ProgressBar(len(tests), fmt)
 
     failures = []
     timeouts = 0
@@ -293,6 +295,7 @@ def run_tests(tests, test_dir, lib_dir, shell_args):
 
             if not ok:
                 failures.append([ test, out, err, code, timed_out ])
+                pb.message("FAIL - %s" % test.path)
             if timed_out:
                 timeouts += 1
 
@@ -309,15 +312,17 @@ def run_tests(tests, test_dir, lib_dir, shell_args):
                     print_tinderbox("TEST-UNEXPECTED-FAIL", test, msg);
 
             n = i + 1
-            if pb:
-                pb.label = '[%4d|%4d|%4d|%4d]'%(n - len(failures), len(failures), timeouts, n)
-                pb.update(n)
+            pb.update(n, {
+                'PASS': n - len(failures),
+                'FAIL': len(failures),
+                'TIMEOUT': timeouts,
+                'SKIP': 0}
+            )
         complete = True
     except KeyboardInterrupt:
         print_tinderbox("TEST-UNEXPECTED-FAIL", test);
 
-    if pb:
-        pb.finish()
+    pb.finish(True)
 
     if failures:
         if OPTIONS.write_failures:
@@ -438,7 +443,7 @@ def main(argv):
     op.add_option('--write-failure-output', dest='write_failure_output', action='store_true',
                   help='With --write-failures=FILE, additionally write the output of failed tests to [FILE]')
     op.add_option('--ion', dest='ion', action='store_true',
-                  help='Run tests with --ion flag (ignores --jitflags)')
+                  help='Run tests once with --ion-eager and once with --no-jm (ignores --jitflags)')
     op.add_option('--tbpl', dest='tbpl', action='store_true',
                   help='Run tests with all IonMonkey option combinations (ignores --jitflags)')
     (OPTIONS, args) = op.parse_args(argv)

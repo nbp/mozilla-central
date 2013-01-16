@@ -45,6 +45,9 @@ class MathCache
     size_t sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf);
 };
 
+extern void
+InitRandom(JSRuntime *rt, uint64_t *rngState);
+
 } /* namespace js */
 
 /*
@@ -53,9 +56,6 @@ class MathCache
 
 extern JSObject *
 js_InitMathClass(JSContext *cx, js::HandleObject obj);
-
-extern void
-js_InitRandom(JSContext *cx);
 
 extern double
 math_random_no_outparam(JSContext *cx);
@@ -94,6 +94,9 @@ extern double
 js_math_floor_impl(double x);
 
 namespace js {
+
+extern JSBool
+math_imul(JSContext *cx, unsigned argc, js::Value *vp);
 
 extern JSBool
 math_log(JSContext *cx, unsigned argc, js::Value *vp);

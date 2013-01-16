@@ -5,7 +5,7 @@
 /*
  * PKCS7 decoding, verification.
  *
- * $Id: p7decode.c,v 1.29 2012/04/25 14:50:06 gerv%gerv.net Exp $
+ * $Id: p7decode.c,v 1.31 2012/12/12 19:25:36 wtc%google.com Exp $
  */
 
 #include "p7local.h"
@@ -407,7 +407,6 @@ sec_pkcs7_decoder_get_recipient_key (SEC_PKCS7DecoderContext *p7dcx,
     PK11SymKey *bulkkey = NULL;
     SECOidTag keyalgtag, bulkalgtag, encalgtag;
     PK11SlotInfo *slot = NULL;
-    int bulkLength = 0;
 
     if (recipientinfos == NULL || recipientinfos[0] == NULL) {
 	p7dcx->error = SEC_ERROR_NOT_A_RECIPIENT;
@@ -1280,12 +1279,12 @@ SEC_PKCS7ContentIsSigned(SEC_PKCS7ContentInfo *cinfo)
 static PRBool
 sec_pkcs7_verify_signature(SEC_PKCS7ContentInfo *cinfo,
 			   SECCertUsage certusage,
-			   SECItem *detached_digest,
+			   const SECItem *detached_digest,
 			   HASH_HashType digest_type,
 			   PRBool keepcerts)
 {
     SECAlgorithmID **digestalgs, *bulkid;
-    SECItem *digest;
+    const SECItem *digest;
     SECItem **digests;
     SECItem **rawcerts;
     CERTSignedCrl **crls;
@@ -1774,7 +1773,7 @@ SEC_PKCS7VerifySignature(SEC_PKCS7ContentInfo *cinfo,
 PRBool
 SEC_PKCS7VerifyDetachedSignature(SEC_PKCS7ContentInfo *cinfo,
 				 SECCertUsage certusage,
-				 SECItem *detached_digest,
+				 const SECItem *detached_digest,
 				 HASH_HashType digest_type,
 				 PRBool keepcerts)
 {

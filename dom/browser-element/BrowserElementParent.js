@@ -176,6 +176,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   this._domRequestCounter = 0;
   this._pendingDOMRequests = {};
   this._hasRemoteFrame = hasRemoteFrame;
+  this._nextPaintListeners = [];
 
   this._frameLoader = frameLoader;
   this._frameElement = frameLoader.QueryInterface(Ci.nsIFrameLoader).ownerElement;
@@ -213,6 +214,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   addMessageListener("error", this._fireEventFromMsg);
   addMessageListener("scroll", this._fireEventFromMsg);
   addMessageListener("firstpaint", this._fireEventFromMsg);
+  addMessageListener("nextpaint", this._recvNextPaint);
   addMessageListener("keyevent", this._fireKeyEvent);
   addMessageListener("showmodalprompt", this._handleShowModalPrompt);
   addMessageListener('got-purge-history', this._gotDOMRequestResult);
@@ -222,6 +224,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   addMessageListener('fullscreen-origin-change', this._remoteFullscreenOriginChange);
   addMessageListener('rollback-fullscreen', this._remoteFrameFullscreenReverted);
   addMessageListener('exit-fullscreen', this._exitFullscreen);
+  addMessageListener('got-visible', this._gotDOMRequestResult);
 
   let os = Cc["@mozilla.org/observer-service;1"].getService(Ci.nsIObserverService);
   os.addObserver(this, 'ask-children-to-exit-fullscreen', /* ownsWeak = */ true);
@@ -245,6 +248,7 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
 
   // Define methods on the frame element.
   defineMethod('setVisible', this._setVisible);
+  defineDOMRequestMethod('getVisible', 'get-visible');
   defineMethod('sendMouseEvent', this._sendMouseEvent);
 
   // 0 = disabled, 1 = enabled, 2 - auto detect
@@ -257,6 +261,8 @@ function BrowserElementParent(frameLoader, hasRemoteFrame) {
   defineMethod('stop', this._stop);
   defineMethod('purgeHistory', this._purgeHistory);
   defineMethod('getScreenshot', this._getScreenshot);
+  defineMethod('addNextPaintListener', this._addNextPaintListener);
+  defineMethod('removeNextPaintListener', this._removeNextPaintListener);
   defineDOMRequestMethod('getCanGoBack', 'get-can-go-back');
   defineDOMRequestMethod('getCanGoForward', 'get-can-go-forward');
 
@@ -592,6 +598,41 @@ BrowserElementParent.prototype = {
 
     return this._sendDOMRequest('get-screenshot',
                                 {width: width, height: height});
+  },
+
+  _recvNextPaint: function(data) {
+    let listeners = this._nextPaintListeners;
+    this._nextPaintListeners = [];
+    for (let listener of listeners) {
+      try {
+        listener();
+      } catch (e) {
+        // If a listener throws we'll continue.
+      }
+    }
+  },
+
+  _addNextPaintListener: function(listener) {
+    if (typeof listener != 'function')
+      throw Components.Exception("Invalid argument", Cr.NS_ERROR_INVALID_ARG);
+
+    if (this._nextPaintListeners.push(listener) == 1)
+      this._sendAsyncMsg('activate-next-paint-listener');
+  },
+
+  _removeNextPaintListener: function(listener) {
+    if (typeof listener != 'function')
+      throw Components.Exception("Invalid argument", Cr.NS_ERROR_INVALID_ARG);
+
+    for (let i = this._nextPaintListeners.length - 1; i >= 0; i--) {
+      if (this._nextPaintListeners[i] == listener) {
+        this._nextPaintListeners.splice(i, 1);
+        break;
+      }
+    }
+
+    if (this._nextPaintListeners.length == 0)
+      this._sendAsyncMsg('deactivate-next-paint-listener');
   },
 
   _fireKeyEvent: function(data) {

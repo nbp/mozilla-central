@@ -5,7 +5,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys, os.path, re, xpidl, itertools
+import sys, os, xpidl
 
 # --makedepend-output support.
 make_dependencies = []
@@ -265,18 +265,23 @@ def init_value(attribute):
             return "JSVAL_VOID"
         return "0"
     else:
+        if realtype.count("double") and attribute.defvalue == "Infinity":
+            return "MOZ_DOUBLE_POSITIVE_INFINITY()"
+        if realtype.count("double") and attribute.defvalue == "-Infinity":
+            return "MOZ_DOUBLE_NEGATIVE_INFINITY()"
         if realtype.count("nsAString"):
             return "NS_LITERAL_STRING(\"%s\")" % attribute.defvalue
         if realtype.count("nsACString"):
             return "NS_LITERAL_CSTRING(\"%s\")" % attribute.defvalue
-        raise IDLError("Default value is not supported for type %s" % realtype)
+        raise xpidl.IDLError("Default value of %s is not supported for type %s" %
+                             (attribute.defvalue, realtype), attribute.location)
 
 def write_header(iface, fd):
     attributes = []
     for member in iface.members:
         if isinstance(member, xpidl.Attribute):
             attributes.append(member)
-    
+
     fd.write("class %s" % iface.name)
     if iface.base is not None:
         fd.write(" : public %s" % iface.base)
@@ -287,7 +292,7 @@ def write_header(iface, fd):
     fd.write("  // If aCx or aVal is null, NS_OK is returned and \n"
              "  // dictionary will use the default values. \n"
              "  nsresult Init(JSContext* aCx, const jsval* aVal);\n")
-    
+
     fd.write("\n")
 
     for member in attributes:

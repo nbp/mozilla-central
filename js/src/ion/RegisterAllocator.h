@@ -55,12 +55,19 @@ struct AllocationIntegrityState
     // debug-builds-only bloat in the size of the involved structures.
 
     struct InstructionInfo {
-        Vector<uint32, 2, SystemAllocPolicy> inputs;
-        Vector<uint32, 1, SystemAllocPolicy> outputs;
-        InstructionInfo() {}
-        InstructionInfo(const InstructionInfo &o) {
+        Vector<LAllocation, 2, SystemAllocPolicy> inputs;
+        Vector<LDefinition, 0, SystemAllocPolicy> temps;
+        Vector<LDefinition, 1, SystemAllocPolicy> outputs;
+
+        InstructionInfo()
+        { }
+
+        InstructionInfo(const InstructionInfo &o)
+        {
             for (size_t i = 0; i < o.inputs.length(); i++)
                 inputs.append(o.inputs[i]);
+            for (size_t i = 0; i < o.temps.length(); i++)
+                temps.append(o.temps[i]);
             for (size_t i = 0; i < o.outputs.length(); i++)
                 outputs.append(o.outputs[i]);
         }
@@ -85,11 +92,11 @@ struct AllocationIntegrityState
     struct IntegrityItem
     {
         LBlock *block;
-        uint32 vreg;
+        uint32_t vreg;
         LAllocation alloc;
 
         // Order of insertion into seen, for sorting.
-        uint32 index;
+        uint32_t index;
 
         typedef IntegrityItem Lookup;
         static HashNumber hash(const IntegrityItem &item) {
@@ -112,11 +119,12 @@ struct AllocationIntegrityState
     typedef HashSet<IntegrityItem, IntegrityItem, SystemAllocPolicy> IntegrityItemSet;
     IntegrityItemSet seen;
 
-    bool checkIntegrity(LBlock *block, LInstruction *ins, uint32 vreg, LAllocation alloc,
+    bool checkIntegrity(LBlock *block, LInstruction *ins, uint32_t vreg, LAllocation alloc,
                         bool populateSafepoints);
-    bool addPredecessor(LBlock *block, uint32 vreg, LAllocation alloc);
+    bool checkSafepointAllocation(LInstruction *ins, uint32_t vreg, LAllocation alloc,
+                                  bool populateSafepoints);
+    bool addPredecessor(LBlock *block, uint32_t vreg, LAllocation alloc);
 
-    void check(bool cond, const char *msg);
     void dump();
 };
 
@@ -133,13 +141,13 @@ struct AllocationIntegrityState
 class CodePosition
 {
   private:
-    CodePosition(const uint32 &bits)
+    CodePosition(const uint32_t &bits)
       : bits_(bits)
     { }
 
     static const unsigned int INSTRUCTION_SHIFT = 1;
     static const unsigned int SUBPOSITION_MASK = 1;
-    uint32 bits_;
+    uint32_t bits_;
 
   public:
     static const CodePosition MAX;
@@ -155,17 +163,17 @@ class CodePosition
     CodePosition() : bits_(0)
     { }
 
-    CodePosition(uint32 instruction, SubPosition where) {
+    CodePosition(uint32_t instruction, SubPosition where) {
         JS_ASSERT(instruction < 0x80000000u);
-        JS_ASSERT(((uint32)where & SUBPOSITION_MASK) == (uint32)where);
-        bits_ = (instruction << INSTRUCTION_SHIFT) | (uint32)where;
+        JS_ASSERT(((uint32_t)where & SUBPOSITION_MASK) == (uint32_t)where);
+        bits_ = (instruction << INSTRUCTION_SHIFT) | (uint32_t)where;
     }
 
-    uint32 ins() const {
+    uint32_t ins() const {
         return bits_ >> INSTRUCTION_SHIFT;
     }
 
-    uint32 pos() const {
+    uint32_t pos() const {
         return bits_;
     }
 
@@ -246,7 +254,7 @@ class InstructionData
 class InstructionDataMap
 {
     InstructionData *insData_;
-    uint32 numIns_;
+    uint32_t numIns_;
 
   public:
     InstructionDataMap()
@@ -254,7 +262,7 @@ class InstructionDataMap
         numIns_(0)
     { }
 
-    bool init(MIRGenerator *gen, uint32 numInstructions) {
+    bool init(MIRGenerator *gen, uint32_t numInstructions) {
         insData_ = gen->allocate<InstructionData>(numInstructions);
         numIns_ = numInstructions;
         if (!insData_)
@@ -271,7 +279,7 @@ class InstructionDataMap
         JS_ASSERT(ins->id() < numIns_);
         return insData_[ins->id()];
     }
-    InstructionData &operator[](uint32 ins) {
+    InstructionData &operator[](uint32_t ins) {
         JS_ASSERT(ins < numIns_);
         return insData_[ins];
     }
@@ -306,27 +314,38 @@ class RegisterAllocator
   protected:
     bool init();
 
-    CodePosition outputOf(uint32 pos) {
+    CodePosition outputOf(uint32_t pos) {
         return CodePosition(pos, CodePosition::OUTPUT);
     }
     CodePosition outputOf(LInstruction *ins) {
         return CodePosition(ins->id(), CodePosition::OUTPUT);
     }
-    CodePosition inputOf(uint32 pos) {
+    CodePosition inputOf(uint32_t pos) {
         return CodePosition(pos, CodePosition::INPUT);
     }
     CodePosition inputOf(LInstruction *ins) {
         return CodePosition(ins->id(), CodePosition::INPUT);
     }
 
-    LMoveGroup *getInputMoveGroup(uint32 ins);
-    LMoveGroup *getMoveGroupAfter(uint32 ins);
+    LMoveGroup *getInputMoveGroup(uint32_t ins);
+    LMoveGroup *getMoveGroupAfter(uint32_t ins);
 
     LMoveGroup *getInputMoveGroup(CodePosition pos) {
         return getInputMoveGroup(pos.ins());
     }
     LMoveGroup *getMoveGroupAfter(CodePosition pos) {
         return getMoveGroupAfter(pos.ins());
+    }
+
+    size_t findFirstNonCallSafepoint(CodePosition from)
+    {
+        size_t i = 0;
+        for (; i < graph.numNonCallSafepoints(); i++) {
+            LInstruction *ins = graph.getNonCallSafepoint(i);
+            if (from <= inputOf(ins))
+                break;
+        }
+        return i;
     }
 };
 

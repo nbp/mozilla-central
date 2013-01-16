@@ -150,6 +150,9 @@ pref("media.cache_size", 512000);
 // Master HTML5 media volume scale.
 pref("media.volume_scale", "1.0");
 
+#ifdef MOZ_WMF
+pref("media.windows-media-foundation.enabled", false);
+#endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
 #endif
@@ -166,13 +169,13 @@ pref("media.wave.enabled", true);
 pref("media.webm.enabled", true);
 #endif
 #ifdef MOZ_DASH
-pref("media.dash.enabled", true);
+pref("media.dash.enabled", false);
 #endif
 #ifdef MOZ_GSTREAMER
 pref("media.gstreamer.enabled", true);
 #endif
 #ifdef MOZ_WEBRTC
-pref("media.navigator.enabled", false);
+pref("media.navigator.enabled", true);
 pref("media.peerconnection.enabled", false);
 pref("media.navigator.permission.disabled", false);
 #else
@@ -347,7 +350,11 @@ pref("toolkit.scrollbox.horizontalScrollDistance", 5);
 pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
 // Telemetry
+#ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
+pref("toolkit.telemetry.enabledPreRelease", true);
+#else
 pref("toolkit.telemetry.enabled", false);
+#endif
 pref("toolkit.telemetry.server", "https://data.mozilla.com");
 // Telemetry server owner. Please change if you set toolkit.telemetry.server to a different server
 pref("toolkit.telemetry.server_owner", "Mozilla");
@@ -712,11 +719,12 @@ pref("javascript.options.strict.debug",     true);
 pref("javascript.options.methodjit.content", true);
 pref("javascript.options.methodjit.chrome",  true);
 pref("javascript.options.ion.content",      true);
+pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
 pref("javascript.options.methodjit_always", false);
 pref("javascript.options.xml.content", false);
-pref("javascript.options.xml.chrome", true);
+pref("javascript.options.xml.chrome", false);
 pref("javascript.options.jit_hardening", true);
 pref("javascript.options.typeinference", true);
 // This preference limits the memory usage of javascript.
@@ -764,6 +772,9 @@ pref("security.fileuri.strict_origin_policy", true);
 // telemetry is also enabled as otherwise there is no way to report
 // the results
 pref("network.allow-experiments", true);
+
+// Turn off interprocess security checks. Needed to run xpcshell tests.
+pref("network.disable.ipc.security", false);
 
 // Default action for unlisted external protocol handlers
 pref("network.protocol-handler.external-default", true);      // OK to load
@@ -908,6 +919,14 @@ pref("network.http.connection-retry-timeout", 250);
 // The number of seconds after sending initial SYN for an HTTP connection
 // to give up if the OS does not give up first
 pref("network.http.connection-timeout", 90);
+
+// The maximum number of current global half open sockets allowable
+// when starting a new speculative connection.
+pref("network.http.speculative-parallel-limit", 6);
+
+// Whether or not to block requests for non head js/css items (e.g. media)
+// while those elements load.
+pref("network.http.rendering-critical-requests-prioritization", true);
 
 // Disable IPv6 for backup connections to workaround problems about broken
 // IPv6 connectivity.
@@ -1268,7 +1287,6 @@ pref("intl.charsetmenu.browser.more2",      "ISO-8859-4, ISO-8859-13, windows-12
 pref("intl.charsetmenu.browser.more3",      "GB2312, gbk, gb18030, HZ-GB-2312, ISO-2022-CN, Big5, Big5-HKSCS, x-euc-tw, EUC-JP, ISO-2022-JP, Shift_JIS, EUC-KR, x-johab, ISO-2022-KR");
 pref("intl.charsetmenu.browser.more4",      "armscii-8, TIS-620, ISO-8859-11, windows-874, IBM857, ISO-8859-9, x-mac-turkish, windows-1254, x-viet-tcvn5712, VISCII, x-viet-vps, windows-1258, x-mac-devanagari, x-mac-gujarati, x-mac-gurmukhi");
 pref("intl.charsetmenu.browser.more5",      "ISO-8859-6, windows-1256, ISO-8859-8-I, windows-1255, ISO-8859-8, IBM862");
-pref("intl.charsetmenu.browser.unicode",    "UTF-8, UTF-16LE, UTF-16BE");
 pref("intl.charsetmenu.mailedit",           "chrome://global/locale/intl.properties");
 pref("intl.charsetmenu.browser.cache",      "");
 pref("intl.charsetmenu.mailview.cache",     "");
@@ -1435,6 +1453,17 @@ pref("mousewheel.with_control.action", 3);
 pref("mousewheel.with_meta.action", 1);  // command key on Mac
 pref("mousewheel.with_shift.action", 1);
 pref("mousewheel.with_win.action", 1);
+
+// mousewheel.*.action.override_x will override the action
+// when the mouse wheel is rotated along the x direction.
+// -1: Don't override the action.
+// 0 to 3: Override the action with the specified value.
+pref("mousewheel.default.action.override_x", -1);
+pref("mousewheel.with_alt.action.override_x", -1);
+pref("mousewheel.with_control.action.override_x", -1);
+pref("mousewheel.with_meta.action.override_x", -1);  // command key on Mac
+pref("mousewheel.with_shift.action.override_x", -1);
+pref("mousewheel.with_win.action.override_x", -1);
 
 // mousewheel.*.delta_multiplier_* can specify the value muliplied by the delta
 // value.  The values will be used after divided by 100.  I.e., 100 means 1.0,
@@ -1609,17 +1638,35 @@ pref("layout.css.dpi", -1);
 // of a CSS "px". This is only used for windows on the screen, not for printing.
 pref("layout.css.devPixelsPerPx", "-1.0");
 
+// Is support for CSS Masking features enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.masking.enabled", false);
+#else
+pref("layout.css.masking.enabled", true);
+#endif
+
 // Is support for the the @supports rule enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.supports-rule.enabled", false);
+#else
 pref("layout.css.supports-rule.enabled", true);
+#endif
 
 // Is support for CSS Flexbox enabled?
-pref("layout.css.flexbox.enabled", false);
+pref("layout.css.flexbox.enabled", true);
 
 // Are sets of prefixed properties supported?
 pref("layout.css.prefixes.border-image", true);
 pref("layout.css.prefixes.transforms", true);
 pref("layout.css.prefixes.transitions", true);
 pref("layout.css.prefixes.animations", true);
+
+// Is support for the :scope selector enabled?
+#ifdef RELEASE_BUILD
+pref("layout.css.scope-pseudo.enabled", false);
+#else
+pref("layout.css.scope-pseudo.enabled", true);
+#endif
 
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
@@ -1708,16 +1755,29 @@ pref("dom.ipc.plugins.parentTimeoutSecs", 0);
 // How long a plugin launch is allowed to take before
 // we consider it failed.
 pref("dom.ipc.plugins.processLaunchTimeoutSecs", 45);
+#ifdef XP_WIN
+// How long a plugin is allowed to process a synchronous IPC message 
+// before we display the plugin hang UI
+pref("dom.ipc.plugins.hangUITimeoutSecs", 5);
+// Minimum time that the plugin hang UI will be displayed
+pref("dom.ipc.plugins.hangUIMinDisplaySecs", 10);
+#endif
 #else
 // No timeout in DEBUG builds
 pref("dom.ipc.plugins.timeoutSecs", 0);
 pref("dom.ipc.plugins.processLaunchTimeoutSecs", 0);
 pref("dom.ipc.plugins.parentTimeoutSecs", 0);
+#ifdef XP_WIN
+pref("dom.ipc.plugins.hangUITimeoutSecs", 0);
+pref("dom.ipc.plugins.hangUIMinDisplaySecs", 0);
+#endif
 #endif
 
-// Disable oopp for standard java. They run their own process isolation (which
-// conflicts with our implementation, at least on Windows).
+#ifdef XP_WIN
+// Disable oopp for java on windows. They run their own
+// process isolation which conflicts with our implementation.
 pref("dom.ipc.plugins.java.enabled", false);
+#endif
 
 pref("dom.ipc.plugins.flash.subprocess.crashreporter.enabled", true);
 
@@ -1795,6 +1855,16 @@ pref("font.size.inflation.minTwips", 0);
  * either of the prefs above.  It has no meaning in single-mode UIs.
  */
 pref("font.size.inflation.forceEnabled", false);
+/*
+ * In products with multi-mode pan-and-zoom and non-pan-and-zoom UIs,
+ * this pref disables font inflation in master-process contexts where
+ * existing heuristics can't be used determine enabled-ness.
+ *
+ * This pref has no effect if font inflation is not enabled through
+ * either of the prefs above.  The "forceEnabled" pref above overrides
+ * this pref.
+ */
+pref("font.size.inflation.disabledInMasterProcess", false);
 /*
  * Since the goal of font size inflation is to avoid having to
  * repeatedly scroll side to side to read a block of text, and there are
@@ -2594,12 +2664,12 @@ pref("font.name-list.monospace.x-western", "Courier,Courier New");
 pref("font.name-list.cursive.x-western", "Apple Chancery");
 pref("font.name-list.fantasy.x-western", "Papyrus");
 
-pref("font.name.serif.zh-CN", "STSong");
-pref("font.name.sans-serif.zh-CN", "STHeiti");
-pref("font.name.monospace.zh-CN", "STHeiti");
-pref("font.name-list.serif.zh-CN", "STSong,Heiti SC");
-pref("font.name-list.sans-serif.zh-CN", "STHeiti,Heiti SC");
-pref("font.name-list.monospace.zh-CN", "STHeiti,Heiti SC");
+pref("font.name.serif.zh-CN", "Times");
+pref("font.name.sans-serif.zh-CN", "Helvetica");
+pref("font.name.monospace.zh-CN", "Courier");
+pref("font.name-list.serif.zh-CN", "Times,STSong,Heiti SC");
+pref("font.name-list.sans-serif.zh-CN", "Helvetica,STHeiti,Heiti SC");
+pref("font.name-list.monospace.zh-CN", "Courier,STHeiti,Heiti SC");
 
 pref("font.name.serif.zh-TW", "Times"); 
 pref("font.name.sans-serif.zh-TW", "Helvetica");  
@@ -3646,6 +3716,8 @@ pref("webgl.msaa-force", false);
 pref("webgl.prefer-16bpp", false);
 pref("webgl.default-no-alpha", false);
 pref("webgl.force-layers-readback", false);
+pref("webgl.lose-context-on-heap-minimize", false);
+pref("webgl.can-lose-context-in-foreground", true);
 
 // Stagefright prefs
 pref("stagefright.force-enabled", false);
@@ -3836,12 +3908,20 @@ pref("social.enabled", false);
 // observers (bug 780507).
 pref("dom.idle-observers-api.fuzz_time.disabled", true);
 
-// Setting that to true grant elevated privileges to apps that ask
-// for them in their manifest.
-pref("dom.mozApps.dev_mode", false);
-
 // Lowest localId for apps.
 pref("dom.mozApps.maxLocalId", 1000);
+
+// XXX Security: You CANNOT safely add a new app store for
+// installing privileged apps just by modifying this pref and
+// adding the signing cert for that store to the cert trust
+// database. *Any* origin listed can install apps signed with
+// *any* certificate trusted; we don't try to maintain a strong
+// association between certificate with installOrign. The
+// expectation here is that in production builds the pref will
+// contain exactly one origin. However, in custom development
+// builds it may contain more than one origin so we can test
+// different stages (dev, staging, prod) of the same app store.
+pref("dom.mozApps.signed_apps_installable_from", "https://marketplace.firefox.com");
 
 // Minimum delay in milliseconds between network activity notifications (0 means
 // no notifications). The delay is the same for both download and upload, though
@@ -3861,3 +3941,13 @@ pref("dom.browserElement.maxScreenshotDelayMS", 2000);
 
 // Whether we should show the placeholder when the element is focused but empty.
 pref("dom.placeholder.show_on_focus", true);
+
+// UAProfile settings
+pref("wap.UAProf.url", "");
+pref("wap.UAProf.tagname", "x-wap-profile");
+
+// If the user puts a finger down on an element and we think the user
+// might be executing a pan gesture, how long do we wait before
+// tentatively deciding the gesture is actually a tap and activating
+// the target element?
+pref("ui.touch_activation.delay_ms", 50);

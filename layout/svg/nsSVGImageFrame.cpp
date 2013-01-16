@@ -8,18 +8,19 @@
 #include "gfxMatrix.h"
 #include "gfxPlatform.h"
 #include "imgIContainer.h"
-#include "nsIDOMSVGImageElement.h"
+#include "nsIImageLoadingContent.h"
 #include "nsLayoutUtils.h"
 #include "nsRenderingContext.h"
 #include "imgINotificationObserver.h"
 #include "nsSVGEffects.h"
-#include "nsSVGImageElement.h"
 #include "nsSVGPathGeometryFrame.h"
-#include "nsSVGSVGElement.h"
+#include "mozilla/dom/SVGSVGElement.h"
 #include "nsSVGUtils.h"
 #include "SVGContentUtils.h"
+#include "mozilla/dom/SVGImageElement.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 
 class nsSVGImageFrame;
 
@@ -131,14 +132,12 @@ nsSVGImageFrame::Init(nsIContent* aContent,
                       nsIFrame* aParent,
                       nsIFrame* aPrevInFlow)
 {
-#ifdef DEBUG
-  nsCOMPtr<nsIDOMSVGImageElement> image = do_QueryInterface(aContent);
-  NS_ASSERTION(image, "Content is not an SVG image!");
-#endif
+  NS_ASSERTION(aContent->IsSVG(nsGkAtoms::image),
+               "Content is not an SVG image!");
 
   nsresult rv = nsSVGImageFrameBase::Init(aContent, aParent, aPrevInFlow);
   if (NS_FAILED(rv)) return rv;
-  
+
   mListener = new nsSVGImageListener(this);
   if (!mListener) return NS_ERROR_OUT_OF_MEMORY;
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mContent);
@@ -185,7 +184,8 @@ nsSVGImageFrame::AttributeChanged(int32_t         aNameSpaceID,
         aAttribute == nsGkAtoms::y ||
         aAttribute == nsGkAtoms::width ||
         aAttribute == nsGkAtoms::height) {
-      nsSVGUtils::InvalidateAndScheduleReflowSVG(this);
+      nsSVGUtils::InvalidateBounds(this, false);
+      nsSVGUtils::ScheduleReflowSVG(this);
       return NS_OK;
     }
     else if (aAttribute == nsGkAtoms::preserveAspectRatio) {
@@ -200,9 +200,9 @@ nsSVGImageFrame::AttributeChanged(int32_t         aNameSpaceID,
     if (nsContentUtils::IsImageSrcSetDisabled()) {
       return NS_OK;
     }
-    nsSVGImageElement *element = static_cast<nsSVGImageElement*>(mContent);
+    SVGImageElement *element = static_cast<SVGImageElement*>(mContent);
 
-    if (element->mStringAttributes[nsSVGImageElement::HREF].IsExplicitlySet()) {
+    if (element->mStringAttributes[SVGImageElement::HREF].IsExplicitlySet()) {
       element->LoadSVGImage(true, true);
     } else {
       element->CancelImageRequests(true);
@@ -219,7 +219,7 @@ nsSVGImageFrame::GetRasterImageTransform(int32_t aNativeWidth,
                                          uint32_t aFor)
 {
   float x, y, width, height;
-  nsSVGImageElement *element = static_cast<nsSVGImageElement*>(mContent);
+  SVGImageElement *element = static_cast<SVGImageElement*>(mContent);
   element->GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
 
   gfxMatrix viewBoxTM =
@@ -235,7 +235,7 @@ gfxMatrix
 nsSVGImageFrame::GetVectorImageTransform(uint32_t aFor)
 {
   float x, y, width, height;
-  nsSVGImageElement *element = static_cast<nsSVGImageElement*>(mContent);
+  SVGImageElement *element = static_cast<SVGImageElement*>(mContent);
   element->GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
 
   // No viewBoxTM needed here -- our height/width overrides any concept of
@@ -288,7 +288,7 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
     return NS_OK;
 
   float x, y, width, height;
-  nsSVGImageElement *imgElem = static_cast<nsSVGImageElement*>(mContent);
+  SVGImageElement *imgElem = static_cast<SVGImageElement*>(mContent);
   imgElem->GetAnimatedLengthValues(&x, &y, &width, &height, nullptr);
   NS_ASSERTION(width > 0 && height > 0,
                "Should only be painting things with valid width/height");
@@ -358,8 +358,8 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
       }
 
       // Grab root node (w/ sanity-check to make sure it exists & is <svg>)
-      nsSVGSVGElement* rootSVGElem =
-        static_cast<nsSVGSVGElement*>(imgRootFrame->GetContent());
+      SVGSVGElement* rootSVGElem =
+        static_cast<SVGSVGElement*>(imgRootFrame->GetContent());
       if (!rootSVGElem || !rootSVGElem->IsSVG(nsGkAtoms::svg)) {
         NS_ABORT_IF_FALSE(false, "missing or non-<svg> root node!!");
         return NS_OK;
@@ -468,10 +468,30 @@ nsSVGImageFrame::ReflowSVG()
 
   gfxContext tmpCtx(gfxPlatform::GetPlatform()->ScreenReferenceSurface());
 
-  gfxMatrix identity;
-  GeneratePath(&tmpCtx, identity);
-
+  // We'd like to just pass the identity matrix to GeneratePath, but if
+  // this frame's user space size is _very_ large/small then the extents we
+  // obtain below might have overflowed or otherwise be broken. This would
+  // cause us to end up with a broken mRect and visual overflow rect and break
+  // painting of this frame. This is particularly noticeable if the transforms
+  // between us and our nsSVGOuterSVGFrame scale this frame to a reasonable
+  // size. To avoid this we sadly have to do extra work to account for the
+  // transforms between us and our nsSVGOuterSVGFrame, even though the
+  // overwhelming number of SVGs will never have this problem.
+  // XXX Will Azure eventually save us from having to do this?
+  gfxSize scaleFactors = GetCanvasTM(FOR_OUTERSVG_TM).ScaleFactors(true);
+  bool applyScaling = fabs(scaleFactors.width) >= 1e-6 &&
+                      fabs(scaleFactors.height) >= 1e-6;
+  gfxMatrix scaling;
+  if (applyScaling) {
+    scaling.Scale(scaleFactors.width, scaleFactors.height);
+  }
+  tmpCtx.Save();
+  GeneratePath(&tmpCtx, scaling);
+  tmpCtx.Restore();
   gfxRect extent = tmpCtx.GetUserPathExtent();
+  if (applyScaling) {
+    extent.Scale(1 / scaleFactors.width, 1 / scaleFactors.height);
+  }
 
   if (!extent.IsEmpty()) {
     mRect = nsLayoutUtils::RoundGfxRectToAppRect(extent, 
@@ -487,15 +507,6 @@ nsSVGImageFrame::ReflowSVG()
     nsSVGEffects::UpdateEffects(this);
   }
 
-  // We only invalidate if we are dirty, if our outer-<svg> has already had its
-  // initial reflow (since if it hasn't, its entire area will be invalidated
-  // when it gets that initial reflow), and if our parent is not dirty (since
-  // if it is, then it will invalidate its entire new area, which will include
-  // our new area).
-  bool invalidate = (mState & NS_FRAME_IS_DIRTY) &&
-    !(GetParent()->GetStateBits() &
-       (NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY));
-
   nsRect overflow = nsRect(nsPoint(0,0), mRect.Size());
   nsOverflowAreas overflowAreas(overflow, overflow);
   FinishAndStoreOverflow(overflowAreas, mRect.Size());
@@ -503,9 +514,10 @@ nsSVGImageFrame::ReflowSVG()
   mState &= ~(NS_FRAME_FIRST_REFLOW | NS_FRAME_IS_DIRTY |
               NS_FRAME_HAS_DIRTY_CHILDREN);
 
-  if (invalidate) {
-    // XXXSDL Let FinishAndStoreOverflow do this.
-    nsSVGUtils::InvalidateBounds(this, true);
+  // Invalidate, but only if this is not our first reflow (since if it is our
+  // first reflow then we haven't had our first paint yet).
+  if (!(GetParent()->GetStateBits() & NS_FRAME_FIRST_REFLOW)) {
+    InvalidateFrame();
   }
 }
 
@@ -564,7 +576,8 @@ nsSVGImageListener::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect
     return NS_ERROR_FAILURE;
 
   if (aType == imgINotificationObserver::LOAD_COMPLETE) {
-    nsSVGUtils::InvalidateAndScheduleReflowSVG(mFrame);
+    nsSVGUtils::InvalidateBounds(mFrame, false);
+    nsSVGUtils::ScheduleReflowSVG(mFrame);
   }
 
   if (aType == imgINotificationObserver::FRAME_UPDATE) {
@@ -577,7 +590,8 @@ nsSVGImageListener::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect
   if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
     // Called once the resource's dimensions have been obtained.
     aRequest->GetImage(getter_AddRefs(mFrame->mImageContainer));
-    nsSVGUtils::InvalidateAndScheduleReflowSVG(mFrame);
+    nsSVGUtils::InvalidateBounds(mFrame, false);
+    nsSVGUtils::ScheduleReflowSVG(mFrame);
   }
 
   return NS_OK;

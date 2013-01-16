@@ -82,7 +82,7 @@ nsImageBoxFrameEvent::Run()
   nsEventStatus status = nsEventStatus_eIgnore;
   nsEvent event(true, mMessage);
 
-  event.flags |= NS_EVENT_FLAG_CANT_BUBBLE;
+  event.mFlags.mBubbles = false;
   nsEventDispatcher::Dispatch(mContent, pres_context, &event, nullptr, &status);
   return NS_OK;
 }
@@ -250,7 +250,7 @@ nsImageBoxFrame::UpdateImage()
     if (!(appearance && nsBox::gTheme &&
           nsBox::gTheme->ThemeSupportsWidget(nullptr, this, appearance))) {
       // get the list-style-image
-      imgIRequest *styleRequest = GetStyleList()->GetListStyleImage();
+      imgRequestProxy *styleRequest = GetStyleList()->GetListStyleImage();
       if (styleRequest) {
         styleRequest->Clone(mListener, getter_AddRefs(mImageRequest));
       }
@@ -388,13 +388,13 @@ nsDisplayXULImage::ConfigureLayer(ImageLayer* aLayer, const nsIntPoint& aOffset)
 }
 
 already_AddRefed<ImageContainer>
-nsDisplayXULImage::GetContainer(nsDisplayListBuilder* aBuilder)
+nsDisplayXULImage::GetContainer(LayerManager* aManager, nsDisplayListBuilder* aBuilder)
 {
-  return static_cast<nsImageBoxFrame*>(mFrame)->GetContainer();
+  return static_cast<nsImageBoxFrame*>(mFrame)->GetContainer(aManager);
 }
 
 already_AddRefed<ImageContainer>
-nsImageBoxFrame::GetContainer()
+nsImageBoxFrame::GetContainer(LayerManager* aManager)
 {
   bool hasSubRect = !mUseSrcAttr && (mSubRect.width > 0 || mSubRect.height > 0);
   if (hasSubRect || !mImageRequest) {
@@ -408,7 +408,7 @@ nsImageBoxFrame::GetContainer()
   }
   
   nsRefPtr<ImageContainer> container;
-  nsresult rv = imgCon->GetImageContainer(getter_AddRefs(container));
+  nsresult rv = imgCon->GetImageContainer(aManager, getter_AddRefs(container));
   NS_ENSURE_SUCCESS(rv, nullptr);
   return container.forget();
 }

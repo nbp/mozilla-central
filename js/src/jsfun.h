@@ -13,15 +13,18 @@
 #include "jspubtd.h"
 #include "jsobj.h"
 #include "jsatom.h"
-#include "jsscript.h"
 #include "jsstr.h"
 
 #include "gc/Barrier.h"
 
+ForwardDeclareJS(Atom);
+ForwardDeclareJS(Script);
+
 namespace js { class FunctionExtended; }
 
-struct JSFunction : public JSObject
+class JSFunction : public JSObject
 {
+  public:
     enum Flags {
         INTERPRETED      = 0x0001,  /* function has a JSScript and environment. */
         NATIVE_CTOR      = 0x0002,  /* native that can be called as a constructor */
@@ -57,7 +60,7 @@ struct JSFunction : public JSObject
     uint16_t        flags;        /* bitfield composed of the above Flags enum */
     union U {
         class Native {
-            friend struct JSFunction;
+            friend class JSFunction;
             js::Native          native;       /* native method pointer or null */
             const JSJitInfo     *jitinfo;     /* Information about this function to be
                                                  used by the JIT;
@@ -110,20 +113,21 @@ struct JSFunction : public JSObject
     }
 
     /* Returns the strictness of this function, which must be interpreted. */
-    inline bool inStrictMode() const;
+    inline bool strict() const;
 
+    // Can be called multiple times by the parser.
     void setArgCount(uint16_t nargs) {
-        JS_ASSERT(this->nargs == 0);
+        JS_ASSERT(this->nargs == 0 || this->nargs == nargs);
         this->nargs = nargs;
     }
 
+    // Can be called multiple times by the parser.
     void setHasRest() {
-        JS_ASSERT(!hasRest());
         flags |= HAS_REST;
     }
 
+    // Can be called multiple times by the parser.
     void setHasDefaults() {
-        JS_ASSERT(!hasDefaults());
         flags |= HAS_DEFAULTS;
     }
 
@@ -146,8 +150,8 @@ struct JSFunction : public JSObject
         flags |= HEAVYWEIGHT;
     }
 
+    // Can be called multiple times by the parser.
     void setIsExprClosure() {
-        JS_ASSERT(!isExprClosure());
         flags |= EXPR_CLOSURE;
     }
 
@@ -162,7 +166,7 @@ struct JSFunction : public JSObject
     inline void initAtom(JSAtom *atom);
     JSAtom *displayAtom() const { return atom_; }
 
-    inline void setGuessedAtom(JSAtom *atom);
+    inline void setGuessedAtom(js::UnrootedAtom atom);
 
     /* uint16_t representation bounds number of call object dynamic slots. */
     enum { MAX_ARGS_AND_VARS = 2 * ((1U << 16) - 1) };
@@ -178,34 +182,35 @@ struct JSFunction : public JSObject
     static inline size_t offsetOfEnvironment() { return offsetof(JSFunction, u.i.env_); }
     static inline size_t offsetOfAtom() { return offsetof(JSFunction, atom_); }
 
-    js::Return<JSScript*> getOrCreateScript(JSContext *cx) {
-        JS_ASSERT(isInterpreted());
-        if (isInterpretedLazy()) {
-            js::RootedFunction self(cx, this);
+    static js::UnrootedScript getOrCreateScript(JSContext *cx, JS::HandleFunction fun) {
+        JS_ASSERT(fun->isInterpreted());
+        if (fun->isInterpretedLazy()) {
             js::MaybeCheckStackRoots(cx);
-            if (!initializeLazyScript(cx))
-                return js::NullPtr();
+            if (!fun->initializeLazyScript(cx))
+                return js::UnrootedScript(NULL);
         }
-        JS_ASSERT(hasScript());
-        return JS::HandleScript::fromMarkedLocation(&u.i.script_);
+        JS_ASSERT(fun->hasScript());
+        return fun->u.i.script_;
     }
 
-    bool maybeGetOrCreateScript(JSContext *cx, js::MutableHandle<JSScript*> script) {
-        if (isNative()) {
+    static bool maybeGetOrCreateScript(JSContext *cx, js::HandleFunction fun,
+                                       js::MutableHandle<JSScript*> script)
+    {
+        if (fun->isNative()) {
             script.set(NULL);
             return true;
         }
-        script.set(getOrCreateScript(cx).unsafeGet());
-        return hasScript();
+        script.set(getOrCreateScript(cx, fun));
+        return fun->hasScript();
     }
 
-    js::Return<JSScript*> nonLazyScript() const {
+    js::UnrootedScript nonLazyScript() const {
         JS_ASSERT(hasScript());
         return JS::HandleScript::fromMarkedLocation(&u.i.script_);
     }
 
-    js::Return<JSScript*> maybeNonLazyScript() const {
-        return isInterpreted() ? nonLazyScript() : JS::NullPtr();
+    js::UnrootedScript maybeNonLazyScript() const {
+        return isInterpreted() ? nonLazyScript() : js::UnrootedScript(NULL);
     }
 
     js::HeapPtrScript &mutableScript() {
@@ -333,7 +338,7 @@ namespace js {
  */
 class FunctionExtended : public JSFunction
 {
-    friend struct JSFunction;
+    friend class JSFunction;
 
     /* Reserved slots available for storage by particular native functions. */
     HeapValue extendedSlots[2];

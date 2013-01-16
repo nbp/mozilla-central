@@ -256,7 +256,7 @@ JS_WrapAutoIdVector(JSContext *cx, js::AutoIdVector &props)
 JS_FRIEND_API(void)
 JS_TraceShapeCycleCollectorChildren(JSTracer *trc, void *shape)
 {
-    MarkCycleCollectorChildren(trc, (Shape *)shape);
+    MarkCycleCollectorChildren(trc, static_cast<RawShape>(shape));
 }
 
 static bool
@@ -304,18 +304,18 @@ JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *objArg, const JSFunctionSpec
 }
 
 AutoSwitchCompartment::AutoSwitchCompartment(JSContext *cx, JSCompartment *newCompartment
-                                             JS_GUARD_OBJECT_NOTIFIER_PARAM_NO_INIT)
+                                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
   : cx(cx), oldCompartment(cx->compartment)
 {
-    JS_GUARD_OBJECT_NOTIFIER_INIT;
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     cx->setCompartment(newCompartment);
 }
 
 AutoSwitchCompartment::AutoSwitchCompartment(JSContext *cx, JSHandleObject target
-                                             JS_GUARD_OBJECT_NOTIFIER_PARAM_NO_INIT)
+                                             MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
   : cx(cx), oldCompartment(cx->compartment)
 {
-    JS_GUARD_OBJECT_NOTIFIER_INIT;
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     cx->setCompartment(target->compartment());
 }
 
@@ -557,11 +557,10 @@ js::TraceWeakMaps(WeakMapTracer *trc)
     WatchpointMap::traceAll(trc);
 }
 
-JS_FRIEND_API(bool)
-js::GCThingIsMarkedGray(void *thing)
+extern JS_FRIEND_API(bool)
+js::AreGCGrayBitsValid(JSRuntime *rt)
 {
-    JS_ASSERT(thing);
-    return reinterpret_cast<gc::Cell *>(thing)->isMarked(gc::GRAY);
+    return rt->gcGrayBitsValid;
 }
 
 JS_FRIEND_API(JSGCTraceKind)
@@ -572,15 +571,9 @@ js::GCThingTraceKind(void *thing)
 }
 
 JS_FRIEND_API(void)
-js::UnmarkGrayGCThing(void *thing)
+js::VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback callback, void *closure)
 {
-    static_cast<js::gc::Cell *>(thing)->unmark(js::gc::GRAY);
-}
-
-JS_FRIEND_API(void)
-js::VisitGrayWrapperTargets(JSCompartment *comp, GCThingCallback *callback, void *closure)
-{
-    for (WrapperMap::Enum e(comp->crossCompartmentWrappers); !e.empty(); e.popFront()) {
+    for (JSCompartment::WrapperEnum e(comp); !e.empty(); e.popFront()) {
         gc::Cell *thing = e.front().key.wrapped;
         if (thing->isMarked(gc::GRAY))
             callback(closure, thing);
@@ -771,12 +764,6 @@ js::ContextHasOutstandingRequests(const JSContext *cx)
 }
 #endif
 
-JS_FRIEND_API(JSCompartment *)
-js::GetContextCompartment(const JSContext *cx)
-{
-    return cx->compartment;
-}
-
 JS_FRIEND_API(bool)
 js::HasUnrootedGlobal(const JSContext *cx)
 {
@@ -893,18 +880,6 @@ js::IsIncrementalBarrierNeeded(JSContext *cx)
     return IsIncrementalBarrierNeeded(cx->runtime);
 }
 
-JS_FRIEND_API(bool)
-js::IsIncrementalBarrierNeededOnObject(RawObject obj)
-{
-    return obj->compartment()->needsBarrier();
-}
-
-JS_FRIEND_API(bool)
-js::IsIncrementalBarrierNeededOnScript(JSScript *script)
-{
-    return script->compartment()->needsBarrier();
-}
-
 JS_FRIEND_API(void)
 js::IncrementalReferenceBarrier(void *ptr)
 {
@@ -918,15 +893,15 @@ js::IncrementalReferenceBarrier(void *ptr)
 
     uint32_t kind = gc::GetGCThingTraceKind(ptr);
     if (kind == JSTRACE_OBJECT)
-        JSObject::writeBarrierPre((JSObject *) ptr);
+        JSObject::writeBarrierPre(reinterpret_cast<RawObject>(ptr));
     else if (kind == JSTRACE_STRING)
-        JSString::writeBarrierPre((JSString *) ptr);
+        JSString::writeBarrierPre(reinterpret_cast<RawString>(ptr));
     else if (kind == JSTRACE_SCRIPT)
-        JSScript::writeBarrierPre((JSScript *) ptr);
+        JSScript::writeBarrierPre(reinterpret_cast<RawScript>(ptr));
     else if (kind == JSTRACE_SHAPE)
-        Shape::writeBarrierPre((Shape *) ptr);
+        Shape::writeBarrierPre(reinterpret_cast<RawShape>(ptr));
     else if (kind == JSTRACE_BASE_SHAPE)
-        BaseShape::writeBarrierPre((BaseShape *) ptr);
+        BaseShape::writeBarrierPre(reinterpret_cast<RawBaseShape>(ptr));
     else if (kind == JSTRACE_TYPE_OBJECT)
         types::TypeObject::writeBarrierPre((types::TypeObject *) ptr);
     else
@@ -1008,4 +983,22 @@ uint32_t
 js::GetListBaseExpandoSlot()
 {
     return gListBaseExpandoSlot;
+}
+
+JS_FRIEND_API(void)
+js::SetCTypesActivityCallback(JSRuntime *rt, CTypesActivityCallback cb)
+{
+    rt->ctypesActivityCallback = cb;
+}
+
+js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(JSContext *cx,
+                                                           js::CTypesActivityType beginType,
+                                                           js::CTypesActivityType endType
+                                                           MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
+  : cx(cx), callback(cx->runtime->ctypesActivityCallback), beginType(beginType), endType(endType)
+{
+    MOZ_GUARD_OBJECT_NOTIFIER_INIT;
+
+    if (callback)
+        callback(cx, beginType);
 }

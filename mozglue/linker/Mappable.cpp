@@ -248,7 +248,7 @@ public:
 #ifdef ANDROID
   ~_MappableBuffer() {
     /* Free the additional page we allocated. See _MappableBuffer::Create */
-    ::munmap(this + ((GetLength() + PAGE_SIZE) & ~(PAGE_SIZE - 1)), PAGE_SIZE);
+    ::munmap(*this + ((GetLength() + PAGE_SIZE) & ~(PAGE_SIZE - 1)), PAGE_SIZE);
   }
 #endif
 
@@ -333,6 +333,8 @@ MappableDeflate::mmap(const void *addr, size_t length, int prot, int flags, off_
 void
 MappableDeflate::finalize()
 {
+  /* Free zlib internal buffers */
+  inflateEnd(&zStream);
   /* Free decompression buffer */
   buffer = NULL;
   /* Remove reference to Zip archive */

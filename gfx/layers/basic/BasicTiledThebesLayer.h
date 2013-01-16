@@ -12,8 +12,6 @@
 #include "BasicImplData.h"
 #include <algorithm>
 
-#define LOW_PRECISION_RESOLUTION 0.25
-
 namespace mozilla {
 namespace layers {
 
@@ -65,6 +63,20 @@ struct BasicTiledLayerTile {
   void ReadLock() {
     mSurface->ReadLock();
   }
+};
+
+/**
+ * This struct stores all the data necessary to perform a paint so that it
+ * doesn't need to be recalculated on every repeated transaction.
+ */
+struct BasicTiledLayerPaintData {
+  gfx::Point mScrollOffset;
+  gfx3DMatrix mTransformScreenToLayer;
+  nsIntRect mLayerCriticalDisplayPort;
+  gfxSize mResolution;
+  nsIntRect mCompositionBounds;
+  uint16_t mLowPrecisionPaintCount;
+  bool mPaintFinished : 1;
 };
 
 class BasicTiledThebesLayer;
@@ -162,20 +174,8 @@ class BasicTiledThebesLayer : public ThebesLayer,
   typedef ThebesLayer Base;
 
 public:
-  BasicTiledThebesLayer(BasicShadowLayerManager* const aManager)
-    : ThebesLayer(aManager, static_cast<BasicImplData*>(this))
-    , mLastScrollOffset(0, 0)
-    , mFirstPaint(true)
-  {
-    MOZ_COUNT_CTOR(BasicTiledThebesLayer);
-    mLowPrecisionTiledBuffer.SetResolution(LOW_PRECISION_RESOLUTION);
-  }
-
-  ~BasicTiledThebesLayer()
-  {
-    MOZ_COUNT_DTOR(BasicTiledThebesLayer);
-  }
-
+  BasicTiledThebesLayer(BasicShadowLayerManager* const aManager);
+  ~BasicTiledThebesLayer();
 
   // Thebes Layer
   virtual Layer* AsLayer() { return this; }
@@ -265,12 +265,26 @@ private:
                          LayerManager::DrawThebesLayerCallback aCallback,
                          void* aCallbackData);
 
+  /**
+   * For the initial PaintThebes of a transaction, calculates all the data
+   * needed for that paint and any repeated transactions.
+   */
+  void BeginPaint();
+
+  /**
+   * When a paint ends, updates any data necessary to persist until the next
+   * paint. If aFinish is true, this will cause the paint to be marked as
+   * finished.
+   */
+  void EndPaint(bool aFinish);
+
   // Members
   BasicTiledLayerBuffer mTiledBuffer;
   BasicTiledLayerBuffer mLowPrecisionTiledBuffer;
   nsIntRegion mLowPrecisionValidRegion;
   gfx::Point mLastScrollOffset;
   bool mFirstPaint;
+  BasicTiledLayerPaintData mPaintData;
 };
 
 } // layers

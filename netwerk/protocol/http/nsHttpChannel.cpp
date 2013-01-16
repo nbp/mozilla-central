@@ -77,22 +77,6 @@ AccumulateCacheHitTelemetry(Telemetry::ID deviceHistogram,
     }
 }
 
-const char *
-GetCacheSessionNameForStoragePolicy(nsCacheStoragePolicy storagePolicy,
-                                    bool isPrivate)
-{
-    MOZ_ASSERT(!isPrivate || storagePolicy == nsICache::STORE_IN_MEMORY);
-
-    switch (storagePolicy) {
-    case nsICache::STORE_IN_MEMORY:
-        return isPrivate ? "HTTP-memory-only-PB" : "HTTP-memory-only";
-    case nsICache::STORE_OFFLINE:
-        return "HTTP-offline";
-    default:
-        return "HTTP";
-    }
-}
-
 // Computes and returns a SHA1 hash of the input buffer. The input buffer
 // must be a null-terminated string.
 nsresult
@@ -307,6 +291,7 @@ nsHttpChannel::nsHttpChannel()
     , mCachedContentIsPartial(false)
     , mTransactionReplaced(false)
     , mAuthRetryPending(false)
+    , mProxyAuthPending(false)
     , mResuming(false)
     , mInitedCacheEntry(false)
     , mFallbackChannel(false)
@@ -331,7 +316,7 @@ nsHttpChannel::~nsHttpChannel()
 
 nsresult
 nsHttpChannel::Init(nsIURI *uri,
-                    uint8_t caps,
+                    uint32_t caps,
                     nsProxyInfo *proxyInfo,
                     uint32_t proxyResolveFlags,
                     nsIURI *proxyURI)
@@ -681,6 +666,31 @@ nsHttpChannel::ContinueHandleAsyncFallback(nsresult rv)
     return rv;
 }
 
+void
+nsHttpChannel::SetupTransactionLoadGroupInfo()
+{
+    // Find the loadgroup at the end of the chain in order
+    // to make sure all channels derived from the load group
+    // use the same connection scope.
+    nsCOMPtr<nsILoadGroup> rootLoadGroup = mLoadGroup;
+    while (rootLoadGroup) {
+        nsCOMPtr<nsILoadGroup> tmp;
+        rootLoadGroup->GetLoadGroup(getter_AddRefs(tmp));
+        if (tmp)
+            rootLoadGroup.swap(tmp);
+        else
+            break;
+    }
+
+    // Set the load group connection scope on the transaction
+    if (rootLoadGroup) {
+        nsCOMPtr<nsILoadGroupConnectionInfo> ci;
+        rootLoadGroup->GetConnectionInfo(getter_AddRefs(ci));
+        if (ci)
+            mTransaction->SetLoadGroupConnectionInfo(ci);
+    }
+}
+
 nsresult
 nsHttpChannel::SetupTransaction()
 {
@@ -854,6 +864,8 @@ nsHttpChannel::SetupTransaction()
         return rv;
     }
 
+    SetupTransactionLoadGroupInfo();
+    
     rv = nsInputStreamPump::Create(getter_AddRefs(mTransactionPump),
                                    responseStream);
     return rv;
@@ -1266,6 +1278,9 @@ nsHttpChannel::ProcessResponse()
             // authentication prompt has been invoked and result
             // is expected asynchronously
             mAuthRetryPending = true;
+            if (httpStatus == 407 || mTransaction->ProxyConnectFailed())
+                mProxyAuthPending = true;
+
             // suspend the transaction pump to stop receiving the
             // unauthenticated content data. We will throw that data
             // away when user provides credentials or resume the pump
@@ -2453,6 +2468,18 @@ nsHttpChannel::OnOfflineCacheEntryAvailable(nsICacheEntryDescriptor *aEntry,
     return OpenNormalCacheEntry(usingSSL);
 }
 
+static void
+GetAppInfo(nsIChannel* aChannel, uint32_t* aAppId, bool* aIsInBrowser)
+{
+    nsCOMPtr<nsILoadContext> loadContext;
+    NS_QueryNotificationCallbacks(aChannel, loadContext);
+    *aAppId = NECKO_NO_APP_ID;
+    *aIsInBrowser = false;
+    if (loadContext) {
+        loadContext->GetAppId(aAppId);
+        loadContext->GetIsInBrowserElement(aIsInBrowser);
+    }
+}
 
 nsresult
 nsHttpChannel::OpenNormalCacheEntry(bool usingSSL)
@@ -2461,9 +2488,14 @@ nsHttpChannel::OpenNormalCacheEntry(bool usingSSL)
 
     nsresult rv;
 
+    uint32_t appId;
+    bool isInBrowser;
+    GetAppInfo(this, &appId, &isInBrowser);
+
     nsCacheStoragePolicy storagePolicy = DetermineStoragePolicy();
-    nsDependentCString clientID(
-        GetCacheSessionNameForStoragePolicy(storagePolicy, mPrivateBrowsing));
+    nsAutoCString clientID;
+    nsHttpHandler::GetCacheSessionNameForStoragePolicy(storagePolicy, mPrivateBrowsing,
+                                                       appId, isInBrowser, clientID);
 
     nsAutoCString cacheKey;
     GenerateCacheKey(mPostID, cacheKey);
@@ -3591,7 +3623,15 @@ nsHttpChannel::InitOfflineCacheEntry()
     }
 
     if (!mResponseHead || mResponseHead->NoStore()) {
+        if (mResponseHead->NoStore()) {
+            mOfflineCacheEntry->AsyncDoom(nullptr);
+        }
+
         CloseOfflineCacheEntry();
+
+        if (mResponseHead->NoStore()) {
+            return NS_ERROR_NOT_AVAILABLE;
+        }
 
         return NS_OK;
     }
@@ -3753,16 +3793,9 @@ nsHttpChannel::InstallCacheListener(uint32_t offset)
     NS_ASSERTION(mCacheEntry, "no cache entry");
     NS_ASSERTION(mListener, "no listener");
 
-    nsCacheStoragePolicy policy;
-    rv = mCacheEntry->GetStoragePolicy(&policy);
-    if (NS_FAILED(rv)) {
-        policy = nsICache::STORE_ON_DISK_AS_FILE;
-    }
-
     // If the content is compressible and the server has not compressed it,
     // mark the cache entry for compression.
     if ((mResponseHead->PeekHeader(nsHttp::Content_Encoding) == nullptr) && (
-         policy != nsICache::STORE_ON_DISK_AS_FILE) && (
          mResponseHead->ContentType().EqualsLiteral(TEXT_HTML) ||
          mResponseHead->ContentType().EqualsLiteral(TEXT_PLAIN) ||
          mResponseHead->ContentType().EqualsLiteral(TEXT_CSS) ||
@@ -3808,10 +3841,9 @@ nsHttpChannel::InstallCacheListener(uint32_t offset)
     nsCOMPtr<nsIEventTarget> cacheIOTarget;
     serv->GetCacheIOTarget(getter_AddRefs(cacheIOTarget));
 
-    if (policy == nsICache::STORE_ON_DISK_AS_FILE ||
-        !cacheIOTarget) {
-        LOG(("nsHttpChannel::InstallCacheListener sync tee %p rv=%x policy=%d "
-             "cacheIOTarget=%p", tee.get(), rv, policy, cacheIOTarget.get()));
+    if (!cacheIOTarget) {
+        LOG(("nsHttpChannel::InstallCacheListener sync tee %p rv=%x "
+             "cacheIOTarget=%p", tee.get(), rv, cacheIOTarget.get()));
         rv = tee->Init(mListener, out, nullptr);
     } else {
         LOG(("nsHttpChannel::InstallCacheListener async tee %p", tee.get()));
@@ -4114,6 +4146,7 @@ NS_IMETHODIMP nsHttpChannel::OnAuthAvailable()
     // triggers process of throwing away the unauthenticated data already
     // coming from the network
     mAuthRetryPending = true;
+    mProxyAuthPending = false;
     LOG(("Resuming the transaction, we got credentials from user"));
     mTransactionPump->Resume();
   
@@ -4125,12 +4158,23 @@ NS_IMETHODIMP nsHttpChannel::OnAuthCancelled(bool userCancel)
     LOG(("nsHttpChannel::OnAuthCancelled [this=%p]", this));
 
     if (mTransactionPump) {
+        // If the channel is trying to authenticate to a proxy and
+        // that was canceled we cannot show the http response body
+        // from the 40x as that might mislead the user into thinking
+        // it was a end host response instead of a proxy reponse.
+        // This must check explicitly whether a proxy auth was being done
+        // because we do want to show the content if this is an error from
+        // the origin server.
+        if (mProxyAuthPending)
+            Cancel(NS_ERROR_PROXY_CONNECTION_REFUSED);
+
         // ensure call of OnStartRequest of the current listener here,
         // it would not be called otherwise at all
         nsresult rv = CallOnStartRequest();
 
         // drop mAuthRetryPending flag and resume the transaction
-        // this resumes load of the unauthenticated content data
+        // this resumes load of the unauthenticated content data (which
+        // may have been canceled if we don't want to show it)
         mAuthRetryPending = false;
         LOG(("Resuming the transaction, user cancelled the auth dialog"));
         mTransactionPump->Resume();
@@ -4138,7 +4182,8 @@ NS_IMETHODIMP nsHttpChannel::OnAuthCancelled(bool userCancel)
         if (NS_FAILED(rv))
             mTransactionPump->Cancel(rv);
     }
-    
+
+    mProxyAuthPending = false;
     return NS_OK;
 }
 
@@ -4294,6 +4339,11 @@ nsHttpChannel::AsyncOpen(nsIStreamListener *listener, nsISupports *context)
 
     AddCookiesToRequest();
 
+    // notify "http-on-opening-request" observers, but not if this is a redirect
+    if (!(mLoadFlags & LOAD_REPLACE)) {
+        gHttpHandler->OnOpeningRequest(this);
+    }
+
     mIsPending = true;
     mWasOpened = true;
 
@@ -4331,6 +4381,8 @@ nsHttpChannel::BeginConnect()
 
     // notify "http-on-modify-request" observers
     gHttpHandler->OnModifyRequest(this);
+
+    mRequestObserversCalled = true;
 
     // If mTimingEnabled flag is not set after OnModifyRequest() then
     // clear the already recorded AsyncOpen value for consistency.
@@ -4411,6 +4463,13 @@ nsHttpChannel::BeginConnect()
         (BYPASS_LOCAL_CACHE(mLoadFlags)))
         mCaps |= NS_HTTP_REFRESH_DNS;
 
+    if (gHttpHandler->CritialRequestPrioritization()) {
+        if (mLoadAsBlocking)
+            mCaps |= NS_HTTP_LOAD_AS_BLOCKING;
+        if (mLoadUnblocked)
+            mCaps |= NS_HTTP_LOAD_UNBLOCKED;
+    }
+
     // Force-Reload should reset the persistent connection pool for this host
     if (mLoadFlags & LOAD_FRESH_CONNECTION) {
         // just the initial document resets the whole pool
@@ -4450,7 +4509,7 @@ nsHttpChannel::BeginConnect()
 NS_IMETHODIMP
 nsHttpChannel::SetupFallbackChannel(const char *aFallbackKey)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     LOG(("nsHttpChannel::SetupFallbackChannel [this=%x, key=%s]",
          this, aFallbackKey));
@@ -4986,25 +5045,6 @@ nsHttpChannel::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult st
         mListener->OnStopRequest(this, mListenerContext, status);
     }
 
-    if (mCacheEntry) {
-        bool asFile = false;
-        if (mInitedCacheEntry && !mCachedContentIsPartial &&
-            (NS_SUCCEEDED(mStatus) || contentComplete) &&
-            (mCacheAccess & nsICache::ACCESS_WRITE) &&
-            NS_SUCCEEDED(GetCacheAsFile(&asFile)) && asFile) {
-            // We can allow others access to the cache entry
-            // because we don't write to the cache anymore.
-            // CloseCacheEntry may not actually close the cache
-            // entry immediately because someone (such as XHR2
-            // blob response) may hold the token to the cache
-            // entry. So we mark the cache valid here.
-            // We also need to check the entry is stored as file
-            // because we write to the cache asynchronously when
-            // it isn't stored in the file and it isn't completely
-            // written to the disk yet.
-            mCacheEntry->MarkValid();
-        }
-    }
     CloseCacheEntry(!contentComplete);
 
     if (mOfflineCacheEntry)
@@ -5332,7 +5372,7 @@ nsHttpChannel::SetCacheKey(nsISupports *key)
 
     LOG(("nsHttpChannel::SetCacheKey [this=%p key=%p]\n", this, key));
 
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     if (!key)
         mPostID = 0;
@@ -5345,39 +5385,6 @@ nsHttpChannel::SetCacheKey(nsISupports *key)
         if (NS_FAILED(rv)) return rv;
     }
     return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHttpChannel::GetCacheAsFile(bool *value)
-{
-    NS_ENSURE_ARG_POINTER(value);
-    if (!mCacheEntry)
-        return NS_ERROR_NOT_AVAILABLE;
-    nsCacheStoragePolicy storagePolicy;
-    mCacheEntry->GetStoragePolicy(&storagePolicy);
-    *value = (storagePolicy == nsICache::STORE_ON_DISK_AS_FILE);
-    return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHttpChannel::SetCacheAsFile(bool value)
-{
-    if (!mCacheEntry || mLoadFlags & INHIBIT_PERSISTENT_CACHING)
-        return NS_ERROR_NOT_AVAILABLE;
-    nsCacheStoragePolicy policy;
-    if (value)
-        policy = nsICache::STORE_ON_DISK_AS_FILE;
-    else
-        policy = nsICache::STORE_ANYWHERE;
-    return mCacheEntry->SetStoragePolicy(policy);
-}
-
-NS_IMETHODIMP
-nsHttpChannel::GetCacheFile(nsIFile **cacheFile)
-{
-    if (!mCacheEntry)
-        return NS_ERROR_NOT_AVAILABLE;
-    return mCacheEntry->GetFile(cacheFile);
 }
 
 //-----------------------------------------------------------------------------
@@ -5581,7 +5588,7 @@ nsHttpChannel::GetApplicationCache(nsIApplicationCache **out)
 NS_IMETHODIMP
 nsHttpChannel::SetApplicationCache(nsIApplicationCache *appCache)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mApplicationCache = appCache;
     return NS_OK;
@@ -5597,7 +5604,7 @@ nsHttpChannel::GetApplicationCacheForWrite(nsIApplicationCache **out)
 NS_IMETHODIMP
 nsHttpChannel::SetApplicationCacheForWrite(nsIApplicationCache *appCache)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mApplicationCacheForWrite = appCache;
     return NS_OK;
@@ -5620,7 +5627,7 @@ nsHttpChannel::GetInheritApplicationCache(bool *aInherit)
 NS_IMETHODIMP
 nsHttpChannel::SetInheritApplicationCache(bool aInherit)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mInheritApplicationCache = aInherit;
     return NS_OK;
@@ -5636,7 +5643,7 @@ nsHttpChannel::GetChooseApplicationCache(bool *aChoose)
 NS_IMETHODIMP
 nsHttpChannel::SetChooseApplicationCache(bool aChoose)
 {
-    ENSURE_CALLED_BEFORE_ASYNC_OPEN();
+    ENSURE_CALLED_BEFORE_CONNECT();
 
     mChooseApplicationCache = aChoose;
     return NS_OK;
@@ -5854,20 +5861,25 @@ nsHttpChannel::DoInvalidateCacheEntry(const nsCString &key)
     // The logic below deviates from the original logic in OpenCacheEntry on
     // one point by using only READ_ONLY access-policy. I think this is safe.
 
+    uint32_t appId;
+    bool isInBrowser;
+    GetAppInfo(this, &appId, &isInBrowser);
+
     // First, find session holding the cache-entry - use current storage-policy
     nsCacheStoragePolicy storagePolicy = DetermineStoragePolicy();
-    const char * clientID =
-        GetCacheSessionNameForStoragePolicy(storagePolicy, mPrivateBrowsing);
+    nsAutoCString clientID;
+    nsHttpHandler::GetCacheSessionNameForStoragePolicy(storagePolicy, mPrivateBrowsing,
+                                                       appId, isInBrowser, clientID);
 
     LOG(("DoInvalidateCacheEntry [channel=%p session=%s policy=%d key=%s]",
-         this, clientID, int(storagePolicy), key.get()));
+         this, clientID.get(), int(storagePolicy), key.get()));
 
     nsresult rv;
     nsCOMPtr<nsICacheService> serv =
         do_GetService(NS_CACHESERVICE_CONTRACTID, &rv);
     nsCOMPtr<nsICacheSession> session;
     if (NS_SUCCEEDED(rv)) {
-        rv = serv->CreateSession(clientID, storagePolicy,  
+        rv = serv->CreateSession(clientID.get(), storagePolicy,
                                  nsICache::STREAM_BASED,
                                  getter_AddRefs(session));
     }
@@ -5879,7 +5891,7 @@ nsHttpChannel::DoInvalidateCacheEntry(const nsCString &key)
     }
 
     LOG(("DoInvalidateCacheEntry [channel=%p session=%s policy=%d key=%s rv=%d]",
-         this, clientID, int(storagePolicy), key.get(), int(rv)));
+         this, clientID.get(), int(storagePolicy), key.get(), int(rv)));
 }
 
 nsCacheStoragePolicy

@@ -1051,12 +1051,17 @@ RuleCascadeData::AttributeListFor(nsIAtom* aAttribute)
 //
 
 nsCSSRuleProcessor::nsCSSRuleProcessor(const sheet_array_type& aSheets,
-                                       uint8_t aSheetType)
+                                       uint8_t aSheetType,
+                                       Element* aScopeElement)
   : mSheets(aSheets)
   , mRuleCascades(nullptr)
   , mLastPresContext(nullptr)
   , mSheetType(aSheetType)
+  , mScopeElement(aScopeElement)
 {
+  NS_ASSERTION(!!mScopeElement == (aSheetType == nsStyleSet::eScopedDocSheet),
+               "aScopeElement must be specified iff aSheetType is "
+               "eScopedDocSheet");
   for (sheet_array_type::size_type i = mSheets.Length(); i-- != 0; ) {
     mSheets[i]->AddRuleProcessor(this);
   }
@@ -1538,9 +1543,9 @@ checkGenericEmptyMatches(Element* aElement,
 
 // Arrays of the states that are relevant for various pseudoclasses.
 static const nsEventStates sPseudoClassStateDependences[] = {
-#define CSS_PSEUDO_CLASS(_name, _value) \
+#define CSS_PSEUDO_CLASS(_name, _value, _pref)  \
   nsEventStates(),
-#define CSS_STATE_DEPENDENT_PSEUDO_CLASS(_name, _value, _states)  \
+#define CSS_STATE_DEPENDENT_PSEUDO_CLASS(_name, _value, _pref, _states)  \
   _states,
 #include "nsCSSPseudoClassList.h"
 #undef CSS_STATE_DEPENDENT_PSEUDO_CLASS
@@ -1552,9 +1557,9 @@ static const nsEventStates sPseudoClassStateDependences[] = {
 };
 
 static const nsEventStates sPseudoClassStates[] = {
-#define CSS_PSEUDO_CLASS(_name, _value)         \
+#define CSS_PSEUDO_CLASS(_name, _value, _pref)  \
   nsEventStates(),
-#define CSS_STATE_PSEUDO_CLASS(_name, _value, _states) \
+#define CSS_STATE_PSEUDO_CLASS(_name, _value, _pref, _states) \
   _states,
 #include "nsCSSPseudoClassList.h"
 #undef CSS_STATE_PSEUDO_CLASS
@@ -1782,8 +1787,7 @@ static bool SelectorMatches(Element* aElement,
         break;
 
       case nsCSSPseudoClasses::ePseudoClass_root:
-        if (aElement->GetParent() ||
-            aElement != aElement->OwnerDoc()->GetRootElement()) {
+        if (aElement != aElement->OwnerDoc()->GetRootElement()) {
           return false;
         }
         break;
@@ -2024,6 +2028,18 @@ static bool SelectorMatches(Element* aElement,
         }
         break;
 
+      case nsCSSPseudoClasses::ePseudoClass_scope:
+        if (aTreeMatchContext.HasSpecifiedScope()) {
+          if (!aTreeMatchContext.IsScopeElement(aElement)) {
+            return false;
+          }
+        } else {
+          if (aElement != aElement->OwnerDoc()->GetRootElement()) {
+            return false;
+          }
+        }
+        break;
+
       default:
         NS_ABORT_IF_FALSE(false, "How did that happen?");
       }
@@ -2186,6 +2202,13 @@ static bool SelectorMatchesTree(Element* aPrevElement,
                  selector->mNext->mOperator != PRUnichar(0),
                  "compound selector without combinator");
 
+    // If after the previous selector match we are now outside the
+    // current style scope, we don't need to match any further.
+    if (aTreeMatchContext.mForScopedStyle &&
+        !aTreeMatchContext.IsWithinStyleScopeForSelectorMatching()) {
+      return false;
+    }
+
     // for adjacent sibling combinators, the content to test against the
     // selector is the previous sibling *element*
     Element* element = nullptr;
@@ -2216,6 +2239,13 @@ static bool SelectorMatchesTree(Element* aPrevElement,
       // element parents.
       if (content && content->IsElement()) {
         element = content->AsElement();
+        if (aTreeMatchContext.mForScopedStyle) {
+          // We are moving up to the parent element; tell the
+          // TreeMatchContext, so that in case this element is the
+          // style scope element, selector matching stops before we
+          // traverse further up the tree.
+          aTreeMatchContext.PopStyleScopeForSelectorMatching(element);
+        }
       }
     }
     if (!element) {
@@ -2285,6 +2315,12 @@ void ContentEnumFunc(const RuleValue& value, nsCSSSelector* aSelector,
       !ancestorFilter->MightHaveMatchingAncestor<RuleValue::eMaxAncestorHashes>(
           value.mAncestorSelectorHashes)) {
     // We won't match; nothing else to do here
+    return;
+  }
+  if (!data->mTreeMatchContext.SetStyleScopeForSelectorMatching(data->mElement,
+                                                                data->mScope)) {
+    // The selector is for a rule in a scoped style sheet, and the subject
+    // of the selector matching is not in its scope.
     return;
   }
   if (SelectorMatches(data->mElement, aSelector, nodeContext,
@@ -2470,6 +2506,13 @@ static void
 AttributeEnumFunc(nsCSSSelector* aSelector, AttributeEnumData* aData)
 {
   AttributeRuleProcessorData *data = aData->data;
+
+  if (!data->mTreeMatchContext.SetStyleScopeForSelectorMatching(data->mElement,
+                                                                data->mScope)) {
+    // The selector is for a rule in a scoped style sheet, and the subject
+    // of the selector matching is not in its scope.
+    return;
+  }
 
   nsRestyleHint possibleChange = RestyleHintForOp(aSelector->mOperator);
 
@@ -3245,14 +3288,14 @@ nsCSSRuleProcessor::SelectorListMatches(Element* aElement,
   return false;
 }
 
-// AncestorFilter out of line methods
+// TreeMatchContext and AncestorFilter out of line methods
 void
-AncestorFilter::Init(Element *aElement)
+TreeMatchContext::InitAncestors(Element *aElement)
 {
-  MOZ_ASSERT(!mFilter);
-  MOZ_ASSERT(mHashes.IsEmpty());
+  MOZ_ASSERT(!mAncestorFilter.mFilter);
+  MOZ_ASSERT(mAncestorFilter.mHashes.IsEmpty());
 
-  mFilter = new Filter();
+  mAncestorFilter.mFilter = new AncestorFilter::Filter();
 
   if (MOZ_LIKELY(aElement)) {
     MOZ_ASSERT(aElement->IsInDoc(),
@@ -3273,7 +3316,8 @@ AncestorFilter::Init(Element *aElement)
 
     // Now push them in reverse order.
     for (uint32_t i = ancestors.Length(); i-- != 0; ) {
-      PushAncestor(ancestors[i]);
+      mAncestorFilter.PushAncestor(ancestors[i]);
+      PushStyleScope(ancestors[i]);
     }
   }
 }

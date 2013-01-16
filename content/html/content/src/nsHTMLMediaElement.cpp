@@ -65,12 +65,17 @@
 #include "nsDOMMediaStream.h"
 #include "nsIScriptError.h"
 #include "nsHostObjectProtocolHandler.h"
+#include "MediaMetadataManager.h"
+
+#include "AudioChannelService.h"
 
 #include "nsCSSParser.h"
 #include "nsIMediaList.h"
 
 #include "ImageContainer.h"
 #include "nsIPowerManagerService.h"
+#include <cstdlib> // for std::abs(int/long)
+#include <cmath> // for std::abs(float/double)
 
 #ifdef MOZ_OGG
 #include "OggDecoder.h"
@@ -97,6 +102,9 @@
 #ifdef MOZ_DASH
 #include "DASHDecoder.h"
 #endif
+#ifdef MOZ_WMF
+#include "WMFDecoder.h"
+#endif
 
 #ifdef PR_LOGGING
 static PRLogModuleInfo* gMediaElementLog;
@@ -113,6 +121,8 @@ static PRLogModuleInfo* gMediaElementEventsLog;
 #include "nsChannelPolicy.h"
 
 #include "mozilla/Preferences.h"
+
+#include "nsIPermissionManager.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -449,6 +459,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(nsHTMLMediaElement)
   NS_INTERFACE_MAP_ENTRY(nsIObserver)
+  NS_INTERFACE_MAP_ENTRY(nsIAudioChannelAgentCallback)
 NS_INTERFACE_MAP_END_INHERITING(nsGenericHTMLElement)
 
 // nsIDOMHTMLMediaElement
@@ -459,6 +470,7 @@ NS_IMPL_BOOL_ATTR(nsHTMLMediaElement, Autoplay, autoplay)
 NS_IMPL_BOOL_ATTR(nsHTMLMediaElement, Loop, loop)
 NS_IMPL_BOOL_ATTR(nsHTMLMediaElement, DefaultMuted, muted)
 NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLMediaElement, Preload, preload, NULL)
+NS_IMPL_ENUM_ATTR_DEFAULT_VALUE(nsHTMLMediaElement, MozAudioChannelType, mozaudiochannel, "normal")
 
 NS_IMETHODIMP
 nsHTMLMediaElement::GetMozSrcObject(JSContext* aCtx, jsval *aParams)
@@ -1481,6 +1493,11 @@ nsHTMLMediaElement::BuildObjectFromTags(nsCStringHashKey::KeyType aKey,
 
   nsString wideValue = NS_ConvertUTF8toUTF16(aValue);
   JSString* string = JS_NewUCStringCopyZ(args->cx, wideValue.Data());
+  if (!string) {
+    NS_WARNING("Failed to perform string copy");
+    args->error = true;
+    return PL_DHASH_STOP;
+  }
   JS::Value value = STRING_TO_JSVAL(string);
   if (!JS_DefineProperty(args->cx, args->tags, aKey.Data(), value,
                          NULL, NULL, JSPROP_ENUMERATE)) {
@@ -1549,6 +1566,7 @@ NS_IMETHODIMP nsHTMLMediaElement::GetMuted(bool *aMuted)
 void nsHTMLMediaElement::SetMutedInternal(bool aMuted)
 {
   float effectiveVolume = aMuted ? 0.0f : float(mVolume);
+
   if (mDecoder) {
     mDecoder->SetVolume(effectiveVolume);
   } else if (mAudioStream) {
@@ -1744,7 +1762,8 @@ nsHTMLMediaElement::nsHTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     mMuted(false),
     mAudioCaptured(false),
     mPlayingBeforeSeek(false),
-    mPausedForInactiveDocument(false),
+    mPausedForInactiveDocumentOrChannel(false),
+    mEventDeliveryPaused(false),
     mWaitingFired(false),
     mIsRunningLoadMethod(false),
     mIsLoadingFromSourceChildren(false),
@@ -1761,7 +1780,9 @@ nsHTMLMediaElement::nsHTMLMediaElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     mCORSMode(CORS_NONE),
     mHasAudio(false),
     mDownloadSuspendedByCache(false),
-    mAudioChannelType(AUDIO_CHANNEL_NORMAL)
+    mAudioChannelType(AUDIO_CHANNEL_NORMAL),
+    mChannelSuspended(false),
+    mPlayingThroughTheAudioChannel(false)
 {
 #ifdef PR_LOGGING
   if (!gMediaElementLog) {
@@ -1866,7 +1887,7 @@ NS_IMETHODIMP nsHTMLMediaElement::Play()
     if (mDecoder->IsEnded()) {
       SetCurrentTime(0);
     }
-    if (!mPausedForInactiveDocument) {
+    if (!mPausedForInactiveDocumentOrChannel) {
       nsresult rv = mDecoder->Play();
       NS_ENSURE_SUCCESS(rv, rv);
     }
@@ -1929,9 +1950,9 @@ nsHTMLMediaElement::WakeLockBoolWrapper& nsHTMLMediaElement::WakeLockBoolWrapper
 }
 
 bool nsHTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
-                                          nsIAtom* aAttribute,
-                                          const nsAString& aValue,
-                                          nsAttrValue& aResult)
+                                        nsIAtom* aAttribute,
+                                        const nsAString& aValue,
+                                        nsAttrValue& aResult)
 {
   // Mappings from 'preload' attribute strings to an enumeration.
   static const nsAttrValue::EnumTable kPreloadTable[] = {
@@ -1939,6 +1960,18 @@ bool nsHTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
     { "none",     nsHTMLMediaElement::PRELOAD_ATTR_NONE },
     { "metadata", nsHTMLMediaElement::PRELOAD_ATTR_METADATA },
     { "auto",     nsHTMLMediaElement::PRELOAD_ATTR_AUTO },
+    { 0 }
+  };
+
+  // Mappings from 'mozaudiochannel' attribute strings to an enumeration.
+  static const nsAttrValue::EnumTable kMozAudioChannelAttributeTable[] = {
+    { "normal",             AUDIO_CHANNEL_NORMAL },
+    { "content",            AUDIO_CHANNEL_CONTENT },
+    { "notification",       AUDIO_CHANNEL_NOTIFICATION },
+    { "alarm",              AUDIO_CHANNEL_ALARM },
+    { "telephony",          AUDIO_CHANNEL_TELEPHONY },
+    { "ringer",             AUDIO_CHANNEL_RINGER },
+    { "publicnotification", AUDIO_CHANNEL_PUBLICNOTIFICATION },
     { 0 }
   };
 
@@ -1953,10 +1986,50 @@ bool nsHTMLMediaElement::ParseAttribute(int32_t aNamespaceID,
     if (aAttribute == nsGkAtoms::preload) {
       return aResult.ParseEnumValue(aValue, kPreloadTable, false);
     }
+
+    if (aAttribute == nsGkAtoms::mozaudiochannel) {
+      bool parsed = aResult.ParseEnumValue(aValue, kMozAudioChannelAttributeTable, false,
+                                           &kMozAudioChannelAttributeTable[0]);
+      if (!parsed) {
+        return false;
+      }
+
+      AudioChannelType audioChannelType = static_cast<AudioChannelType>(aResult.GetEnumValue());
+
+      if (audioChannelType != mAudioChannelType &&
+          !mDecoder &&
+          CheckAudioChannelPermissions(aValue)) {
+        mAudioChannelType = audioChannelType;
+      }
+
+      return true;
+    }
   }
 
   return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
                                               aResult);
+}
+
+bool nsHTMLMediaElement::CheckAudioChannelPermissions(const nsAString& aString)
+{
+#ifdef MOZ_B2G
+  // Only normal channel doesn't need permission.
+  if (!aString.EqualsASCII("normal")) {
+    nsCOMPtr<nsIPermissionManager> permissionManager =
+      do_GetService(NS_PERMISSIONMANAGER_CONTRACTID);
+    if (!permissionManager) {
+      return false;
+    }
+
+    uint32_t perm = nsIPermissionManager::UNKNOWN_ACTION;
+    permissionManager->TestExactPermissionFromPrincipal(NodePrincipal(),
+      nsCString(NS_LITERAL_CSTRING("audio-channel-") + NS_ConvertUTF16toUTF8(aString)).get(), &perm);
+    if (perm != nsIPermissionManager::ALLOW_ACTION) {
+      return false;
+    }
+  }
+#endif
+  return true;
 }
 
 void nsHTMLMediaElement::DoneCreatingElement()
@@ -2099,7 +2172,6 @@ nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
     }
   }
 #endif
-
 #ifdef MOZ_RAW
   if (DecoderTraits::IsRawType(aType)) {
     nsRefPtr<RawDecoder> decoder = new RawDecoder();
@@ -2148,10 +2220,17 @@ nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
     }
   }
 #endif
-
 #ifdef MOZ_DASH
   if (DecoderTraits::IsDASHMPDType(aType)) {
     nsRefPtr<DASHDecoder> decoder = new DASHDecoder();
+    if (decoder->Init(this)) {
+      return decoder.forget();
+    }
+  }
+#endif
+#ifdef MOZ_WMF
+  if (DecoderTraits::IsWMFSupportedType(aType)) {
+    nsRefPtr<WMFDecoder> decoder = new WMFDecoder();
     if (decoder->Init(this)) {
       return decoder.forget();
     }
@@ -2183,7 +2262,8 @@ nsresult nsHTMLMediaElement::InitializeDecoderAsClone(MediaDecoder* aOriginal)
   double duration = aOriginal->GetDuration();
   if (duration >= 0) {
     decoder->SetDuration(duration);
-    decoder->SetSeekable(aOriginal->IsSeekable());
+    decoder->SetTransportSeekable(aOriginal->IsTransportSeekable());
+    decoder->SetMediaSeekable(aOriginal->IsMediaSeekable());
   }
 
   MediaResource* resource = originalResource->CloneData(decoder);
@@ -2239,7 +2319,9 @@ nsresult nsHTMLMediaElement::FinishDecoderSetup(MediaDecoder* aDecoder,
   mMediaSecurityVerified = false;
 
   // The new stream has not been suspended by us.
-  mPausedForInactiveDocument = false;
+  mPausedForInactiveDocumentOrChannel = false;
+  mPendingEvents.Clear();
+  mEventDeliveryPaused = false;
 
   aDecoder->SetAudioChannelType(mAudioChannelType);
   aDecoder->SetAudioCaptured(mAudioCaptured);
@@ -2270,7 +2352,7 @@ nsresult nsHTMLMediaElement::FinishDecoderSetup(MediaDecoder* aDecoder,
 
   if (!mPaused) {
     SetPlayedOrSeeked(true);
-    if (!mPausedForInactiveDocument) {
+    if (!mPausedForInactiveDocumentOrChannel) {
       rv = mDecoder->Play();
     }
   }
@@ -2416,7 +2498,7 @@ void nsHTMLMediaElement::SetupSrcMediaStreamPlayback(nsDOMMediaStream* aStream)
   if (mPaused) {
     GetSrcMediaStream()->ChangeExplicitBlockerCount(1);
   }
-  if (mPausedForInactiveDocument) {
+  if (mPausedForInactiveDocumentOrChannel) {
     GetSrcMediaStream()->ChangeExplicitBlockerCount(1);
   }
   ChangeDelayLoadStatus(false);
@@ -2451,7 +2533,7 @@ void nsHTMLMediaElement::EndSrcMediaStreamPlayback()
   if (mPaused) {
     GetSrcMediaStream()->ChangeExplicitBlockerCount(-1);
   }
-  if (mPausedForInactiveDocument) {
+  if (mPausedForInactiveDocumentOrChannel) {
     GetSrcMediaStream()->ChangeExplicitBlockerCount(-1);
   }
   mSrcStream = nullptr;
@@ -2512,8 +2594,8 @@ void nsHTMLMediaElement::ProcessMediaFragmentURI()
   }
 }
 
-void nsHTMLMediaElement::MetadataLoaded(uint32_t aChannels,
-                                        uint32_t aRate,
+void nsHTMLMediaElement::MetadataLoaded(int aChannels,
+                                        int aRate,
                                         bool aHasAudio,
                                         const MetadataTags* aTags)
 {
@@ -2524,7 +2606,7 @@ void nsHTMLMediaElement::MetadataLoaded(uint32_t aChannels,
   ChangeReadyState(nsIDOMHTMLMediaElement::HAVE_METADATA);
   DispatchAsyncEvent(NS_LITERAL_STRING("durationchange"));
   DispatchAsyncEvent(NS_LITERAL_STRING("loadedmetadata"));
-  if (mDecoder && mDecoder->IsSeekable()) {
+  if (mDecoder && mDecoder->IsTransportSeekable() && mDecoder->IsMediaSeekable()) {
     ProcessMediaFragmentURI();
     mDecoder->SetFragmentEndTime(mFragmentEnd);
   }
@@ -2798,6 +2880,8 @@ void nsHTMLMediaElement::ChangeReadyState(nsMediaReadyState aState)
 
   LOG(PR_LOG_DEBUG, ("%p Ready state changed to %s", this, gReadyStateToString[aState]));
 
+  UpdateAudioChannelPlayingState();
+
   // Handle raising of "waiting" event during seek (see 4.8.10.9)
   if (mPlayingBeforeSeek &&
       oldState < nsIDOMHTMLMediaElement::HAVE_FUTURE_DATA) {
@@ -2924,7 +3008,7 @@ nsresult nsHTMLMediaElement::DispatchEvent(const nsAString& aName)
 
   // Save events that occur while in the bfcache. These will be dispatched
   // if the page comes out of the bfcache.
-  if (mPausedForInactiveDocument) {
+  if (mEventDeliveryPaused) {
     mPendingEvents.AppendElement(aName);
     return NS_OK;
   }
@@ -2948,7 +3032,7 @@ nsresult nsHTMLMediaElement::DispatchAsyncEvent(const nsAString& aName)
 
 nsresult nsHTMLMediaElement::DispatchPendingMediaEvents()
 {
-  NS_ASSERTION(!mPausedForInactiveDocument,
+  NS_ASSERTION(!mEventDeliveryPaused,
                "Must not be in bfcache when dispatching pending media events");
 
   uint32_t count = mPendingEvents.Length();
@@ -3007,21 +3091,18 @@ void nsHTMLMediaElement::UpdateMediaSize(nsIntSize size)
   mMediaSize = size;
 }
 
-void nsHTMLMediaElement::NotifyOwnerDocumentActivityChanged()
+void nsHTMLMediaElement::SuspendOrResumeElement(bool aPauseElement, bool aSuspendEvents)
 {
-  nsIDocument* ownerDoc = OwnerDoc();
-  bool pauseForInactiveDocument =
-    !ownerDoc->IsActive() || !ownerDoc->IsVisible();
-
-  if (pauseForInactiveDocument != mPausedForInactiveDocument) {
-    mPausedForInactiveDocument = pauseForInactiveDocument;
-    if (pauseForInactiveDocument) {
+  if (aPauseElement != mPausedForInactiveDocumentOrChannel) {
+    mPausedForInactiveDocumentOrChannel = aPauseElement;
+    if (aPauseElement) {
       if (mDecoder) {
         mDecoder->Pause();
         mDecoder->Suspend();
       } else if (mSrcStream) {
         GetSrcMediaStream()->ChangeExplicitBlockerCount(1);
       }
+      mEventDeliveryPaused = aSuspendEvents;
     } else {
       if (mDecoder) {
         mDecoder->Resume(false);
@@ -3031,9 +3112,32 @@ void nsHTMLMediaElement::NotifyOwnerDocumentActivityChanged()
       } else if (mSrcStream) {
         GetSrcMediaStream()->ChangeExplicitBlockerCount(-1);
       }
-      DispatchPendingMediaEvents();
+      if (mEventDeliveryPaused) {
+        DispatchPendingMediaEvents();
+        mEventDeliveryPaused = false;
+      }
     }
   }
+}
+
+void nsHTMLMediaElement::NotifyOwnerDocumentActivityChanged()
+{
+  nsIDocument* ownerDoc = OwnerDoc();
+#ifdef MOZ_B2G
+  nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(OwnerDoc());
+  if (domDoc) {
+    bool hidden = false;
+    domDoc->GetHidden(&hidden);
+    // SetVisibilityState will update mChannelSuspended via the CanPlayChanged callback.
+    if (mPlayingThroughTheAudioChannel && mAudioChannelAgent) {
+      mAudioChannelAgent->SetVisibilityState(!hidden);
+    }
+  }
+#endif
+  bool suspendEvents = !ownerDoc->IsActive() || !ownerDoc->IsVisible();
+  bool pauseElement = suspendEvents || mChannelSuspended;
+
+  SuspendOrResumeElement(pauseElement, suspendEvents);
 
   AddRemoveSelfReference();
 }
@@ -3073,6 +3177,8 @@ void nsHTMLMediaElement::AddRemoveSelfReference()
       NS_DispatchToMainThread(event);
     }
   }
+
+  UpdateAudioChannelPlayingState();
 }
 
 void nsHTMLMediaElement::DoRemoveSelfReference()
@@ -3362,10 +3468,10 @@ static double ClampPlaybackRate(double aPlaybackRate)
   if (aPlaybackRate == 0.0) {
     return aPlaybackRate;
   }
-  if (NS_ABS(aPlaybackRate) < MIN_PLAYBACKRATE) {
+  if (std::abs(aPlaybackRate) < MIN_PLAYBACKRATE) {
     return aPlaybackRate < 0 ? -MIN_PLAYBACKRATE : MIN_PLAYBACKRATE;
   }
-  if (NS_ABS(aPlaybackRate) > MAX_PLAYBACKRATE) {
+  if (std::abs(aPlaybackRate) > MAX_PLAYBACKRATE) {
     return aPlaybackRate < 0 ? -MAX_PLAYBACKRATE : MAX_PLAYBACKRATE;
   }
   return aPlaybackRate;
@@ -3433,65 +3539,69 @@ NS_IMETHODIMP nsHTMLMediaElement::SetMozPreservesPitch(bool aPreservesPitch)
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsHTMLMediaElement::GetMozAudioChannelType(nsAString& aString)
-{
-  switch (mAudioChannelType) {
-    case AUDIO_CHANNEL_NORMAL:
-      aString.AssignLiteral("normal");
-      break;
-    case AUDIO_CHANNEL_CONTENT:
-      aString.AssignLiteral("content");
-      break;
-    case AUDIO_CHANNEL_NOTIFICATION:
-      aString.AssignLiteral("notification");
-      break;
-    case AUDIO_CHANNEL_ALARM:
-      aString.AssignLiteral("alarm");
-      break;
-    case AUDIO_CHANNEL_TELEPHONY:
-      aString.AssignLiteral("telephony");
-      break;
-    case AUDIO_CHANNEL_PUBLICNOTIFICATION:
-      aString.AssignLiteral("publicnotification");
-      break;
-  }
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsHTMLMediaElement::SetMozAudioChannelType(const nsAString& aString)
-{
-  AudioChannelType tmpType;
-
-  if (aString.EqualsASCII("normal")) {
-    tmpType = AUDIO_CHANNEL_NORMAL;
-  } else if (aString.EqualsASCII("content")) {
-    tmpType = AUDIO_CHANNEL_CONTENT;
-  } else if (aString.EqualsASCII("notification")) {
-    tmpType = AUDIO_CHANNEL_NOTIFICATION;
-  } else if (aString.EqualsASCII("alarm")) {
-    tmpType = AUDIO_CHANNEL_ALARM;
-  } else if (aString.EqualsASCII("telephony")) {
-    tmpType = AUDIO_CHANNEL_TELEPHONY;
-  } else if (aString.EqualsASCII("publicnotification")) {
-    tmpType = AUDIO_CHANNEL_PUBLICNOTIFICATION;
-  } else {
-    return NS_ERROR_FAILURE;
-  }
-
-  if (tmpType != mAudioChannelType && mDecoder) {
-    return NS_ERROR_FAILURE;
-  }
-
-  mAudioChannelType = tmpType;
-  return NS_OK;
-}
-
 ImageContainer* nsHTMLMediaElement::GetImageContainer()
 {
   VideoFrameContainer* container = GetVideoFrameContainer();
   return container ? container->GetImageContainer() : nullptr;
 }
 
+nsresult nsHTMLMediaElement::UpdateChannelMuteState(bool aCanPlay)
+{
+  // Only on B2G we mute the nsHTMLMediaElement following the rules of
+  // AudioChannelService.
+#ifdef MOZ_B2G
+  // We have to mute this channel:
+  if (!aCanPlay && !mChannelSuspended) {
+    mChannelSuspended = true;
+    DispatchAsyncEvent(NS_LITERAL_STRING("mozinterruptbegin"));
+  } else if (aCanPlay && mChannelSuspended) {
+    mChannelSuspended = false;
+    DispatchAsyncEvent(NS_LITERAL_STRING("mozinterruptend"));
+  }
+
+  SuspendOrResumeElement(mChannelSuspended, false);
+#endif
+
+  return NS_OK;
+}
+
+void nsHTMLMediaElement::UpdateAudioChannelPlayingState()
+{
+  // The nsHTMLMediaElement is registered to the AudioChannelService only on B2G.
+#ifdef MOZ_B2G
+  bool playingThroughTheAudioChannel =
+     (!mPaused &&
+      (HasAttr(kNameSpaceID_None, nsGkAtoms::loop) ||
+       (mReadyState >= nsIDOMHTMLMediaElement::HAVE_CURRENT_DATA &&
+        !IsPlaybackEnded())));
+  if (playingThroughTheAudioChannel != mPlayingThroughTheAudioChannel) {
+    mPlayingThroughTheAudioChannel = playingThroughTheAudioChannel;
+
+    if (!mAudioChannelAgent) {
+      nsresult rv;
+      mAudioChannelAgent = do_CreateInstance("@mozilla.org/audiochannelagent;1", &rv);
+      if (!mAudioChannelAgent) {
+        return;
+      }
+      mAudioChannelAgent->Init(mAudioChannelType, this);
+    }
+
+    if (mPlayingThroughTheAudioChannel) {
+      bool canPlay;
+      mAudioChannelAgent->StartPlaying(&canPlay);
+    } else {
+      mAudioChannelAgent->StopPlaying();
+      mAudioChannelAgent = nullptr;
+    }
+  }
+#endif
+}
+
+/* void canPlayChanged (in boolean canPlay); */
+NS_IMETHODIMP nsHTMLMediaElement::CanPlayChanged(bool canPlay)
+{
+  NS_ENSURE_TRUE(nsContentUtils::IsCallerChrome(), NS_ERROR_NOT_AVAILABLE);
+
+  UpdateChannelMuteState(canPlay);
+  return NS_OK;
+}

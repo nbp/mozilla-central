@@ -43,7 +43,7 @@
 #include "nsIFileURL.h"
 #include "nsIJARURI.h"
 #include "nsNetUtil.h"
-#include "nsDOMFile.h"
+#include "nsDOMBlobBuilder.h"
 #include "jsprf.h"
 #include "nsJSPrincipals.h"
 // For reporting errors with the console service
@@ -71,6 +71,22 @@
 using namespace mozilla;
 using namespace mozilla::scache;
 using namespace xpc;
+
+// This JSClass exists to trick silly code that expects toString()ing the
+// global in a component scope to return something with "BackstagePass" in it
+// to continue working.
+static JSClass kFakeBackstagePassJSClass =
+{
+    "FakeBackstagePass",
+    0,
+    JS_PropertyStub,
+    JS_PropertyStub,
+    JS_PropertyStub,
+    JS_StrictPropertyStub,
+    JS_EnumerateStub,
+    JS_ResolveStub,
+    JS_ConvertStub
+};
 
 static const char kJSRuntimeServiceContractID[] = "@mozilla.org/js/xpc/RuntimeService;1";
 static const char kXPConnectServiceContractID[] = "@mozilla.org/js/xpc/XPConnect;1";
@@ -229,7 +245,50 @@ File(JSContext *cx, unsigned argc, jsval *vp)
     }
 
     nsCOMPtr<nsISupports> native;
-    rv = nsDOMFileFile::NewFile(getter_AddRefs(native));
+    rv = nsDOMMultipartFile::NewFile(getter_AddRefs(native));
+    if (NS_FAILED(rv)) {
+        XPCThrower::Throw(rv, cx);
+        return false;
+    }
+
+    nsCOMPtr<nsIJSNativeInitializer> initializer = do_QueryInterface(native);
+    NS_ASSERTION(initializer, "what?");
+
+    rv = initializer->Initialize(nullptr, cx, nullptr, argc, JS_ARGV(cx, vp));
+    if (NS_FAILED(rv)) {
+        XPCThrower::Throw(rv, cx);
+        return false;
+    }
+
+    nsXPConnect* xpc = nsXPConnect::GetXPConnect();
+    if (!xpc) {
+        XPCThrower::Throw(NS_ERROR_UNEXPECTED, cx);
+        return false;
+    }
+
+    JSObject* glob = JS_GetGlobalForScopeChain(cx);
+
+    nsCOMPtr<nsIXPConnectJSObjectHolder> holder;
+    jsval retval;
+    rv = xpc->WrapNativeToJSVal(cx, glob, native, nullptr,
+                                &NS_GET_IID(nsISupports),
+                                true, &retval, nullptr);
+    if (NS_FAILED(rv)) {
+        XPCThrower::Throw(rv, cx);
+        return false;
+    }
+
+    JS_SET_RVAL(cx, vp, retval);
+    return true;
+}
+
+static JSBool
+Blob(JSContext *cx, unsigned argc, jsval *vp)
+{
+    nsresult rv;
+
+    nsCOMPtr<nsISupports> native;
+    rv = nsDOMMultipartFile::NewBlob(getter_AddRefs(native));
     if (NS_FAILED(rv)) {
         XPCThrower::Throw(rv, cx);
         return false;
@@ -272,6 +331,7 @@ static JSFunctionSpec gGlobalFun[] = {
     JS_FS("atob",    Atob,   1,0),
     JS_FS("btoa",    Btoa,   1,0),
     JS_FS("File",    File,   1,JSFUN_CONSTRUCTOR),
+    JS_FS("Blob",    Blob,   2,JSFUN_CONSTRUCTOR),
     JS_FS_END
 };
 
@@ -472,7 +532,7 @@ mozJSComponentLoader::LoadModule(FileLocation &aFile)
 
     ModuleEntry* mod;
     if (mModules.Get(spec, &mod))
-	return mod;
+    return mod;
 
     nsAutoPtr<ModuleEntry> entry(new ModuleEntry);
 
@@ -625,6 +685,16 @@ mozJSComponentLoader::FindTargetObject(JSContext* aCx,
     return NS_OK;
 }
 
+void
+mozJSComponentLoader::NoteSubScript(JSScript* aScript, JSObject* aThisObject)
+{
+  if (!mInitialized && NS_FAILED(ReallyInit())) {
+      MOZ_NOT_REACHED();
+  }
+
+  mThisObjects.Put(aScript, aThisObject);
+}
+
 // Some stack based classes for cleaning up on early return
 #ifdef HAVE_PR_MEMMAP
 class FileAutoCloser
@@ -707,7 +777,8 @@ mozJSComponentLoader::PrepareObjectForLocation(JSCLContextHelper& aCx,
     if (aReuseLoaderGlobal) {
         // If we're reusing the loader global, we don't actually use the
         // global, but rather we use a different object as the 'this' object.
-        JSObject* newObj = JS_NewObject(aCx, nullptr, nullptr, nullptr);
+        JSObject* newObj = JS_NewObject(aCx, &kFakeBackstagePassJSClass,
+                                        nullptr, nullptr);
         NS_ENSURE_TRUE(newObj, nullptr);
 
         obj = newObj;

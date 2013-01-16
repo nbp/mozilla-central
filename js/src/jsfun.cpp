@@ -91,7 +91,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
      * check any calls that were inlined.
      */
     if (fun->isInterpreted()) {
-        fun->getOrCreateScript(cx)->uninlineable = true;
+        JSFunction::getOrCreateScript(cx, fun)->uninlineable = true;
         MarkTypeObjectFlags(cx, fun, OBJECT_FLAG_UNINLINEABLE);
     }
 
@@ -125,15 +125,12 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
             return false;
 
 #ifdef JS_ION
-        AutoAssertNoGC nogc;
-
-        // If this script hasn't been compiled yet, make sure it will never
-        // be compiled. IonMonkey does not guarantee |f.arguments| can be
+        // Disabling compiling of this script in IonMonkey.
+        // IonMonkey does not guarantee |f.arguments| can be
         // fully recovered, so we try to mitigate observing this behavior by
         // detecting its use early.
-        RawScript script = iter.script().get(nogc);
-        if (!script->hasAnyIonScript())
-            ion::ForbidCompilation(cx, script);
+        UnrootedScript script = iter.script();
+        ion::ForbidCompilation(cx, script);
 #endif
 
         vp.setObject(*argsobj);
@@ -181,7 +178,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
             vp.setNull();
         } else if (caller.isFunction()) {
             JSFunction *callerFun = caller.toFunction();
-            if (callerFun->isInterpreted() && callerFun->inStrictMode()) {
+            if (callerFun->isInterpreted() && callerFun->strict()) {
                 JS_ReportErrorFlagsAndNumber(cx, JSREPORT_ERROR, js_GetErrorMessage, NULL,
                                              JSMSG_CALLER_IS_STRICT);
                 return false;
@@ -214,22 +211,22 @@ fun_enumerate(JSContext *cx, HandleObject obj)
 
     if (!obj->isBoundFunction()) {
         id = NameToId(cx->names().classPrototype);
-        if (!JSObject::hasProperty(cx, obj, id, &found, JSRESOLVE_QUALIFIED))
+        if (!JSObject::hasProperty(cx, obj, id, &found, 0))
             return false;
     }
 
     id = NameToId(cx->names().length);
-    if (!JSObject::hasProperty(cx, obj, id, &found, JSRESOLVE_QUALIFIED))
+    if (!JSObject::hasProperty(cx, obj, id, &found, 0))
         return false;
 
     id = NameToId(cx->names().name);
-    if (!JSObject::hasProperty(cx, obj, id, &found, JSRESOLVE_QUALIFIED))
+    if (!JSObject::hasProperty(cx, obj, id, &found, 0))
         return false;
 
     for (unsigned i = 0; i < ArrayLength(poisonPillProps); i++) {
         const uint16_t offset = poisonPillProps[i];
         id = NameToId(OFFSET_TO_NAME(cx->runtime, offset));
-        if (!JSObject::hasProperty(cx, obj, id, &found, JSRESOLVE_QUALIFIED))
+        if (!JSObject::hasProperty(cx, obj, id, &found, 0))
             return false;
     }
 
@@ -344,9 +341,9 @@ fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
             PropertyOp getter;
             StrictPropertyOp setter;
             unsigned attrs = JSPROP_PERMANENT;
-            if (fun->isInterpretedLazy() && !fun->getOrCreateScript(cx).unsafeGet())
+            if (fun->isInterpretedLazy() && !JSFunction::getOrCreateScript(cx, fun))
                 return false;
-            if (fun->isInterpreted() ? fun->inStrictMode() : fun->isBoundFunction()) {
+            if (fun->isInterpreted() ? fun->strict() : fun->isBoundFunction()) {
                 JSObject *throwTypeError = fun->global().getThrowTypeError();
 
                 getter = CastAsPropertyOp(throwTypeError);
@@ -427,7 +424,7 @@ js::XDRInterpretedFunction(XDRState<mode> *xdr, HandleObject enclosingScope, Han
             return false;
         JS_ASSERT(fun->nargs == fun->nonLazyScript()->bindings.numArgs());
         RootedScript script(cx, fun->nonLazyScript());
-        js_CallNewScriptHook(cx, script, fun);
+        CallNewScriptHook(cx, script, fun);
         objp.set(fun);
     }
 
@@ -453,7 +450,7 @@ js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleF
         return NULL;
 
     RootedScript srcScript(cx, srcFun->nonLazyScript());
-    RawScript clonedScript = CloneScript(cx, enclosingScope, clone, srcScript);
+    RootedScript clonedScript(cx, CloneScript(cx, enclosingScope, clone, srcScript));
     if (!clonedScript)
         return NULL;
 
@@ -466,7 +463,7 @@ js::CloneInterpretedFunction(JSContext *cx, HandleObject enclosingScope, HandleF
         return NULL;
 
     RootedScript cloneScript(cx, clone->nonLazyScript());
-    js_CallNewScriptHook(cx, cloneScript, clone);
+    CallNewScriptHook(cx, cloneScript, clone);
     return clone;
 }
 
@@ -662,7 +659,7 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
         // have "use strict", we insert "use strict" into the body of the
         // function. This ensures that if the result of toString is evaled, the
         // resulting function will have the same semantics.
-        bool addUseStrict = script->strictModeCode && !script->explicitUseStrict;
+        bool addUseStrict = script->strict && !script->explicitUseStrict;
 
         bool buildBody = funCon && !bodyOnly;
         if (buildBody) {
@@ -991,7 +988,7 @@ JSFunction::initBoundFunction(JSContext *cx, HandleValue thisArg,
     if (!self->setFlag(cx, BaseShape::BOUND_FUNCTION))
         return false;
 
-    if (!self->setSlotSpan(cx, BOUND_FUNCTION_RESERVED_SLOTS + argslen))
+    if (!JSObject::setSlotSpan(cx, self, BOUND_FUNCTION_RESERVED_SLOTS + argslen))
         return false;
 
     self->setSlot(JSSLOT_BOUND_FUNCTION_THIS, thisArg);
@@ -1112,7 +1109,7 @@ fun_isGenerator(JSContext *cx, unsigned argc, Value *vp)
 
     bool result = false;
     if (fun->hasScript()) {
-        RawScript script = fun->nonLazyScript().get(nogc);
+        UnrootedScript script = fun->nonLazyScript();
         JS_ASSERT(script->length != 0);
         result = script->isGenerator;
     }
@@ -1480,7 +1477,12 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
     clone->nargs = fun->nargs;
     clone->flags = fun->flags & ~JSFunction::EXTENDED;
     if (fun->isInterpreted()) {
-        clone->initScript(fun->nonLazyScript().unsafeGet());
+        if (fun->isInterpretedLazy()) {
+            AutoCompartment ac(cx, fun);
+            if (!JSFunction::getOrCreateScript(cx, fun))
+                return NULL;
+        }
+        clone->initScript(fun->nonLazyScript());
         clone->initEnvironment(parent);
     } else {
         clone->initNative(fun->native(), fun->jitInfo());
@@ -1522,7 +1524,7 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
 
             clone->mutableScript().init(NULL);
 
-            RawScript cscript = CloneScript(cx, scope, clone, script);
+            RootedScript cscript(cx, CloneScript(cx, scope, clone, script));
             if (!cscript)
                 return NULL;
 
@@ -1532,7 +1534,7 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
             GlobalObject *global = script->compileAndGo ? &script->global() : NULL;
 
             script = clone->nonLazyScript();
-            js_CallNewScriptHook(cx, script, clone);
+            CallNewScriptHook(cx, script, clone);
             Debugger::onNewScript(cx, script, global);
         }
     }

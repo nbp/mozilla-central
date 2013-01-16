@@ -44,6 +44,9 @@ pref("toolkit.storage.synchronous", 0);
 // Device pixel to CSS px ratio, in percent. Set to -1 to calculate based on display density.
 pref("browser.viewport.scaleRatio", -1);
 pref("browser.viewport.desktopWidth", 980);
+// The default fallback zoom level to render pages at. Set to -1 to fit page; otherwise
+// the value is divided by 1000 and clamped to hard-coded min/max scale values.
+pref("browser.viewport.defaultZoom", -1);
 
 /* allow scrollbars to float above chrome ui */
 pref("ui.scrollbarsCanOverlapContent", 1);
@@ -76,8 +79,9 @@ pref("offline-apps.quota.warn", 1024); // kilobytes
 // cache compression turned off for now - see bug #715198
 pref("browser.cache.compression_level", 0);
 
-/* protocol warning prefs */
+/* disable some protocol warnings */
 pref("network.protocol-handler.warn-external.tel", false);
+pref("network.protocol-handler.warn-external.sms", false);
 pref("network.protocol-handler.warn-external.mailto", false);
 pref("network.protocol-handler.warn-external.vnd.youtube", false);
 
@@ -162,6 +166,7 @@ pref("dom.experimental_forms", true);
 
 /* extension manager and xpinstall */
 pref("xpinstall.whitelist.add", "addons.mozilla.org");
+pref("xpinstall.whitelist.add.180", "marketplace.firefox.com");
 
 pref("extensions.enabledScopes", 1);
 pref("extensions.autoupdate.enabled", true);
@@ -342,8 +347,6 @@ pref("gfx.displayport.strategy_vb.danger_y_incr", -1); // additional danger zone
 // prediction bias strategy options
 pref("gfx.displayport.strategy_pb.threshold", -1); // velocity threshold in inches/frame
 
-pref("gfx.java.screenshot.enabled", false);
-
 // don't allow JS to move and resize existing windows
 pref("dom.disable_window_move_resize", true);
 
@@ -427,10 +430,6 @@ pref("plugin.disable", false);
 pref("dom.ipc.plugins.enabled", false);
 
 pref("plugins.click_to_play", true);
-// Disabled because of thread safety problem
-// in getting the bits from the surface.
-// Bug 756253
-pref("plugins.use_placeholder", 0);
 
 // product URLs
 // The breakpad report server to link to in about:crashes
@@ -524,6 +523,7 @@ pref("layers.offmainthreadcomposition.enabled", true);
 pref("layers.async-video.enabled", true);
 pref("layers.progressive-paint", true);
 pref("layers.low-precision-buffer", true);
+pref("layers.low-precision-resolution", 250);
 
 pref("notification.feature.enabled", true);
 
@@ -568,6 +568,8 @@ pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-erro
 pref("browser.safebrowsing.warning.infoURL", "http://www.mozilla.com/%LOCALE%/firefox/phishing-protection/");
 pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
 
+pref("browser.safebrowsing.id", "@MOZ_APP_UA_NAME@");
+
 // Name of the about: page contributed by safebrowsing to handle display of error
 // pages on phishing/malware hits.  (bug 399233)
 pref("urlclassifier.alternate_error_page", "blocked");
@@ -575,16 +577,13 @@ pref("urlclassifier.alternate_error_page", "blocked");
 // The number of random entries to send with a gethash request.
 pref("urlclassifier.gethashnoise", 4);
 
-// Randomize all UrlClassifier data with a per-client key.
-pref("urlclassifier.randomizeclient", false);
-
 // The list of tables that use the gethash request to confirm partial results.
 pref("urlclassifier.gethashtables", "goog-phish-shavar,goog-malware-shavar");
 
 // If an urlclassifier table has not been updated in this number of seconds,
 // a gethash request will be forced to check that the result is still in
 // the database.
-pref("urlclassifier.confirm-age", 2700);
+pref("urlclassifier.max-complete-age", 2700);
 #endif
 
 // True if this is the first time we are showing about:firstrun
@@ -613,9 +612,6 @@ pref("full-screen-api.enabled", true);
 pref("direct-texture.force.enabled", false);
 pref("direct-texture.force.disabled", false);
 
-// show checkerboard pattern on android; we use background colour instead
-pref("gfx.show_checkerboard_pattern", true);
-
 // This fraction in 1000ths of velocity remains after every animation frame when the velocity is low.
 pref("ui.scrolling.friction_slow", -1);
 // This fraction in 1000ths of velocity remains after every animation frame when the velocity is high.
@@ -633,6 +629,7 @@ pref("ui.scrolling.min_scrollable_distance", -1);
 
 // Enable accessibility mode if platform accessibility is enabled.
 pref("accessibility.accessfu.activate", 2);
+pref("accessibility.accessfu.quicknav_modes", "Link,Heading,FormElement,ListItem");
 
 // Mobile manages state by autodetection
 pref("network.manage-offline-status", true);

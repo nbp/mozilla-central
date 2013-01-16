@@ -8,14 +8,14 @@
 #include "nsJSUtils.h"
 #include "nsIDOMTCPSocket.h"
 #include "mozilla/unused.h"
-#include "mozilla/AppProcessPermissions.h"
+#include "mozilla/AppProcessChecker.h"
 
 namespace IPC {
 
 //Defined in TCPSocketChild.cpp
 extern bool
 DeserializeUint8Array(JSRawObject aObj,
-                      const nsTArray<uint8_t>& aBuffer,
+                      const InfallibleTArray<uint8_t>& aBuffer,
                       jsval* aVal);
 
 }

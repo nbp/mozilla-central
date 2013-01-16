@@ -185,9 +185,11 @@ var DebuggerServer = {
    */
   addBrowserActors: function DS_addBrowserActors() {
     this.addActors("chrome://global/content/devtools/dbg-browser-actors.js");
+#ifndef MOZ_B2G
     this.addActors("chrome://global/content/devtools/dbg-webconsole-actors.js");
     this.addTabActor(this.WebConsoleActor, "consoleActor");
     this.addGlobalActor(this.WebConsoleActor, "consoleActor");
+#endif
     if ("nsIProfiler" in Ci)
       this.addActors("chrome://global/content/devtools/dbg-profiler-actors.js");
   },
@@ -289,7 +291,9 @@ var DebuggerServer = {
     }
   },
 
-  onStopListening: function DS_onStopListening() { },
+  onStopListening: function DS_onStopListening(aSocket, status) {
+    dumpn("onStopListening, status: " + status);
+  },
 
   /**
    * Raises an exception if the server has not been properly initialized.
@@ -539,11 +543,20 @@ DebuggerServerConnection.prototype = {
 
   /**
    * Remove a previously-added pool of actors to the connection.
+   *
+   * @param ActorPool aActorPool
+   *        The ActorPool instance you want to remove.
+   * @param boolean aCleanup
+   *        True if you want to disconnect each actor from the pool, false
+   *        otherwise.
    */
-  removeActorPool: function DSC_removeActorPool(aActorPool) {
+  removeActorPool: function DSC_removeActorPool(aActorPool, aCleanup) {
     let index = this._extraPools.lastIndexOf(aActorPool);
     if (index > -1) {
-      this._extraPools.splice(index, 1);
+      let pool = this._extraPools.splice(index, 1);
+      if (aCleanup) {
+        pool.map(function(p) { p.cleanup(); });
+      }
     }
   },
 

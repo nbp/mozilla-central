@@ -12,8 +12,8 @@
 #include "TypeOracle.h"
 #include "Registers.h"
 
-struct JSFunction;
-struct JSScript;
+class JSFunction;
+class JSScript;
 
 namespace js {
 namespace ion {
@@ -201,9 +201,9 @@ class IonCache
 
     CodeLocationLabel cacheLabel() const { return cacheLabel_; }
     CodeLocationLabel rejoinLabel() const {
-        uint8 *ptr = initialJump_.raw();
+        uint8_t *ptr = initialJump_.raw();
 #ifdef JS_CPU_ARM
-        uint32 i = 0;
+        uint32_t i = 0;
         while (i < REJOIN_LABEL_OFFSET)
             ptr = Assembler::nextInstruction(ptr, &i);
 #endif
@@ -298,7 +298,7 @@ class IonCache
         idempotent_ = true;
     }
 
-    void setScriptedLocation(JSScript *script, jsbytecode *pc) {
+    void setScriptedLocation(UnrootedScript script, jsbytecode *pc) {
         JS_ASSERT(!idempotent_);
         this->script = script;
         this->pc = pc;
@@ -336,7 +336,9 @@ class GetPropertyIC : public IonCache
     Register object_;
     PropertyName *name_;
     TypedOrValueRegister output_;
-    bool allowGetters_;
+    bool allowGetters_ : 1;
+    bool hasDenseArrayLengthStub_ : 1;
+    bool hasTypedArrayLengthStub_ : 1;
 
   public:
     GetPropertyIC(RegisterSet liveRegs,
@@ -347,7 +349,9 @@ class GetPropertyIC : public IonCache
         object_(object),
         name_(name),
         output_(output),
-        allowGetters_(allowGetters)
+        allowGetters_(allowGetters),
+        hasDenseArrayLengthStub_(false),
+        hasTypedArrayLengthStub_(false)
     {
     }
 
@@ -357,12 +361,16 @@ class GetPropertyIC : public IonCache
     PropertyName *name() const { return name_; }
     TypedOrValueRegister output() const { return output_; }
     bool allowGetters() const { return allowGetters_; }
+    bool hasDenseArrayLengthStub() const { return hasDenseArrayLengthStub_; }
+    bool hasTypedArrayLengthStub() const { return hasTypedArrayLengthStub_; }
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                        const Shape *shape);
+                        HandleShape shape);
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
-                          const Shape *shape,
+                          HandleShape shape,
                           const SafepointIndex *safepointIndex, void *returnAddr);
+    bool attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
+    bool attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
 
     static bool update(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
 };
@@ -403,8 +411,8 @@ class SetPropertyIC : public IonCache
     bool attachNativeExisting(JSContext *cx, IonScript *ion, HandleObject obj, HandleShape shape);
     bool attachSetterCall(JSContext *cx, IonScript *ion, HandleObject obj,
                           HandleObject holder, HandleShape shape, void *returnAddr);
-    bool attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj, const Shape *oldshape,
-                            const Shape *newshape, const Shape *propshape);
+    bool attachNativeAdding(JSContext *cx, IonScript *ion, JSObject *obj, HandleShape oldshape,
+                            HandleShape newshape, HandleShape propshape);
 
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue value);
@@ -481,7 +489,6 @@ class BindNameIC : public IonCache
         return scopeChain_;
     }
     HandlePropertyName name() const {
-        // TODO: are we marking IC?
         return HandlePropertyName::fromMarkedLocation(&name_);
     }
     Register outputReg() const {
@@ -530,7 +537,7 @@ class NameIC : public IonCache
     }
 
     bool attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject obj,
-                Shape *shape);
+                HandleShape shape);
 
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);

@@ -45,12 +45,14 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/WebGLRenderingContextBinding.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/ipc/ProcessPriorityManager.h"
 
 #include "Layers.h"
 
 using namespace mozilla;
 using namespace mozilla::gl;
 using namespace mozilla::dom;
+using namespace mozilla::dom::ipc;
 using namespace mozilla::layers;
 
 NS_IMETHODIMP
@@ -58,9 +60,21 @@ WebGLMemoryPressureObserver::Observe(nsISupports* aSubject,
                                      const char* aTopic,
                                      const PRUnichar* aSomeData)
 {
-  if (strcmp(aTopic, "memory-pressure") == 0)
-    mContext->ForceLoseContext();
-  return NS_OK;
+    if (strcmp(aTopic, "memory-pressure"))
+        return NS_OK;
+
+    bool wantToLoseContext = true;
+
+    if (!mContext->mCanLoseContextInForeground && CurrentProcessIsForeground())
+        wantToLoseContext = false;
+    else if (!nsCRT::strcmp(aSomeData,
+                            NS_LITERAL_STRING("heap-minimize").get()))
+        wantToLoseContext = mContext->mLoseContextOnHeapMinimize;
+
+    if (wantToLoseContext)
+        mContext->ForceLoseContext();
+
+    return NS_OK;
 }
 
 
@@ -150,6 +164,7 @@ WebGLContext::WebGLContext()
     mGLMaxTextureUnits = 0;
     mGLMaxTextureSize = 0;
     mGLMaxCubeMapTextureSize = 0;
+    mGLMaxRenderbufferSize = 0;
     mGLMaxTextureImageUnits = 0;
     mGLMaxVertexTextureImageUnits = 0;
     mGLMaxVaryingVectors = 0;
@@ -168,6 +183,8 @@ WebGLContext::WebGLContext()
     mContextRestorer = do_CreateInstance("@mozilla.org/timer;1");
     mContextStatus = ContextStable;
     mContextLostErrorSet = false;
+    mLoseContextOnHeapMinimize = false;
+    mCanLoseContextInForeground = true;
 
     mAlreadyGeneratedWarnings = 0;
     mAlreadyWarnedAboutFakeVertexAttrib0 = false;
@@ -785,7 +802,7 @@ namespace mozilla {
 
 class WebGLContextUserData : public LayerUserData {
 public:
-    WebGLContextUserData(nsHTMLCanvasElement *aContent)
+    WebGLContextUserData(HTMLCanvasElement *aContent)
     : mContent(aContent) {}
 
   /** DidTransactionCallback gets called by the Layers code everytime the WebGL canvas gets composite,
@@ -794,7 +811,7 @@ public:
   static void DidTransactionCallback(void* aData)
   {
     WebGLContextUserData *userdata = static_cast<WebGLContextUserData*>(aData);
-    nsHTMLCanvasElement *canvas = userdata->mContent;
+    HTMLCanvasElement *canvas = userdata->mContent;
     WebGLContext *context = static_cast<WebGLContext*>(canvas->GetContextAtIndex(0));
 
     context->mBackbufferClearingStatus = BackbufferClearingStatus::NotClearedSinceLastPresented;
@@ -804,7 +821,7 @@ public:
   }
 
 private:
-  nsRefPtr<nsHTMLCanvasElement> mContent;
+  nsRefPtr<HTMLCanvasElement> mContent;
 };
 
 } // end namespace mozilla
@@ -876,22 +893,21 @@ WebGLContext::GetCanvasLayer(nsDisplayListBuilder* aBuilder,
 }
 
 void
-WebGLContext::GetContextAttributes(dom::WebGLContextAttributes &result)
+WebGLContext::GetContextAttributes(Nullable<dom::WebGLContextAttributesInitializer> &retval)
 {
+    retval.SetNull();
     if (!IsContextStable())
-    {
-        // XXXbz spec says we should still return our attributes in
-        // this case!  Should we store them all in mOptions?
         return;
-    }
+
+    dom::WebGLContextAttributes& result = retval.SetValue();
 
     gl::ContextFormat cf = gl->ActualFormat();
-    result.alpha = cf.alpha > 0;
-    result.depth = cf.depth > 0;
-    result.stencil = cf.stencil > 0;
-    result.antialias = cf.samples > 1;
-    result.premultipliedAlpha = mOptions.premultipliedAlpha;
-    result.preserveDrawingBuffer = mOptions.preserveDrawingBuffer;
+    result.mAlpha = cf.alpha > 0;
+    result.mDepth = cf.depth > 0;
+    result.mStencil = cf.stencil > 0;
+    result.mAntialias = cf.samples > 1;
+    result.mPremultipliedAlpha = mOptions.premultipliedAlpha;
+    result.mPreserveDrawingBuffer = mOptions.preserveDrawingBuffer;
 }
 
 bool

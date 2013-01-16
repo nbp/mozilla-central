@@ -746,7 +746,7 @@ nsNPAPIPluginStreamListener::OnStopBinding(nsPluginStreamListenerPeer* streamPee
     return NS_ERROR_FAILURE;
 
   NPReason reason = NS_FAILED(status) ? NPRES_NETWORK_ERR : NPRES_DONE;
-  if (mRedirectDenied) {
+  if (mRedirectDenied || status == NS_BINDING_ABORTED) {
     reason = NPRES_USER_BREAK;
   }
 
@@ -863,6 +863,7 @@ nsNPAPIPluginStreamListener::HandleRedirectNotification(nsIChannel *oldChannel, 
 #if defined(XP_WIN) || defined(XP_OS2)
           NS_TRY_SAFE_CALL_VOID((*pluginFunctions->urlredirectnotify)(npp, spec.get(), static_cast<int32_t>(status), mNPStreamWrapper->mNPStream.notifyData), mInst);
 #else
+          MAIN_THREAD_JNI_REF_GUARD;
           (*pluginFunctions->urlredirectnotify)(npp, spec.get(), static_cast<int32_t>(status), mNPStreamWrapper->mNPStream.notifyData);
 #endif
           return true;

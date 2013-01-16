@@ -7,6 +7,7 @@ package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserContract.Combined;
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.gfx.BitmapUtils;
 import org.mozilla.gecko.util.GeckoAsyncTask;
 import org.mozilla.gecko.util.GeckoBackgroundThread;
 
@@ -21,7 +22,6 @@ import android.content.SharedPreferences;
 import android.content.Intent;
 import android.database.Cursor;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.Rect;
@@ -34,6 +34,7 @@ import android.view.Menu;
 import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.SubMenu;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.Interpolator;
@@ -47,8 +48,6 @@ import java.io.InputStream;
 import java.net.URL;
 import java.util.EnumSet;
 import java.util.Vector;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 abstract public class BrowserApp extends GeckoApp
                                  implements TabsPanel.TabsLayoutChangeListener,
@@ -58,18 +57,18 @@ abstract public class BrowserApp extends GeckoApp
     public static BrowserToolbar mBrowserToolbar;
     private AboutHomeContent mAboutHomeContent;
     private Boolean mAboutHomeShowing = null;
+    protected Telemetry.Timer mAboutHomeStartupTimer = null;
 
     private static final int ADDON_MENU_OFFSET = 1000;
     private class MenuItemInfo {
-        int id;
-        String label;
-        String icon;
-
-        public MenuItemInfo(int id, String label, String icon) {
-            this.id = id;
-            this.label = label;
-            this.icon = icon;
-        }
+        public int id;
+        public String label;
+        public String icon;
+        public boolean checkable;
+        public boolean checked;
+        public boolean enabled;
+        public boolean visible;
+        public int parent;
     }
 
     private Vector<MenuItemInfo> mAddonMenuItemsCache;
@@ -202,6 +201,8 @@ abstract public class BrowserApp extends GeckoApp
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        mAboutHomeStartupTimer = new Telemetry.Timer("FENNEC_STARTUP_TIME_ABOUTHOME");
+
         super.onCreate(savedInstanceState);
 
         LinearLayout actionBar = (LinearLayout) getActionBarLayout();
@@ -257,7 +258,7 @@ abstract public class BrowserApp extends GeckoApp
     }
 
     @Override
-    protected void initializeChrome(String uri, Boolean isExternalURL) {
+    protected void initializeChrome(String uri, boolean isExternalURL) {
         super.initializeChrome(uri, isExternalURL);
 
         mBrowserToolbar.updateBackButton(false);
@@ -265,19 +266,26 @@ abstract public class BrowserApp extends GeckoApp
 
         mDoorHangerPopup.setAnchor(mBrowserToolbar.mFavicon);
 
-        if (!isExternalURL) {
-            // show about:home if we aren't restoring previous session
-            if (mRestoreMode == RESTORE_NONE) {
-                Tab tab = Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
+        if (isExternalURL || mRestoreMode != RESTORE_NONE) {
+            mAboutHomeStartupTimer.cancel();
+        }
+
+        if (!mIsRestoringActivity) {
+            if (!isExternalURL) {
+                // show about:home if we aren't restoring previous session
+                if (mRestoreMode == RESTORE_NONE) {
+                    Tab tab = Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB);
+                } else {
+                    hideAboutHome();
+                }
             } else {
-                hideAboutHome();
+                int flags = Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED;
+                Tabs.getInstance().loadUrl(uri, flags);
             }
-        } else {
-            int flags = Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_USER_ENTERED;
-            Tabs.getInstance().loadUrl(uri, flags);
         }
     }
 
+    @Override
     void toggleChrome(final boolean aShow) {
         mMainHandler.post(new Runnable() {
             public void run() {
@@ -285,6 +293,9 @@ abstract public class BrowserApp extends GeckoApp
                     mBrowserToolbar.show();
                 } else {
                     mBrowserToolbar.hide();
+                    if (hasTabsSideBar()) {
+                        hideTabs();
+                    }
                 }
             }
         });
@@ -326,6 +337,12 @@ abstract public class BrowserApp extends GeckoApp
             mAboutHomeContent.refresh();
     }
 
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        mBrowserToolbar.fromAwesomeBarSearch();
+    }
+
     public View getActionBarLayout() {
         int actionBarRes;
 
@@ -349,16 +366,29 @@ abstract public class BrowserApp extends GeckoApp
     public void handleMessage(String event, JSONObject message) {
         try {
             if (event.equals("Menu:Add")) {
-                final String label = message.getString("name");
-                final int id = message.getInt("id") + ADDON_MENU_OFFSET;
+                MenuItemInfo info = new MenuItemInfo();
+                info.label = message.getString("name");
+                info.id = message.getInt("id") + ADDON_MENU_OFFSET;
+                info.checkable = false;
+                info.checked = false;
+                info.enabled = true;
+                info.visible = true;
                 String iconRes = null;
                 try { // icon is optional
                     iconRes = message.getString("icon");
                 } catch (Exception ex) { }
-                final String icon = iconRes;
+                info.icon = iconRes;
+                info.checkable = false;
+                try {
+                    info.checkable = message.getBoolean("checkable");
+                } catch (Exception ex) { }
+                try { // parent is optional
+                    info.parent = message.getInt("parent") + ADDON_MENU_OFFSET;
+                } catch (Exception ex) { }
+                final MenuItemInfo menuItemInfo = info;
                 mMainHandler.post(new Runnable() {
                     public void run() {
-                        addAddonMenuItem(id, label, icon);
+                        addAddonMenuItem(menuItemInfo);
                     }
                 });
             } else if (event.equals("Menu:Remove")) {
@@ -366,6 +396,14 @@ abstract public class BrowserApp extends GeckoApp
                 mMainHandler.post(new Runnable() {
                     public void run() {
                         removeAddonMenuItem(id);
+                    }
+                });
+            } else if (event.equals("Menu:Update")) {
+                final int id = message.getInt("id") + ADDON_MENU_OFFSET;
+                final JSONObject options = message.getJSONObject("options");
+                mMainHandler.post(new Runnable() {
+                    public void run() {
+                        updateAddonMenuItem(id, options);
                     }
                 });
             } else if (event.equals("CharEncoding:Data")) {
@@ -455,12 +493,20 @@ abstract public class BrowserApp extends GeckoApp
         }
     }
 
-    void addTab() {
+    public void addTab() {
         showAwesomebar(AwesomeBar.Target.NEW_TAB);
     }
 
-    public void showLocalTabs() {
-        showTabs(TabsPanel.Panel.LOCAL_TABS);
+    public void addPrivateTab() {
+        Tabs.getInstance().loadUrl("about:privatebrowsing", Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_PRIVATE);
+    }
+
+    public void showNormalTabs() {
+        showTabs(TabsPanel.Panel.NORMAL_TABS);
+    }
+
+    public void showPrivateTabs() {
+        showTabs(TabsPanel.Panel.PRIVATE_TABS);
     }
 
     public void showRemoteTabs() {
@@ -579,7 +625,7 @@ abstract public class BrowserApp extends GeckoApp
     private void loadFavicon(final Tab tab) {
         maybeCancelFaviconLoad(tab);
 
-        long id = getFavicons().loadFavicon(tab.getURL(), tab.getFaviconURL(), !tab.isPrivate(),
+        long id = Favicons.getInstance().loadFavicon(tab.getURL(), tab.getFaviconURL(), !tab.isPrivate(),
                         new Favicons.OnFaviconLoadedListener() {
 
             public void onFaviconLoaded(String pageUrl, Bitmap favicon) {
@@ -613,7 +659,7 @@ abstract public class BrowserApp extends GeckoApp
             return;
 
         // Cancel pending favicon load task
-        getFavicons().cancelFaviconLoad(faviconLoadId);
+        Favicons.getInstance().cancelFaviconLoad(faviconLoadId);
 
         // Reset favicon load state
         tab.setFaviconLoadId(Favicons.NOT_LOADING);
@@ -670,9 +716,9 @@ abstract public class BrowserApp extends GeckoApp
                         }
                     });
                     mAboutHomeContent.setLoadCompleteCallback(new AboutHomeContent.VoidCallback() {
-                         public void callback() {
-                             mAboutHomeStartupTimer.stop();
-                         }
+                        public void callback() {
+                            mAboutHomeStartupTimer.stop();
+                        }
                     });
                 } else {
                     mAboutHomeContent.update(EnumSet.of(AboutHomeContent.UpdateFlags.TOP_SITES,
@@ -730,38 +776,53 @@ abstract public class BrowserApp extends GeckoApp
         }
     }
 
-    private void addAddonMenuItem(final int id, final String label, final String icon) {
+    private void addAddonMenuItem(final MenuItemInfo info) {
         if (mMenu == null) {
             if (mAddonMenuItemsCache == null)
                 mAddonMenuItemsCache = new Vector<MenuItemInfo>();
 
-            mAddonMenuItemsCache.add(new MenuItemInfo(id, label, icon));
+            mAddonMenuItemsCache.add(info);
             return;
         }
 
-        final MenuItem item = mMenu.add(Menu.NONE, id, Menu.NONE, label);
+        Menu menu;
+        if (info.parent == 0) {
+            menu = mMenu;
+        } else {
+            MenuItem parent = mMenu.findItem(info.parent);
+            if (parent == null)
+                return;
 
+            if (!parent.hasSubMenu()) {
+                mMenu.removeItem(parent.getItemId());
+                menu = mMenu.addSubMenu(Menu.NONE, parent.getItemId(), Menu.NONE, parent.getTitle());
+                if (parent.getIcon() != null)
+                    ((SubMenu) menu).getItem().setIcon(parent.getIcon());
+            } else {
+                menu = parent.getSubMenu();
+            }
+        }
+
+        final MenuItem item = menu.add(Menu.NONE, info.id, Menu.NONE, info.label);
         item.setOnMenuItemClickListener(new MenuItem.OnMenuItemClickListener() {
             @Override
             public boolean onMenuItemClick(MenuItem item) {
                 Log.i(LOGTAG, "menu item clicked");
-                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Menu:Clicked", Integer.toString(id - ADDON_MENU_OFFSET)));
+                GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("Menu:Clicked", Integer.toString(info.id - ADDON_MENU_OFFSET)));
                 return true;
             }
         });
 
-        if (icon != null) {
-            if (icon.startsWith("data")) {
-                byte[] raw = GeckoAppShell.decodeBase64(icon.substring(22), GeckoAppShell.BASE64_DEFAULT);
-                Bitmap bitmap = BitmapFactory.decodeByteArray(raw, 0, raw.length);
-                BitmapDrawable drawable = new BitmapDrawable(bitmap);
+        if (info.icon != null) {
+            if (info.icon.startsWith("data")) {
+                BitmapDrawable drawable = new BitmapDrawable(BitmapUtils.getBitmapFromDataURI(info.icon));
                 item.setIcon(drawable);
             }
-            else if (icon.startsWith("jar:") || icon.startsWith("file://")) {
+            else if (info.icon.startsWith("jar:") || info.icon.startsWith("file://")) {
                 GeckoAppShell.getHandler().post(new Runnable() {
                     public void run() {
                         try {
-                            URL url = new URL(icon);
+                            URL url = new URL(info.icon);
                             InputStream is = (InputStream) url.getContent();
                             try {
                                 Drawable drawable = Drawable.createFromStream(is, "src");
@@ -776,6 +837,11 @@ abstract public class BrowserApp extends GeckoApp
                 });
             }
         }
+
+        item.setCheckable(info.checkable);
+        item.setChecked(info.checked);
+        item.setEnabled(info.enabled);
+        item.setVisible(info.visible);
     }
 
     private void removeAddonMenuItem(int id) {
@@ -797,6 +863,54 @@ abstract public class BrowserApp extends GeckoApp
             mMenu.removeItem(id);
     }
 
+    private void updateAddonMenuItem(int id, JSONObject options) {
+        // Set attribute for the menu item in cache, if available
+        if (mAddonMenuItemsCache != null && !mAddonMenuItemsCache.isEmpty()) {
+            for (MenuItemInfo item : mAddonMenuItemsCache) {
+                 if (item.id == id) {
+                     try {
+                        item.checkable = options.getBoolean("checkable");
+                     } catch (JSONException e) {}
+
+                     try {
+                        item.checked = options.getBoolean("checked");
+                     } catch (JSONException e) {}
+
+                     try {
+                        item.enabled = options.getBoolean("enabled");
+                     } catch (JSONException e) {}
+
+                     try {
+                        item.visible = options.getBoolean("visible");
+                     } catch (JSONException e) {}
+                     break;
+                 }
+            }
+        }
+
+        if (mMenu == null)
+            return;
+
+        MenuItem menuItem = mMenu.findItem(id);
+        if (menuItem != null) {
+            try {
+               menuItem.setCheckable(options.getBoolean("checkable"));
+            } catch (JSONException e) {}
+
+            try {
+               menuItem.setChecked(options.getBoolean("checked"));
+            } catch (JSONException e) {}
+
+            try {
+               menuItem.setEnabled(options.getBoolean("enabled"));
+            } catch (JSONException e) {}
+
+            try {
+               menuItem.setVisible(options.getBoolean("visible"));
+            } catch (JSONException e) {}
+        }
+    }
+
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
         super.onCreateOptionsMenu(menu);
@@ -811,7 +925,7 @@ abstract public class BrowserApp extends GeckoApp
         // Add add-on menu items if any.
         if (mAddonMenuItemsCache != null && !mAddonMenuItemsCache.isEmpty()) {
             for (MenuItemInfo item : mAddonMenuItemsCache) {
-                 addAddonMenuItem(item.id, item.label, item.icon);
+                 addAddonMenuItem(item);
             }
 
             mAddonMenuItemsCache.clear();
@@ -869,6 +983,10 @@ abstract public class BrowserApp extends GeckoApp
         MenuItem findInPage = aMenu.findItem(R.id.find_in_page);
         MenuItem desktopMode = aMenu.findItem(R.id.desktop_mode);
 
+        // Only show the "Quit" menu item on pre-ICS. In ICS+, it's easy to
+        // kill an app through the task switcher.
+        aMenu.findItem(R.id.quit).setVisible(Build.VERSION.SDK_INT < 14);
+
         if (tab == null || tab.getURL() == null) {
             bookmark.setEnabled(false);
             forward.setEnabled(false);
@@ -909,6 +1027,28 @@ abstract public class BrowserApp extends GeckoApp
         charEncoding.setVisible(GeckoPreferences.getCharEncodingState());
 
         return true;
+    }
+
+    @Override
+    public boolean onContextItemSelected(MenuItem item) {
+        switch (item.getItemId()) {
+            case R.id.abouthome_topsites_edit:
+                mAboutHomeContent.editSite();
+                return true;
+
+            case R.id.abouthome_topsites_unpin:
+                mAboutHomeContent.unpinSite();
+                return true;
+
+            case R.id.abouthome_topsites_unpinall:
+                mAboutHomeContent.unpinAllSites();
+                return true;
+
+            case R.id.abouthome_topsites_pin:
+                mAboutHomeContent.pinSite();
+                return true;
+        }
+        return super.onContextItemSelected(item);
     }
 
     @Override
@@ -978,8 +1118,11 @@ abstract public class BrowserApp extends GeckoApp
                 }
                 GeckoAppShell.sendEventToGecko(GeckoEvent.createBroadcastEvent("DesktopMode:Change", args.toString()));
                 return true;
-            case R.id.private_browsing:
-                Tabs.getInstance().loadUrl("about:home", Tabs.LOADURL_NEW_TAB | Tabs.LOADURL_PRIVATE);
+            case R.id.new_tab:
+                addTab();
+                return true;
+            case R.id.new_private_tab:
+                addPrivateTab();
                 return true;
             default:
                 return super.onOptionsItemSelected(item);

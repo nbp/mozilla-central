@@ -160,14 +160,15 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
             } else if (type.equals("time")) {
                 TimePicker input = new TimePicker(GeckoApp.mAppContext);
                 input.setIs24HourView(DateFormat.is24HourFormat(GeckoApp.mAppContext));
+
+                GregorianCalendar calendar = new GregorianCalendar();
                 if (!value.equals("")) {
                     try {
-                        GregorianCalendar calendar = new GregorianCalendar();
                         calendar.setTime(new SimpleDateFormat("kk:mm").parse(value));
-                        input.setCurrentHour(calendar.get(GregorianCalendar.HOUR_OF_DAY));
-                        input.setCurrentMinute(calendar.get(GregorianCalendar.MINUTE));
                     } catch (Exception e) { }
                 }
+                input.setCurrentHour(calendar.get(GregorianCalendar.HOUR_OF_DAY));
+                input.setCurrentMinute(calendar.get(GregorianCalendar.MINUTE));
                 view = (View)input;
             } else if (type.equals("datetime-local") || type.equals("datetime")) {
                 DateTimePicker input = new DateTimePicker(GeckoApp.mAppContext, "yyyy-MM-dd kk:mm", value,
@@ -558,6 +559,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
         public boolean inGroup = false;
         public boolean disabled = false;
         public int id = 0;
+        public boolean isParent = false;
 
         // This member can't be accessible from JS, see bug 733749.
         public Drawable icon = null;
@@ -568,6 +570,7 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
             try { inGroup = aObject.getBoolean("inGroup"); } catch(Exception ex) { }
             try { disabled = aObject.getBoolean("disabled"); } catch(Exception ex) { }
             try { id = aObject.getInt("id"); } catch(Exception ex) { }
+            try { isParent = aObject.getBoolean("isParent"); } catch(Exception ex) { }
         }
 
         public PromptListItem(String aLabel) {
@@ -599,53 +602,62 @@ public class PromptService implements OnClickListener, OnCancelListener, OnItemC
         }
 
         private void maybeUpdateIcon(PromptListItem item, TextView t) {
-            if (item.icon == null)
+            if (item.icon == null && !item.isParent) {
+                t.setCompoundDrawablesWithIntrinsicBounds(null, null, null, null);
                 return;
+            }
 
+            Drawable d = null;
             Resources res = GeckoApp.mAppContext.getResources();
-
-            // Set padding inside the item.
-            t.setPadding(item.inGroup ? mLeftRightTextWithIconPadding + mGroupPaddingSize :
-                                        mLeftRightTextWithIconPadding,
-                         mTopBottomTextWithIconPadding,
-                         mLeftRightTextWithIconPadding,
-                         mTopBottomTextWithIconPadding);
-
             // Set the padding between the icon and the text.
             t.setCompoundDrawablePadding(mIconTextPadding);
+            if (item.icon != null) {
+                // Set padding inside the item.
+                t.setPadding(item.inGroup ? mLeftRightTextWithIconPadding + mGroupPaddingSize :
+                                            mLeftRightTextWithIconPadding,
+                             mTopBottomTextWithIconPadding,
+                             mLeftRightTextWithIconPadding,
+                             mTopBottomTextWithIconPadding);
+                // We want the icon to be of a specific size. Some do not
+                // follow this rule so we have to resize them.
+                Bitmap bitmap = ((BitmapDrawable) item.icon).getBitmap();
+                d = new BitmapDrawable(Bitmap.createScaledBitmap(bitmap, mIconSize, mIconSize, true));
+            }
 
-            // We want the icon to be of a specific size. Some do not
-            // follow this rule so we have to resize them.
-            Bitmap bitmap = ((BitmapDrawable) item.icon).getBitmap();
-            Drawable d = new BitmapDrawable(Bitmap.createScaledBitmap(bitmap, mIconSize, mIconSize, true));
+            Drawable moreDrawable = null;
+            if (item.isParent) {
+                moreDrawable = res.getDrawable(android.R.drawable.ic_menu_more);
+            }
 
-            t.setCompoundDrawablesWithIntrinsicBounds(d, null, null, null);
+            if (d != null || moreDrawable != null) {
+                t.setCompoundDrawablesWithIntrinsicBounds(d, null, moreDrawable, null);
+            }
         }
 
         private void maybeUpdateCheckedState(int position, PromptListItem item, ViewHolder viewHolder) {
-            if (item.isGroup || mSelected == null)
+            viewHolder.textView.setPadding((item.inGroup ? mGroupPaddingSize : viewHolder.paddingLeft),
+                                            viewHolder.paddingTop,
+                                            viewHolder.paddingRight,
+                                            viewHolder.paddingBottom);
+
+            viewHolder.textView.setEnabled(!item.disabled && !item.isGroup);
+            viewHolder.textView.setClickable(item.isGroup || item.disabled);
+
+            if (mSelected == null)
                 return;
 
             CheckedTextView ct;
             try {
                 ct = (CheckedTextView) viewHolder.textView;
+                // Apparently just using ct.setChecked(true) doesn't work, so this
+                // is stolen from the android source code as a way to set the checked
+                // state of these items
+                if (listView != null)
+                    listView.setItemChecked(position, mSelected[position]);
             } catch (Exception e) {
                 return;
             }
 
-            ct.setEnabled(!item.disabled);
-            ct.setClickable(item.disabled);
-
-            // Apparently just using ct.setChecked(true) doesn't work, so this
-            // is stolen from the android source code as a way to set the checked
-            // state of these items
-            if (listView != null)
-                listView.setItemChecked(position, mSelected[position]);
-
-            ct.setPadding((item.inGroup ? mGroupPaddingSize : viewHolder.paddingLeft),
-                          viewHolder.paddingTop,
-                          viewHolder.paddingRight,
-                          viewHolder.paddingBottom);
         }
 
         @Override

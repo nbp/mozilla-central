@@ -11,7 +11,7 @@ this.EXPORTED_SYMBOLS = ["DOMIdentity"];
 
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
-Cu.import("resource://gre/modules/IdentityUtils.jsm");
+Cu.import("resource://gre/modules/identity/IdentityUtils.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "IdentityService",
 #ifdef MOZ_B2G_VERSION
@@ -125,6 +125,12 @@ RPWatchContext.prototype = {
     log("doReady: " + this.id);
     let message = new IDDOMMessage({id: this.id});
     this._mm.sendAsyncMessage("Identity:RP:Watch:OnReady", message);
+  },
+
+  doCancel: function RPWatchContext_oncancel() {
+    log("doCancel: " + this.id);
+    let message = new IDDOMMessage({id: this.id});
+    this._mm.sendAsyncMessage("Identity:RP:Watch:OnCancel", message);
   },
 
   doError: function RPWatchContext_onerror(aMessage) {

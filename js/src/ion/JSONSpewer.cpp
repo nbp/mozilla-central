@@ -178,7 +178,7 @@ JSONSpewer::init(const char *path)
 }
 
 void
-JSONSpewer::beginFunction(JSScript *script)
+JSONSpewer::beginFunction(UnrootedScript script)
 {
     if (inFunction_)
         endFunction();
@@ -260,7 +260,7 @@ JSONSpewer::spewMDef(MDefinition *def)
         Sprinter sp(GetIonContext()->cx);
         sp.init();
         def->range()->print(sp);
-        stringProperty("type", "%s : %s", sp.string());
+        stringProperty("type", "%s : %s", sp.string(), StringFromMIRType(def->type()));
     } else {
         stringProperty("type", "%s", StringFromMIRType(def->type()));
     }
@@ -396,7 +396,7 @@ JSONSpewer::spewIntervals(LinearScanAllocator *regalloc)
                 VirtualRegister *vreg = &regalloc->vregs[ins->getDef(k)->virtualRegister()];
 
                 beginObject();
-                integerProperty("vreg", vreg->reg());
+                integerProperty("vreg", vreg->id());
                 beginListProperty("intervals");
 
                 for (size_t i = 0; i < vreg->numIntervals(); i++) {
@@ -405,9 +405,7 @@ JSONSpewer::spewIntervals(LinearScanAllocator *regalloc)
                     if (live->numRanges()) {
                         beginObject();
                         property("allocation");
-                        fprintf(fp_, "\"");
-                        LAllocation::PrintAllocation(fp_, live->getAllocation());
-                        fprintf(fp_, "\"");
+                        fprintf(fp_, "\"%s\"", live->getAllocation()->toString());
                         beginListProperty("ranges");
 
                         for (size_t j = 0; j < live->numRanges(); j++) {

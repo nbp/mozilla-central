@@ -93,8 +93,12 @@ WatchpointMap::unwatch(JSObject *obj, jsid id,
     if (Map::Ptr p = map.lookup(WatchKey(obj, id))) {
         if (handlerp)
             *handlerp = p->value.handler;
-        if (closurep)
+        if (closurep) {
+            // Read barrier to prevent an incorrectly gray closure from escaping the
+            // watchpoint. See the comment before UnmarkGrayChildren in gc/Marking.cpp
+            ExposeGCThingToActiveJS(p->value.closure, JSTRACE_OBJECT);
             *closurep = p->value.closure;
+        }
         map.remove(p);
     }
 }
@@ -132,26 +136,26 @@ WatchpointMap::triggerWatchpoint(JSContext *cx, HandleObject obj, HandleId id, M
     Value old;
     old.setUndefined();
     if (obj->isNative()) {
-        if (Shape *shape = obj->nativeLookup(cx, id)) {
+        if (UnrootedShape shape = obj->nativeLookup(cx, id)) {
             if (shape->hasSlot())
                 old = obj->nativeGetSlot(shape->slot());
         }
     }
+
+    // Read barrier to prevent an incorrectly gray closure from escaping the
+    // watchpoint. See the comment before UnmarkGrayChildren in gc/Marking.cpp
+    ExposeGCThingToActiveJS(closure, JSTRACE_OBJECT);
 
     /* Call the handler. */
     return handler(cx, obj, id, old, vp.address(), closure);
 }
 
 bool
-WatchpointMap::markAllIteratively(JSTracer *trc)
+WatchpointMap::markCompartmentIteratively(JSCompartment *c, JSTracer *trc)
 {
-    JSRuntime *rt = trc->runtime;
-    bool mutated = false;
-    for (GCCompartmentsIter c(rt); !c.done(); c.next()) {
-        if (c->watchpointMap)
-            mutated |= c->watchpointMap->markIteratively(trc);
-    }
-    return mutated;
+    if (!c->watchpointMap)
+        return false;
+    return c->watchpointMap->markIteratively(trc);
 }
 
 bool
@@ -220,7 +224,7 @@ WatchpointMap::sweep()
     for (Map::Enum e(map); !e.empty(); e.popFront()) {
         Map::Entry &entry = e.front();
         RelocatablePtrObject obj(entry.key.object);
-        if (!IsObjectMarked(&obj)) {
+        if (IsObjectAboutToBeFinalized(&obj)) {
             JS_ASSERT(!entry.value.held);
             e.removeFront();
         } else if (obj != entry.key.object) {

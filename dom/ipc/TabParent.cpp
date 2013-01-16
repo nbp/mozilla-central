@@ -15,6 +15,7 @@
 #include "mozilla/BrowserElementParent.h"
 #include "mozilla/docshell/OfflineCacheUpdateParent.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/Hal.h"
 #include "mozilla/ipc/DocumentRendererParent.h"
 #include "mozilla/layers/CompositorParent.h"
 #include "mozilla/layout/RenderFrameParent.h"
@@ -40,7 +41,7 @@
 #include "nsIURI.h"
 #include "nsIMozBrowserFrame.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIViewManager.h"
+#include "nsViewManager.h"
 #include "nsIWidget.h"
 #include "nsIWindowWatcher.h"
 #include "nsNetUtil.h"
@@ -256,7 +257,10 @@ TabParent::UpdateDimensions(const nsRect& rect, const nsIntSize& size)
   if (mIsDestroyed) {
     return;
   }
-  unused << SendUpdateDimensions(rect, size);
+  hal::ScreenConfiguration config;
+  hal::GetCurrentScreenConfiguration(&config);
+
+  unused << SendUpdateDimensions(rect, size, config.orientation());
   if (RenderFrameParent* rfp = GetRenderFrame()) {
     rfp->NotifyDimensionsChanged(size.width, size.height);
   }
@@ -431,14 +435,14 @@ bool TabParent::SendRealTouchEvent(nsTouchEvent& event)
   }
 
   nsTouchEvent e(event);
-  // PresShell::HandleEventInternal adds touches on touch end/cancel,
-  // when we're not capturing raw events from the widget backend.
-  // This hack filters those out. Bug 785554
-  if (sEventCapturer != this &&
-      (event.message == NS_TOUCH_END || event.message == NS_TOUCH_CANCEL)) {
+  // PresShell::HandleEventInternal adds touches on touch end/cancel.
+  // This confuses remote content into thinking that the added touches
+  // are part of the touchend/cancel, when actually they're not.
+  if (event.message == NS_TOUCH_END || event.message == NS_TOUCH_CANCEL) {
     for (int i = e.touches.Length() - 1; i >= 0; i--) {
-      if (!e.touches[i]->mChanged)
+      if (!e.touches[i]->mChanged) {
         e.touches.RemoveElementAt(i);
+      }
     }
   }
 
@@ -481,6 +485,13 @@ TabParent::TryCapture(const nsGUIEvent& aEvent)
 
   // Adjust the widget coordinates to be relative to our frame.
   nsRefPtr<nsFrameLoader> frameLoader = GetFrameLoader();
+
+  if (!frameLoader) {
+    // No frame anymore?
+    sEventCapturer = nullptr;
+    return false;
+  }
+
   nsEventStateManager::MapEventCoordinatesForChildProcess(frameLoader, &event);
 
   SendRealTouchEvent(event);
@@ -872,7 +883,7 @@ TabParent::RecvGetWidgetNativeData(WindowsHandle* aValue)
   if (content) {
     nsIPresShell* shell = content->OwnerDoc()->GetShell();
     if (shell) {
-      nsIViewManager* vm = shell->GetViewManager();
+      nsViewManager* vm = shell->GetViewManager();
       nsCOMPtr<nsIWidget> widget;
       vm->GetRootWidget(getter_AddRefs(widget));
       if (widget) {
@@ -1121,15 +1132,13 @@ TabParent::DeallocPRenderFrame(PRenderFrameParent* aFrame)
 mozilla::docshell::POfflineCacheUpdateParent*
 TabParent::AllocPOfflineCacheUpdate(const URIParams& aManifestURI,
                                     const URIParams& aDocumentURI,
-                                    const bool& isInBrowserElement,
-                                    const uint32_t& appId,
                                     const bool& stickDocument)
 {
   nsRefPtr<mozilla::docshell::OfflineCacheUpdateParent> update =
-    new mozilla::docshell::OfflineCacheUpdateParent();
+    new mozilla::docshell::OfflineCacheUpdateParent(OwnOrContainingAppId(),
+                                                    IsBrowserElement());
 
-  nsresult rv = update->Schedule(aManifestURI, aDocumentURI,
-                                 isInBrowserElement, appId, stickDocument);
+  nsresult rv = update->Schedule(aManifestURI, aDocumentURI, stickDocument);
   if (NS_FAILED(rv))
     return nullptr;
 
@@ -1223,8 +1232,8 @@ TabParent::UseAsyncPanZoom()
   bool usingOffMainThreadCompositing = !!CompositorParent::CompositorLoop();
   bool asyncPanZoomEnabled =
     Preferences::GetBool("layers.async-pan-zoom.enabled", false);
-  return (usingOffMainThreadCompositing &&
-          IsBrowserElement() && asyncPanZoomEnabled);
+  return (usingOffMainThreadCompositing && asyncPanZoomEnabled &&
+          GetScrollingBehavior() == ASYNC_PAN_ZOOM);
 }
 
 void

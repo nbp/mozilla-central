@@ -18,6 +18,8 @@
 #include "nsStyleConsts.h"
 #include "gfxFont.h"
 
+static const PRUnichar UNICODE_BULLET = 0x2022;
+
 nsLookAndFeel::nsLookAndFeel()
     : nsXPLookAndFeel()
 {
@@ -172,6 +174,7 @@ nsLookAndFeel::NativeGetColor(ColorID aID, nscolor &aColor)
         aColor = TEXT_NORMAL_COLOR;
         break;
     case eColorID_menu:
+    case eColorID__moz_menubar:
         // menu background
         aColor = BG_NORMAL_COLOR;
         break;
@@ -391,4 +394,19 @@ nsLookAndFeel::GetFontImpl(FontID aID, nsString& aFontName,
 bool
 nsLookAndFeel::GetEchoPasswordImpl() {
     return true;
+}
+
+/*virtual*/
+uint32_t
+nsLookAndFeel::GetPasswordMaskDelayImpl()
+{
+    // Same value on Android framework
+    return 1500;
+}
+
+/* virtual */
+PRUnichar
+nsLookAndFeel::GetPasswordCharacterImpl()
+{
+    return UNICODE_BULLET;
 }

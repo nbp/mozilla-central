@@ -87,11 +87,10 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsLayoutUtils.h"
 #include "mozilla/Preferences.h"
 
-#include "nsViewsCID.h"
 #include "nsWidgetsCID.h"
 #include "nsIDeviceContextSpec.h"
-#include "nsIViewManager.h"
-#include "nsIView.h"
+#include "nsViewManager.h"
+#include "nsView.h"
 #include "nsRenderingContext.h"
 
 #include "nsIPageSequenceFrame.h"
@@ -124,6 +123,10 @@ static const char kPrintingPromptService[] = "@mozilla.org/embedcomp/printingpro
 #include "nsIURIFixup.h"
 #include "mozilla/dom/Element.h"
 #include "nsContentList.h"
+
+#ifdef MOZ_CRASHREPORTER
+#include "nsExceptionHandler.h"
+#endif
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -215,9 +218,6 @@ protected:
   nsRefPtr<nsPrintEngine> mPrintEngine;
   bool                    mSuppressed;
 };
-
-// Class IDs
-static NS_DEFINE_CID(kViewManagerCID,       NS_VIEW_MANAGER_CID);
 
 NS_IMPL_ISUPPORTS3(nsPrintEngine, nsIWebProgressListener,
                    nsISupportsWeakReference, nsIObserver)
@@ -411,6 +411,7 @@ nsPrintEngine::CommonPrint(bool                    aIsPrintPreview,
                            nsIPrintSettings*       aPrintSettings,
                            nsIWebProgressListener* aWebProgressListener,
                            nsIDOMDocument* aDoc) {
+  nsRefPtr<nsPrintEngine> kungfuDeathGrip = this;
   nsresult rv = DoCommonPrint(aIsPrintPreview, aPrintSettings,
                               aWebProgressListener, aDoc);
   if (NS_FAILED(rv)) {
@@ -509,21 +510,24 @@ nsPrintEngine::DoCommonPrint(bool                    aIsPrintPreview,
   nsCOMPtr<nsIDocShell> webContainer(do_QueryReferent(mContainer, &rv));
   NS_ENSURE_SUCCESS(rv, rv);
 
-  mPrt->mPrintObject = new nsPrintObject();
-  NS_ENSURE_TRUE(mPrt->mPrintObject, NS_ERROR_OUT_OF_MEMORY);
-  rv = mPrt->mPrintObject->Init(webContainer, aDoc, aIsPrintPreview);
-  NS_ENSURE_SUCCESS(rv, rv);
+  {
+    nsAutoScriptBlocker scriptBlocker;
+    mPrt->mPrintObject = new nsPrintObject();
+    NS_ENSURE_TRUE(mPrt->mPrintObject, NS_ERROR_OUT_OF_MEMORY);
+    rv = mPrt->mPrintObject->Init(webContainer, aDoc, aIsPrintPreview);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  NS_ENSURE_TRUE(mPrt->mPrintDocList.AppendElement(mPrt->mPrintObject),
-                 NS_ERROR_OUT_OF_MEMORY);
+    NS_ENSURE_TRUE(mPrt->mPrintDocList.AppendElement(mPrt->mPrintObject),
+                   NS_ERROR_OUT_OF_MEMORY);
 
-  mPrt->mIsParentAFrameSet = IsParentAFrameSet(webContainer);
-  mPrt->mPrintObject->mFrameType = mPrt->mIsParentAFrameSet ? eFrameSet : eDoc;
+    mPrt->mIsParentAFrameSet = IsParentAFrameSet(webContainer);
+    mPrt->mPrintObject->mFrameType = mPrt->mIsParentAFrameSet ? eFrameSet : eDoc;
 
-  // Build the "tree" of PrintObjects
-  nsCOMPtr<nsIDocShellTreeNode> parentAsNode =
-    do_QueryInterface(mPrt->mPrintObject->mDocShell);
-  BuildDocTree(parentAsNode, &mPrt->mPrintDocList, mPrt->mPrintObject);
+    // Build the "tree" of PrintObjects
+    nsCOMPtr<nsIDocShellTreeNode> parentAsNode =
+      do_QueryInterface(mPrt->mPrintObject->mDocShell);
+    BuildDocTree(parentAsNode, &mPrt->mPrintDocList, mPrt->mPrintObject);
+  }
 
   if (!aIsPrintPreview) {
     SetIsPrinting(true);
@@ -1066,7 +1070,7 @@ nsPrintEngine::IsThereARangeSelection(nsIDOMWindow* aDOMWin)
   nsCOMPtr<nsIPresShell> presShell;
   if (aDOMWin) {
     nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(aDOMWin));
-    window->GetDocShell()->GetPresShell(getter_AddRefs(presShell));
+    presShell = window->GetDocShell()->GetPresShell();
   }
 
   if (!presShell)
@@ -1534,6 +1538,9 @@ nsresult nsPrintEngine::CleanupOnFailure(nsresult aResult, bool aIsPrinting)
     ShowPrintErrorDialog(aResult, aIsPrinting);
   }
 
+#ifdef MOZ_CRASHREPORTER
+  CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("Unsuccessful print.\n"));
+#endif
   FirePrintCompletionEvent();
 
   return aResult;
@@ -2022,8 +2029,7 @@ nsresult
 nsPrintEngine::UpdateSelectionAndShrinkPrintObject(nsPrintObject* aPO,
                                                    bool aDocumentIsTopLevel)
 {
-  nsCOMPtr<nsIPresShell> displayShell;
-  aPO->mDocShell->GetPresShell(getter_AddRefs(displayShell));
+  nsCOMPtr<nsIPresShell> displayShell = aPO->mDocShell->GetPresShell();
   // Transfer Selection Ranges to the new Print PresShell
   nsCOMPtr<nsISelection> selection, selectionPS;
   // It's okay if there is no display shell, just skip copying the selection
@@ -2079,7 +2085,7 @@ nsPrintEngine::DoSetPixelScale()
   return doSetPixelScale;
 }
 
-nsIView*
+nsView*
 nsPrintEngine::GetParentViewForRoot()
 {
   if (mIsCreatingPrintPreview) {
@@ -2101,8 +2107,8 @@ nsPrintEngine::SetRootView(
 {
   bool canCreateScrollbars = true;
 
-  nsIView* rootView;
-  nsIView* parentView = nullptr;
+  nsView* rootView;
+  nsView* parentView = nullptr;
 
   doReturn = false;
 
@@ -2125,7 +2131,7 @@ nsPrintEngine::SetRootView(
 
     // the top nsPrintObject's widget will always have scrollbars
     if (frame && frame->GetType() == nsGkAtoms::subDocumentFrame) {
-      nsIView* view = frame->GetView();
+      nsView* view = frame->GetView();
       NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
       view = view->GetFirstChild();
       NS_ENSURE_TRUE(view, NS_ERROR_FAILURE);
@@ -2145,7 +2151,7 @@ nsPrintEngine::SetRootView(
     rootView = aPO->mViewManager->GetRootView();
     // Remove it from its existing parent if necessary
     aPO->mViewManager->RemoveChild(rootView);
-    reinterpret_cast<nsView*>(rootView)->SetParent(reinterpret_cast<nsView*>(parentView));
+    rootView->SetParent(parentView);
   } else {
     // Create a child window of the parent that is our "root view/window"
     nsRect tbounds = nsRect(nsPoint(0, 0), adjSize);
@@ -2179,7 +2185,7 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO)
   nsPresContext::nsPresContextType type =
       mIsCreatingPrintPreview ? nsPresContext::eContext_PrintPreview:
                                 nsPresContext::eContext_Print;
-  nsIView* parentView =
+  nsView* parentView =
     aPO->mParent && aPO->mParent->IsPrintable() ? nullptr : GetParentViewForRoot();
   aPO->mPresContext = parentView ?
       new nsPresContext(aPO->mDocument, type) :
@@ -2198,8 +2204,7 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO)
   nsresult rv = aPO->mPresContext->Init(mPrt->mPrintDC);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  aPO->mViewManager = do_CreateInstance(kViewManagerCID, &rv);
-  NS_ENSURE_SUCCESS(rv,rv);
+  aPO->mViewManager = new nsViewManager();
 
   rv = aPO->mViewManager->Init(mPrt->mPrintDC);
   NS_ENSURE_SUCCESS(rv,rv);
@@ -2287,7 +2292,7 @@ nsPrintEngine::ReflowPrintObject(nsPrintObject * aPO)
         //DumpFrames(fd, aPO->mPresContext, renderingContext, theRootFrame, 0);
         fprintf(fd, "---------------------------------------\n\n");
         fprintf(fd, "--------------- Views From Root Frame----------------\n");
-        nsIView* v = theRootFrame->GetView();
+        nsView* v = theRootFrame->GetView();
         if (v) {
           v->List(fd);
         } else {
@@ -3176,6 +3181,9 @@ nsPrintEngine::DonePrintingPages(nsPrintObject* aPO, nsresult aResult)
   }
 
   if (NS_SUCCEEDED(aResult)) {
+#ifdef MOZ_CRASHREPORTER
+    CrashReporter::AppendAppNotesToCrashReport(NS_LITERAL_CSTRING("Successful print.\n"));
+#endif
     FirePrintCompletionEvent();
   }
 
@@ -3794,9 +3802,9 @@ DumpViews(nsIDocShell* aDocShell, FILE* out)
     fprintf(out, "docshell=%p \n", aDocShell);
     nsIPresShell* shell = nsPrintEngine::GetPresShellFor(aDocShell);
     if (shell) {
-      nsIViewManager* vm = shell->GetViewManager();
+      nsViewManager* vm = shell->GetViewManager();
       if (vm) {
-        nsIView* root = vm->GetRootView();
+        nsView* root = vm->GetRootView();
         if (root) {
           root->List(out);
         }
@@ -3862,7 +3870,7 @@ void DumpLayoutData(char*              aTitleStr,
     //DumpFrames(fd, aPresContext, renderingContext, aRootFrame, 0);
     fprintf(fd, "---------------------------------------\n\n");
     fprintf(fd, "--------------- Views From Root Frame----------------\n");
-    nsIView* v = aRootFrame->GetView();
+    nsView* v = aRootFrame->GetView();
     if (v) {
       v->List(fd);
     } else {

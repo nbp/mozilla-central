@@ -7,6 +7,8 @@
 
 #ifdef JS_METHODJIT
 
+#include "mozilla/DebugOnly.h"
+
 #include "Retcon.h"
 #include "MethodJIT.h"
 #include "Compiler.h"
@@ -350,7 +352,7 @@ ClearAllFrames(JSCompartment *compartment)
         if (f->entryfp->compartment() != compartment)
             continue;
 
-        Recompiler::patchFrame(compartment, f, f->fp()->script().get(nogc));
+        Recompiler::patchFrame(compartment, f, f->fp()->script());
 
         // Clear ncode values from all frames associated with the VMFrame.
         // Patching the VMFrame's return address will cause all its frames to

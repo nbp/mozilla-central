@@ -61,6 +61,8 @@
 #include "Navigator.h"
 #include "nsDOMStorageBaseDB.h"
 
+#include "AudioChannelService.h"
+
 #ifdef MOZ_XUL
 #include "nsXULPopupManager.h"
 #include "nsXULContentUtils.h"
@@ -75,6 +77,10 @@
 
 #ifdef MOZ_MEDIA_PLUGINS
 #include "MediaPluginHost.h"
+#endif
+
+#ifdef MOZ_WMF
+#include "WMFDecoder.h"
 #endif
 
 #ifdef MOZ_SYDNEYAUDIO
@@ -254,7 +260,7 @@ nsLayoutStatics::Initialize()
 
   InitProcessPriorityManager();
 
-  nsPermissionManager::AppUninstallObserverInit();
+  nsPermissionManager::AppClearDataObserverInit();
   nsCookieService::AppClearDataObserverInit();
   nsApplicationCacheService::AppClearDataObserverInit();
 
@@ -332,15 +338,19 @@ nsLayoutStatics::Shutdown()
   FrameLayerBuilder::Shutdown();
 
 #ifdef MOZ_MEDIA_PLUGINS
-  MediaPluginHost::Shutdown();  
+  MediaPluginHost::Shutdown();
 #endif
 
 #ifdef MOZ_SYDNEYAUDIO
   AudioStream::ShutdownLibrary();
 #endif
 
+#ifdef MOZ_WMF
+  WMFDecoder::UnloadDLLs();
+#endif
+
   nsCORSListenerProxy::Shutdown();
-  
+
   nsIPresShell::ReleaseStatics();
 
   nsTreeSanitizer::ReleaseStatics();
@@ -361,5 +371,9 @@ nsLayoutStatics::Shutdown()
   nsEditorSpellCheck::ShutDown();
   nsDOMMutationObserver::Shutdown();
 
+  AudioChannelService::Shutdown();
+
   ContentParent::ShutDown();
+
+  nsRefreshDriver::Shutdown();
 }

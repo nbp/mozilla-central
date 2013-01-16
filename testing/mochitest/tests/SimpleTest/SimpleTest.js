@@ -286,8 +286,10 @@ SimpleTest._logResult = function(test, passString, failString) {
         } else {
             parentRunner.log(msg);
         }
-    } else {
+    } else if (typeof dump === "function") {
         dump(msg + "\n");
+    } else {
+        // Non-Mozilla browser?  Just do nothing.
     }
 };
 
@@ -600,7 +602,7 @@ SimpleTest.waitForClipboard = function(aExpectedStringOrValidatorFn, aSetupFn,
 
     // Build a default validator function for common string input.
     var inputValidatorFn = typeof(aExpectedStringOrValidatorFn) == "string"
-        ? function(aData) aData == aExpectedStringOrValidatorFn
+        ? function(aData) { return aData == aExpectedStringOrValidatorFn; }
         : aExpectedStringOrValidatorFn;
 
     // reset for the next use
@@ -628,7 +630,7 @@ SimpleTest.waitForClipboard = function(aExpectedStringOrValidatorFn, aSetupFn,
             reset();
             successFn();
         } else {
-            setTimeout(function() wait(validatorFn, successFn, failureFn, flavor), 100);
+            setTimeout(function() { return wait(validatorFn, successFn, failureFn, flavor); }, 100);
         }
     }
 
@@ -636,7 +638,7 @@ SimpleTest.waitForClipboard = function(aExpectedStringOrValidatorFn, aSetupFn,
     var preExpectedVal = SimpleTest._waitForClipboardMonotonicCounter +
                          "-waitForClipboard-known-value";
     SpecialPowers.clipboardCopyString(preExpectedVal);
-    wait(function(aData) aData  == preExpectedVal,
+    wait(function(aData) { return aData  == preExpectedVal; },
          function() {
            // Call the original setup fn
            aSetupFn();
@@ -1058,9 +1060,8 @@ window.onerror = function simpletestOnerror(errorMsg, url, lineNumber) {
     // For now, for tests that self identify as having unintentional uncaught
     // exceptions, just dump it so that the error is visible but doesn't cause
     // a test failure.  See bug 652494.
-    var href = SpecialPowers.getPrivilegedProps(window, 'location.href');
     var isExpected = !!SimpleTest._expectingUncaughtException;
-    var message = "an " + (isExpected ? "" : "un") + "expected uncaught JS exception reported through window.onerror";
+    var message = (isExpected ? "expected " : "") + "uncaught exception";
     var error = errorMsg + " at " + url + ":" + lineNumber;
     if (!SimpleTest._ignoringAllUncaughtExceptions) {
         SimpleTest.ok(isExpected, message, error);

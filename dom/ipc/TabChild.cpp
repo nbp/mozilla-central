@@ -30,6 +30,9 @@
 #include "nsContentUtils.h"
 #include "nsEmbedCID.h"
 #include "nsEventListenerManager.h"
+#ifdef MOZ_CRASHREPORTER
+#include "nsExceptionHandler.h"
+#endif
 #include "mozilla/dom/Element.h"
 #include "nsIAppsService.h"
 #include "nsIBaseWindow.h"
@@ -55,7 +58,7 @@
 #include "nsIURI.h"
 #include "nsIURIFixup.h"
 #include "nsCDefaultURIFixup.h"
-#include "nsIView.h"
+#include "nsView.h"
 #include "nsIWebBrowser.h"
 #include "nsIWebBrowserFocus.h"
 #include "nsIWebBrowserSetup.h"
@@ -75,6 +78,7 @@
 #include "PuppetWidget.h"
 #include "StructuredCloneUtils.h"
 #include "xpcpublic.h"
+#include "nsViewportInfo.h"
 
 #define BROWSER_ELEMENT_CHILD_SCRIPT \
     NS_LITERAL_STRING("chrome://global/content/BrowserElementChild.js")
@@ -96,6 +100,7 @@ static const nsIntSize kDefaultViewportSize(980, 480);
 static const char CANCEL_DEFAULT_PAN_ZOOM[] = "cancel-default-pan-zoom";
 static const char BROWSER_ZOOM_TO_RECT[] = "browser-zoom-to-rect";
 static const char BEFORE_FIRST_PAINT[] = "before-first-paint";
+static const char DETECT_SCROLLABLE_SUBFRAME[] = "detect-scrollable-subframe";
 
 NS_IMETHODIMP
 ContentListener::HandleEvent(nsIDOMEvent* aEvent)
@@ -161,12 +166,15 @@ TabChild::TabChild(const TabContext& aContext, uint32_t aChromeFlags)
   , mChromeFlags(aChromeFlags)
   , mOuterRect(0, 0, 0, 0)
   , mInnerSize(0, 0)
+  , mActivePointerId(-1)
+  , mTapHoldTimer(nullptr)
   , mOldViewportWidth(0.0f)
   , mLastBackgroundColor(NS_RGB(255, 255, 255))
   , mDidFakeShow(false)
   , mNotified(false)
   , mContentDocumentIsDisplayed(false)
   , mTriedBrowserInit(false)
+  , mOrientation(eScreenOrientation_PortraitPrimary)
 {
     printf("creating %d!\n", NS_IsMainThread());
 }
@@ -241,6 +249,12 @@ TabChild::Observe(nsISupports *aSubject,
         HandlePossibleViewportChange();
       }
     }
+  } else if (!strcmp(aTopic, DETECT_SCROLLABLE_SUBFRAME)) {
+    nsCOMPtr<nsIDocShell> docShell(do_QueryInterface(aSubject));
+    nsCOMPtr<nsITabChild> tabChild(GetTabChildFrom(docShell));
+    if (tabChild == this) {
+      mRemoteFrame->DetectScrollableSubframe();
+    }
   }
 
   return NS_OK;
@@ -283,6 +297,9 @@ TabChild::OnLocationChange(nsIWebProgress* aWebProgress,
   if (!window) {
     return NS_OK;
   }
+
+  nsCOMPtr<nsIDOMWindowUtils> utils(do_GetInterface(window));
+  utils->SetIsFirstPaint(true);
 
   nsCOMPtr<nsIDOMDocument> progressDoc;
   window->GetDocument(getter_AddRefs(progressDoc));
@@ -364,16 +381,16 @@ TabChild::HandlePossibleViewportChange()
 
   nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
 
-  ViewportInfo viewportInfo =
+  nsViewportInfo viewportInfo =
     nsContentUtils::GetViewportInfo(document, mInnerSize.width, mInnerSize.height);
-  SendUpdateZoomConstraints(viewportInfo.allowZoom,
-                            viewportInfo.minZoom,
-                            viewportInfo.maxZoom);
+  SendUpdateZoomConstraints(viewportInfo.IsZoomAllowed(),
+                            viewportInfo.GetMinZoom(),
+                            viewportInfo.GetMaxZoom());
 
   float screenW = mInnerSize.width;
   float screenH = mInnerSize.height;
-  float viewportW = viewportInfo.width;
-  float viewportH = viewportInfo.height;
+  float viewportW = viewportInfo.GetWidth();
+  float viewportH = viewportInfo.GetHeight();
 
   // We're not being displayed in any way; don't bother doing anything because
   // that will just confuse future adjustments.
@@ -387,8 +404,8 @@ TabChild::HandlePossibleViewportChange()
   // we have to call SetCSSViewport twice - once to set the width, and the
   // second time to figure out the height based on the layout at that width.
   float oldBrowserWidth = mOldViewportWidth;
-  mLastMetrics.mViewport.width = viewportInfo.width;
-  mLastMetrics.mViewport.height = viewportInfo.height;
+  mLastMetrics.mViewport.width = viewportW;
+  mLastMetrics.mViewport.height = viewportH;
   if (!oldBrowserWidth) {
     oldBrowserWidth = kDefaultViewportSize.width;
   }
@@ -435,7 +452,8 @@ TabChild::HandlePossibleViewportChange()
   NS_ENSURE_TRUE_VOID(pageWidth); // (return early rather than divide by 0)
 
   minScale = mInnerSize.width / pageWidth;
-  minScale = clamped((double)minScale, viewportInfo.minZoom, viewportInfo.maxZoom);
+  minScale = clamped((double)minScale, viewportInfo.GetMinZoom(),
+                     viewportInfo.GetMaxZoom());
   NS_ENSURE_TRUE_VOID(minScale); // (return early rather than divide by 0)
 
   viewportH = NS_MAX(viewportH, screenH / minScale);
@@ -463,20 +481,29 @@ TabChild::HandlePossibleViewportChange()
   metrics.mScrollableRect = gfx::Rect(0.0f, 0.0f, pageWidth, pageHeight);
   metrics.mCompositionBounds = nsIntRect(0, 0, mInnerSize.width, mInnerSize.height);
 
-  gfxSize intrinsicScale =
-      AsyncPanZoomController::CalculateIntrinsicScale(metrics);
-  // FIXME/bug 799585(?): GetViewportInfo() returns a defaultZoom of
-  // 0.0 to mean "did not calculate a zoom".  In that case, we default
-  // it to the intrinsic scale.
-  if (viewportInfo.defaultZoom < 0.01f) {
-    viewportInfo.defaultZoom = intrinsicScale.width;
+  // Changing the zoom when we're not doing a first paint will get ignored
+  // by AsyncPanZoomController and causes a blurry flash.
+  bool isFirstPaint;
+  nsresult rv = utils->GetIsFirstPaint(&isFirstPaint);
+  MOZ_ASSERT(NS_SUCCEEDED(rv));
+  if (NS_FAILED(rv) || isFirstPaint) {
+    gfxSize intrinsicScale =
+        AsyncPanZoomController::CalculateIntrinsicScale(metrics);
+    // FIXME/bug 799585(?): GetViewportInfo() returns a defaultZoom of
+    // 0.0 to mean "did not calculate a zoom".  In that case, we default
+    // it to the intrinsic scale.
+    if (viewportInfo.GetDefaultZoom() < 0.01f) {
+      viewportInfo.SetDefaultZoom(intrinsicScale.width);
+    }
+
+    double defaultZoom = viewportInfo.GetDefaultZoom();
+    MOZ_ASSERT(viewportInfo.GetMinZoom() <= defaultZoom &&
+               defaultZoom <= viewportInfo.GetMaxZoom());
+    // GetViewportInfo() returns a resolution-dependent scale factor.
+    // Convert that to a resolution-indepedent zoom.
+    metrics.mZoom = gfxSize(defaultZoom / intrinsicScale.width,
+                            defaultZoom / intrinsicScale.height);
   }
-  MOZ_ASSERT(viewportInfo.minZoom <= viewportInfo.defaultZoom &&
-             viewportInfo.defaultZoom <= viewportInfo.maxZoom);
-  // GetViewportInfo() returns a resolution-dependent scale factor.
-  // Convert that to a resolution-indepedent zoom.
-  metrics.mZoom = gfxSize(viewportInfo.defaultZoom / intrinsicScale.width,
-                          viewportInfo.defaultZoom / intrinsicScale.height);
 
   metrics.mDisplayPort = AsyncPanZoomController::CalculatePendingDisplayPort(
     // The page must have been refreshed in some way such as a new document or
@@ -850,7 +877,7 @@ TabChild::BrowserFrameProvideWindow(nsIDOMWindow* aOpener,
   unused << Manager()->SendPBrowserConstructor(
       // We release this ref in DeallocPBrowserChild
       nsRefPtr<TabChild>(newChild).forget().get(),
-      context, /* chromeFlags */ 0);
+      IPCTabContext(context, mScrolling), /* chromeFlags */ 0);
 
   nsAutoCString spec;
   if (aURI) {
@@ -1065,6 +1092,10 @@ TabChild::RecvLoadURL(const nsCString& uri)
         NS_WARNING("mWebNav->LoadURI failed. Eating exception, what else can I do?");
     }
 
+#ifdef MOZ_CRASHREPORTER
+    CrashReporter::AnnotateCrashReport(NS_LITERAL_CSTRING("URL"), uri);
+#endif
+
     return true;
 }
 
@@ -1105,7 +1136,7 @@ TabChild::RecvShow(const nsIntSize& size)
 }
 
 bool
-TabChild::RecvUpdateDimensions(const nsRect& rect, const nsIntSize& size)
+TabChild::RecvUpdateDimensions(const nsRect& rect, const nsIntSize& size, const ScreenOrientation& orientation)
 {
     if (!mRemoteFrame) {
         return true;
@@ -1116,6 +1147,7 @@ TabChild::RecvUpdateDimensions(const nsRect& rect, const nsIntSize& size)
     mOuterRect.width = rect.width;
     mOuterRect.height = rect.height;
 
+    mOrientation = orientation;
     mInnerSize = size;
     mWidget->Resize(0, 0, size.width, size.height,
                     true);
@@ -1173,6 +1205,8 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
         return true;
     }
 
+    gfx::Rect cssCompositedRect =
+      AsyncPanZoomController::CalculateCompositedRectInCssPixels(aFrameMetrics);
     // The BrowserElementScrolling helper must know about these updated metrics
     // for other functions it performs, such as double tap handling.
     nsCString data;
@@ -1200,6 +1234,10 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
         data += nsPrintfCString(", \"width\" : %f", aFrameMetrics.mScrollableRect.width);
         data += nsPrintfCString(", \"height\" : %f", aFrameMetrics.mScrollableRect.height);
         data += nsPrintfCString(" }");
+    data += nsPrintfCString(", \"cssCompositedRect\" : ");
+            data += nsPrintfCString("{ \"width\" : %f", cssCompositedRect.width);
+            data += nsPrintfCString(", \"height\" : %f", cssCompositedRect.height);
+            data += nsPrintfCString(" }");
     data += nsPrintfCString(" }");
 
     DispatchMessageManagerMessage(NS_LITERAL_STRING("Viewport:Change"), data);
@@ -1207,8 +1245,6 @@ TabChild::RecvUpdateFrame(const FrameMetrics& aFrameMetrics)
     nsCOMPtr<nsIDOMWindowUtils> utils(GetDOMWindowUtils());
     nsCOMPtr<nsIDOMWindow> window = do_GetInterface(mWebNav);
 
-    gfx::Rect cssCompositedRect =
-      AsyncPanZoomController::CalculateCompositedRectInCssPixels(aFrameMetrics);
     utils->SetScrollPositionClampingScrollPortSize(
       cssCompositedRect.width, cssCompositedRect.height);
     ScrollWindowTo(window, aFrameMetrics.mScrollOffset);
@@ -1258,6 +1294,7 @@ TabChild::RecvHandleSingleTap(const nsIntPoint& aPoint)
     return true;
   }
 
+  RecvMouseEvent(NS_LITERAL_STRING("mousemove"), aPoint.x, aPoint.y, 0, 1, 0, false);
   RecvMouseEvent(NS_LITERAL_STRING("mousedown"), aPoint.x, aPoint.y, 0, 1, 0, false);
   RecvMouseEvent(NS_LITERAL_STRING("mouseup"), aPoint.x, aPoint.y, 0, 1, 0, false);
 
@@ -1328,40 +1365,133 @@ TabChild::RecvMouseWheelEvent(const WheelEvent& event)
 }
 
 void
-TabChild::DispatchSynthesizedMouseEvent(const nsTouchEvent& aEvent)
+TabChild::DispatchSynthesizedMouseEvent(uint32_t aMsg, uint64_t aTime,
+                                        const nsIntPoint& aRefPoint)
 {
-  // Synthesize a phony mouse event.
-  uint32_t msg;
-  switch (aEvent.message) {
-    case NS_TOUCH_START:
-      msg = NS_MOUSE_BUTTON_DOWN;
-      break;
-    case NS_TOUCH_MOVE:
-      msg = NS_MOUSE_MOVE;
-      break;
-    case NS_TOUCH_END:
-    case NS_TOUCH_CANCEL:
-      msg = NS_MOUSE_BUTTON_UP;
-      break;
-    default:
-      MOZ_NOT_REACHED("Unknown touch event message");
-  }
+  MOZ_ASSERT(aMsg == NS_MOUSE_MOVE || aMsg == NS_MOUSE_BUTTON_DOWN ||
+             aMsg == NS_MOUSE_BUTTON_UP);
 
-  nsIntPoint refPoint(0, 0);
-  if (aEvent.touches.Length()) {
-    refPoint = aEvent.touches[0]->mRefPoint;
-  }
-
-  nsMouseEvent event(true, msg, NULL,
+  nsMouseEvent event(true, aMsg, NULL,
       nsMouseEvent::eReal, nsMouseEvent::eNormal);
-  event.refPoint = refPoint;
-  event.time = aEvent.time;
+  event.refPoint = aRefPoint;
+  event.time = aTime;
   event.button = nsMouseEvent::eLeftButton;
-  if (msg != NS_MOUSE_MOVE) {
+  if (aMsg != NS_MOUSE_MOVE) {
     event.clickCount = 1;
   }
 
   DispatchWidgetEvent(event);
+}
+
+static nsDOMTouch*
+GetTouchForIdentifier(const nsTouchEvent& aEvent, int32_t aId)
+{
+  for (uint32_t i = 0; i < aEvent.touches.Length(); ++i) {
+    nsDOMTouch* touch = static_cast<nsDOMTouch*>(aEvent.touches[i].get());
+    if (touch->mIdentifier == aId) {
+      return touch;
+    }
+  }
+  return nullptr;
+}
+
+void
+TabChild::UpdateTapState(const nsTouchEvent& aEvent, nsEventStatus aStatus)
+{
+  static bool sHavePrefs;
+  static bool sClickHoldContextMenusEnabled;
+  static nsIntSize sDragThreshold;
+  static int32_t sContextMenuDelayMs;
+  if (!sHavePrefs) {
+    sHavePrefs = true;
+    Preferences::AddBoolVarCache(&sClickHoldContextMenusEnabled,
+                                 "ui.click_hold_context_menus", true);
+    Preferences::AddIntVarCache(&sDragThreshold.width,
+                                "ui.dragThresholdX", 25);
+    Preferences::AddIntVarCache(&sDragThreshold.height,
+                                "ui.dragThresholdY", 25);
+    Preferences::AddIntVarCache(&sContextMenuDelayMs,
+                                "ui.click_hold_context_menus.delay", 500);
+  }
+
+  bool currentlyTrackingTouch = (mActivePointerId >= 0);
+  if (aEvent.message == NS_TOUCH_START) {
+    if (currentlyTrackingTouch || aEvent.touches.Length() > 1) {
+      // We're tracking a possible tap for another point, or we saw a
+      // touchstart for a later pointer after we canceled tracking of
+      // the first point.  Ignore this one.
+      return;
+    }
+    if (aStatus == nsEventStatus_eConsumeNoDefault ||
+        nsIPresShell::gPreventMouseEvents) {
+      return;
+    }
+
+    nsDOMTouch* touch = static_cast<nsDOMTouch*>(aEvent.touches[0].get());
+    mGestureDownPoint = touch->mRefPoint;
+    mActivePointerId = touch->mIdentifier;
+    if (sClickHoldContextMenusEnabled) {
+      MOZ_ASSERT(!mTapHoldTimer);
+      mTapHoldTimer = NewRunnableMethod(this,
+                                        &TabChild::FireContextMenuEvent);
+      MessageLoop::current()->PostDelayedTask(FROM_HERE, mTapHoldTimer,
+                                              sContextMenuDelayMs);
+    }
+    return;
+  }
+
+  // If we're not tracking a touch or this event doesn't include the
+  // one we care about, bail.
+  if (!currentlyTrackingTouch) {
+    return;
+  }
+  nsDOMTouch* trackedTouch = GetTouchForIdentifier(aEvent, mActivePointerId);
+  if (!trackedTouch) {
+    return;
+  }
+
+  nsIntPoint currentPoint = trackedTouch->mRefPoint;
+  int64_t time = aEvent.time;
+  switch (aEvent.message) {
+  case NS_TOUCH_MOVE:
+    if (abs(currentPoint.x - mGestureDownPoint.x) > sDragThreshold.width ||
+        abs(currentPoint.y - mGestureDownPoint.y) > sDragThreshold.height) {
+      CancelTapTracking();
+    }
+    return;
+
+  case NS_TOUCH_END:
+    if (!nsIPresShell::gPreventMouseEvents) {
+      DispatchSynthesizedMouseEvent(NS_MOUSE_MOVE, time, currentPoint);
+      DispatchSynthesizedMouseEvent(NS_MOUSE_BUTTON_DOWN, time, currentPoint);
+      DispatchSynthesizedMouseEvent(NS_MOUSE_BUTTON_UP, time, currentPoint);
+    }
+    // fall through
+  case NS_TOUCH_CANCEL:
+    CancelTapTracking();
+    return;
+
+  default:
+    NS_WARNING("Unknown touch event type");
+  }
+}
+
+void
+TabChild::FireContextMenuEvent()
+{
+  MOZ_ASSERT(mTapHoldTimer && mActivePointerId >= 0);
+  RecvHandleLongTap(mGestureDownPoint);
+  CancelTapTracking();
+}
+
+void
+TabChild::CancelTapTracking()
+{
+  mActivePointerId = -1;
+  if (mTapHoldTimer) {
+    mTapHoldTimer->Cancel();
+  }
+  mTapHoldTimer = nullptr;
 }
 
 bool
@@ -1377,8 +1507,8 @@ TabChild::RecvRealTouchEvent(const nsTouchEvent& aEvent)
     if (innerWindow && innerWindow->HasTouchEventListeners()) {
       SendContentReceivedTouch(nsIPresShell::gPreventMouseEvents);
     }
-  } else if (status != nsEventStatus_eConsumeNoDefault) {
-    DispatchSynthesizedMouseEvent(aEvent);
+  } else {
+    UpdateTapState(aEvent, status);
   }
 
   return true;
@@ -1555,8 +1685,6 @@ TabChild::RecvActivateFrameEvent(const nsString& aType, const bool& capture)
 POfflineCacheUpdateChild*
 TabChild::AllocPOfflineCacheUpdate(const URIParams& manifestURI,
                                    const URIParams& documentURI,
-                                   const bool& isInBrowserElement,
-                                   const uint32_t& appId,
                                    const bool& stickDocument)
 {
   NS_RUNTIMEABORT("unused");
@@ -1661,6 +1789,7 @@ TabChild::RecvDestroy()
   observerService->RemoveObserver(this, CANCEL_DEFAULT_PAN_ZOOM);
   observerService->RemoveObserver(this, BROWSER_ZOOM_TO_RECT);
   observerService->RemoveObserver(this, BEFORE_FIRST_PAINT);
+  observerService->RemoveObserver(this, DETECT_SCROLLABLE_SUBFRAME);
 
   const InfallibleTArray<PIndexedDBChild*>& idbActors =
     ManagedPIndexedDBChild();
@@ -1672,6 +1801,14 @@ TabChild::RecvDestroy()
   DestroyWindow();
 
   return Send__delete__(this);
+}
+
+/* virtual */ bool
+TabChild::RecvSetAppType(const nsString& aAppType)
+{
+  MOZ_ASSERT_IF(!aAppType.IsEmpty(), HasOwnApp());
+  mAppType = aAppType;
+  return true;
 }
 
 PRenderFrameChild*
@@ -1787,6 +1924,9 @@ TabChild::InitRenderingState()
                                      false);
         observerService->AddObserver(this,
                                      BEFORE_FIRST_PAINT,
+                                     false);
+        observerService->AddObserver(this,
+                                     DETECT_SCROLLABLE_SUBFRAME,
                                      false);
     }
 

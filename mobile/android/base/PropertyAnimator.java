@@ -7,7 +7,6 @@ package org.mozilla.gecko;
 
 import android.os.Build;
 import android.os.Handler;
-import android.util.Log;
 import android.view.Choreographer;
 import android.view.View;
 import android.view.ViewGroup;
@@ -82,6 +81,11 @@ public class PropertyAnimator implements Runnable {
 
     public void setPropertyAnimationListener(PropertyAnimationListener listener) {
         mListener = listener;
+    }
+
+    public long getRemainingTime() {
+        int timePassed = (int) (AnimationUtils.currentAnimationTimeMillis() - mStartTime);
+        return mDuration - timePassed;
     }
 
     @Override

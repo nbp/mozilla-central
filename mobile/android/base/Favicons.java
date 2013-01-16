@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.db.BrowserDB;
+import org.mozilla.gecko.util.GeckoBackgroundThread;
 import org.mozilla.gecko.util.GeckoJarReader;
 
 import org.apache.http.HttpEntity;
@@ -13,16 +14,10 @@ import org.apache.http.client.methods.HttpGet;
 import org.apache.http.entity.BufferedHttpEntity;
 
 import android.content.ContentResolver;
-import android.content.ContentValues;
 import android.content.Context;
-import android.database.Cursor;
-import android.database.sqlite.SQLiteDatabase;
-import android.database.sqlite.SQLiteOpenHelper;
-import android.database.sqlite.SQLiteQueryBuilder;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
-import android.graphics.drawable.Drawable;
 import android.net.http.AndroidHttpClient;
 import android.os.AsyncTask;
 import android.support.v4.util.LruCache;
@@ -56,10 +51,8 @@ public class Favicons {
         public void onFaviconLoaded(String url, Bitmap favicon);
     }
 
-    public Favicons(Context context) {
+    public Favicons() {
         Log.d(LOGTAG, "Creating Favicons instance");
-
-        mContext = context;
 
         mLoadTasks = Collections.synchronizedMap(new HashMap<Long,LoadFaviconTask>());
         mNextFaviconLoadId = 0;
@@ -169,6 +162,18 @@ public class Favicons {
             mHttpClient.close();
     }
 
+    private static class FaviconsInstanceHolder {
+        private static final Favicons INSTANCE = new Favicons();
+    }
+
+    public static Favicons getInstance() {
+       return Favicons.FaviconsInstanceHolder.INSTANCE;
+    }
+
+    public void attachToContext(Context context) {
+        mContext = context;
+    }
+
     private class LoadFaviconTask extends AsyncTask<Void, Void, Bitmap> {
         private long mId;
         private String mPageUrl;
@@ -195,17 +200,20 @@ public class Favicons {
         }
 
         // Runs in background thread
-        private void saveFaviconToDb(Bitmap favicon) {
+        private void saveFaviconToDb(final Bitmap favicon) {
             if (!mPersist) {
                 return;
             }
 
-            // since the Async task can run this on any number of threads in the
-            // pool, we need to protect against inserting the same url twice
-            synchronized(Favicons.this) {
-                ContentResolver resolver = mContext.getContentResolver();
-                BrowserDB.updateFaviconForUrl(resolver, mPageUrl, favicon, mFaviconUrl);
-            }
+            // Even though this code is in a background thread, all DB writes
+            // should happen in GeckoBackgroundThread or we could get locked
+            // databases.
+            GeckoBackgroundThread.post(new Runnable() {
+                public void run() {
+                    ContentResolver resolver = mContext.getContentResolver();
+                    BrowserDB.updateFaviconForUrl(resolver, mPageUrl, favicon, mFaviconUrl);
+                }
+            });
         }
 
         // Runs in background thread
@@ -286,8 +294,10 @@ public class Favicons {
 
             image = downloadFavicon(faviconUrl);
 
-            if (image != null) {
+            if (image != null && image.getWidth() > 0 && image.getHeight() > 0) {
                 saveFaviconToDb(image);
+            } else {
+                image = null;
             }
 
             return image;

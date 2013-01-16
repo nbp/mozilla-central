@@ -20,12 +20,12 @@
 #include "base/basictypes.h"
 #include "prrwlock.h"
 #include <media/MediaProfiles.h>
+#include "DeviceStorage.h"
 #include "nsIDOMCameraManager.h"
 #include "DOMCameraControl.h"
 #include "CameraControlImpl.h"
 #include "CameraCommon.h"
 #include "GonkRecorder.h"
-
 
 namespace mozilla {
 
@@ -55,9 +55,6 @@ public:
   nsresult GetVideoSizes(nsTArray<dom::CameraSize>& aVideoSizes);
   nsresult PushParameters();
 
-  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes, int64_t aMaxVideoLengthMs);
-  nsresult SetupVideoMode(const nsAString& aProfile);
-
   void AutoFocusComplete(bool aSuccess);
   void TakePictureComplete(uint8_t* aData, uint32_t aLength);
   void HandleRecorderEvent(int msg, int ext1, int ext2);
@@ -76,9 +73,12 @@ protected:
   nsresult PushParametersImpl();
   nsresult PullParametersImpl();
   nsresult GetPreviewStreamVideoModeImpl(GetPreviewStreamVideoModeTask* aGetPreviewStreamVideoMode);
+  nsresult ReleaseHardwareImpl(ReleaseHardwareTask* aReleaseHardware);
   already_AddRefed<RecorderProfileManager> GetRecorderProfileManagerImpl();
   already_AddRefed<GonkRecorderProfileManager> GetGonkRecorderProfileManager();
 
+  nsresult SetupRecording(int aFd, int aRotation, int64_t aMaxFileSizeBytes, int64_t aMaxVideoLengthMs);
+  nsresult SetupVideoMode(const nsAString& aProfile);
   void SetPreviewSize(uint32_t aWidth, uint32_t aHeight);
   void SetupThumbnail(uint32_t aPictureWidth, uint32_t aPictureHeight, uint32_t aPercentQuality);
 
@@ -104,13 +104,13 @@ protected:
   uint32_t                  mDiscardedFrameCount;
 
   android::MediaProfiles*   mMediaProfiles;
-  android::GonkRecorder*    mRecorder;
-
-  nsString                  mVideoFile;
+  nsRefPtr<android::GonkRecorder> mRecorder;
 
   // camcorder profile settings for the desired quality level
   nsRefPtr<GonkRecorderProfileManager> mProfileManager;
   nsRefPtr<GonkRecorderProfile> mRecorderProfile;
+
+  nsRefPtr<DeviceStorageFile> mVideoFile;
 
 private:
   nsGonkCameraControl(const nsGonkCameraControl&) MOZ_DELETE;

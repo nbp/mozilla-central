@@ -103,6 +103,7 @@ protected:
   virtual void GetStyleSheetInfo(nsAString& aTitle,
                                  nsAString& aType,
                                  nsAString& aMedia,
+                                 bool* aIsScoped,
                                  bool* aIsAlternate);
   virtual CORSMode GetCORSMode() const;
 protected:
@@ -212,7 +213,7 @@ nsHTMLLinkElement::BindToTree(nsIDocument* aDocument, nsIContent* aParent,
                               nsIContent* aBindingParent,
                               bool aCompileEventHandlers)
 {
-  Link::ResetLinkState(false);
+  Link::ResetLinkState(false, Link::ElementHasHref());
 
   nsresult rv = nsGenericHTMLElement::BindToTree(aDocument, aParent,
                                                  aBindingParent,
@@ -250,7 +251,7 @@ nsHTMLLinkElement::UnbindFromTree(bool aDeep, bool aNullParent)
 {
   // If this link is ever reinserted into a document, it might
   // be under a different xml:base, so forget the cached state now.
-  Link::ResetLinkState(false);
+  Link::ResetLinkState(false, Link::ElementHasHref());
 
   // Once we have XPCOMGC we shouldn't need to call UnbindFromTree during Unlink
   // and so this messy event dispatch can go away.
@@ -322,7 +323,7 @@ nsHTMLLinkElement::SetAttr(int32_t aNameSpaceID, nsIAtom* aName,
   // that content states have changed will call IntrinsicState, which will try
   // to get updated information about the visitedness from Link.
   if (aName == nsGkAtoms::href && kNameSpaceID_None == aNameSpaceID) {
-    Link::ResetLinkState(!!aNotify);
+    Link::ResetLinkState(!!aNotify, true);
   }
 
   if (NS_SUCCEEDED(rv) && aNameSpaceID == kNameSpaceID_None &&
@@ -370,7 +371,7 @@ nsHTMLLinkElement::UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
   // that content states have changed will call IntrinsicState, which will try
   // to get updated information about the visitedness from Link.
   if (aAttribute == nsGkAtoms::href && kNameSpaceID_None == aNameSpaceID) {
-    Link::ResetLinkState(!!aNotify);
+    Link::ResetLinkState(!!aNotify, false);
   }
 
   return rv;
@@ -431,11 +432,13 @@ void
 nsHTMLLinkElement::GetStyleSheetInfo(nsAString& aTitle,
                                      nsAString& aType,
                                      nsAString& aMedia,
+                                     bool* aIsScoped,
                                      bool* aIsAlternate)
 {
   aTitle.Truncate();
   aType.Truncate();
   aMedia.Truncate();
+  *aIsScoped = false;
   *aIsAlternate = false;
 
   nsAutoString rel;

@@ -11,6 +11,7 @@ const Cr = Components.results;
 
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
+Cu.import("resource://gre/modules/SystemMessagePermissionsChecker.jsm");
 
 XPCOMUtils.defineLazyServiceGetter(this, "ppmm",
                                    "@mozilla.org/parentprocessmessagemanager;1",
@@ -81,16 +82,15 @@ SystemMessageInternal.prototype = {
 
     debug("Sending " + aType + " " + JSON.stringify(aMessage) +
       " for " + aPageURI.spec + " @ " + aManifestURI.spec);
-    if (this._listeners[aManifestURI.spec]) {
-      let manifest = this._listeners[aManifestURI.spec];
-      for (let winID in manifest) {
-        manifest[winID].sendAsyncMessage("SystemMessageManager:Message",
-                                         { type: aType,
-                                           msg: aMessage,
-                                           manifest: aManifestURI.spec,
-                                           uri: aPageURI.spec,
-                                           msgID: messageID });
-      }
+
+    // Don't need to open the pages and queue the system message
+    // which was not allowed to be sent.
+    if (!this._sendMessageCommon(aType,
+                                 aMessage,
+                                 messageID,
+                                 aPageURI.spec,
+                                 aManifestURI.spec)) {
+      return;
     }
 
     let pagesToOpen = {};
@@ -131,17 +131,16 @@ SystemMessageInternal.prototype = {
     let pagesToOpen = {};
     this._pages.forEach(function(aPage) {
       if (aPage.type == aType) {
-        if (this._listeners[aPage.manifest]) {
-          let manifest = this._listeners[aPage.manifest];
-          for (let winID in manifest) {
-            manifest[winID].sendAsyncMessage("SystemMessageManager:Message",
-                                             { type: aType,
-                                               msg: aMessage,
-                                               manifest: aPage.manifest,
-                                               uri: aPage.uri,
-                                               msgID: messageID });
-          }
+        // Don't need to open the pages and queue the system message
+        // which was not allowed to be sent.
+        if (!this._sendMessageCommon(aType,
+                                     aMessage,
+                                     messageID,
+                                     aPage.uri,
+                                     aPage.manifest)) {
+          return;
         }
+
         // Queue this message in the corresponding pages.
         this._queueMessage(aPage, aMessage, messageID);
 
@@ -169,6 +168,20 @@ SystemMessageInternal.prototype = {
 
   receiveMessage: function receiveMessage(aMessage) {
     let msg = aMessage.json;
+
+    // To prevent the hacked child process from sending commands to parent
+    // to manage system messages, we need to check its manifest URL.
+    if (["SystemMessageManager:Register",
+         "SystemMessageManager:Unregister",
+         "SystemMessageManager:GetPendingMessages",
+         "SystemMessageManager:HasPendingMessages",
+         "SystemMessageManager:Message:Return:OK"].indexOf(aMessage.name) != -1) {
+      if (!aMessage.target.assertContainApp(msg.manifest)) {
+        debug("Got message from a child process containing illegal manifest URL.");
+        return null;
+      }
+    }
+
     switch(aMessage.name) {
       case "SystemMessageManager:AskReadyToRegister":
         return true;
@@ -342,10 +355,10 @@ SystemMessageInternal.prototype = {
     Services.obs.notifyObservers(this, "system-messages-open-app", JSON.stringify(page));
   },
 
-  _isPageMatched: function _isPageMatched(aPage, aType, aUri, aManifest) {
+  _isPageMatched: function _isPageMatched(aPage, aType, aPageURI, aManifestURI) {
     return (aPage.type === aType &&
-            aPage.manifest === aManifest &&
-            aPage.uri === aUri)
+            aPage.manifest === aManifestURI &&
+            aPage.uri === aPageURI)
   },
 
   _createKeyForPage: function _createKeyForPage(aPage) {
@@ -364,6 +377,31 @@ SystemMessageInternal.prototype = {
     });
 
     return hasher.finish(true);
+  },
+
+  _sendMessageCommon:
+    function _sendMessageCommon(aType, aMessage, aMessageID, aPageURI, aManifestURI) {
+    // Don't send the system message not granted by the app's permissions.
+    if (!SystemMessagePermissionsChecker
+          .isSystemMessagePermittedToSend(aType,
+                                          aPageURI,
+                                          aManifestURI)) {
+      return false;
+    }
+
+    let winTargets = this._listeners[aManifestURI];
+    if (winTargets) {
+      for (let winID in winTargets) {
+        winTargets[winID].sendAsyncMessage("SystemMessageManager:Message",
+                                           { type: aType,
+                                             msg: aMessage,
+                                             manifest: aManifestURI,
+                                             uri: aPageURI,
+                                             msgID: aMessageID });
+      }
+    }
+
+    return true;
   },
 
   classID: Components.ID("{70589ca5-91ac-4b9e-b839-d6a88167d714}"),

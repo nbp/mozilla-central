@@ -35,7 +35,7 @@
 #include "nsINameSpaceManager.h"
 #include "nsIPresShell.h"
 #include "nsIServiceManager.h"
-#include "nsIViewManager.h"
+#include "nsViewManager.h"
 #include "nsIScrollableFrame.h"
 #include "nsUnicharUtils.h"
 #include "nsIURI.h"
@@ -75,11 +75,13 @@ DocAccessible::
                   nsIPresShell* aPresShell) :
   HyperTextAccessibleWrap(aRootContent, this),
   mDocumentNode(aDocument), mScrollPositionChangedTicks(0),
-  mLoadState(eTreeConstructionPending), mLoadEventType(0),
+  mLoadState(eTreeConstructionPending), mDocFlags(0), mLoadEventType(0),
   mVirtualCursor(nullptr),
   mPresShell(aPresShell)
 {
-  mFlags |= eDocAccessible | eNotNodeMapEntry;
+  mGenericTypes |= eDocument;
+  mStateFlags |= eNotNodeMapEntry;
+
   MOZ_ASSERT(mPresShell, "should have been given a pres shell");
   mPresShell->SetDocAccessible(this);
 
@@ -90,19 +92,7 @@ DocAccessible::
 
   // If this is a XUL Document, it should not implement nsHyperText
   if (mDocumentNode && mDocumentNode->IsXUL())
-    mFlags &= ~eHyperTextAccessible;
-
-  // For GTK+ native window, we do nothing here.
-  if (!mDocumentNode)
-    return;
-
-  // DocManager creates document accessible when scrollable frame is
-  // available already, it should be safe time to add scroll listener.
-  AddScrollListener();
-
-  // We provide a virtual cursor if this is a root doc or if it's a tab doc.
-  mIsCursorable = (!(mDocumentNode->GetParentDocument()) ||
-                   nsCoreUtils::IsTabDocument(mDocumentNode));
+    mGenericTypes &= ~eHyperText;
 }
 
 DocAccessible::~DocAccessible()
@@ -119,17 +109,9 @@ NS_IMPL_CYCLE_COLLECTION_CLASS(DocAccessible)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(DocAccessible, Accessible)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentNode)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNotificationController)
-
-  if (tmp->mVirtualCursor) {
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mVirtualCursor)
-  }
-
-  uint32_t i, length = tmp->mChildDocuments.Length();
-  for (i = 0; i < length; ++i) {
-    NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildDocuments[i])
-  }
-
-  CycleCollectorTraverseCache(tmp->mAccessibleCache, &cb);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mVirtualCursor)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildDocuments)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAccessibleCache)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DocAccessible, Accessible)
@@ -139,7 +121,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(DocAccessible, Accessible)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildDocuments)
   tmp->mDependentIDsHash.Clear();
   tmp->mNodeToAccessibleMap.Clear();
-  ClearCache(tmp->mAccessibleCache);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mAccessibleCache)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(DocAccessible)
@@ -151,7 +133,7 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION_INHERITED(DocAccessible)
   NS_INTERFACE_MAP_ENTRY(nsIAccessiblePivotObserver)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIAccessibleDocument)
   NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIAccessibleCursorable,
-                                     mIsCursorable)
+                                     (mDocFlags & eCursorable))
     foundInterface = 0;
 
   nsresult status;
@@ -508,7 +490,8 @@ DocAccessible::GetVirtualCursor(nsIAccessiblePivot** aVirtualCursor)
   if (IsDefunct())
     return NS_ERROR_FAILURE;
 
-  NS_ENSURE_TRUE(mIsCursorable, NS_ERROR_NOT_IMPLEMENTED);
+  if (!(mDocFlags & eCursorable))
+    return NS_OK;
 
   if (!mVirtualCursor) {
     mVirtualCursor = new nsAccessiblePivot(this);
@@ -609,8 +592,6 @@ DocAccessible::Shutdown()
     logging::DocDestroy("document shutdown", mDocumentNode, this);
 #endif
 
-  mPresShell->SetDocAccessible(nullptr);
-
   if (mNotificationController) {
     mNotificationController->Shutdown();
     mNotificationController = nullptr;
@@ -621,7 +602,7 @@ DocAccessible::Shutdown()
   // Mark the document as shutdown before AT is notified about the document
   // removal from its container (valid for root documents on ATK and due to
   // some reason for MSAA, refer to bug 757392 for details).
-  mFlags |= eIsDefunct;
+  mStateFlags |= eIsDefunct;
   nsCOMPtr<nsIDocument> kungFuDeathGripDoc = mDocumentNode;
   mDocumentNode = nullptr;
 
@@ -646,6 +627,7 @@ DocAccessible::Shutdown()
     mVirtualCursor = nullptr;
   }
 
+  mPresShell->SetDocAccessible(nullptr);
   mPresShell = nullptr;  // Avoid reentrancy
 
   mDependentIDsHash.Clear();
@@ -713,42 +695,26 @@ DocAccessible::GetBoundsRect(nsRect& aBounds, nsIFrame** aRelativeFrame)
 nsresult
 DocAccessible::AddEventListeners()
 {
-  // 1) Set up scroll position listener
-  // 2) Check for editor and listen for changes to editor
-
-  NS_ENSURE_TRUE(mPresShell, NS_ERROR_FAILURE);
-
   nsCOMPtr<nsISupports> container = mDocumentNode->GetContainer();
   nsCOMPtr<nsIDocShellTreeItem> docShellTreeItem(do_QueryInterface(container));
-  NS_ENSURE_TRUE(docShellTreeItem, NS_ERROR_FAILURE);
 
-  // Make sure we're a content docshell
-  // We don't want to listen to chrome progress
+  // We want to add a command observer only if the document is content and has
+  // an editor.
   int32_t itemType;
   docShellTreeItem->GetItemType(&itemType);
-
-  bool isContent = (itemType == nsIDocShellTreeItem::typeContent);
-
-  if (isContent) {
-    // We're not an editor yet, but we might become one
+  if (itemType == nsIDocShellTreeItem::typeContent) {
     nsCOMPtr<nsICommandManager> commandManager = do_GetInterface(docShellTreeItem);
-    if (commandManager) {
+    if (commandManager)
       commandManager->AddCommandObserver(this, "obs_documentCreated");
-    }
   }
 
-  nsCOMPtr<nsIDocShellTreeItem> rootTreeItem;
-  docShellTreeItem->GetRootTreeItem(getter_AddRefs(rootTreeItem));
-  if (rootTreeItem) {
-    a11y::RootAccessible* rootAccessible = RootAccessible();
-    NS_ENSURE_TRUE(rootAccessible, NS_ERROR_FAILURE);
-    nsRefPtr<nsCaretAccessible> caretAccessible = rootAccessible->GetCaretAccessible();
-    if (caretAccessible) {
-      caretAccessible->AddDocSelectionListener(mPresShell);
-    }
-  }
+  a11y::RootAccessible* rootAccessible = RootAccessible();
+  NS_ENSURE_TRUE(rootAccessible, NS_ERROR_FAILURE);
+  nsRefPtr<nsCaretAccessible> caretAccessible = rootAccessible->GetCaretAccessible();
+  if (caretAccessible)
+    caretAccessible->AddDocSelectionListener(mPresShell);
 
-  // add document observer
+  // Add document observer.
   mDocumentNode->AddObserver(this);
   return NS_OK;
 }
@@ -817,36 +783,6 @@ DocAccessible::ScrollTimerCallback(nsITimer* aTimer, void* aClosure)
       docAcc->mScrollWatchTimer = nullptr;
       NS_RELEASE(docAcc); // Release kung fu death grip
     }
-  }
-}
-
-// DocAccessible protected member
-void
-DocAccessible::AddScrollListener()
-{
-  if (!mPresShell)
-    return;
-
-  nsIScrollableFrame* sf = mPresShell->GetRootScrollFrameAsScrollableExternal();
-  if (sf) {
-    sf->AddScrollPositionListener(this);
-#ifdef A11Y_LOG
-    if (logging::IsEnabled(logging::eDocCreate))
-      logging::Text("add scroll listener");
-#endif
-  }
-}
-
-// DocAccessible protected member
-void
-DocAccessible::RemoveScrollListener()
-{
-  if (!mPresShell)
-    return;
- 
-  nsIScrollableFrame* sf = mPresShell->GetRootScrollFrameAsScrollableExternal();
-  if (sf) {
-    sf->RemoveScrollPositionListener(this);
   }
 }
 
@@ -936,7 +872,7 @@ DocAccessible::AttributeWillChange(nsIDocument* aDocument,
   // because dependent IDs cache doesn't contain IDs from non accessible
   // elements.
   if (aModType != nsIDOMMutationEvent::ADDITION)
-    RemoveDependentIDsFor(accessible, aAttribute);
+    RemoveDependentIDsFor(aElement, aAttribute);
 
   // Store the ARIA attribute old value so that it can be used after
   // attribute change. Note, we assume there's no nested ARIA attribute
@@ -992,7 +928,7 @@ DocAccessible::AttributeChanged(nsIDocument* aDocument,
   // dependent IDs cache when its accessible is created.
   if (aModType == nsIDOMMutationEvent::MODIFICATION ||
       aModType == nsIDOMMutationEvent::ADDITION) {
-    AddDependentIDsFor(accessible, aAttribute);
+    AddDependentIDsFor(aElement, aAttribute);
   }
 }
 
@@ -1317,7 +1253,7 @@ DocAccessible::GetNativeWindow() const
   if (!mPresShell)
     return nullptr;
 
-  nsIViewManager* vm = mPresShell->GetViewManager();
+  nsViewManager* vm = mPresShell->GetViewManager();
   if (!vm)
     return nullptr;
 
@@ -1375,12 +1311,11 @@ DocAccessible::BindToDocument(Accessible* aAccessible,
   // Put into unique ID cache.
   mAccessibleCache.Put(aAccessible->UniqueID(), aAccessible);
 
-  // Initialize the accessible.
-  aAccessible->Init();
-
   aAccessible->SetRoleMapEntry(aRoleMapEntry);
-  if (aAccessible->IsElement())
-    AddDependentIDsFor(aAccessible);
+
+  nsIContent* content = aAccessible->GetContent();
+  if (content && content->IsElement())
+    AddDependentIDsFor(content->AsElement());
 
   return true;
 }
@@ -1536,14 +1471,23 @@ DocAccessible::NotifyOfLoading(bool aIsReloading)
 void
 DocAccessible::DoInitialUpdate()
 {
+  if (nsCoreUtils::IsTabDocument(mDocumentNode))
+    mDocFlags |= eTabDocument;
+
+  // We provide a virtual cursor if this is a root doc or if it's a tab doc.
+  if (!mDocumentNode->GetParentDocument() || (mDocFlags & eTabDocument))
+    mDocFlags |= eCursorable;
+
   mLoadState |= eTreeConstructed;
 
   // The content element may be changed before the initial update and then we
   // miss the notification (since content tree change notifications are ignored
   // prior to initial update). Make sure the content element is valid.
   nsIContent* contentElm = nsCoreUtils::GetRoleContent(mDocumentNode);
-  if (mContent != contentElm)
+  if (mContent != contentElm) {
     mContent = contentElm;
+    SetRoleMapEntry(aria::GetRoleMap(mContent));
+  }
 
   // Build initial tree.
   CacheChildrenInSubtree(this);
@@ -1592,7 +1536,7 @@ DocAccessible::ProcessLoad()
 }
 
 void
-DocAccessible::AddDependentIDsFor(Accessible* aRelProvider,
+DocAccessible::AddDependentIDsFor(dom::Element* aRelProviderElm,
                                   nsIAtom* aRelAttr)
 {
   for (uint32_t idx = 0; idx < kRelationAttrsLen; idx++) {
@@ -1601,19 +1545,19 @@ DocAccessible::AddDependentIDsFor(Accessible* aRelProvider,
       continue;
 
     if (relAttr == nsGkAtoms::_for) {
-      if (!aRelProvider->GetContent()->IsHTML() ||
-          (aRelProvider->GetContent()->Tag() != nsGkAtoms::label &&
-           aRelProvider->GetContent()->Tag() != nsGkAtoms::output))
+      if (!aRelProviderElm->IsHTML() ||
+          (aRelProviderElm->Tag() != nsGkAtoms::label &&
+           aRelProviderElm->Tag() != nsGkAtoms::output))
         continue;
 
     } else if (relAttr == nsGkAtoms::control) {
-      if (!aRelProvider->GetContent()->IsXUL() ||
-          (aRelProvider->GetContent()->Tag() != nsGkAtoms::label &&
-           aRelProvider->GetContent()->Tag() != nsGkAtoms::description))
+      if (!aRelProviderElm->IsXUL() ||
+          (aRelProviderElm->Tag() != nsGkAtoms::label &&
+           aRelProviderElm->Tag() != nsGkAtoms::description))
         continue;
     }
 
-    IDRefsIterator iter(this, aRelProvider->GetContent(), relAttr);
+    IDRefsIterator iter(this, aRelProviderElm, relAttr);
     while (true) {
       const nsDependentSubstring id = iter.NextID();
       if (id.IsEmpty())
@@ -1629,7 +1573,7 @@ DocAccessible::AddDependentIDsFor(Accessible* aRelProvider,
 
       if (providers) {
         AttrRelProvider* provider =
-          new AttrRelProvider(relAttr, aRelProvider->GetContent());
+          new AttrRelProvider(relAttr, aRelProviderElm);
         if (provider) {
           providers->AppendElement(provider);
 
@@ -1653,7 +1597,7 @@ DocAccessible::AddDependentIDsFor(Accessible* aRelProvider,
 }
 
 void
-DocAccessible::RemoveDependentIDsFor(Accessible* aRelProvider,
+DocAccessible::RemoveDependentIDsFor(dom::Element* aRelProviderElm,
                                      nsIAtom* aRelAttr)
 {
   for (uint32_t idx = 0; idx < kRelationAttrsLen; idx++) {
@@ -1661,7 +1605,7 @@ DocAccessible::RemoveDependentIDsFor(Accessible* aRelProvider,
     if (aRelAttr && aRelAttr != *kRelationAttrs[idx])
       continue;
 
-    IDRefsIterator iter(this, aRelProvider->GetContent(), relAttr);
+    IDRefsIterator iter(this, aRelProviderElm, relAttr);
     while (true) {
       const nsDependentSubstring id = iter.NextID();
       if (id.IsEmpty())
@@ -1672,7 +1616,7 @@ DocAccessible::RemoveDependentIDsFor(Accessible* aRelProvider,
         for (uint32_t jdx = 0; jdx < providers->Length(); ) {
           AttrRelProvider* provider = (*providers)[jdx];
           if (provider->mRelAttr == relAttr &&
-              provider->mContent == aRelProvider->GetContent())
+              provider->mContent == aRelProviderElm)
             providers->RemoveElement(provider);
           else
             jdx++;
@@ -1764,8 +1708,10 @@ DocAccessible::ProcessContentInserted(Accessible* aContainer,
       if (aContainer == this) {
         // If new root content has been inserted then update it.
         nsIContent* rootContent = nsCoreUtils::GetRoleContent(mDocumentNode);
-        if (rootContent != mContent)
+        if (rootContent != mContent) {
           mContent = rootContent;
+          SetRoleMapEntry(aria::GetRoleMap(mContent));
+        }
 
         // Continue to update the tree even if we don't have root content.
         // For example, elements may be inserted under the document element while
@@ -1968,10 +1914,11 @@ DocAccessible::CacheChildrenInSubtree(Accessible* aRoot)
 void
 DocAccessible::UncacheChildrenInSubtree(Accessible* aRoot)
 {
-  aRoot->mFlags |= eIsNotInDocument;
+  aRoot->mStateFlags |= eIsNotInDocument;
 
-  if (aRoot->IsElement())
-    RemoveDependentIDsFor(aRoot);
+  nsIContent* rootContent = aRoot->GetContent();
+  if (rootContent && rootContent->IsElement())
+    RemoveDependentIDsFor(rootContent->AsElement());
 
   uint32_t count = aRoot->ContentChildCount();
   for (uint32_t idx = 0; idx < count; idx++)

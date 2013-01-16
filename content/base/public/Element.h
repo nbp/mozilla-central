@@ -45,6 +45,7 @@
 #include "nsISMILAttr.h"
 #include "nsClientRect.h"
 #include "nsIDOMDOMTokenList.h"
+#include "nsEvent.h"
 
 class nsIDOMEventListener;
 class nsIFrame;
@@ -115,6 +116,7 @@ namespace mozilla {
 namespace dom {
 
 class Link;
+class UndoManager;
 
 // IID for the dom::Element interface
 #define NS_ELEMENT_IID \
@@ -457,12 +459,12 @@ public:
 
   virtual nsresult SetAttr(int32_t aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
                            const nsAString& aValue, bool aNotify);
-  virtual nsresult SetParsedAttr(int32_t aNameSpaceID, nsIAtom* aName,
-                                 nsIAtom* aPrefix, nsAttrValue& aParsedValue,
-                                 bool aNotify);
+  nsresult SetParsedAttr(int32_t aNameSpaceID, nsIAtom* aName, nsIAtom* aPrefix,
+                         nsAttrValue& aParsedValue, bool aNotify);
   virtual bool GetAttr(int32_t aNameSpaceID, nsIAtom* aName,
                          nsAString& aResult) const;
   virtual bool HasAttr(int32_t aNameSpaceID, nsIAtom* aName) const;
+  // aCaseSensitive == eIgnoreCaase means ASCII case-insensitive matching.
   virtual bool AttrValueIs(int32_t aNameSpaceID, nsIAtom* aName,
                              const nsAString& aValue,
                              nsCaseTreatment aCaseSensitive) const;
@@ -530,7 +532,7 @@ public:
     SetAttr(kNameSpaceID_None, nsGkAtoms::id, aId, true);
   }
 
-  nsDOMTokenList* ClassList();
+  nsDOMTokenList* GetClassList();
   nsDOMAttributeMap* GetAttributes()
   {
     nsDOMSlots *slots = DOMSlots();
@@ -695,6 +697,29 @@ public:
            0;
   }
 
+  virtual already_AddRefed<mozilla::dom::UndoManager> GetUndoManager()
+  {
+    return nullptr;
+  }
+
+  virtual bool UndoScope()
+  {
+    return false;
+  }
+
+  virtual void SetUndoScope(bool aUndoScope, mozilla::ErrorResult& aError)
+  {
+  }
+
+  virtual void GetInnerHTML(nsAString& aInnerHTML,
+                            mozilla::ErrorResult& aError);
+  virtual void SetInnerHTML(const nsAString& aInnerHTML,
+                            mozilla::ErrorResult& aError);
+  void GetOuterHTML(nsAString& aOuterHTML, mozilla::ErrorResult& aError);
+  void SetOuterHTML(const nsAString& aOuterHTML, mozilla::ErrorResult& aError);
+  void InsertAdjacentHTML(const nsAString& aPosition, const nsAString& aText,
+                          mozilla::ErrorResult& aError);
+
   //----------------------------------------
 
   /**
@@ -721,12 +746,15 @@ public:
    * through the full dispatching of the presshell of the aPresContext; if it's
    * false the event will be dispatched only as a DOM event.
    * If aPresContext is nullptr, this does nothing.
+   *
+   * @param aFlags      Extra flags for the dispatching event.  The true flags
+   *                    will be respected.
    */
   static nsresult DispatchClickEvent(nsPresContext* aPresContext,
                                      nsInputEvent* aSourceEvent,
                                      nsIContent* aTarget,
                                      bool aFullDispatch,
-                                     uint32_t aFlags,
+                                     const mozilla::widget::EventFlags* aFlags,
                                      nsEventStatus* aStatus);
 
   /**
@@ -839,6 +867,34 @@ public:
 
   virtual JSObject* WrapObject(JSContext *aCx, JSObject *aScope,
                                bool *aTriedToWrap) MOZ_FINAL;
+
+  /**
+   * Locate an nsIEditor rooted at this content node, if there is one.
+   */
+  nsIEditor* GetEditorInternal();
+
+  /**
+   * Helper method for NS_IMPL_BOOL_ATTR macro.
+   * Gets value of boolean attribute. Only works for attributes in null
+   * namespace.
+   *
+   * @param aAttr    name of attribute.
+   * @param aValue   Boolean value of attribute.
+   */
+  NS_HIDDEN_(bool) GetBoolAttr(nsIAtom* aAttr) const
+  {
+    return HasAttr(kNameSpaceID_None, aAttr);
+  }
+
+  /**
+   * Helper method for NS_IMPL_BOOL_ATTR macro.
+   * Sets value of boolean attribute by removing attribute or setting it to
+   * the empty string. Only works for attributes in null namespace.
+   *
+   * @param aAttr    name of attribute.
+   * @param aValue   Boolean value of attribute.
+   */
+  NS_HIDDEN_(nsresult) SetBoolAttr(nsIAtom* aAttr, bool aValue);
 
 protected:
   /*
@@ -1078,6 +1134,8 @@ private:
 
   nsIScrollableFrame* GetScrollFrame(nsIFrame **aStyledFrame = nullptr);
 
+  nsresult GetMarkup(bool aIncludeSelf, nsAString& aMarkup);
+
   // Data members
   nsEventStates mState;
 };
@@ -1178,6 +1236,24 @@ _elementName::Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const        \
   _class::Set##_method(const nsAString& aValue)                         \
   {                                                                     \
     return SetAttr(kNameSpaceID_None, nsGkAtoms::_atom, nullptr, aValue, true); \
+  }
+
+/**
+ * A macro to implement the getter and setter for a given boolean
+ * valued content property. The method uses the GetBoolAttr and
+ * SetBoolAttr methods.
+ */
+#define NS_IMPL_BOOL_ATTR(_class, _method, _atom)                     \
+  NS_IMETHODIMP                                                       \
+  _class::Get##_method(bool* aValue)                                  \
+  {                                                                   \
+    *aValue = GetBoolAttr(nsGkAtoms::_atom);                          \
+    return NS_OK;                                                     \
+  }                                                                   \
+  NS_IMETHODIMP                                                       \
+  _class::Set##_method(bool aValue)                                   \
+  {                                                                   \
+    return SetBoolAttr(nsGkAtoms::_atom, aValue);                     \
   }
 
 #define NS_FORWARD_NSIDOMELEMENT_TO_GENERIC                                   \
