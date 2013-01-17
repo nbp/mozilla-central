@@ -130,7 +130,7 @@ this.Toolbox = function Toolbox(target, selectedTool, hostType) {
   if (!selectedTool) {
     selectedTool = Services.prefs.getCharPref(this._prefs.LAST_TOOL);
   }
-  let definitions = gDevTools.getToolDefinitions();
+  let definitions = gDevTools.getToolDefinitionMap();
   if (!definitions.get(selectedTool)) {
     selectedTool = "webconsole";
   }
@@ -248,11 +248,6 @@ Toolbox.prototype = {
       let domReady = function() {
         iframe.removeEventListener("DOMContentLoaded", domReady, true);
 
-        let vbox = this.doc.getElementById("toolbox-panel-" + this._currentToolId);
-        if (vbox) {
-          this.doc.commandDispatcher.advanceFocusIntoSubtree(vbox);
-        }
-
         this.isReady = true;
 
         let closeButton = this.doc.getElementById("toolbox-close");
@@ -261,6 +256,7 @@ Toolbox.prototype = {
         this._buildDockButtons();
         this._buildTabs();
         this._buildButtons();
+        this._addKeysToWindow();
 
         this.selectTool(this._defaultToolId).then(function(panel) {
           this.emit("ready");
@@ -273,6 +269,39 @@ Toolbox.prototype = {
     }.bind(this));
 
     return deferred.promise;
+  },
+
+  /**
+   * Adds the keys and commands to the Toolbox Window in window mode.
+   */
+  _addKeysToWindow: function TBOX__addKeysToWindow() {
+    if (this.hostType != Toolbox.HostType.WINDOW) {
+      return;
+    }
+    let doc = this.doc.defaultView.parent.document;
+    for (let [id, toolDefinition] of gDevTools._tools) {
+      if (toolDefinition.key) {
+        // Prevent multiple entries for the same tool.
+        if (doc.getElementById("key_" + id)) {
+          continue;
+        }
+        let key = doc.createElement("key");
+        key.id = "key_" + id;
+
+        if (toolDefinition.key.startsWith("VK_")) {
+          key.setAttribute("keycode", toolDefinition.key);
+        } else {
+          key.setAttribute("key", toolDefinition.key);
+        }
+
+        key.setAttribute("modifiers", toolDefinition.modifiers);
+        key.setAttribute("oncommand", "void(0);"); // needed. See bug 371900
+        key.addEventListener("command", function(toolId) {
+          this.selectTool(toolId);
+        }.bind(this, id), true);
+        doc.getElementById("toolbox-keyset").appendChild(key);
+      }
+    }
   },
 
   /**
@@ -315,7 +344,7 @@ Toolbox.prototype = {
    * Add tabs to the toolbox UI for registered tools
    */
   _buildTabs: function TBOX_buildTabs() {
-    for (let [id, definition] of gDevTools.getToolDefinitions()) {
+    for (let definition of gDevTools.getToolDefinitionArray()) {
       this._buildTabForTool(definition);
     }
   },
@@ -347,7 +376,6 @@ Toolbox.prototype = {
    *        Tool definition of the tool to build a tab for.
    */
   _buildTabForTool: function TBOX_buildTabForTool(toolDefinition) {
-    const MAX_ORDINAL = 99;
     if (!toolDefinition.isTargetSupported(this._target)) {
       return;
     }
@@ -367,10 +395,6 @@ Toolbox.prototype = {
       radio.setAttribute("src", toolDefinition.icon);
     }
 
-    let ordinal = (typeof toolDefinition.ordinal == "number") ?
-                  toolDefinition.ordinal : MAX_ORDINAL;
-    radio.setAttribute("ordinal", ordinal);
-
     radio.addEventListener("command", function(id) {
       this.selectTool(id);
     }.bind(this, id));
@@ -381,6 +405,8 @@ Toolbox.prototype = {
 
     tabs.appendChild(radio);
     deck.appendChild(vbox);
+
+    this._addKeysToWindow();
   },
 
   /**
@@ -422,7 +448,7 @@ Toolbox.prototype = {
     let deck = this.doc.getElementById("toolbox-deck");
     deck.selectedIndex = index;
 
-    let definition = gDevTools.getToolDefinitions().get(id);
+    let definition = gDevTools.getToolDefinitionMap().get(id);
 
     this._currentToolId = id;
 
@@ -478,6 +504,10 @@ Toolbox.prototype = {
   /**
    * Create a host object based on the given host type.
    *
+   * Warning: some hosts require that the toolbox target provides a reference to
+   * the attached tab. Not all Targets have a tab property - make sure you correctly
+   * mix and match hosts and targets.
+   *
    * @param {string} hostType
    *        The host type of the new host object
    *
@@ -526,6 +556,7 @@ Toolbox.prototype = {
       Services.prefs.setCharPref(this._prefs.LAST_HOST, this._host.type);
 
       this._buildDockButtons();
+      this._addKeysToWindow();
 
       this.emit("host-changed");
     }.bind(this));
@@ -539,7 +570,7 @@ Toolbox.prototype = {
    *         Id of the tool that was registered
    */
   _toolRegistered: function TBOX_toolRegistered(event, toolId) {
-    let defs = gDevTools.getToolDefinitions();
+    let defs = gDevTools.getToolDefinitionMap();
     let tool = defs.get(toolId);
 
     this._buildTabForTool(tool);
@@ -574,6 +605,14 @@ Toolbox.prototype = {
 
     if (panel) {
       panel.parentNode.removeChild(panel);
+    }
+
+    if (this.hostType == Toolbox.HostType.WINDOW) {
+      let doc = this.doc.defaultView.parent.document;
+      let key = doc.getElementById("key_" + id);
+      if (key) {
+        key.parentNode.removeChild(key);
+      }
     }
 
     if (this._toolPanels.has(toolId)) {

@@ -8,8 +8,8 @@
 #include "mozilla/dom/SVGMPathElement.h"
 #include "nsAutoPtr.h"
 #include "nsDebug.h"
-#include "nsSVGPathElement.h"
 #include "mozilla/dom/SVGAnimateMotionElement.h"
+#include "mozilla/dom/SVGPathElement.h"
 #include "nsContentUtils.h"
 #include "mozilla/dom/SVGMPathElementBinding.h"
 
@@ -32,7 +32,6 @@ nsSVGElement::StringInfo SVGMPathElement::sStringInfo[1] =
 };
 
 // Cycle collection magic -- based on nsSVGUseElement
-NS_IMPL_CYCLE_COLLECTION_CLASS(SVGMPathElement)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(SVGMPathElement,
                                                 SVGMPathElementBase)
   tmp->UnlinkHrefTarget(false);
@@ -203,7 +202,7 @@ SVGMPathElement::AttributeChanged(nsIDocument* aDocument,
 //----------------------------------------------------------------------
 // Public helper methods
 
-nsSVGPathElement*
+SVGPathElement*
 SVGMPathElement::GetReferencedPath()
 {
   if (!HasAttr(kNameSpaceID_XLink, nsGkAtoms::href)) {
@@ -215,7 +214,7 @@ SVGMPathElement::GetReferencedPath()
 
   nsIContent* genericTarget = mHrefTarget.get();
   if (genericTarget && genericTarget->IsSVG(nsGkAtoms::path)) {
-    return static_cast<nsSVGPathElement*>(genericTarget);
+    return static_cast<SVGPathElement*>(genericTarget);
   }
   return nullptr;
 }

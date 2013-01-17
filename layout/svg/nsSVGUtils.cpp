@@ -6,6 +6,7 @@
 // Main header first:
 // This is also necessary to ensure our definition of M_SQRT1_2 is picked up
 #include "nsSVGUtils.h"
+#include <algorithm>
 
 // Keep others in (case-insensitive) order:
 #include "gfxContext.h"
@@ -44,7 +45,7 @@
 #include "nsSVGLength2.h"
 #include "nsSVGMaskFrame.h"
 #include "nsSVGOuterSVGFrame.h"
-#include "nsSVGPathElement.h"
+#include "mozilla/dom/SVGPathElement.h"
 #include "nsSVGPathGeometryElement.h"
 #include "nsSVGPathGeometryFrame.h"
 #include "nsSVGPaintServerFrame.h"
@@ -1070,9 +1071,9 @@ nsSVGUtils::ConvertToSurfaceSize(const gfxSize& aSize,
     surfaceSize.height != ceil(aSize.height);
 
   if (!gfxASurface::CheckSurfaceSize(surfaceSize)) {
-    surfaceSize.width = NS_MIN(NS_SVG_OFFSCREEN_MAX_DIMENSION,
+    surfaceSize.width = std::min(NS_SVG_OFFSCREEN_MAX_DIMENSION,
                                surfaceSize.width);
-    surfaceSize.height = NS_MIN(NS_SVG_OFFSCREEN_MAX_DIMENSION,
+    surfaceSize.height = std::min(NS_SVG_OFFSCREEN_MAX_DIMENSION,
                                 surfaceSize.height);
     *aResultOverflows = true;
   }
@@ -1733,8 +1734,8 @@ GetStrokeDashData(nsIFrame* aFrame,
     gfxFloat pathScale = 1.0;
 
     if (content->Tag() == nsGkAtoms::path) {
-      pathScale = static_cast<nsSVGPathElement*>(content)->
-        GetPathLengthScale(nsSVGPathElement::eForStroking);
+      pathScale = static_cast<SVGPathElement*>(content)->
+        GetPathLengthScale(SVGPathElement::eForStroking);
       if (pathScale <= 0) {
         return false;
       }

@@ -30,6 +30,7 @@
 #include "nsContentUtils.h"
 #include "nsEmbedCID.h"
 #include "nsEventListenerManager.h"
+#include <algorithm>
 #ifdef MOZ_CRASHREPORTER
 #include "nsExceptionHandler.h"
 #endif
@@ -37,6 +38,7 @@
 #include "nsIAppsService.h"
 #include "nsIBaseWindow.h"
 #include "nsIComponentManager.h"
+#include "nsIDocumentInlines.h"
 #include "nsIDOMClassInfo.h"
 #include "nsIDOMElement.h"
 #include "nsIDOMEvent.h"
@@ -427,7 +429,7 @@ TabChild::HandlePossibleViewportChange()
   float minScale = 1.0f;
 
   nsCOMPtr<nsIDOMElement> htmlDOMElement = do_QueryInterface(document->GetHtmlElement());
-  nsCOMPtr<nsIDOMElement> bodyDOMElement = do_QueryInterface(document->GetBodyElement());
+  HTMLBodyElement* bodyDOMElement = document->GetBodyElement();
 
   int32_t htmlWidth = 0, htmlHeight = 0;
   if (htmlDOMElement) {
@@ -436,14 +438,14 @@ TabChild::HandlePossibleViewportChange()
   }
   int32_t bodyWidth = 0, bodyHeight = 0;
   if (bodyDOMElement) {
-    bodyDOMElement->GetScrollWidth(&bodyWidth);
-    bodyDOMElement->GetScrollHeight(&bodyHeight);
+    bodyWidth = bodyDOMElement->ScrollWidth();
+    bodyHeight = bodyDOMElement->ScrollHeight();
   }
 
   float pageWidth, pageHeight;
   if (htmlDOMElement || bodyDOMElement) {
-    pageWidth = NS_MAX(htmlWidth, bodyWidth);
-    pageHeight = NS_MAX(htmlHeight, bodyHeight);
+    pageWidth = std::max(htmlWidth, bodyWidth);
+    pageHeight = std::max(htmlHeight, bodyHeight);
   } else {
     // For non-HTML content (e.g. SVG), just assume page size == viewport size.
     pageWidth = viewportW;
@@ -456,7 +458,7 @@ TabChild::HandlePossibleViewportChange()
                      viewportInfo.GetMaxZoom());
   NS_ENSURE_TRUE_VOID(minScale); // (return early rather than divide by 0)
 
-  viewportH = NS_MAX(viewportH, screenH / minScale);
+  viewportH = std::max(viewportH, screenH / minScale);
   SetCSSViewport(viewportW, viewportH);
 
   // This change to the zoom accounts for all types of changes I can conceive:
@@ -2078,8 +2080,6 @@ TabChildGlobal::Init()
                                               mTabChild->GetJSContext(),
                                               MM_CHILD);
 }
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(TabChildGlobal)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(TabChildGlobal,
                                                 nsDOMEventTargetHelper)

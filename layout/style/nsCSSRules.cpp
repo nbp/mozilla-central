@@ -565,7 +565,6 @@ GroupRule::~GroupRule()
   }
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(GroupRule)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(GroupRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(GroupRule)
 
@@ -1768,8 +1767,6 @@ nsCSSFontFaceRule::Clone() const
 NS_IMPL_CYCLE_COLLECTING_ADDREF(nsCSSFontFaceRule)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(nsCSSFontFaceRule)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsCSSFontFaceRule)
-
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsCSSFontFaceRule)
   // Trace the wrapper for our declaration.  This just expands out
   // NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER which we can't use
@@ -2595,7 +2592,11 @@ void
 nsCSSPageRule::ChangeDeclaration(css::Declaration* aDeclaration)
 {
   mImportantRule = nullptr;
-  mDeclaration = aDeclaration;
+  // Be careful to not assign to an nsAutoPtr if we would be assigning
+  // the thing it already holds.
+  if (aDeclaration != mDeclaration) {
+    mDeclaration = aDeclaration;
+  }
 
   nsCSSStyleSheet* sheet = GetStyleSheet();
   if (sheet) {

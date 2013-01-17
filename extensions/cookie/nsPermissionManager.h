@@ -90,7 +90,7 @@ public:
       return mozilla::HashString(str);
     }
 
-    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PermissionKey);
+    NS_INLINE_DECL_THREADSAFE_REFCOUNTING(PermissionKey)
 
     nsCString mHost;
     uint32_t  mAppId;
@@ -217,7 +217,8 @@ private:
   nsresult CommonTestPermission(nsIPrincipal* aPrincipal,
                                 const char *aType,
                                 uint32_t   *aPermission,
-                                bool        aExactHostMatch);
+                                bool        aExactHostMatch,
+                                bool        aIncludingSession);
 
   nsresult InitDB(bool aRemoveFile);
   nsresult CreateTable();

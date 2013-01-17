@@ -30,11 +30,13 @@
 
 #define CHILD_PROCESS_SHUTDOWN_MESSAGE NS_LITERAL_STRING("child-process-shutdown")
 
+#define CONTENT_PARENT_NO_CHILD_ID 0
 #define CONTENT_PARENT_UNKNOWN_CHILD_ID -1
 
 class mozIApplication;
 class nsConsoleService;
 class nsIDOMBlob;
+class nsDOMFileBase;
 
 namespace mozilla {
 
@@ -103,9 +105,13 @@ public:
                                     const mozilla::dom::StructuredCloneData& aData);
     virtual bool CheckPermission(const nsAString& aPermission);
     virtual bool CheckManifestURL(const nsAString& aManifestURL);
+    virtual bool CheckAppHasPermission(const nsAString& aPermission);
 
+    /** Notify that a tab is beginning its destruction sequence. */
+    void NotifyTabDestroying(PBrowserParent* aTab);
     /** Notify that a tab was destroyed during normal operation. */
-    void NotifyTabDestroyed(PBrowserParent* aTab);
+    void NotifyTabDestroyed(PBrowserParent* aTab,
+                            bool aNotifiedDestroying);
 
     TestShellParent* CreateTestShell();
     bool DestroyTestShell(TestShellParent* aTestShell);
@@ -127,8 +133,9 @@ public:
         return mSendPermissionUpdates;
     }
 
+    bool GetParamsForBlob(nsDOMFileBase* aBlob,
+                          BlobConstructorParams* aOutParams);
     BlobParent* GetOrCreateActorForBlob(nsIDOMBlob* aBlob);
-
     /**
      * Kill our subprocess and make sure it dies.  Should only be used
      * in emergency situations since it bypasses the normal shutdown
@@ -334,6 +341,8 @@ private:
 
     virtual bool RecvAudioChannelChangedNotification();
 
+    virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
+
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 
     GeckoChildProcessHost* mSubprocess;
@@ -353,6 +362,15 @@ private:
     const nsString mAppManifestURL;
     nsRefPtr<nsFrameMessageManager> mMessageManager;
 
+    // After we initiate shutdown, we also start a timer to ensure
+    // that even content processes that are 100% blocked (say from
+    // SIGSTOP), are still killed eventually.  This task enforces that
+    // timer.
+    CancelableTask* mForceKillTask;
+    // How many tabs we're waiting to finish their destruction
+    // sequence.  Precisely, how many TabParents have called
+    // NotifyTabDestroying() but not called NotifyTabDestroyed().
+    int32_t mNumDestroyingTabs;
     // True only while this is ready to be used to host remote tabs.
     // This must not be used for new purposes after mIsAlive goes to
     // false, but some previously scheduled IPC traffic may still pass

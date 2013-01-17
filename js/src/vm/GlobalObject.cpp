@@ -354,9 +354,9 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
     }
 
     /* Add the global Function and Object properties now. */
-    if (!self->addDataProperty(cx, NameToId(cx->names().Object), JSProto_Object + JSProto_LIMIT * 2, 0))
+    if (!self->addDataProperty(cx, cx->names().Object, JSProto_Object + JSProto_LIMIT * 2, 0))
         return NULL;
-    if (!self->addDataProperty(cx, NameToId(cx->names().Function), JSProto_Function + JSProto_LIMIT * 2, 0))
+    if (!self->addDataProperty(cx, cx->names().Function, JSProto_Function + JSProto_LIMIT * 2, 0))
         return NULL;
 
     /* Heavy lifting done, but lingering tasks remain. */
@@ -379,7 +379,7 @@ GlobalObject::initFunctionAndObjectClasses(JSContext *cx)
 
     RootedObject intrinsicsHolder(cx);
     if (cx->runtime->isSelfHostingGlobal(self)) {
-        intrinsicsHolder = this;
+        intrinsicsHolder = self;
     } else {
         intrinsicsHolder = NewObjectWithClassProto(cx, &ObjectClass, NULL, self);
         if (!intrinsicsHolder)
@@ -494,7 +494,7 @@ GlobalObject::isRuntimeCodeGenEnabled(JSContext *cx)
          * and that it permits runtime code generation, then cache the result.
          */
         JSCSPEvalChecker allows = cx->runtime->securityCallbacks->contentSecurityPolicyAllows;
-        v.set(this, RUNTIME_CODEGEN_ENABLED, BooleanValue(!allows || allows(cx)));
+        v.set(this, HeapSlot::Slot, RUNTIME_CODEGEN_ENABLED, BooleanValue(!allows || allows(cx)));
     }
     return !v.isFalse();
 }

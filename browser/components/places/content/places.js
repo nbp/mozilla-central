@@ -79,11 +79,6 @@ var PlacesOrganizer = {
     gPrivateBrowsingListener.init();
 #endif
 
-    // Select the first item in the content area view.
-    let view = ContentArea.currentView;
-    let root = view.result ? view.result.root : null;
-    if (root && root.containerOpen && root.childCount > 0)
-      view.selectNode(root.getChild(0));
     ContentArea.focus();
   },
 
@@ -1249,6 +1244,7 @@ let ContentArea = {
     this._deck = document.getElementById("placesViewsDeck");
     this._toolbar = document.getElementById("placesToolbar");
     ContentTree.init();
+    this._setupView();
   },
 
   /**
@@ -1385,10 +1381,6 @@ let ContentTree = {
   },
 
   onClick: function CT_onClick(aEvent) {
-    // Only handle clicks on tree children.
-    if (aEvent.target.localName != "treechildren")
-      return;
-
     let node = this.view.selectedNode;
     if (node) {
       let doubleClick = aEvent.button == 0 && aEvent.detail == 2;

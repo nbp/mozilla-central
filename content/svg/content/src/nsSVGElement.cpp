@@ -88,6 +88,12 @@ nsSVGElement::WrapNode(JSContext *aCx, JSObject *aScope, bool *aTriedToWrap)
   return SVGElementBinding::Wrap(aCx, aScope, this, aTriedToWrap);
 }
 
+bool
+nsSVGElement::PrefEnabled()
+{
+  return nsGenericHTMLElement::PrefEnabled();
+}
+
 //----------------------------------------------------------------------
 
 /* readonly attribute nsIDOMSVGAnimatedString className; */
@@ -102,22 +108,8 @@ nsSVGElement::GetClassName(nsIDOMSVGAnimatedString** aClassName)
 NS_IMETHODIMP
 nsSVGElement::GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
 {
-  ErrorResult rv;
-  NS_ADDREF(*aStyle = GetStyle(rv));
-  return rv.ErrorCode();
-}
-
-nsICSSDeclaration*
-nsSVGElement::GetStyle(ErrorResult& rv)
-{
-  nsresult res;
-  nsICSSDeclaration* style = nsSVGElementBase::GetStyle(&res);
-  if (NS_FAILED(res)) {
-    rv.Throw(res);
-    return nullptr;
-  }
-
-  return style;
+  NS_ADDREF(*aStyle = Style());
+  return NS_OK;
 }
 
 //----------------------------------------------------------------------
@@ -972,6 +964,7 @@ nsSVGElement::sFillStrokeMap[] = {
   { &nsGkAtoms::fill },
   { &nsGkAtoms::fill_opacity },
   { &nsGkAtoms::fill_rule },
+  { &nsGkAtoms::paint_order },
   { &nsGkAtoms::stroke },
   { &nsGkAtoms::stroke_dasharray },
   { &nsGkAtoms::stroke_dashoffset },

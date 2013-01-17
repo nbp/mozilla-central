@@ -937,7 +937,7 @@ MakeJITScript(JSContext *cx, HandleScript script)
 }
 
 static inline bool
-IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
+IonGetsFirstChance(JSContext *cx, JSScript *script, jsbytecode *pc, CompileRequest request)
 {
 #ifdef JS_ION
     if (!ion::IsEnabled(cx))
@@ -959,6 +959,17 @@ IonGetsFirstChance(JSContext *cx, JSScript *script, CompileRequest request)
     // If we cannot enter Ion because bailouts are expected, let JM take over.
     if (script->hasIonScript() && script->ion->bailoutExpected())
         return false;
+
+    // If we cannot enter Ion because it was compiled for OSR at a different PC,
+    // let JM take over until the PC is reached. Don't do this until the script
+    // reaches a high use count, as if we do this prematurely we may get stuck
+    // in JM code.
+    if (ion::js_IonOptions.parallelCompilation && script->hasIonScript() &&
+        pc && script->ionScript()->osrPc() && script->ionScript()->osrPc() != pc &&
+        script->getUseCount() >= ion::js_IonOptions.usesBeforeCompile * 2)
+    {
+        return false;
+    }
 
     // If ion compilation is pending or in progress on another thread, continue
     // using JM until that compilation finishes.
@@ -998,8 +1009,11 @@ mjit::CanMethodJIT(JSContext *cx, HandleScript script, jsbytecode *pc,
             return Compile_Skipped;
     }
 
-    if (IonGetsFirstChance(cx, script, request))
+    if (IonGetsFirstChance(cx, script, pc, request)) {
+        if (script->hasIonScript())
+            script->incUseCount();
         return Compile_Skipped;
+    }
 
     if (script->hasMJITInfo()) {
         JSScript::JITScriptHandle *jith = script->jitHandle(construct, cx->compartment->compileBarriers());
@@ -1637,6 +1651,7 @@ mjit::Compiler::finishThisUp()
     chunk->nCallICs = callICs.length();
     cursor += sizeof(ic::CallICInfo) * chunk->nCallICs;
     for (size_t i = 0; i < chunk->nCallICs; i++) {
+        jitCallICs[i].funGuardLabel = fullCode.locationOf(callICs[i].funGuardLabel);
         jitCallICs[i].funGuard = fullCode.locationOf(callICs[i].funGuard);
         jitCallICs[i].funJump = fullCode.locationOf(callICs[i].funJump);
         jitCallICs[i].slowPathStart = stubCode.locationOf(callICs[i].slowPathStart);
@@ -3240,7 +3255,7 @@ mjit::Compiler::generateMethod()
           END_CASE(JSOP_INT32)
 
           BEGIN_CASE(JSOP_HOLE)
-            frame.push(MagicValue(JS_ARRAY_HOLE));
+            frame.push(MagicValue(JS_ELEMENTS_HOLE));
           END_CASE(JSOP_HOLE)
 
           BEGIN_CASE(JSOP_LOOPHEAD)
@@ -4430,6 +4445,7 @@ mjit::Compiler::inlineCallHelper(uint32_t argc, bool callingNew, FrameSize &call
      * callee is scripted, compiled/compilable, and argc == nargs, then this
      * guard is patched, and the compiled code address is baked in.
      */
+    callIC.funGuardLabel = masm.label();
     Jump j = masm.branchPtrWithPatch(Assembler::NotEqual, icCalleeData, callIC.funGuard);
     callIC.funJump = j;
 
@@ -4629,6 +4645,11 @@ mjit::Compiler::inlineScriptedFunction(uint32_t argc, bool callingNew)
     for (unsigned i = 0; i < ssa.numFrames(); i++) {
         if (ssa.iterFrame(i).parent == a->inlineIndex && ssa.iterFrame(i).parentpc == PC) {
             JSScript *script_ = ssa.iterFrame(i).script;
+
+            /* Don't inline if any of the callees should be cloned at callsite. */
+            if (script_->function()->isCloneAtCallsite())
+                return Compile_InlineAbort;
+
             inlineCallees.append(script_);
             if (script_->analysis()->numReturnSites() > 1)
                 calleeMultipleReturns = true;
@@ -5065,6 +5086,7 @@ mjit::Compiler::jsop_getprop(HandlePropertyName name, JSValueType knownType,
          * must fit in an int32_t.
          */
         if (!types->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY)) {
+            frame.forgetMismatchedObject(top);
             bool isObject = top->isTypeKnown();
             if (!isObject) {
                 Jump notObject = frame.testObject(Assembler::NotEqual, top);
@@ -6060,7 +6082,7 @@ mjit::Compiler::jsop_aliasedVar(ScopeCoordinate sc, bool get, bool poppedAfter)
     for (unsigned i = 0; i < sc.hops; i++)
         masm.loadPayload(Address(reg, ScopeObject::offsetOfEnclosingScope()), reg);
 
-    UnrootedShape shape = ScopeCoordinateToStaticScope(script_, PC).scopeShape();
+    UnrootedShape shape = ScopeCoordinateToStaticScopeShape(cx, script_, PC);
     Address addr;
     if (shape->numFixedSlots() <= sc.slot) {
         masm.loadPtr(Address(reg, JSObject::offsetOfSlots()), reg);
@@ -6224,6 +6246,12 @@ mjit::Compiler::iter(unsigned flags)
     masm.loadPtr(Address(T1, offsetof(types::TypeObject, proto)), T1);
     Jump overlongChain = masm.branchPtr(Assembler::NonZero, T1, T1);
     stubcc.linkExit(overlongChain, Uses(1));
+
+    /* Compare object's elements() with emptyObjectElements. */
+    Address elementsAddress(reg, JSObject::offsetOfElements());
+    Jump hasElements = masm.branchPtr(Assembler::NotEqual, elementsAddress,
+                                      ImmPtr(js::emptyObjectElements));
+    stubcc.linkExit(hasElements, Uses(1));
 
 #ifdef JSGC_INCREMENTAL_MJ
     /*
@@ -7566,6 +7594,7 @@ mjit::Compiler::jsop_in()
             !types->hasObjectFlags(cx, types::OBJECT_FLAG_NON_DENSE_ARRAY) &&
             !types::ArrayPrototypeHasIndexedProperty(cx, outerScript))
         {
+            frame.forgetMismatchedObject(obj);
             bool isPacked = !types->hasObjectFlags(cx, types::OBJECT_FLAG_NON_PACKED_ARRAY);
 
             if (!obj->isTypeKnown()) {
