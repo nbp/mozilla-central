@@ -962,7 +962,9 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
         return false;
     }
 
-    if (!isCacheable && canAttachStub() && !cache.idempotent() && cx->names().length == name) {
+    if (!isCacheable && cache.canAttachStub() &&
+        !cache.idempotent() && cx->names().length == name)
+    {
         if (cache.output().type() != MIRType_Value && cache.output().type() != MIRType_Int32) {
             // The next execution should cause an invalidation because the type
             // does not fit.
