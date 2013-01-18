@@ -438,6 +438,13 @@ public:
   // be called when nsContentUtils is initialized.
   static nsIPrincipal* GetSubjectPrincipal();
 
+  // Returns the principal of the given JS object. This should never be null
+  // for any object in the XPConnect runtime.
+  //
+  // In general, being interested in the principal of an object is enough to
+  // guarantee that the return value is non-null.
+  static nsIPrincipal* GetObjectPrincipal(JSObject* aObj);
+
   static nsresult GenerateStateKey(nsIContent* aContent,
                                    const nsIDocument* aDocument,
                                    nsACString& aKey);
@@ -1559,42 +1566,6 @@ public:
                                     const nsAString& aStr2);
 
   /**
-   * Case insensitive comparison between a string and an ASCII literal.
-   * This must ONLY be applied to an actual literal string. Do not attempt
-   * to use it with a regular char* pointer, or with a char array variable.
-   * The template trick to acquire the array length at compile time without
-   * using a macro is due to Corey Kosak, which much thanks.
-   */
-  static bool EqualsLiteralIgnoreASCIICase(const nsAString& aStr1,
-                                           const char* aStr2,
-                                           const uint32_t len);
-#ifdef NS_DISABLE_LITERAL_TEMPLATE
-  static inline bool
-  EqualsLiteralIgnoreASCIICase(const nsAString& aStr1,
-                               const char* aStr2)
-  {
-    uint32_t len = strlen(aStr2);
-    return EqualsLiteralIgnoreASCIICase(aStr1, aStr2, len);
-  }
-#else
-  template<int N>
-  static inline bool
-  EqualsLiteralIgnoreASCIICase(const nsAString& aStr1,
-                               const char (&aStr2)[N])
-  {
-    return EqualsLiteralIgnoreASCIICase(aStr1, aStr2, N-1);
-  }
-  template<int N>
-  static inline bool
-  EqualsLiteralIgnoreASCIICase(const nsAString& aStr1,
-                               char (&aStr2)[N])
-  {
-    const char* s = aStr2;
-    return EqualsLiteralIgnoreASCIICase(aStr1, s, N-1);
-  }
-#endif
-
-  /**
    * Convert ASCII A-Z to a-z.
    * @return NS_OK on success, or NS_ERROR_OUT_OF_MEMORY if making the string
    * writable needs to allocate memory and that allocation fails.
@@ -2246,6 +2217,7 @@ private:
   bool mPushedSomething;
 #ifdef DEBUG
   JSContext* mPushedContext;
+  unsigned mCompartmentDepthOnEntry;
 #endif
 };
 

@@ -634,7 +634,7 @@ struct GetNativePropertyStub
             masm.movePtr(StackPointer, argVpReg);
 
             // push canonical jsid from shape instead of propertyname.
-            jsid propId;
+            RootedId propId(cx);
             if (!shape->getUserId(cx, &propId))
                 return false;
             masm.Push(propId, scratchReg);
@@ -757,9 +757,9 @@ GetPropertyIC::attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj,
 }
 
 bool
-GetPropertyIC::attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *obj)
+GetPropertyIC::attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj)
 {
-    JS_ASSERT(obj->isDenseArray());
+    JS_ASSERT(obj->isArray());
     JS_ASSERT(!idempotent());
 
     Label failures;
@@ -767,7 +767,7 @@ GetPropertyIC::attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *o
 
     // Guard object is a dense array.
     RootedObject globalObj(cx, &script->global());
-    RootedShape shape(cx, GetDenseArrayShape(cx, globalObj));
+    RootedShape shape(cx, obj->lastProperty());
     if (!shape)
         return false;
     masm.branchTestObjShape(Assembler::NotEqual, object(), shape, &failures);
@@ -802,9 +802,9 @@ GetPropertyIC::attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *o
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
-    JS_ASSERT(!hasDenseArrayLengthStub_);
-    hasDenseArrayLengthStub_ = true;
-    return linkAndAttachStub(cx, masm, ion, "dense array length", rejoinOffset, &exitOffset);
+    JS_ASSERT(!hasArrayLengthStub_);
+    hasArrayLengthStub_ = true;
+    return linkAndAttachStub(cx, masm, ion, "array length", rejoinOffset, &exitOffset);
 }
 
 bool
@@ -928,6 +928,8 @@ TryAttachNativeGetPropStub(JSContext *cx, IonScript *ion,
 
     if (readSlot)
         return cache.attachReadSlot(cx, ion, obj, holder, shape);
+    else if (obj->isArray() && !cache.hasArrayLengthStub() && cx->names().length == name)
+        return cache.attachArrayLength(cx, ion, obj);
     return cache.attachCallGetter(cx, ion, obj, holder, shape, safepointIndex, returnAddr);
 }
 
@@ -969,10 +971,6 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
             // The next execution should cause an invalidation because the type
             // does not fit.
             isCacheable = false;
-        } else if (obj->isDenseArray() && !cache.hasDenseArrayLengthStub()) {
-            isCacheable = true;
-            if (!cache.attachDenseArrayLength(cx, ion, obj))
-                return false;
         } else if (obj->isTypedArray() && !cache.hasTypedArrayLengthStub()) {
             isCacheable = true;
             if (!cache.attachTypedArrayLength(cx, ion, obj))
@@ -1042,6 +1040,13 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
     cacheLabel_.repoint(code, &masm);
+}
+
+void
+IonCache::disable()
+{
+    reset();
+    this->disabled_ = 1;
 }
 
 void
@@ -1197,7 +1202,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
     masm.move32(Imm32(strict() ? 1 : 0), argStrictReg);
 
     // push canonical jsid from shape instead of propertyname.
-    jsid propId;
+    RootedId propId(cx);
     if (!shape->getUserId(cx, &propId))
         return false;
     masm.Push(propId, argIdReg);
@@ -1367,9 +1372,12 @@ IsPropertySetInlineable(JSContext *cx, HandleObject obj, HandleId id, MutableHan
 
 static bool
 IsPropertySetterCallInlineable(JSContext *cx, HandleObject obj, HandleObject holder,
-                               jsid id, HandleShape shape)
+                               HandleShape shape)
 {
     if (!shape)
+        return false;
+
+    if (!holder->isNative())
         return false;
 
     if (shape->hasSlot())
@@ -1390,7 +1398,7 @@ IsPropertySetterCallInlineable(JSContext *cx, HandleObject obj, HandleObject hol
 }
 
 static bool
-IsPropertyAddInlineable(JSContext *cx, HandleObject obj, jsid id, uint32_t oldSlots,
+IsPropertyAddInlineable(JSContext *cx, HandleObject obj, HandleId id, uint32_t oldSlots,
                         MutableHandleShape pShape)
 {
     // This is not a Add, the property exists.
@@ -1468,7 +1476,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
             if (!JSObject::lookupProperty(cx, obj, name, &holder, &shape))
                 return false;
 
-            if (IsPropertySetterCallInlineable(cx, obj, holder, id, shape)) {
+            if (IsPropertySetterCallInlineable(cx, obj, holder, shape)) {
                 if (!cache.attachSetterCall(cx, ion, obj, holder, shape, returnAddr))
                     return false;
                 addedSetterStub = true;
@@ -1532,17 +1540,17 @@ GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
 }
 
 bool
-GetElementIC::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
+GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval)
 {
-    JS_ASSERT(obj->isDenseArray());
+    JS_ASSERT(obj->isNative());
     JS_ASSERT(idval.isInt32());
 
     Label failures;
     MacroAssembler masm;
 
-    // Guard object is a dense array.
+    // Guard object's shape.
     RootedObject globalObj(cx, &script->global());
-    RootedShape shape(cx, GetDenseArrayShape(cx, globalObj));
+    RootedShape shape(cx, obj->lastProperty());
     if (!shape)
         return false;
     masm.branchTestObjShape(Assembler::NotEqual, object(), shape, &failures);
@@ -1586,7 +1594,7 @@ GetElementIC::attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, con
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
-    setHasDenseArrayStub();
+    setHasDenseStub();
     return linkAndAttachStub(cx, masm, ion, "dense array", rejoinOffset, &exitOffset);
 }
 
@@ -1594,39 +1602,50 @@ bool
 GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
                      HandleValue idval, MutableHandleValue res)
 {
-    AutoFlushCache afc ("GetElementCache");
-
     IonScript *ion = GetTopIonJSScript(cx)->ionScript();
-
     GetElementIC &cache = ion->getCache(cacheIndex).toGetElement();
+    RootedScript script(cx);
+    jsbytecode *pc;
+    cache.getScriptedLocation(&script, &pc);
+    RootedValue lval(cx, ObjectValue(*obj));
+
+    if (cache.isDisabled()) {
+        if (!GetElementOperation(cx, JSOp(*pc), lval, idval, res))
+            return false;
+        types::TypeScript::Monitor(cx, script, pc, res);
+        return true;
+    }
 
     // Override the return value if we are invalidated (bug 728188).
     AutoDetectInvalidation adi(cx, res.address(), ion);
 
     RootedId id(cx);
-    if (!FetchElementId(cx, obj, idval, id.address(), res))
+    if (!FetchElementId(cx, obj, idval, &id, res))
         return false;
 
+    bool attachedStub = false;
     if (cache.canAttachStub()) {
         if (obj->isNative() && cache.monitoredResult()) {
             uint32_t dummy;
             if (idval.isString() && JSID_IS_ATOM(id) && !JSID_TO_ATOM(id)->isIndex(&dummy)) {
                 if (!cache.attachGetProp(cx, ion, obj, idval, JSID_TO_ATOM(id)->asPropertyName()))
                     return false;
+                attachedStub = true;
             }
-        } else if (!cache.hasDenseArrayStub() && obj->isDenseArray() && idval.isInt32()) {
-            if (!cache.attachDenseArray(cx, ion, obj, idval))
+        } else if (!cache.hasDenseStub() && obj->isNative() && idval.isInt32()) {
+            if (!cache.attachDenseElement(cx, ion, obj, idval))
                 return false;
+            attachedStub = true;
         }
     }
 
-    RootedScript script(cx);
-    jsbytecode *pc;
-    cache.getScriptedLocation(&script, &pc);
-
-    RootedValue lval(cx, ObjectValue(*obj));
     if (!GetElementOperation(cx, JSOp(*pc), lval, idval, res))
         return false;
+
+    // If no new attach was done, and we've reached maximum number of stubs, then
+    // disable the cache.
+    if (!attachedStub && !cache.canAttachStub())
+        cache.disable();
 
     types::TypeScript::Monitor(cx, script, pc, res);
     return true;
@@ -1805,6 +1824,7 @@ BindNameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain)
 bool
 NameIC::attach(JSContext *cx, IonScript *ion, HandleObject scopeChain, HandleObject holder, HandleShape shape)
 {
+    AssertCanGC();
     MacroAssembler masm;
     Label failures;
 
@@ -1921,4 +1941,52 @@ NameIC::update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain,
     types::TypeScript::Monitor(cx, script, pc, vp);
 
     return true;
+}
+
+bool
+CallsiteCloneIC::attach(JSContext *cx, IonScript *ion, HandleFunction original,
+                        HandleFunction clone)
+{
+    MacroAssembler masm;
+
+    // Guard against object identity on the original.
+    RepatchLabel exit;
+    CodeOffsetJump exitOffset = masm.branchPtrWithPatch(Assembler::NotEqual, calleeReg(),
+                                                        ImmWord(uintptr_t(original.get())), &exit);
+    masm.bind(&exit);
+
+    // Load the clone.
+    masm.movePtr(ImmWord(uintptr_t(clone.get())), outputReg());
+
+    RepatchLabel rejoin;
+    CodeOffsetJump rejoinOffset = masm.jumpWithPatch(&rejoin);
+    masm.bind(&rejoin);
+
+    return linkAndAttachStub(cx, masm, ion, "generic", rejoinOffset, &exitOffset);
+}
+
+JSObject *
+CallsiteCloneIC::update(JSContext *cx, size_t cacheIndex, HandleObject callee)
+{
+    AutoFlushCache afc ("CallsiteCloneCache");
+
+    // Act as the identity for functions that are not clone-at-callsite, as we
+    // generate this cache as long as some callees are clone-at-callsite.
+    RootedFunction fun(cx, callee->toFunction());
+    if (!fun->isCloneAtCallsite())
+        return fun;
+
+    IonScript *ion = GetTopIonJSScript(cx)->ionScript();
+    CallsiteCloneIC &cache = ion->getCache(cacheIndex).toCallsiteClone();
+
+    RootedFunction clone(cx, CloneFunctionAtCallsite(cx, fun, cache.callScript(), cache.callPc()));
+    if (!clone)
+        return NULL;
+
+    if (cache.canAttachStub()) {
+        if (!cache.attach(cx, ion, fun, clone))
+            return NULL;
+    }
+
+    return clone;
 }

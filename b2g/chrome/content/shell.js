@@ -121,12 +121,16 @@ var shell = {
       }
     } catch (e) { }
 
-    // Let Gaia notify the user of the crash.
-    this.sendChromeEvent({
-      type: "handle-crash",
-      crashID: crashID,
-      chrome: isChrome
-    });
+    // We can get here if we're just submitting old pending crashes.
+    // Check that there's a valid crashID so that we only notify the
+    // user if a crash just happened and not when we OOM. Bug 829477
+    if (crashID) {
+      this.sendChromeEvent({
+        type: "handle-crash",
+        crashID: crashID,
+        chrome: isChrome
+      });
+    }
   },
 
   // this function submit the pending crashes.
@@ -221,8 +225,18 @@ var shell = {
       let androidVersion = libcutils.property_get("ro.build.version.sdk") +
                            "(" + libcutils.property_get("ro.build.version.codename") + ")";
       cr.annotateCrashReport("Android_Version", androidVersion);
+
+      SettingsListener.observe("deviceinfo.os", "", function(value) {
+        try {
+          let cr = Cc["@mozilla.org/xre/app-info;1"]
+                     .getService(Ci.nsICrashReporter);
+          cr.annotateCrashReport("B2G_OS_Version", value);
+        } catch(e) { }
+      });
 #endif
-    } catch(e) { }
+    } catch(e) {
+      dump("exception: " + e);
+    }
 
     let homeURL = this.homeURL;
     if (!homeURL) {
@@ -725,7 +739,8 @@ var AlertsHelper = {
         title: title,
         text: text,
         appName: appName,
-        appIcon: appIcon
+        appIcon: appIcon,
+        manifestURL: manifestUrl
       });
     }
 
@@ -755,7 +770,7 @@ var AlertsHelper = {
   },
 
   receiveMessage: function alert_receiveMessage(aMessage) {
-    if (!aMessage.target.assertPermission("desktop-notification")) {
+    if (!aMessage.target.assertAppHasPermission("desktop-notification")) {
       Cu.reportError("Desktop-notification message " + aMessage.name +
                      " from a content process with no desktop-notification privileges.");
       return null;
@@ -899,6 +914,7 @@ let RemoteDebugger = {
       DebuggerServer.init(this.prompt.bind(this));
       DebuggerServer.addBrowserActors();
       DebuggerServer.addActors('chrome://browser/content/dbg-browser-actors.js');
+      DebuggerServer.addActors('chrome://browser/content/dbg-webapps-actors.js');
     }
 
     let port = Services.prefs.getIntPref('devtools.debugger.remote-port') || 6000;
@@ -990,9 +1006,11 @@ window.addEventListener('ContentStart', function cr_onContentStart() {
 window.addEventListener('ContentStart', function update_onContentStart() {
   let updatePrompt = Cc["@mozilla.org/updates/update-prompt;1"]
                        .createInstance(Ci.nsIUpdatePrompt);
+  if (!updatePrompt) {
+    return;
+  }
 
-  let content = shell.contentBrowser.contentWindow;
-  content.addEventListener("mozContentEvent", updatePrompt.wrappedJSObject);
+  updatePrompt.wrappedJSObject.handleContentStart(shell);
 });
 
 (function geolocationStatusTracker() {

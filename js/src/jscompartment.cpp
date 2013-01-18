@@ -301,7 +301,7 @@ JSCompartment::wrap(JSContext *cx, Value *vp, JSObject *existing)
 
     /* Unwrap incoming objects. */
     if (vp->isObject()) {
-        Rooted<JSObject*> obj(cx, &vp->toObject());
+        RootedObject obj(cx, &vp->toObject());
 
         if (obj->compartment() == this)
             return WrapForSameCompartment(cx, obj, vp);
@@ -353,10 +353,10 @@ JSCompartment::wrap(JSContext *cx, Value *vp, JSObject *existing)
 
     if (vp->isString()) {
         RootedValue orig(cx, *vp);
-        JSStableString *str = vp->toString()->ensureStable(cx);
+        Rooted<JSStableString *> str(cx, vp->toString()->ensureStable(cx));
         if (!str)
             return false;
-        JSString *wrapped = js_NewStringCopyN(cx, str->chars().get(), str->length());
+        RootedString wrapped(cx, js_NewStringCopyN(cx, str->chars().get(), str->length()));
         if (!wrapped)
             return false;
         vp->setString(wrapped);
@@ -454,7 +454,12 @@ JSCompartment::wrapId(JSContext *cx, jsid *idp)
     RootedValue value(cx, IdToValue(*idp));
     if (!wrap(cx, value.address()))
         return false;
-    return ValueToId(cx, value.get(), idp);
+    RootedId id(cx);
+    if (!ValueToId(cx, value.get(), &id))
+        return false;
+
+    *idp = id;
+    return true;
 }
 
 bool
@@ -573,8 +578,6 @@ JSCompartment::markTypes(JSTracer *trc)
         MarkTypeObjectRoot(trc, &type, "mark_types_scan");
         JS_ASSERT(type == i.get<types::TypeObject>());
     }
-
-    gcTypesMarked = true;
 }
 
 void
@@ -650,6 +653,7 @@ JSCompartment::sweep(FreeOp *fop, bool releaseTypes)
         sweepNewTypeObjectTable(newTypeObjects);
         sweepNewTypeObjectTable(lazyTypeObjects);
         sweepBreakpoints(fop);
+        sweepCallsiteClones();
 
         if (global_ && IsObjectAboutToBeFinalized(global_.unsafeGet()))
             global_ = NULL;
@@ -795,7 +799,7 @@ JSCompartment::onTooMuchMalloc()
 bool
 JSCompartment::hasScriptsOnStack()
 {
-    for (AllFramesIter afi(rt->stackSpace); !afi.done(); ++afi) {
+    for (AllFramesIter afi(rt); !afi.done(); ++afi) {
 #ifdef JS_ION
         // If this is an Ion frame, check the IonActivation instead
         if (afi.isIon())

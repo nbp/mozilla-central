@@ -350,6 +350,14 @@ struct JSCompartment : private JS::shadow::Compartment, public js::gc::GraphNode
     js::types::TypeObject *getLazyType(JSContext *cx, js::Handle<js::TaggedProto> proto);
 
     /*
+     * Hash table of all manually call site-cloned functions from within
+     * self-hosted code. Cloning according to call site provides extra
+     * sensitivity for type specialization and inlining.
+     */
+    js::CallsiteCloneTable callsiteClones;
+    void sweepCallsiteClones();
+
+    /*
      * Keeps track of the total number of malloc bytes connected to a
      * compartment's GC things. This counter should be used in preference to
      * gcMallocBytes. These counters affect collection in the same way as
@@ -378,12 +386,6 @@ struct JSCompartment : private JS::shadow::Compartment, public js::gc::GraphNode
 
     /* This compartment's gray roots. */
     js::Vector<js::GrayRoot, 0, js::SystemAllocPolicy> gcGrayRoots;
-
-    /*
-     * Whether type objects have been marked by markTypes().  This is used to
-     * determine whether they need to be swept.
-     */
-    bool                         gcTypesMarked;
 
   private:
     /*

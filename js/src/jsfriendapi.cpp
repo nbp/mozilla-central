@@ -389,9 +389,9 @@ js::GetOutermostEnclosingFunctionOfScriptedCaller(JSContext *cx)
     if (!fp->isFunctionFrame())
         return NULL;
 
-    JSFunction *scriptedCaller = fp->fun();
+    RootedFunction scriptedCaller(cx, fp->fun());
     RootedScript outermost(cx, scriptedCaller->nonLazyScript());
-    for (StaticScopeIter i(scriptedCaller); !i.done(); i++) {
+    for (StaticScopeIter i(cx, scriptedCaller); !i.done(); i++) {
         if (i.type() == StaticScopeIter::FUNCTION)
             outermost = i.funScript();
     }
@@ -932,6 +932,14 @@ js::GetTestingFunctions(JSContext *cx)
 
     return obj;
 }
+
+#ifdef DEBUG
+JS_FRIEND_API(unsigned)
+js::GetEnterCompartmentDepth(JSContext *cx)
+{
+  return cx->getEnterCompartmentDepth();
+}
+#endif
 
 JS_FRIEND_API(void)
 js::SetRuntimeProfilingStack(JSRuntime *rt, ProfileEntry *stack, uint32_t *size, uint32_t max)

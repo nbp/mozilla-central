@@ -262,6 +262,11 @@ pref("browser.search.jarURIs", "chrome://browser/locale/searchplugins/");
 // tell the search service that we don't really expose the "current engine"
 pref("browser.search.noCurrentEngine", true);
 
+#ifdef MOZ_OFFICIAL_BRANDING
+// {moz:official} expands to "official"
+pref("browser.search.official", true);
+#endif
+
 // enable xul error pages
 pref("browser.xul.error_pages.enabled", true);
 
@@ -568,7 +573,7 @@ pref("browser.safebrowsing.reportMalwareErrorURL", "http://%LOCALE%.malware-erro
 pref("browser.safebrowsing.warning.infoURL", "http://www.mozilla.com/%LOCALE%/firefox/phishing-protection/");
 pref("browser.safebrowsing.malware.reportURL", "http://safebrowsing.clients.google.com/safebrowsing/diagnostic?client=%NAME%&hl=%LOCALE%&site=");
 
-pref("browser.safebrowsing.id", "@MOZ_APP_UA_NAME@");
+pref("browser.safebrowsing.id", @MOZ_APP_UA_NAME@);
 
 // Name of the about: page contributed by safebrowsing to handle display of error
 // pages on phishing/malware hits.  (bug 399233)
@@ -668,3 +673,6 @@ pref("app.orientation.default", "");
 // On memory pressure, release dirty but unused pages held by jemalloc
 // back to the system.
 pref("memory.free_dirty_pages", true);
+
+// Enable tiled layers rendering by default on android
+pref("gfx.use_tiled_thebes", true);

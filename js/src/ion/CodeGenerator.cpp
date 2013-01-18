@@ -3445,6 +3445,13 @@ CodeGenerator::visitIteratorStart(LIteratorStart *lir)
     masm.loadObjProto(temp1, temp1);
     masm.branchTestPtr(Assembler::NonZero, temp1, temp1, ool->entry());
 
+    // Ensure the object does not have any elements. The presence of dense
+    // elements is not captured by the shape tests above.
+    masm.branchPtr(Assembler::NotEqual,
+                   Address(obj, JSObject::offsetOfElements()),
+                   ImmWord(js::emptyObjectElements),
+                   ool->entry());
+
     // Write barrier for stores to the iterator. We only need to take a write
     // barrier if NativeIterator::obj is actually going to change.
     {
@@ -3671,7 +3678,7 @@ CodeGenerator::link()
       IonScript::New(cx, graph.totalSlotCount(), scriptFrameSize, snapshots_.size(),
                      bailouts_.length(), graph.numConstants(),
                      safepointIndices_.length(), osiIndices_.length(),
-                     cacheList_.length(), runtimeData_.length(), barrierOffsets_.length(),
+                     cacheList_.length(), runtimeData_.length(),
                      safepoints_.size(), graph.mir().numScripts());
     SetIonScript(script, executionMode, ionScript);
 
@@ -3707,10 +3714,6 @@ CodeGenerator::link()
         ionScript->copySafepointIndices(&safepointIndices_[0], masm);
     if (safepoints_.size())
         ionScript->copySafepoints(&safepoints_);
-
-    // for switching GC modes.
-    if (barrierOffsets_.length())
-        ionScript->copyPrebarrierEntries(&barrierOffsets_[0], masm);
 
     // for rare cases, such as f.arguments or bailouts.
     if (bailouts_.length())
@@ -3893,6 +3896,39 @@ CodeGenerator::visitStoreFixedSlotT(LStoreFixedSlotT *ins)
 }
 
 bool
+CodeGenerator::visitCallsiteCloneCache(LCallsiteCloneCache *ins)
+{
+    const MCallsiteCloneCache *mir = ins->mir();
+    Register callee = ToRegister(ins->callee());
+    Register output = ToRegister(ins->output());
+
+    CallsiteCloneIC cache(callee, mir->block()->info().script(), mir->callPc(), output);
+    return inlineCache(ins, allocateCache(cache));
+}
+
+typedef JSObject *(*CallsiteCloneICFn)(JSContext *, size_t, HandleObject);
+const VMFunction CallsiteCloneIC::UpdateInfo =
+    FunctionInfo<CallsiteCloneICFn>(CallsiteCloneIC::update);
+
+bool
+CodeGenerator::visitCallsiteCloneIC(OutOfLineUpdateCache *ool, CallsiteCloneIC *ic)
+{
+    AssertCanGC();
+    LInstruction *lir = ool->lir();
+    saveLive(lir);
+
+    pushArg(ic->calleeReg());
+    pushArg(Imm32(ool->getCacheIndex()));
+    if (!callVM(CallsiteCloneIC::UpdateInfo, lir))
+        return false;
+    StoreRegisterTo(ic->outputReg()).generate(this);
+    restoreLiveIgnore(lir, StoreRegisterTo(ic->outputReg()).clobbered());
+
+    masm.jump(ool->rejoin());
+    return true;
+}
+
+bool
 CodeGenerator::visitGetNameCache(LGetNameCache *ins)
 {
     Register scopeChain = ToRegister(ins->scopeObj());
@@ -4031,7 +4067,7 @@ CodeGenerator::visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic)
     if (!callVM(BindNameIC::UpdateInfo, lir))
         return false;
     StoreRegisterTo(ic->outputReg()).generate(this);
-    restoreLiveIgnore(lir, StoreValueTo(ic->outputReg()).clobbered());
+    restoreLiveIgnore(lir, StoreRegisterTo(ic->outputReg()).clobbered());
 
     masm.jump(ool->rejoin());
     return true;

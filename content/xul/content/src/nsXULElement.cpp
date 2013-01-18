@@ -89,6 +89,7 @@
 #include "nsAttrValueOrString.h"
 #include "nsAttrValueInlines.h"
 #include "mozilla/Attributes.h"
+#include <algorithm>
 
 // The XUL doc interface
 #include "nsIDOMXULDocument.h"
@@ -136,10 +137,8 @@ public:
 
   NS_IMETHOD GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
   {
-    nsresult rv;
-    *aStyle = static_cast<nsXULElement*>(mElement.get())->GetStyle(&rv);
-    NS_ENSURE_SUCCESS(rv, rv);
-    NS_ADDREF(*aStyle);
+    nsXULElement* element = static_cast<nsXULElement*>(mElement.get());
+    NS_ADDREF(*aStyle = element->Style());
     return NS_OK;
   }
   NS_FORWARD_NSIFRAMELOADEROWNER(static_cast<nsXULElement*>(mElement.get())->)
@@ -301,7 +300,6 @@ NS_TrustedNewXULElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNod
 //----------------------------------------------------------------------
 // nsISupports interface
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXULElement,
                                                   nsStyledElement)
     {
@@ -823,7 +821,7 @@ nsXULElement::RemoveChildAt(uint32_t aIndex, bool aNotify)
         int32_t treeRows;
         listBox->GetRowCount(&treeRows);
         if (treeRows > 0) {
-            newCurrentIndex = NS_MIN((treeRows - 1), newCurrentIndex);
+            newCurrentIndex = std::min((treeRows - 1), newCurrentIndex);
             nsCOMPtr<nsIDOMElement> newCurrentItem;
             listBox->GetItemAtIndex(newCurrentIndex, getter_AddRefs(newCurrentItem));
             nsCOMPtr<nsIDOMXULSelectControlItemElement> xulCurItem = do_QueryInterface(newCurrentItem);
@@ -1831,8 +1829,6 @@ nsXULElement::IsEventAttributeName(nsIAtom *aName)
 {
   return nsContentUtils::IsEventAttributeName(aName, EventNameType_XUL);
 }
-
-NS_IMPL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(nsXULPrototypeNode)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {

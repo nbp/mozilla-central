@@ -3023,22 +3023,33 @@ let RIL = {
         delete newCalls[currentCall.callIndex];
       }
 
-      if (newCall) {
-        // Call is still valid.
-        if (newCall.state != currentCall.state) {
-          // State has changed.
-          if (!currentCall.started && newCall.state == CALL_STATE_ACTIVE) {
-            currentCall.started = new Date().getTime();
-          }
-          currentCall.state = newCall.state;
-          this._handleChangedCallState(currentCall);
-        }
-      } else {
+      if (!newCall) {
         // Call is no longer reported by the radio. Remove from our map and
         // send disconnected state change.
         delete this.currentCalls[currentCall.callIndex];
         this.getFailCauseCode(currentCall);
+        continue;
       }
+
+      // Call is still valid.
+      if (newCall.state == currentCall.state) {
+        continue;
+      }
+
+      // State has changed.
+      if (newCall.state == CALL_STATE_INCOMING &&
+          currentCall.state == CALL_STATE_WAITING) {
+        // Update the call internally but we don't notify DOM since these two
+        // states are viewed as the same one there.
+        currentCall.state = newCall.state;
+        continue;
+      }
+
+      if (!currentCall.started && newCall.state == CALL_STATE_ACTIVE) {
+        currentCall.started = new Date().getTime();
+      }
+      currentCall.state = newCall.state;
+      this._handleChangedCallState(currentCall);
     }
 
     // Go through any remaining calls that are new to us.
@@ -3597,12 +3608,6 @@ let RIL = {
     }
 
     delete this._pendingSentSmsMap[message.messageRef];
-
-    if ((options.segmentMaxSeq > 1)
-        && (options.segmentSeq < options.segmentMaxSeq)) {
-      // Not the last segment.
-      return PDU_FCS_OK;
-    }
 
     let deliveryStatus = ((status >>> 5) == 0x00)
                        ? GECKO_SMS_DELIVERY_STATUS_SUCCESS
@@ -4409,17 +4414,17 @@ RIL[REQUEST_SEND_SMS] = function REQUEST_SEND_SMS(length, options) {
   options.ackPDU = Buf.readString();
   options.errorCode = Buf.readUint32();
 
-  if (options.requestStatusReport) {
-    if (DEBUG) debug("waiting SMS-STATUS-REPORT for messageRef " + options.messageRef);
-    this._pendingSentSmsMap[options.messageRef] = options;
-  }
-
   if ((options.segmentMaxSeq > 1)
       && (options.segmentSeq < options.segmentMaxSeq)) {
     // Not last segment
     this._processSentSmsSegment(options);
   } else {
-    // Last segment sent with success. Report it.
+    // Last segment sent with success.
+    if (options.requestStatusReport) {
+      if (DEBUG) debug("waiting SMS-STATUS-REPORT for messageRef " + options.messageRef);
+      this._pendingSentSmsMap[options.messageRef] = options;
+    }
+
     this.sendDOMMessage({
       rilMessageType: "sms-sent",
       envelopeId: options.envelopeId,
@@ -7452,7 +7457,7 @@ let StkCommandParamsFactory = {
         if (!call.confirmMessage) {
           call.confirmMessage = ctlv.value.identifier;
         } else {
-          call.callMessge = ctlv.value.identifier;
+          call.callMessage = ctlv.value.identifier;
           break;
         }
       }

@@ -73,6 +73,11 @@ XPCOMUtils.defineLazyServiceGetter(this, "DOMUtils",
 XPCOMUtils.defineLazyServiceGetter(window, "URIFixup",
   "@mozilla.org/docshell/urifixup;1", "nsIURIFixup");
 
+#ifdef MOZ_WEBRTC
+XPCOMUtils.defineLazyServiceGetter(this, "MediaManagerService",
+  "@mozilla.org/mediaManagerService;1", "nsIMediaManagerService");
+#endif
+
 const kStateActive = 0x00000001; // :active pseudoclass for elements
 
 const kXLinkNamespace = "http://www.w3.org/1999/xlink";
@@ -246,6 +251,9 @@ var BrowserApp = {
 #endif
 #ifdef ACCESSIBILITY
     AccessFu.attach(window);
+#endif
+#ifdef MOZ_WEBRTC
+    WebrtcUI.init();
 #endif
 
     // Init LoginManager
@@ -467,21 +475,9 @@ var BrowserApp = {
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.saveImage"),
       NativeWindow.contextmenus.imageSaveableContext,
       function(aTarget) {
-        let doc = aTarget.ownerDocument;
-        let imageCache = Cc["@mozilla.org/image/tools;1"].getService(Ci.imgITools)
-                                                         .getImgCacheForDocument(doc);
-        let props = imageCache.findEntryProperties(aTarget.currentURI, doc.characterSet);
-        let contentDisposition = "";
-        let type = "";
-        try {
-           contentDisposition = String(props.get("content-disposition", Ci.nsISupportsCString));
-           type = String(props.get("type", Ci.nsISupportsCString));
-        } catch(ex) {
-           contentDisposition = "";
-           type = "";
-        }
-        ContentAreaUtils.internalSave(aTarget.currentURI.spec, null, null, contentDisposition, type, false, "SaveImageTitle", null,
-                                      aTarget.ownerDocument.documentURIObject, aTarget.ownerDocument, true, null);
+        ContentAreaUtils.saveImageURL(aTarget.currentURI.spec, null, "SaveImageTitle",
+                                      false, true, aTarget.ownerDocument.documentURIObject,
+                                      aTarget.ownerDocument);
       });
 
     NativeWindow.contextmenus.add(Strings.browser.GetStringFromName("contextmenu.setWallpaper"),
@@ -526,6 +522,9 @@ var BrowserApp = {
     Tabs.uninit();
 #ifdef MOZ_TELEMETRY_REPORTING
     Telemetry.uninit();
+#endif
+#ifdef MOZ_WEBRTC
+    WebrtcUi.uninit();
 #endif
   },
 
@@ -740,6 +739,38 @@ var BrowserApp = {
       }
     };
     sendMessageToJava(message);
+  },
+
+  /**
+   * Gets an open tab with the given URL.
+   *
+   * @param  aURL URL to look for
+   * @return the tab with the given URL, or null if no such tab exists
+   */
+  getTabWithURL: function getTabWithURL(aURL) {
+    let uri = Services.io.newURI(aURL, null, null);
+    for (let i = 0; i < this._tabs.length; ++i) {
+      let tab = this._tabs[i];
+      if (tab.browser.currentURI.equals(uri)) {
+        return tab;
+      }
+    }
+    return null;
+  },
+
+  /**
+   * If a tab with the given URL already exists, that tab is selected.
+   * Otherwise, a new tab is opened with the given URL.
+   *
+   * @param aURL URL to open
+   */
+  selectOrOpenTab: function selectOrOpenTab(aURL) {
+    let tab = this.getTabWithURL(aURL);
+    if (tab == null) {
+      this.addTab(aURL);
+    } else {
+      this.selectTab(tab);
+    }
   },
 
   // This method updates the state in BrowserApp after a tab has been selected
@@ -992,7 +1023,7 @@ var BrowserApp = {
   getFocusedInput: function(aBrowser, aOnlyInputElements = false) {
     let doc = aBrowser.contentDocument;
     if (!doc)
-      return;
+      return null;
 
     let focused = doc.activeElement;
     while (focused instanceof HTMLFrameElement || focused instanceof HTMLIFrameElement) {
@@ -1618,9 +1649,6 @@ var NativeWindow = {
           }
         }
 
-        // if we reach a link or a text node, stop digging up through the node hierarchy
-        if (this.linkOpenableContext.matches(element) || this.textContext.matches(element))
-          break;
         element = element.parentNode;
       }
 
@@ -1693,6 +1721,11 @@ var NativeWindow = {
         }
       };
       let data = JSON.parse(sendMessageToJava(msg));
+      if (data.button == -1) {
+        // prompt was cancelled
+        return;
+      }
+
       let selectedId = itemArray[data.button].id;
       let selectedItem = this._getMenuItemForId(selectedId);
 
@@ -1703,7 +1736,6 @@ var NativeWindow = {
           while (aTarget) {
             if (selectedItem.matches(aTarget, aX, aY)) {
               selectedItem.callback.call(selectedItem, aTarget, aX, aY);
-              foundNode = true;
               break;
             }
             aTarget = aTarget.parentNode;
@@ -3116,8 +3148,13 @@ Tab.prototype = {
     let viewportHeight = gScreenHeight / zoom;
     let [pageWidth, pageHeight] = this.getPageSize(this.browser.contentDocument,
                                                    viewportWidth, viewportHeight);
-    let scrollPortWidth = Math.min(viewportWidth, pageWidth);
-    let scrollPortHeight = Math.min(viewportHeight, pageHeight);
+
+    // Make sure the aspect ratio of the screen is maintained when setting
+    // the clamping scroll-port size.
+    let factor = Math.min(viewportWidth / gScreenWidth, pageWidth / gScreenWidth,
+                          viewportHeight / gScreenHeight, pageHeight / gScreenHeight);
+    let scrollPortWidth = gScreenWidth * factor;
+    let scrollPortHeight = gScreenHeight * factor;
 
     let win = this.browser.contentWindow;
     win.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils).
@@ -8023,9 +8060,10 @@ var MemoryObserver = {
     // If this browser is already a zombie, fallback to the session data
     let currentURL = browser.__SS_restore ? data.entries[0].url : browser.currentURI.spec;
     let sibling = browser.nextSibling;
+    let isPrivate = PrivateBrowsingUtils.isWindowPrivate(browser.contentWindow);
 
     tab.destroy();
-    tab.create(currentURL, { sibling: sibling, zombifying: true, delayLoad: true });
+    tab.create(currentURL, { sibling: sibling, zombifying: true, delayLoad: true, isPrivate: isPrivate });
 
     // Reattach session store data and flag this browser so it is restored on select
     browser = tab.browser;
@@ -8110,6 +8148,112 @@ var Distribution = {
     defaults.setCharPref("distribution.version", aData.version);
   }
 };
+
+#ifdef MOZ_WEBRTC
+var WebrtcUI = {
+  init: function () {
+    Services.obs.addObserver(this, "getUserMedia:request", false);
+  },
+
+  uninit: function () {
+    Services.obs.removeObserver(this, "getUserMedia:request");
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    if (aTopic == "getUserMedia:request") {
+      this.handleRequest(aSubject, aTopic, aData);
+    }
+  },
+
+  handleRequest: function handleRequest(aSubject, aTopic, aData) {
+    let { windowID: windowID, callID: callID } = JSON.parse(aData);
+
+    let someWindow = Services.wm.getMostRecentWindow("navigator:browser");
+    if (someWindow != window)
+      return;
+
+    let contentWindow = someWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+          .getInterface(Ci.nsIDOMWindowUtils).getOuterWindowWithId(windowID);
+    let browser = BrowserApp.getBrowserForWindow(contentWindow);
+    let params = aSubject.QueryInterface(Ci.nsIMediaStreamOptions);
+
+    browser.ownerDocument.defaultView.navigator.mozGetUserMediaDevices(
+      function (devices) {
+        WebrtcUI.prompt(browser, callID, params.audio, params.video, devices);
+      },
+      function (error) {
+        Cu.reportError(error);
+      }
+    );
+  },
+
+  getDeviceButtons: function(aDevices, aCallID, stringBundle) {
+    let buttons = [{
+      label: stringBundle.GetStringFromName("getUserMedia.denyRequest.label"),
+      callback: function() {
+        Services.obs.notifyObservers(null, "getUserMedia:response:deny", aCallID);
+      }
+    }];
+    for (let device of aDevices) {
+      let button = {
+        label: stringBundle.GetStringFromName("getUserMedia.shareRequest.label"),
+        callback: function() {
+          let allowedDevices = Cc["@mozilla.org/supports-array;1"].createInstance(Ci.nsISupportsArray);
+          allowedDevices.AppendElement(device);
+          Services.obs.notifyObservers(allowedDevices, "getUserMedia:response:allow", aCallID);
+          // Show browser-specific indicator for the active camera/mic access.
+          // XXX: Mobile?
+        }
+      };
+      buttons.push(button);
+    }
+
+    return buttons;
+  },
+
+  prompt: function prompt(aBrowser, aCallID, aAudioRequested, aVideoRequested, aDevices) {
+    let audioDevices = [];
+    let videoDevices = [];
+    for (let device of aDevices) {
+      device = device.QueryInterface(Ci.nsIMediaDevice);
+      switch (device.type) {
+      case "audio":
+        if (aAudioRequested)
+          audioDevices.push(device);
+        break;
+      case "video":
+        if (aVideoRequested)
+          videoDevices.push(device);
+        break;
+      }
+    }
+
+    let requestType;
+    if (audioDevices.length && videoDevices.length)
+      requestType = "CameraAndMicrophone";
+    else if (audioDevices.length)
+      requestType = "Microphone";
+    else if (videoDevices.length)
+      requestType = "Camera";
+    else
+      return;
+
+    let host = aBrowser.contentDocument.documentURIObject.asciiHost;
+    let stringBundle = Services.strings.createBundle("chrome://browser/locale/browser.properties");
+    let message = stringBundle.formatStringFromName("getUserMedia.share" + requestType + ".message", [ host ], 1);
+
+    if (audioDevices.length) {
+      let buttons = this.getDeviceButtons(audioDevices, aCallID, stringBundle);
+      NativeWindow.doorhanger.show(message, "webrtc-request-audio", buttons, BrowserApp.selectedTab.id);
+    }
+
+    if (videoDevices.length) {
+      let buttons = this.getDeviceButtons(videoDevices, aCallID, stringBundle);
+      NativeWindow.doorhanger.show(message, "webrtc-request-video", buttons, BrowserApp.selectedTab.id);
+    }
+  }
+}
+#endif
 
 var Tabs = {
   // This object provides functions to manage a most-recently-used list

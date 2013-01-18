@@ -66,9 +66,6 @@ class CodeGeneratorShared : public LInstructionVisitor
     // Vector of information about generated polymorphic inline caches.
     js::Vector<uint32_t, 0, SystemAllocPolicy> cacheList_;
 
-    // Vector of all patchable write pre-barrier offsets.
-    js::Vector<CodeOffsetLabel, 0, SystemAllocPolicy> barrierOffsets_;
-
     // List of stack slots that have been pushed as arguments to an MCall.
     js::Vector<uint32_t, 0, SystemAllocPolicy> pushedArgumentSlots_;
 
@@ -191,10 +188,6 @@ class CodeGeneratorShared : public LInstructionVisitor
         // Use the copy constructor on the allocated space.
         new (&runtimeData_[cacheList_.back()]) T(cache);
         return index;
-    }
-
-    void addPreBarrierOffset(CodeOffsetLabel offset) {
-        masm.collectOOM(barrierOffsets_.append(offset));
     }
 
   protected:
@@ -527,7 +520,6 @@ StoreValueTo_<Output> StoreValueTo(const Output &out)
     return StoreValueTo_<Output>(out);
 }
 
-
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM : public OutOfLineCodeBase<CodeGeneratorShared>
 {
@@ -553,7 +545,6 @@ class OutOfLineCallVM : public OutOfLineCodeBase<CodeGeneratorShared>
     LInstruction *lir() const { return lir_; }
     const VMFunction &function() const { return fun_; }
     const ArgSeq &args() const { return args_; }
-    ArgSeq &args() { return args_; }
     const StoreOutputTo &out() const { return out_; }
 };
 

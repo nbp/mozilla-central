@@ -23,7 +23,8 @@ namespace ion {
     _(SetProperty)                                              \
     _(GetElement)                                               \
     _(BindName)                                                 \
-    _(Name)
+    _(Name)                                                     \
+    _(CallsiteClone)
 
 // Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class kind##IC;
@@ -144,7 +145,8 @@ class IonCache
   protected:
     bool pure_ : 1;
     bool idempotent_ : 1;
-    size_t stubCount_ : 6;
+    bool disabled_ : 1;
+    size_t stubCount_ : 5;
 
     CodeLocationJump initialJump_;
     CodeLocationJump lastJump_;
@@ -192,6 +194,11 @@ class IonCache
         script(NULL),
         pc(NULL)
     {
+    }
+
+    void disable();
+    inline bool isDisabled() const {
+        return disabled_;
     }
 
     // Bind inline boundaries of the cache. This include the patchable jump
@@ -312,7 +319,7 @@ class GetPropertyIC : public IonCache
     PropertyName *name_;
     TypedOrValueRegister output_;
     bool allowGetters_ : 1;
-    bool hasDenseArrayLengthStub_ : 1;
+    bool hasArrayLengthStub_ : 1;
     bool hasTypedArrayLengthStub_ : 1;
 
   public:
@@ -325,7 +332,7 @@ class GetPropertyIC : public IonCache
         name_(name),
         output_(output),
         allowGetters_(allowGetters),
-        hasDenseArrayLengthStub_(false),
+        hasArrayLengthStub_(false),
         hasTypedArrayLengthStub_(false)
     {
     }
@@ -336,7 +343,7 @@ class GetPropertyIC : public IonCache
     PropertyName *name() const { return name_; }
     TypedOrValueRegister output() const { return output_; }
     bool allowGetters() const { return allowGetters_; }
-    bool hasDenseArrayLengthStub() const { return hasDenseArrayLengthStub_; }
+    bool hasArrayLengthStub() const { return hasArrayLengthStub_; }
     bool hasTypedArrayLengthStub() const { return hasTypedArrayLengthStub_; }
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
@@ -344,7 +351,7 @@ class GetPropertyIC : public IonCache
     bool attachCallGetter(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                           HandleShape shape,
                           const SafepointIndex *safepointIndex, void *returnAddr);
-    bool attachDenseArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
+    bool attachArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
     bool attachTypedArrayLength(JSContext *cx, IonScript *ion, JSObject *obj);
 
     static bool update(JSContext *cx, size_t cacheIndex, HandleObject obj, MutableHandleValue vp);
@@ -400,7 +407,7 @@ class GetElementIC : public IonCache
     ConstantOrRegister index_;
     TypedOrValueRegister output_;
     bool monitoredResult_ : 1;
-    bool hasDenseArrayStub_ : 1;
+    bool hasDenseStub_ : 1;
 
   public:
     GetElementIC(Register object, ConstantOrRegister index,
@@ -409,7 +416,7 @@ class GetElementIC : public IonCache
         index_(index),
         output_(output),
         monitoredResult_(monitoredResult),
-        hasDenseArrayStub_(false)
+        hasDenseStub_(false)
     {
     }
 
@@ -427,16 +434,16 @@ class GetElementIC : public IonCache
     bool monitoredResult() const {
         return monitoredResult_;
     }
-    bool hasDenseArrayStub() const {
-        return hasDenseArrayStub_;
+    bool hasDenseStub() const {
+        return hasDenseStub_;
     }
-    void setHasDenseArrayStub() {
-        JS_ASSERT(!hasDenseArrayStub());
-        hasDenseArrayStub_ = true;
+    void setHasDenseStub() {
+        JS_ASSERT(!hasDenseStub());
+        hasDenseStub_ = true;
     }
 
     bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval, PropertyName *name);
-    bool attachDenseArray(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
+    bool attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
 
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject obj, HandleValue idval,
@@ -516,6 +523,43 @@ class NameIC : public IonCache
 
     static bool
     update(JSContext *cx, size_t cacheIndex, HandleObject scopeChain, MutableHandleValue vp);
+};
+
+class CallsiteCloneIC : public IonCache
+{
+  protected:
+    Register callee_;
+    Register output_;
+    JSScript *callScript_;
+    jsbytecode *callPc_;
+
+  public:
+    CallsiteCloneIC(Register callee, JSScript *callScript, jsbytecode *callPc, Register output)
+      : callee_(callee),
+        output_(output),
+        callScript_(callScript),
+        callPc_(callPc)
+    {
+    }
+
+    CACHE_HEADER(CallsiteClone)
+
+    Register calleeReg() const {
+        return callee_;
+    }
+    HandleScript callScript() const {
+        return HandleScript::fromMarkedLocation(&callScript_);
+    }
+    jsbytecode *callPc() const {
+        return callPc_;
+    }
+    Register outputReg() const {
+        return output_;
+    }
+
+    bool attach(JSContext *cx, IonScript *ion, HandleFunction original, HandleFunction clone);
+
+    static JSObject *update(JSContext *cx, size_t cacheIndex, HandleObject callee);
 };
 
 #undef CACHE_HEADER

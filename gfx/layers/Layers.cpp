@@ -230,6 +230,43 @@ LayerManager::GetPrimaryScrollableLayer()
   return mRoot;
 }
 
+void
+LayerManager::GetScrollableLayers(nsTArray<Layer*>& aArray)
+{
+  if (!mRoot) {
+    return;
+  }
+
+  nsTArray<Layer*> queue;
+  queue.AppendElement(mRoot);
+  while (!queue.IsEmpty()) {
+    ContainerLayer* containerLayer = queue.LastElement()->AsContainerLayer();
+    queue.RemoveElementAt(queue.Length() - 1);
+    if (!containerLayer) {
+      continue;
+    }
+
+    const FrameMetrics& frameMetrics = containerLayer->GetFrameMetrics();
+    if (frameMetrics.IsScrollable()) {
+      aArray.AppendElement(containerLayer);
+      continue;
+    }
+
+    Layer* child = containerLayer->GetFirstChild();
+    while (child) {
+      queue.AppendElement(child);
+      child = child->GetNextSibling();
+    }
+  }
+}
+
+bool ThebesLayer::UseTiledThebes()
+{
+  static bool useTiledThebesLayer =
+    Preferences::GetBool("gfx.use_tiled_thebes", false);
+  return useTiledThebesLayer;
+}
+
 already_AddRefed<gfxASurface>
 LayerManager::CreateOptimalSurface(const gfxIntSize &aSize,
                                    gfxASurface::gfxImageFormat aFormat)

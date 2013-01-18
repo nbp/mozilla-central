@@ -204,12 +204,14 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitSetPropertyCacheV(LSetPropertyCacheV *ins);
     bool visitSetPropertyCacheT(LSetPropertyCacheT *ins);
     bool visitGetNameCache(LGetNameCache *ins);
+    bool visitCallsiteCloneCache(LCallsiteCloneCache *ins);
 
     bool visitGetPropertyIC(OutOfLineUpdateCache *ool, GetPropertyIC *ic);
     bool visitSetPropertyIC(OutOfLineUpdateCache *ool, SetPropertyIC *ic);
     bool visitGetElementIC(OutOfLineUpdateCache *ool, GetElementIC *ic);
     bool visitBindNameIC(OutOfLineUpdateCache *ool, BindNameIC *ic);
     bool visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic);
+    bool visitCallsiteCloneIC(OutOfLineUpdateCache *ool, CallsiteCloneIC *ic);
 
   private:
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);

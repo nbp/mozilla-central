@@ -16,7 +16,6 @@
 #include "mozilla/css/StyleRule.h"
 #include "nsIDocument.h"
 #include "nsIDocumentEncoder.h"
-#include "nsIDOMHTMLBodyElement.h"
 #include "nsIDOMHTMLDocument.h"
 #include "nsIDOMAttr.h"
 #include "nsIDOMDocumentFragment.h"
@@ -100,6 +99,7 @@
 #include "nsHTMLDocument.h"
 #include "nsDOMTouchEvent.h"
 #include "nsGlobalWindow.h"
+#include "mozilla/dom/HTMLBodyElement.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -233,9 +233,8 @@ class nsGenericHTMLElementTearoff : public nsIDOMElementCSSInlineStyle
 
   NS_IMETHOD GetStyle(nsIDOMCSSStyleDeclaration** aStyle)
   {
-    mozilla::ErrorResult rv;
-    NS_IF_ADDREF(*aStyle = mElement->GetStyle(rv));
-    return rv.ErrorCode();
+    NS_ADDREF(*aStyle = mElement->Style());
+    return NS_OK;
   }
 
   NS_DECL_CYCLE_COLLECTION_CLASS_AMBIGUOUS(nsGenericHTMLElementTearoff,
@@ -3025,8 +3024,7 @@ nsGenericHTMLElement::IsCurrentBodyElement()
 {
   // TODO Bug 698498: Should this handle the case where GetBody returns a
   //                  frameset?
-  nsCOMPtr<nsIDOMHTMLBodyElement> bodyElement = do_QueryInterface(this);
-  if (!bodyElement) {
+  if (!IsHTML(nsGkAtoms::body)) {
     return false;
   }
 
@@ -3038,7 +3036,7 @@ nsGenericHTMLElement::IsCurrentBodyElement()
 
   nsCOMPtr<nsIDOMHTMLElement> htmlElement;
   htmlDocument->GetBody(getter_AddRefs(htmlElement));
-  return htmlElement == bodyElement;
+  return htmlElement == static_cast<HTMLBodyElement*>(this);
 }
 
 // static
@@ -3274,16 +3272,16 @@ nsGenericHTMLElement::GetTokenList(nsIAtom* aAtom)
     list = new nsDOMSettableTokenList(this, aAtom);
     NS_ADDREF(list);
     SetProperty(aAtom, list, nsDOMSettableTokenListPropertyDestructor);
-  }                       
+  }
   return list;
-}  
+}
 
 void
 nsGenericHTMLElement::GetTokenList(nsIAtom* aAtom, nsIVariant** aResult)
 {
-  nsIDOMDOMSettableTokenList* itemType = GetTokenList(aAtom);
+  nsISupports* itemType = GetTokenList(aAtom);
   nsCOMPtr<nsIWritableVariant> out = new nsVariant();
-  out->SetAsInterface(NS_GET_IID(nsIDOMDOMSettableTokenList), itemType);
+  out->SetAsInterface(NS_GET_IID(nsISupports), itemType);
   out.forget(aResult);
 }
 
@@ -3293,14 +3291,16 @@ nsGenericHTMLElement::SetTokenList(nsIAtom* aAtom, nsIVariant* aValue)
   nsDOMSettableTokenList* itemType = GetTokenList(aAtom);
   nsAutoString string;
   aValue->GetAsAString(string);
-  return itemType->SetValue(string);
+  ErrorResult rv;
+  itemType->SetValue(string, rv);
+  return rv.ErrorCode();
 }
 
 static void
 HTMLPropertiesCollectionDestructor(void *aObject, nsIAtom *aProperty,
                                    void *aPropertyValue, void *aData)
 {
-  HTMLPropertiesCollection* properties = 
+  HTMLPropertiesCollection* properties =
     static_cast<HTMLPropertiesCollection*>(aPropertyValue);
   NS_IF_RELEASE(properties);
 }
@@ -3308,7 +3308,7 @@ HTMLPropertiesCollectionDestructor(void *aObject, nsIAtom *aProperty,
 HTMLPropertiesCollection*
 nsGenericHTMLElement::Properties()
 {
-  HTMLPropertiesCollection* properties = 
+  HTMLPropertiesCollection* properties =
     static_cast<HTMLPropertiesCollection*>(GetProperty(nsGkAtoms::microdataProperties));
   if (!properties) {
      properties = new HTMLPropertiesCollection(this);

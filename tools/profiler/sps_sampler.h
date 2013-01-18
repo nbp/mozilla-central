@@ -11,6 +11,7 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/Util.h"
 #include "nsAlgorithm.h"
+#include <algorithm>
 
 
 /* QT has a #define for the word "slots" and jsfriendapi.h has a struct with
@@ -178,8 +179,13 @@ JSObject *mozilla_sampler_get_profile_data(JSContext *aCx);
 const char** mozilla_sampler_get_features();
 void mozilla_sampler_init();
 void mozilla_sampler_shutdown();
-
 void mozilla_sampler_print_location();
+// Lock the profiler. When locked the profiler is (1) stopped,
+// (2) profile data is cleared, (3) profiler-locked is fired.
+// This is used to lock down the profiler during private browsing
+void mozilla_sampler_lock();
+// Unlock the profiler, leaving it stopped and fires profiler-unlocked.
+void mozilla_sampler_unlock();
 
 namespace mozilla {
 
@@ -357,7 +363,7 @@ public:
   }
   uint32_t stackSize() const
   {
-    return NS_MIN<uint32_t>(mStackPointer, mozilla::ArrayLength(mStack));
+    return std::min<uint32_t>(mStackPointer, mozilla::ArrayLength(mStack));
   }
 
   void sampleRuntime(JSRuntime *runtime) {
