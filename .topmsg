@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 832778 - Add packed double math operations. r=
+Subject: Bug 832779 - Unbox Int32 values with SIMD. r=
