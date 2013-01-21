@@ -183,6 +183,21 @@ public:
     } RoundingMode;
 
 private:
+
+    // E = general reg
+    // G = memory
+    // V = xmm
+    // W = xmm/mem64
+    // I = immediate
+    //
+    // b = byte
+    // w = word
+    // v = register size
+    // d = double
+    // sd = scalar double (for xmm)
+    // pd = packed double (for xmm)
+    //
+    // OPn_NAME_DstSrc
     typedef enum {
         OP_ADD_EvGv                     = 0x01,
         OP_ADD_GvEv                     = 0x03,
@@ -255,6 +270,8 @@ private:
         OP2_MOVSD_VsdWsd    = 0x10,
         OP2_MOVSD_WsdVsd    = 0x11,
         OP2_UNPCKLPS_VsdWsd = 0x14,
+        OP2_MOVAPD_VpdWpd   = 0x28,
+        OP2_MOVAPD_WpdVpd   = 0x29,
         OP2_CVTSI2SD_VsdEd  = 0x2A,
         OP2_CVTTSD2SI_GdWsd = 0x2C,
         OP2_UCOMISD_VsdWsd  = 0x2E,
@@ -2033,6 +2050,30 @@ public:
         spew("unpcklps   %s, %s",
              nameFPReg(src), nameFPReg(dst));
         m_formatter.twoByteOp(OP2_UNPCKLPS_VsdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void movapd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        spew("movapd     %s, %s",
+             nameFPReg(src), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MOVAPD_WpdVpd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void movapd_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        spew("movapd     %s0x%x(%s), %s",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MOVAPD_WpdVpd, (RegisterID)dst, base, offset);
+    }
+
+    void movapd_rm(XMMRegisterID src, int offset, RegisterID base)
+    {
+        spew("movapd     %s, %s0x%x(%s)",
+             nameFPReg(src), PRETTY_PRINT_OFFSET(offset), nameIReg(base));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MOVAPD_VpdWpd, (RegisterID)src, base, offset);
     }
 
     void movd_rr(RegisterID src, XMMRegisterID dst)

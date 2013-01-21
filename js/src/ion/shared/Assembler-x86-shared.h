@@ -206,6 +206,33 @@ class AssemblerX86Shared
     void align(int alignment) {
         masm.align(alignment);
     }
+
+    void movapd(const FloatRegister &src, const Operand &dst) {
+        switch (dst.kind()) {
+          case Operand::FPREG:
+            masm.movapd_rr(src.code(), dst.fpu());
+            break;
+          case Operand::REG_DISP:
+            masm.movapd_rm(src.code(), dst.disp(), dst.base());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
+    void movapd(const Operand &src, const FloatRegister &dst) {
+        switch (src.kind()) {
+          case Operand::FPREG:
+              masm.movapd_rr(src.fpu(), dst.code());
+            break;
+          case Operand::REG_DISP:
+              masm.movapd_mr(src.disp(), src.base(), dst.code());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
     void movl(const Imm32 &imm32, const Register &dest) {
         masm.movl_i32r(imm32.value, dest.code());
     }
