@@ -802,6 +802,20 @@ class AssemblerX86Shared
             JS_NOT_REACHED("unexpected operand kind");
         }
     }
+
+    void addpd(const Operand &src, const FloatRegister &dst) {
+        switch (src.kind()) {
+          case Operand::FPREG:
+              masm.addpd_rr(src.fpu(), dst.code());
+            break;
+          case Operand::REG_DISP:
+              masm.addpd_mr(src.disp(), src.base(), dst.code());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
     void subl(Imm32 imm, const Register &dest) {
         masm.subl_ir(imm.value, dest.code());
     }
