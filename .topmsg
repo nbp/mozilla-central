@@ -1,3 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 832777 - Add load and store intructions for packed values. r=
-
+Subject: Bug 832778 - Add packed double math operations. r=
