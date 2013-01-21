@@ -1188,6 +1188,7 @@ class AssemblerX86Shared
             JS_NOT_REACHED("unexpected operand kind");
         }
     }
+
     void divsd(const FloatRegister &src, const FloatRegister &dest) {
         masm.divsd_rr(src.code(), dest.code());
     }
@@ -1203,6 +1204,23 @@ class AssemblerX86Shared
             JS_NOT_REACHED("unexpected operand kind");
         }
     }
+
+    void divpd(const FloatRegister &src, const FloatRegister &dest) {
+        masm.divpd_rr(src.code(), dest.code());
+    }
+    void divpd(const Operand &src, const FloatRegister &dest) {
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.divpd_rr(src.fpu(), dest.code());
+            break;
+          case Operand::REG_DISP:
+            masm.divpd_mr(src.disp(), src.base(), dest.code());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
     void xorpd(const FloatRegister &src, const FloatRegister &dest) {
         masm.xorpd_rr(src.code(), dest.code());
     }

@@ -283,6 +283,7 @@ private:
         OP2_CVTSS2SD_VsdEd  = 0x5A,
         OP2_CVTSD2SS_VsdEd  = 0x5A,
         OP2_SUBSD_VsdWsd    = 0x5C,
+        OP2_DIVPD_VpdWpd    = 0x5E,
         OP2_DIVSD_VsdWsd    = 0x5E,
         OP2_SQRTSD_VsdWsd   = 0x51,
         OP2_ANDPD_VpdWpd    = 0x54,
@@ -2370,6 +2371,22 @@ public:
              PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
         m_formatter.prefix(PRE_SSE_F2);
         m_formatter.twoByteOp(OP2_DIVSD_VsdWsd, (RegisterID)dst, base, offset);
+    }
+
+    void divpd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        spew("divpd      %s, %s",
+             nameFPReg(src), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_DIVPD_VpdWpd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void divpd_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        spew("divpd      %s0x%x(%s), %s",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_DIVPD_VpdWpd, (RegisterID)dst, base, offset);
     }
 
     void xorpd_rr(XMMRegisterID src, XMMRegisterID dst)
