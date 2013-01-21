@@ -1173,6 +1173,7 @@ class AssemblerX86Shared
             JS_NOT_REACHED("unexpected operand kind");
         }
     }
+
     void mulsd(const FloatRegister &src, const FloatRegister &dest) {
         masm.mulsd_rr(src.code(), dest.code());
     }
@@ -1183,6 +1184,22 @@ class AssemblerX86Shared
             break;
           case Operand::REG_DISP:
             masm.mulsd_mr(src.disp(), src.base(), dest.code());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
+    void mulpd(const FloatRegister &src, const FloatRegister &dest) {
+        masm.mulpd_rr(src.code(), dest.code());
+    }
+    void mulpd(const Operand &src, const FloatRegister &dest) {
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.mulpd_rr(src.fpu(), dest.code());
+            break;
+          case Operand::REG_DISP:
+            masm.mulpd_mr(src.disp(), src.base(), dest.code());
             break;
           default:
             JS_NOT_REACHED("unexpected operand kind");

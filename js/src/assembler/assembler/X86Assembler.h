@@ -280,6 +280,7 @@ private:
         OP2_ADDPD_VpdWpd    = 0x58,
         OP2_ADDSD_VsdWsd    = 0x58,
         OP2_MULSD_VsdWsd    = 0x59,
+        OP2_MULPD_VpdWpd    = 0x59,
         OP2_CVTSS2SD_VsdEd  = 0x5A,
         OP2_CVTSD2SS_VsdEd  = 0x5A,
         OP2_SUBSD_VsdWsd    = 0x5C,
@@ -2315,6 +2316,22 @@ public:
              PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
         m_formatter.prefix(PRE_SSE_F2);
         m_formatter.twoByteOp(OP2_MULSD_VsdWsd, (RegisterID)dst, base, offset);
+    }
+
+    void mulpd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        spew("mulpd      %s, %s",
+             nameFPReg(src), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MULPD_VpdWpd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void mulpd_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        spew("mulpd      %s0x%x(%s), %s",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_MULPD_VpdWpd, (RegisterID)dst, base, offset);
     }
 
     void pextrw_irr(int whichWord, XMMRegisterID src, RegisterID dst)
