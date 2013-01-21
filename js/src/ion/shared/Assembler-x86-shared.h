@@ -1125,10 +1125,35 @@ class AssemblerX86Shared
     void movmskpd(const FloatRegister &src, const Register &dest) {
         masm.movmskpd_rr(src.code(), dest.code());
     }
+
+    void pblendw(const FloatRegister &src, const FloatRegister &dst, int mask) {
+        JS_ASSERT(HasSSE41());
+        masm.pblendw_irr(src.code(), dst.code(), mask);
+    }
+    void pblendw(const Operand &src, const FloatRegister &dst, int mask) {
+        JS_ASSERT(HasSSE41());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.pblendw_irr(src.fpu(), dst.code(), mask);
+            break;
+          case Operand::REG_DISP:
+            masm.pblendw_imr(src.disp(), src.base(), dst.code(), mask);
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
+    void pcmpeqq(const FloatRegister &lhs, const FloatRegister &rhs) {
+        JS_ASSERT(HasSSE41());
+        masm.pcmpeqq_rr(rhs.code(), lhs.code());
+    }
+
     void ptest(const FloatRegister &lhs, const FloatRegister &rhs) {
         JS_ASSERT(HasSSE41());
         masm.ptest_rr(rhs.code(), lhs.code());
     }
+
     void ucomisd(const FloatRegister &lhs, const FloatRegister &rhs) {
         masm.ucomisd_rr(rhs.code(), lhs.code());
     }

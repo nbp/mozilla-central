@@ -184,6 +184,8 @@ public:
 
 private:
 
+    // See chapter A.2 for naming enumerated values:
+    //
     // E = general reg
     // G = memory
     // V = xmm
@@ -308,12 +310,16 @@ private:
 
     typedef enum {
         OP3_ROUNDSD_VsdWsd  = 0x0B,
+        OP3_PBLENDW_VpdWpdIb = 0x0E,
         OP3_PTEST_VdVd      = 0x17,
-        OP3_PINSRD_VsdWsd   = 0x22
+        OP3_PINSRD_VsdWsd   = 0x22,
+        OP3_PCMPEQQ_VpdWpd  = 0x29
     } ThreeByteOpcodeID;
 
     typedef enum {
+        ESCAPE_PCMPEQQ      = 0x38,
         ESCAPE_PTEST        = 0x38,
+        ESCAPE_PBLENDW      = 0x3A,
         ESCAPE_PINSRD       = 0x3A,
         ESCAPE_ROUNDSD      = 0x3A 
     } ThreeByteEscape;
@@ -2137,6 +2143,29 @@ public:
              nameFPReg(src), nameIReg(dst));
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_MOVMSKPD_EdVd, dst, (RegisterID)src);
+    }
+
+    void pblendw_irr(XMMRegisterID src, XMMRegisterID dst, int mask) {
+        spew("pblendw    %s, %s, %d",
+             nameFPReg(src), nameFPReg(dst), mask);
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP3_PBLENDW_VpdWpdIb, ESCAPE_PBLENDW, (RegisterID)dst, (RegisterID)src);
+        m_formatter.immediate8(mask);
+    }
+
+    void pblendw_imr(int offset, RegisterID base, XMMRegisterID dst, int mask) {
+        spew("pblendw    %s0x%x(%s), %s, %d",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst), mask);
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP3_PBLENDW_VpdWpdIb, ESCAPE_PBLENDW, (RegisterID)dst, base, offset);
+        m_formatter.immediate8(mask);
+    }
+
+    void pcmpeqq_rr(XMMRegisterID lhs, XMMRegisterID rhs) {
+        spew("pcmpeqq    %s, %s",
+             nameFPReg(lhs), nameFPReg(rhs));
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.threeByteOp(OP3_PCMPEQQ_VpdWpd, ESCAPE_PCMPEQQ, (RegisterID)rhs, (RegisterID)lhs);
     }
 
     void ptest_rr(XMMRegisterID lhs, XMMRegisterID rhs) {
