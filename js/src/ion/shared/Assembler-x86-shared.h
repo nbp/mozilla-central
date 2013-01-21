@@ -803,6 +803,9 @@ class AssemblerX86Shared
         }
     }
 
+    void addpd(const FloatRegister &src, const FloatRegister &dest) {
+        masm.addpd_rr(src.code(), dest.code());
+    }
     void addpd(const Operand &src, const FloatRegister &dst) {
         switch (src.kind()) {
           case Operand::FPREG:
