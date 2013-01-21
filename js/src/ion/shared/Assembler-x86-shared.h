@@ -233,6 +233,19 @@ class AssemblerX86Shared
         }
     }
 
+    void movddup(const Operand &src, const FloatRegister &dst) {
+        switch (src.kind()) {
+          case Operand::FPREG:
+              masm.movddup_rr(src.fpu(), dst.code());
+            break;
+          case Operand::REG_DISP:
+              masm.movddup_mr(src.disp(), src.base(), dst.code());
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
+    }
+
     void movl(const Imm32 &imm32, const Register &dest) {
         masm.movl_i32r(imm32.value, dest.code());
     }

@@ -269,6 +269,7 @@ private:
     typedef enum {
         OP2_MOVSD_VsdWsd    = 0x10,
         OP2_MOVSD_WsdVsd    = 0x11,
+        OP2_MOVDDUP_VpdWsd  = 0x12,
         OP2_UNPCKLPS_VsdWsd = 0x14,
         OP2_MOVAPD_VpdWpd   = 0x28,
         OP2_MOVAPD_WpdVpd   = 0x29,
@@ -2233,6 +2234,22 @@ public:
         m_formatter.twoByteOp(OP2_MOVSD_VsdWsd, (RegisterID)dst, address);
     }
 #endif
+
+    void movddup_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        spew("movddup    %s, %s",
+             nameFPReg(src), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOp(OP2_MOVDDUP_VpdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void movddup_mr(int offset, RegisterID base, XMMRegisterID dst)
+    {
+        spew("movddup    %s0x%x(%s), %s",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOp(OP2_MOVDDUP_VpdWsd, (RegisterID)dst, base, offset);
+    }
 
     void movdqa_rm(XMMRegisterID src, int offset, RegisterID base)
     {
