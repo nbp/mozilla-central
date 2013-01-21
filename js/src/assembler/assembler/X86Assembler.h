@@ -1959,6 +1959,16 @@ public:
         m_formatter.twoByteOp(OP2_ADDSD_VsdWsd, (RegisterID)dst, base, offset);
     }
 
+#if !WTF_CPU_X86_64
+    void addsd_mr(const void* address, XMMRegisterID dst)
+    {
+        spew("addsd      %p, %s",
+             address, nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_F2);
+        m_formatter.twoByteOp(OP2_ADDSD_VsdWsd, (RegisterID)dst, address);
+    }
+#endif
+
     void addpd_rr(XMMRegisterID src, XMMRegisterID dst)
     {
         spew("addpd      %s, %s",
@@ -1974,16 +1984,6 @@ public:
         m_formatter.prefix(PRE_SSE_66);
         m_formatter.twoByteOp(OP2_ADDPD_VpdWpd, (RegisterID)dst, base, offset);
     }
-
-#if !WTF_CPU_X86_64
-    void addsd_mr(const void* address, XMMRegisterID dst)
-    {
-        spew("addsd      %p, %s",
-             address, nameFPReg(dst));
-        m_formatter.prefix(PRE_SSE_F2);
-        m_formatter.twoByteOp(OP2_ADDSD_VsdWsd, (RegisterID)dst, address);
-    }
-#endif
 
     void cvtss2sd_rr(XMMRegisterID src, XMMRegisterID dst)
     {
