@@ -344,6 +344,8 @@ StringFromMIRType(MIRType type)
       return "Elements";
     case MIRType_StackFrame:
       return "StackFrame";
+    case MIRType_PackedD:
+      return "Packed Double";
     default:
       JS_NOT_REACHED("Unknown MIRType.");
       return "";
