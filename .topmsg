@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 832779 - Unbox Int32 values with SIMD. r=
+Subject: Bug 832718 - Estimate the benefit of such modification.
+
