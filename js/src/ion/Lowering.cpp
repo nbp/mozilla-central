@@ -965,6 +965,13 @@ LIRGenerator::visitAdd(MAdd *ins)
         return lowerForFPU(new LMathD(JSOP_ADD), ins, lhs, rhs);
     }
 
+#if defined(JS_CPU_X64)
+    if (ins->specialization() == MIRType_PackedD) {
+        JS_ASSERT(lhs->type() == MIRType_PackedD);
+        return lowerForFPU(new LMathPD(JSOP_ADD), ins, lhs, rhs);
+    }
+#endif
+
     return lowerBinaryV(JSOP_ADD, ins);
 }
 
@@ -994,6 +1001,13 @@ LIRGenerator::visitSub(MSub *ins)
         return lowerForFPU(new LMathD(JSOP_SUB), ins, lhs, rhs);
     }
 
+#if defined(JS_CPU_X64)
+    if (ins->specialization() == MIRType_PackedD) {
+        JS_ASSERT(lhs->type() == MIRType_PackedD);
+        return lowerForFPU(new LMathPD(JSOP_SUB), ins, lhs, rhs);
+    }
+#endif
+
     return lowerBinaryV(JSOP_SUB, ins);
 }
 
@@ -1009,6 +1023,7 @@ LIRGenerator::visitMul(MMul *ins)
         ReorderCommutative(&lhs, &rhs);
         return lowerMulI(ins, lhs, rhs);
     }
+
     if (ins->specialization() == MIRType_Double) {
         JS_ASSERT(lhs->type() == MIRType_Double);
 
@@ -1022,6 +1037,13 @@ LIRGenerator::visitMul(MMul *ins)
 
         return lowerForFPU(new LMathD(JSOP_MUL), ins, lhs, rhs);
     }
+
+#if defined(JS_CPU_X64)
+    if (ins->specialization() == MIRType_PackedD) {
+        JS_ASSERT(lhs->type() == MIRType_PackedD);
+        return lowerForFPU(new LMathPD(JSOP_MUL), ins, lhs, rhs);
+    }
+#endif
 
     return lowerBinaryV(JSOP_MUL, ins);
 }
@@ -1037,10 +1059,18 @@ LIRGenerator::visitDiv(MDiv *ins)
         JS_ASSERT(lhs->type() == MIRType_Int32);
         return lowerDivI(ins);
     }
+
     if (ins->specialization() == MIRType_Double) {
         JS_ASSERT(lhs->type() == MIRType_Double);
         return lowerForFPU(new LMathD(JSOP_DIV), ins, lhs, rhs);
     }
+
+#if defined(JS_CPU_X64)
+    if (ins->specialization() == MIRType_PackedD) {
+        JS_ASSERT(lhs->type() == MIRType_PackedD);
+        return lowerForFPU(new LMathPD(JSOP_DIV), ins, lhs, rhs);
+    }
+#endif
 
     return lowerBinaryV(JSOP_DIV, ins);
 }
@@ -1608,6 +1638,17 @@ LIRGenerator::visitLoadElement(MLoadElement *ins)
         JS_ASSERT(!"typed load must have a payload");
         return false;
 
+#if defined(JS_CPU_X64)
+      case MIRType_PackedD:
+      {
+        LLoadElementPD *lir = new LLoadElementPD(useRegister(ins->elements()),
+                                                 useRegisterOrConstant(ins->index()),
+                                                 tempFloat());
+        if (ins->fallible() && !assignSnapshot(lir))
+            return false;
+        return define(lir, ins);
+      }
+#endif
       default:
       {
         LLoadElementT *lir = new LLoadElementT(useRegister(ins->elements()),
@@ -1650,7 +1691,13 @@ LIRGenerator::visitStoreElement(MStoreElement *ins)
             return false;
         return add(lir, ins);
       }
-
+#if defined(JS_CPU_X64)
+      case MIRType_PackedD:
+      {
+        const LAllocation value = useRegisterOrNonDoubleConstant(ins->value());
+        return add(new LStoreElementPD(elements, index, value), ins);
+      }
+#endif
       default:
       {
         const LAllocation value = useRegisterOrNonDoubleConstant(ins->value());

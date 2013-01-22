@@ -68,7 +68,9 @@ enum MIRType
     MIRType_Slots,      // A slots vector
     MIRType_Elements,   // An elements vector
     MIRType_StackFrame, // StackFrame pointer for OSR.
-    MIRType_Shape       // A Shape pointer.
+    MIRType_Shape,      // A Shape pointer.
+
+    MIRType_PackedD     // 2 Doubles packed into one xmm register.
 };
 
 #ifdef DEBUG

@@ -534,6 +534,7 @@ class LDefinition
           case MIRType_Object:
             return LDefinition::OBJECT;
           case MIRType_Double:
+          case MIRType_PackedD:
             return LDefinition::DOUBLE;
 #if defined(JS_PUNBOX64)
           case MIRType_Value:

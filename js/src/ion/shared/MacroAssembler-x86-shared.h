@@ -375,7 +375,8 @@ class MacroAssemblerX86Shared : public Assembler
         xorpd(ScratchFloatReg, ScratchFloatReg);
         pblendw(dest, ScratchFloatReg, 0x88);
 
-        // Set the sign bits of values to 0 or 1. (the rest do not matter)
+        // Set the sign bits of values to 0 or 1. (the rest does not matter)
+        initPackedInt32Tag(packedIntTags); // would be best outside.
         pcmpeqq(packedIntTags, ScratchFloatReg);
 
         // Check that all sign bits are at 0.  This means that the 2 packed

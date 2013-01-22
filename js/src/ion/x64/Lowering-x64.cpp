@@ -48,6 +48,9 @@ LIRGeneratorX64::visitConstant(MConstant *ins)
     if (ins->type() == MIRType_Double)
         return lowerConstantDouble(ins->value().toDouble(), ins);
 
+    if (ins->type() == MIRType_PackedD)
+        return define(new LPackedD(ins->value().toDouble()), ins);
+
     // Emit non-double constants at their uses.
     if (ins->canEmitAtUses())
         return emitAtUses(ins);
@@ -130,6 +133,14 @@ LIRGeneratorX64::lowerForALU(LInstructionHelper<1, 2, 0> *ins, MDefinition *mir,
 
 bool
 LIRGeneratorX64::lowerForFPU(LMathD *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs)
+{
+    ins->setOperand(0, useRegisterAtStart(lhs));
+    ins->setOperand(1, use(rhs));
+    return defineReuseInput(ins, mir, 0);
+}
+
+bool
+LIRGeneratorX64::lowerForFPU(LMathPD *ins, MDefinition *mir, MDefinition *lhs, MDefinition *rhs)
 {
     ins->setOperand(0, useRegisterAtStart(lhs));
     ins->setOperand(1, use(rhs));

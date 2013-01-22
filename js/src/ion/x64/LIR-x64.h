@@ -83,6 +83,91 @@ class LDouble : public LInstructionHelper<1, 0, 0>
     }
 };
 
+// Duplicated constant of packed double.
+class LPackedD : public LInstructionHelper<1, 0, 0>
+{
+    double d_;
+
+  public:
+    LIR_HEADER(PackedD)
+
+    LPackedD(double d)
+      : d_(d)
+    { }
+
+    double getDouble() const {
+        return d_;
+    }
+};
+
+// Performs an add, sub, mul, or div on two double values.
+class LMathPD : public LBinaryMath<0>
+{
+    JSOp jsop_;
+
+  public:
+    LIR_HEADER(MathPD)
+
+    LMathPD(JSOp jsop)
+      : jsop_(jsop)
+    { }
+
+    JSOp jsop() const {
+        return jsop_;
+    }
+};
+
+class LLoadElementPD : public LInstructionHelper<1, 2, 1>
+{
+  public:
+    LIR_HEADER(LoadElementPD)
+
+    LLoadElementPD(const LAllocation &elements, const LAllocation &index,
+                   const LDefinition &intTagMask)
+    {
+        setOperand(0, elements);
+        setOperand(1, index);
+        setTemp(0, intTagMask);
+    }
+    const MLoadElement *mir() const {
+        return mir_->toLoadElement();
+    }
+    const LAllocation *elements() {
+        return getOperand(0);
+    }
+    const LAllocation *index() {
+        return getOperand(1);
+    }
+    const LDefinition *intTagMask() {
+        return getTemp(0);
+    }
+};
+
+class LStoreElementPD : public LInstructionHelper<0, 3, 0>
+{
+  public:
+    LIR_HEADER(StoreElementPD)
+
+    LStoreElementPD(const LAllocation &elements, const LAllocation &index, const LAllocation &value) {
+        setOperand(0, elements);
+        setOperand(1, index);
+        setOperand(2, value);
+    }
+
+    const MStoreElement *mir() const {
+        return mir_->toStoreElement();
+    }
+    const LAllocation *elements() {
+        return getOperand(0);
+    }
+    const LAllocation *index() {
+        return getOperand(1);
+    }
+    const LAllocation *value() {
+        return getOperand(2);
+    }
+};
+
 } // namespace ion
 } // namespace js
 

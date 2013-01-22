@@ -140,6 +140,7 @@ LIRGeneratorShared::defineReturn(LInstructionHelper<Defs, Ops, Temps> *lir, MDef
 #endif
         break;
       case MIRType_Double:
+      case MIRType_PackedD:
         lir->setDef(0, LDefinition(vreg, LDefinition::DOUBLE, LFloatReg(ReturnFloatReg)));
         break;
       default:
@@ -265,7 +266,7 @@ LIRGeneratorShared::useRegisterOrConstantAtStart(MDefinition *mir)
 LAllocation
 LIRGeneratorShared::useRegisterOrNonDoubleConstant(MDefinition *mir)
 {
-    if (mir->isConstant() && mir->type() != MIRType_Double)
+    if (mir->isConstant() && mir->type() != MIRType_Double && mir->type() != MIRType_PackedD)
         return LAllocation(mir->toConstant()->vp());
     return useRegister(mir);
 }
@@ -377,7 +378,7 @@ VirtualRegisterOfPayload(MDefinition *mir)
 {
     if (mir->isBox()) {
         MDefinition *inner = mir->toBox()->getOperand(0);
-        if (!inner->isConstant() && inner->type() != MIRType_Double)
+        if (!inner->isConstant() && inner->type() != MIRType_Double && inner->type() != MIRType_PackedD)
             return inner->virtualRegister();
     }
     return mir->virtualRegister() + VREG_DATA_OFFSET;
