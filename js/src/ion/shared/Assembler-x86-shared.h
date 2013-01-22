@@ -207,6 +207,9 @@ class AssemblerX86Shared
         masm.align(alignment);
     }
 
+    void movapd(const FloatRegister &src, const FloatRegister &dst) {
+        masm.movapd_rr(src.code(), dst.code());
+    }
     void movapd(const FloatRegister &src, const Operand &dst) {
         switch (dst.kind()) {
           case Operand::FPREG:
@@ -219,7 +222,6 @@ class AssemblerX86Shared
             JS_NOT_REACHED("unexpected operand kind");
         }
     }
-
     void movapd(const Operand &src, const FloatRegister &dst) {
         switch (src.kind()) {
           case Operand::FPREG:
