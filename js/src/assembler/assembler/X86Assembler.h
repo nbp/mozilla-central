@@ -294,6 +294,7 @@ private:
         OP2_XORPD_VpdWpd    = 0x57,
         OP2_MOVD_VdEd       = 0x6E,
         OP2_MOVDQA_VsdWsd   = 0x6F,
+        OP2_PSHUFD_VpdWpdIb = 0x70,
         OP2_PSRLDQ_Vd       = 0x73,
         OP2_PCMPEQW         = 0x75,
         OP2_MOVD_EdVd       = 0x7E,
@@ -2170,11 +2171,27 @@ public:
         m_formatter.immediate8(mask);
     }
 
-    void pcmpeqq_rr(XMMRegisterID lhs, XMMRegisterID rhs) {
+    void pcmpeqq_rr(XMMRegisterID src, XMMRegisterID dst) {
         spew("pcmpeqq    %s, %s",
-             nameFPReg(lhs), nameFPReg(rhs));
+             nameFPReg(src), nameFPReg(dst));
         m_formatter.prefix(PRE_SSE_66);
-        m_formatter.threeByteOp(OP3_PCMPEQQ_VpdWpd, ESCAPE_PCMPEQQ, (RegisterID)rhs, (RegisterID)lhs);
+        m_formatter.threeByteOp(OP3_PCMPEQQ_VpdWpd, ESCAPE_PCMPEQQ, (RegisterID)dst, (RegisterID)src);
+    }
+
+    void pshufd_irr(XMMRegisterID src, XMMRegisterID dst, int order) {
+        spew("pshufd    %s, %s, %d",
+             nameFPReg(src), nameFPReg(dst), order);
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSHUFD_VpdWpdIb, (RegisterID)dst, (RegisterID)src);
+        m_formatter.immediate8(order);
+    }
+
+    void pshufd_imr(int offset, RegisterID base, XMMRegisterID dst, int order) {
+        spew("pshufd    %s0x%x(%s), %s, %d",
+             PRETTY_PRINT_OFFSET(offset), nameIReg(base), nameFPReg(dst), order);
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PSHUFD_VpdWpdIb, (RegisterID)dst, base, offset);
+        m_formatter.immediate8(order);
     }
 
     void ptest_rr(XMMRegisterID lhs, XMMRegisterID rhs) {

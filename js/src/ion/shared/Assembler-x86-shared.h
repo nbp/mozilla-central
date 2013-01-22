@@ -1147,9 +1147,27 @@ class AssemblerX86Shared
         }
     }
 
-    void pcmpeqq(const FloatRegister &lhs, const FloatRegister &rhs) {
+    void pcmpeqq(const FloatRegister &src, const FloatRegister &dst) {
         JS_ASSERT(HasSSE41());
-        masm.pcmpeqq_rr(rhs.code(), lhs.code());
+        masm.pcmpeqq_rr(src.code(), dst.code());
+    }
+
+    void pshufd(const FloatRegister &src, const FloatRegister &dst, int mask) {
+        JS_ASSERT(HasSSE41());
+        masm.pshufd_irr(src.code(), dst.code(), mask);
+    }
+    void pshufd(const Operand &src, const FloatRegister &dst, int mask) {
+        JS_ASSERT(HasSSE41());
+        switch (src.kind()) {
+          case Operand::FPREG:
+            masm.pshufd_irr(src.fpu(), dst.code(), mask);
+            break;
+          case Operand::REG_DISP:
+            masm.pshufd_imr(src.disp(), src.base(), dst.code(), mask);
+            break;
+          default:
+            JS_NOT_REACHED("unexpected operand kind");
+        }
     }
 
     void ptest(const FloatRegister &lhs, const FloatRegister &rhs) {
