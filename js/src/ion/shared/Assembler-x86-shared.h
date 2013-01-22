@@ -235,6 +235,9 @@ class AssemblerX86Shared
         }
     }
 
+    void movddup(const FloatRegister src, const FloatRegister dst) {
+        masm.movddup_rr(src.code(), dst.code());
+    }
     void movddup(const Operand &src, const FloatRegister &dst) {
         switch (src.kind()) {
           case Operand::FPREG:
@@ -1078,6 +1081,7 @@ class AssemblerX86Shared
     void unpcklps(const FloatRegister &src, const FloatRegister &dest) {
         masm.unpcklps_rr(src.code(), dest.code());
     }
+
     void pinsrd(const Register &src, const FloatRegister &dest) {
         masm.pinsrd_rr(src.code(), dest.code());
     }
