@@ -348,6 +348,92 @@ class MacroAssemblerX86Shared : public Assembler
         return true;
     }
 
+    void initPackedInt32Tag(const FloatRegister packedIntTags) {
+        uint32_t tag = uint32_t(JSVAL_TAG_INT32);
+#if JS_BITS_PER_WORD == 64
+        // sadly we extra the 16 first bits with pblendw, and not the 17 first
+        // bits.  So we cannot really check the lowest bit of JSVAL unless
+        // decide to shift all JSVAL_TAGS by one to the left.
+        tag = (tag & ~1) << 15;
+#endif
+
+        // movddup with a constant.
+        movl(Imm32(tag), ScratchReg);
+        pinsrd(ScratchReg, packedIntTags);
+        movddup(packedIntTags, packedIntTags);
+    }
+
+    void loadPackedInt32OrDouble(const Operand &operand, const FloatRegister dest,
+                                 const FloatRegister packedIntTags, Label &failure)
+    {
+        Label end, lowIsInt, highIsInt;
+
+        // TODO: check alignment, or bailed
+        movapd(operand, dest);
+
+        // Remove the payload.
+        xorpd(ScratchFloatReg, ScratchFloatReg);
+        pblendw(dest, ScratchFloatReg, 0x88);
+
+        // Set the sign bits of values to 0 or 1. (the rest do not matter)
+        pcmpeqq(packedIntTags, ScratchFloatReg);
+
+        // Check that all sign bits are at 0.  This means that the 2 packed
+        // values are both doubles.
+        ptest(ScratchFloatReg, ScratchFloatReg);
+        j(Zero, &end);
+
+        // At least one of the entry is not a double, extract the sign bits to
+        // determine which one. This instruction recovers the sign bits in the 2
+        // lowest bits of the general register.
+        movmskpd(ScratchFloatReg, ScratchReg);
+
+        movapd(dest, ScratchFloatReg);
+
+        // Shift the value by 1 to the right to move the lowest bit (identifying
+        // the lowest value) to the carry flag, and to move the second bit
+        // (identifying the highest value) to the parity flag.
+        shrl(Imm32(1), ScratchReg);
+        j(NoParity, &lowIsInt);  // pf == 0 && cf == 1
+        j(NoCarry, &highIsInt); // pf == 1 && cf == 0
+        // pf == 1 && cf == 1
+
+        // Convert both Int32 values to doubles.
+        {
+            // Copy both ints to the low 64 bits.
+            pshufd(dest, dest, 0x08);
+            // Convert both into doubles.
+            cvtdq2pd(dest, dest);
+            jmp(&end);
+        }
+
+        // Convert the highest Int32 value to a double.
+        {
+            bind(&lowIsInt);
+            // Swap the lowest with the highest.
+            pshufd(dest, dest, 0x8b);
+
+            // Convert the lowest Int32 value to a double.
+            {
+                bind(&lowIsInt);
+                // Copy the lowest part into a general reg.
+                movd(dest, ScratchReg);
+                // Erase the lowest part with the corresponding double.
+                cvtsi2sd(ScratchReg, dest);
+
+                // The flag is not been reset by any of the previous
+                // instructions, so it is safe to reuse it to skip the swap
+                // needed by the highest part.
+                j(NoParity, &end);
+            }
+
+            // Swap the lowest with the highest.
+            pshufd(dest, dest, 0x8b);
+        }
+
+        bind(&end);
+    }
+
     // Emit a JMP that can be toggled to a CMP. See ToggleToJmp(), ToggleToCmp().
     CodeOffsetLabel toggledJump(Label *label) {
         CodeOffsetLabel offset(size());

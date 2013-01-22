@@ -68,7 +68,9 @@ class AssemblerX86Shared
         Zero = JSC::X86Assembler::ConditionE,
         NonZero = JSC::X86Assembler::ConditionNE,
         Parity = JSC::X86Assembler::ConditionP,
-        NoParity = JSC::X86Assembler::ConditionNP
+        NoParity = JSC::X86Assembler::ConditionNP,
+        Carry = JSC::X86Assembler::ConditionC,
+        NoCarry = JSC::X86Assembler::ConditionNC
     };
 
     // If this bit is set, the ucomisd operands have to be inverted.
