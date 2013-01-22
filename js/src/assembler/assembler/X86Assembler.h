@@ -305,7 +305,8 @@ private:
         OP2_MOVSX_GvEw      = 0xBF,
         OP2_MOVZX_GvEb      = 0xB6,
         OP2_MOVZX_GvEw      = 0xB7,
-        OP2_PEXTRW_GdUdIb   = 0xC5
+        OP2_PEXTRW_GdUdIb   = 0xC5,
+        OP2_CVTDQ2PD_VpdWsd = 0xE6
     } TwoByteOpcodeID;
 
     typedef enum {
@@ -1993,9 +1994,17 @@ public:
         m_formatter.twoByteOp(OP2_ADDPD_VpdWpd, (RegisterID)dst, base, offset);
     }
 
+    void cvtdq2pd_rr(XMMRegisterID src, XMMRegisterID dst)
+    {
+        spew("cvtdq2pd   %s, %s",
+             nameFPReg(src), nameFPReg(dst));
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_CVTDQ2PD_VpdWsd, (RegisterID)dst, (RegisterID)src);
+    }
+
     void cvtss2sd_rr(XMMRegisterID src, XMMRegisterID dst)
     {
-        spew("cvtps2pd   %s, %s",
+        spew("cvtss2sd   %s, %s",
              nameFPReg(src), nameFPReg(dst));
         m_formatter.prefix(PRE_SSE_F3);
         m_formatter.twoByteOp(OP2_CVTSS2SD_VsdEd, (RegisterID)dst, (RegisterID)src);
@@ -2003,7 +2012,7 @@ public:
 
     void cvtsd2ss_rr(XMMRegisterID src, XMMRegisterID dst)
     {
-        spew("cvtps2pd   %s, %s",
+        spew("cvtsd2ss   %s, %s",
              nameFPReg(src), nameFPReg(dst));
         m_formatter.prefix(PRE_SSE_F2);
         m_formatter.twoByteOp(OP2_CVTSD2SS_VsdEd, (RegisterID)dst, (RegisterID)src);

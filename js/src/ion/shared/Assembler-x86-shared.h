@@ -1101,6 +1101,9 @@ class AssemblerX86Shared
         masm.psrlq_rr(dest.code(), shift.value);
     }
 
+    void cvtdq2pd(const FloatRegister &src, const FloatRegister &dest) {
+        masm.cvtdq2pd_rr(src.code(), dest.code());
+    }
     void cvtsi2sd(const Operand &src, const FloatRegister &dest) {
         switch (src.kind()) {
           case Operand::REG:
