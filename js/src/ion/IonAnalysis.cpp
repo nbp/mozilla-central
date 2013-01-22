@@ -1436,3 +1436,73 @@ LinearSum::print(Sprinter &sp) const
     else if (constant_ < 0)
         sp.printf("%d", constant_);
 }
+
+bool
+ion::EmulateSIMDOptim(MIRGraph &graph)
+{
+    // Filter out other functions.
+    if (graph.info().lineno() != 2 || !strstr("gaussian-blur.js", graph.info().filename()))
+        return true;
+
+    int remain = 0;
+    do {
+        for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+            if (mir->shouldCancel("Specialize Gaussian Blur"))
+                return false;
+
+            MPhi *previous = NULL;
+            for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd();) {
+                switch (phi->id()) {
+                    case 66: case 68:
+                    case 87: case 89:
+                    case 168: case 170: {
+                        previous = *iter;
+                        break;
+                    }
+                    case 67: case 68:
+                    case 88: case 90:
+                    case 169: case 171: {
+                        // Replace consecutive double Phi by the first one which
+                        // hold both values.
+                        previous->setResultType(MIRType_PackedD);
+
+                        // All uses would be removed, but in the mean time keep
+                        // the graph correct.
+                        phi->replaceAllUsesWith(previous);
+                        phi = block->discardPhiAt(phi);
+                        continue;
+                    }
+                    default:
+                        break;
+                }
+                iter++;
+            }
+
+            MToDouble *kernelSum = NULL;
+            MToDouble *kernelFactor = NULL;
+            for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
+                switch (iter->id()) {
+                    case 39: { // 39 MConstant 0.0
+                        iter->setResultType(MIRType_PackedD);
+                        remain--;
+                        break;
+                    }
+                    case 53: { // 53 loadSlot, kernelSum
+                        kernelSum = MToDouble::New(*iter);
+                        // movddup of the divisor.
+                        block->insertAfter(*iter, kernelSum);
+                        break;
+                    }
+                    case 113: { // 113 loadElement, kernel[Math.abs(j)][Math.abs(i)]
+                        kernelFactor = MToDouble::New(*iter);
+                        // movddup of the factor.
+                        block->insertAfter(*iter, kernelFactor);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+            }
+        }
+    } while (remain);
+}

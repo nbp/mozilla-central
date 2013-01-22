@@ -968,6 +968,16 @@ CompileBackEnd(MIRGenerator *mir)
     if (mir->shouldCancel("Bounds Check Elimination"))
         return NULL;
 
+#if defined(JS_CPU_X64)
+    if (!EmulateSIMDOptim(graph))
+        return NULL;
+    IonSpewPass("Emulate SIMD Otpim");
+    AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Emulate SIMD Otpim"))
+        return NULL;
+#endif
+
     LIRGraph *lir = mir->temp().lifoAlloc()->new_<LIRGraph>(&graph);
     if (!lir)
         return NULL;

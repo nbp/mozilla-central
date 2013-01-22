@@ -57,6 +57,9 @@ AssertExtendedGraphCoherency(MIRGraph &graph);
 bool
 EliminateRedundantChecks(MIRGraph &graph);
 
+bool
+EmulateSIMDOptim(MIRGraph &graph);
+
 class MDefinition;
 
 // Simple linear sum of the form 'n' or 'x + n'.
