@@ -17,6 +17,7 @@
     _(ModPowTwoI)                   \
     _(PowHalfD)                     \
                                     \
+    _(DupD)                         \
     _(PackedD)                      \
     _(MathPD)                       \
     _(LoadElementPD)                \

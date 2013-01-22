@@ -1230,7 +1230,13 @@ LIRGenerator::visitToDouble(MToDouble *convert)
       }
 
       case MIRType_Double:
+      {
+#if defined(JS_CPU_X64)
+        if (convert->type() == MIRType_PackedD)
+            return define(new LDupD(useRegisterAtStart(opd)), convert);
+#endif
         return redefine(convert, opd);
+      }
 
       default:
         // Objects might be effectful.
