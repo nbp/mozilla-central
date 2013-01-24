@@ -411,6 +411,7 @@ struct ArenaLists {
         return freeLists[thingKind].allocate(thingSize);
     }
 
+    template <AllowGC allowGC>
     static void *refillFreeList(JSContext *cx, AllocKind thingKind);
 
     void checkEmptyFreeLists() {
@@ -1198,21 +1199,6 @@ MaybeVerifyBarriers(JSContext *cx, bool always = false)
 }
 
 #endif
-
-/*
- * Instances of this class set the |JSRuntime::suppressGC| flag for the duration
- * that they are live. Use of this class is highly discouraged. Please carefully
- * read the comment in jscntxt.h above |suppressGC| and take all appropriate
- * precautions before instantiating this class.
- */
-class AutoSuppressGC
-{
-    int32_t &suppressGC_;
-
-  public:
-    AutoSuppressGC(JSContext *cx);
-    ~AutoSuppressGC();
-};
 
 } /* namespace gc */
 

@@ -70,6 +70,38 @@ function testVariablesView()
   testThirdLevelContents();
   testIntegrity(arr, obj);
 
+  let fooScope = gVariablesView.addScope("foo");
+  let anonymousVar = fooScope.addVar();
+
+  let anonymousScope = gVariablesView.addScope();
+  let barVar = anonymousScope.addVar("bar");
+
+  is(fooScope.header, true,
+    "A named scope should have a header visible.");
+  is(fooScope.target.hasAttribute("non-header"), false,
+    "The non-header attribute should not be applied to scopes with headers.");
+
+  is(anonymousScope.header, false,
+    "An anonymous scope should have a header visible.");
+  is(anonymousScope.target.hasAttribute("non-header"), true,
+    "The non-header attribute should not be applied to scopes without headers.");
+
+  is(barVar.header, true,
+    "A named variable should have a header visible.");
+  is(barVar.target.hasAttribute("non-header"), false,
+    "The non-header attribute should not be applied to variables with headers.");
+
+  is(anonymousVar.header, false,
+    "An anonymous variable should have a header visible.");
+  is(anonymousVar.target.hasAttribute("non-header"), true,
+    "The non-header attribute should not be applied to variables without headers.");
+
+  gVariablesView.clearHierarchy();
+  is (gVariablesView._prevHierarchy.size, 0,
+    "The previous hierarchy should have been cleared.");
+  is (gVariablesView._currHierarchy.size, 0,
+    "The current hierarchy should have been cleared.");
+
   closeDebuggerAndFinish();
 }
 
@@ -78,7 +110,7 @@ function testHierarchy() {
     "There should be 1 scope, 1 var, 1 proto, 8 props, 1 getter and 1 setter.");
 
   gScope = gVariablesView._currHierarchy.get("");
-  gVariable = gVariablesView._currHierarchy.get(".");
+  gVariable = gVariablesView._currHierarchy.get("[\"\"]");
 
   is(gVariablesView._store.size, 1,
     "There should be only one scope in the view");
@@ -97,18 +129,18 @@ function testHeader() {
   gScope.showHeader();
   gVariable.showHeader();
 
-  is(gScope.header, true,
-    "The scope title header should now be visible");
-  is(gVariable.header, true,
-    "The variable title header should now be visible");
+  is(gScope.header, false,
+    "The scope title header should still not be visible");
+  is(gVariable.header, false,
+    "The variable title header should still not be visible");
 
   gScope.hideHeader();
   gVariable.hideHeader();
 
   is(gScope.header, false,
-    "The scope title header should now be hidden");
+    "The scope title header should now still be hidden");
   is(gVariable.header, false,
-    "The variable title header should now be hidden");
+    "The variable title header should now still be hidden");
 }
 
 function testFirstLevelContents() {

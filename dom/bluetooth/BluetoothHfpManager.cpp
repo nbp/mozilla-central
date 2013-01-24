@@ -16,6 +16,7 @@
 
 #include "MobileConnection.h"
 #include "mozilla/dom/bluetooth/BluetoothTypes.h"
+#include "mozilla/Hal.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPtr.h"
 #include "nsContentUtils.h"
@@ -128,6 +129,7 @@ class mozilla::dom::bluetooth::Call {
 };
 
 class mozilla::dom::bluetooth::BluetoothHfpManagerObserver : public nsIObserver
+                                                           , public BatteryObserver
 {
 public:
   NS_DECL_ISUPPORTS
@@ -161,6 +163,8 @@ public:
       return false;
     }
 
+    hal::RegisterBatteryObserver(this);
+
     return true;
   }
 
@@ -175,12 +179,26 @@ public:
       NS_WARNING("Can't unregister observers, or already unregistered!");
       return false;
     }
+
+    hal::UnregisterBatteryObserver(this);
+
     return true;
   }
 
   ~BluetoothHfpManagerObserver()
   {
     Shutdown();
+  }
+
+  void Notify(const hal::BatteryInformation& aBatteryInfo)
+  {
+    // Range of battery level: [0, 1], double
+    // Range of CIND::BATTCHG: [0, 5], int
+    int level = ceil(aBatteryInfo.level() * 5.0);
+    if (level != sCINDItems[CINDType::BATTCHG].value) {
+      sCINDItems[CINDType::BATTCHG].value = level;
+      gBluetoothHfpManager->SendCommand("+CIEV: ", CINDType::BATTCHG);
+    }
   }
 };
 
@@ -600,6 +618,25 @@ BluetoothHfpManager::HandleVoiceConnectionChanged()
     SendCommand("+CIEV: ", CINDType::SIGNAL);
   }
 
+  /**
+   * Possible return values for mode are:
+   * - null (unknown): set mNetworkSelectionMode to 0 (auto)
+   * - automatic: set mNetworkSelectionMode to 0 (auto)
+   * - manual: set mNetworkSelectionMode to 1 (manual)
+   */
+  nsString mode;
+  connection->GetNetworkSelectionMode(mode);
+  if (mode.EqualsLiteral("manual")) {
+    mNetworkSelectionMode = 1;
+  } else {
+    mNetworkSelectionMode = 0;
+  }
+
+  nsIDOMMozMobileNetworkInfo* network;
+  voiceInfo->GetNetwork(&network);
+  NS_ENSURE_TRUE(network, NS_ERROR_FAILURE);
+  network->GetLongName(mOperatorName);
+
   return NS_OK;
 }
 
@@ -613,13 +650,7 @@ BluetoothHfpManager::HandleIccInfoChanged()
   nsIDOMMozMobileICCInfo* iccInfo;
   connection->GetIccInfo(&iccInfo);
   NS_ENSURE_TRUE(iccInfo, NS_ERROR_FAILURE);
-
-  nsString msisdn;
-  iccInfo->GetMsisdn(msisdn);
-
-  if (!msisdn.Equals(mMsisdn)) {
-    mMsisdn = msisdn;
-  }
+  iccInfo->GetMsisdn(mMsisdn);
 
   return NS_OK;
 }
@@ -689,8 +720,35 @@ BluetoothHfpManager::ReceiveSocketData(UnixSocketRawData* aMessage)
     // AT+CMEE = 1: use numeric <err>
     // AT+CMEE = 2: use verbose <err>
     mCMEE = !atCommandValues[0].EqualsLiteral("0");
+  } else if (msg.Find("AT+COPS=") != -1) {
+    ParseAtCommand(msg, 8, atCommandValues);
+
+    if (atCommandValues.Length() != 2) {
+      NS_WARNING("Could't get the value of command [AT+COPS=]");
+      goto respond_with_ok;
+    }
+
+    // Handsfree only support AT+COPS=3,0
+    if (!atCommandValues[0].EqualsLiteral("3") ||
+        !atCommandValues[1].EqualsLiteral("0")) {
+      if (mCMEE) {
+        SendCommand("+CME ERROR: ", BluetoothCmeError::OPERATION_NOT_SUPPORTED);
+      } else {
+        SendLine("ERROR");
+      }
+      return;
+    }
+  } else if (msg.Find("AT+COPS?") != -1) {
+    nsAutoCString message("+COPS: ");
+    message.AppendInt(mNetworkSelectionMode);
+    message += ",0,\"";
+    message += NS_ConvertUTF16toUTF8(mOperatorName);
+    message += "\"";
+    SendLine(message.get());
+    return;
   } else if (msg.Find("AT+VTS=") != -1) {
     ParseAtCommand(msg, 7, atCommandValues);
+
     if (atCommandValues.Length() != 1) {
       NS_WARNING("Couldn't get the value of command [AT+VTS=]");
       goto respond_with_ok;
@@ -724,31 +782,42 @@ BluetoothHfpManager::ReceiveSocketData(UnixSocketRawData* aMessage)
     ParseAtCommand(msg, 8, atCommandValues);
 
     if (atCommandValues.IsEmpty()) {
-      NS_WARNING("Could't get the value of command [AT+VGS=]");
+      NS_WARNING("Could't get the value of command [AT+CHLD=]");
       goto respond_with_ok;
     }
 
-    nsresult rv;
-    int chld = atCommandValues[0].ToInteger(&rv);
-    if (NS_FAILED(rv)) {
-      NS_WARNING("Failed to extract volume value from bluetooth headset!");
-      goto respond_with_ok;
+    char chld = atCommandValues[0][0];
+    if (chld < '0' || chld > '4') {
+      NS_WARNING("Wrong value of command [AT+CHLD]");
+      SendLine("ERROR");
+      return;
     }
 
-    switch(chld) {
-      case 1:
-        // Releases active calls and accepts the other (held or waiting) call
-        NotifyDialer(NS_LITERAL_STRING("CHUP+ATA"));
-        break;
-      case 2:
-        // Places active calls on hold and accepts the other (held or waiting) call
-        NotifyDialer(NS_LITERAL_STRING("CHLD+ATA"));
-        break;
-      default:
-#ifdef DEBUG
-        NS_WARNING("Not handling chld value");
-#endif
-        break;
+    /**
+     * The following two cases are supported:
+     * AT+CHLD=1 - Releases active calls and accepts the other (held or
+     *             waiting) call
+     * AT+CHLD=2 - Places active calls on hold and accepts the other (held
+     *             or waiting) call
+     *
+     * The following cases are NOT supported yet:
+     * AT+CHLD=0, AT+CHLD=1<idx>, AT+CHLD=2<idx>, AT+CHLD=3, AT+CHLD=4
+     * Please see 4.33.2 in Bluetooth hands-free profile 1.6 for more
+     * information.
+     */
+
+    // No idx shall be included
+    if (atCommandValues[0].Length() > 1) {
+      SendLine("ERROR");
+      return;
+    }
+
+    if (chld == '1') {
+      NotifyDialer(NS_LITERAL_STRING("CHUP+ATA"));
+    } else if (chld == '2') {
+      NotifyDialer(NS_LITERAL_STRING("CHLD+ATA"));
+    } else {
+      NS_WARNING("Not handling chld value");
     }
   } else if (msg.Find("AT+VGS=") != -1) {
     // Adjust volume by headset
@@ -771,9 +840,7 @@ BluetoothHfpManager::ReceiveSocketData(UnixSocketRawData* aMessage)
       goto respond_with_ok;
     }
 
-#ifdef DEBUG
     NS_ASSERTION(newVgs >= 0 && newVgs <= 15, "Received invalid VGS value");
-#endif
 
     nsString data;
     nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
@@ -789,6 +856,8 @@ BluetoothHfpManager::ReceiveSocketData(UnixSocketRawData* aMessage)
     // Currently, we don't support memory dialing in Dialer app
     SendLine("ERROR");
     return;
+  } else if (msg.Find("AT+CLCC") != -1) {
+    SendCommand("+CLCC: ");
   } else if (msg.Find("ATD") != -1) {
     nsAutoCString message(msg), newMsg;
     int end = message.FindChar(';');

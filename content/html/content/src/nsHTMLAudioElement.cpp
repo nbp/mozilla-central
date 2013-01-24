@@ -177,10 +177,10 @@ nsHTMLAudioElement::MozWriteAudio(const JS::Value& aData, JSContext* aCx, uint32
   nsAutoArrayPtr<AudioDataValue> audioData(new AudioDataValue[writeLen * mChannels]);
   ConvertAudioSamples(frames, audioData.get(), writeLen * mChannels);
   nsresult rv = mAudioStream->Write(audioData.get(), writeLen);
-
   if (NS_FAILED(rv)) {
     return rv;
   }
+  mAudioStream->Start();
 
   // Return the actual amount written.
   *aRetVal = writeLen * mChannels;

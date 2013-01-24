@@ -609,12 +609,6 @@ nsresult MediaDecoder::Seek(double aTime)
   return ScheduleStateMachineThread();
 }
 
-nsresult MediaDecoder::PlaybackRateChanged()
-{
-  MOZ_ASSERT(NS_IsMainThread());
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
 double MediaDecoder::GetCurrentTime()
 {
   MOZ_ASSERT(NS_IsMainThread());
@@ -975,8 +969,8 @@ void MediaDecoder::NotifyPrincipalChanged()
 
 void MediaDecoder::NotifyBytesConsumed(int64_t aBytes)
 {
-  NS_ENSURE_TRUE_VOID(mDecoderStateMachine);
   ReentrantMonitorAutoEnter mon(GetReentrantMonitor());
+  NS_ENSURE_TRUE_VOID(mDecoderStateMachine);
   MOZ_ASSERT(OnStateMachineThread() || mDecoderStateMachine->OnDecodeThread());
   if (!mIgnoreProgressData) {
     mDecoderPosition += aBytes;
@@ -1378,8 +1372,7 @@ void MediaDecoder::SetPreservesPitch(bool aPreservesPitch)
 }
 
 bool MediaDecoder::OnDecodeThread() const {
-  NS_ENSURE_TRUE(mDecoderStateMachine, false);
-  return mDecoderStateMachine->OnDecodeThread();
+  return mDecoderStateMachine ? mDecoderStateMachine->OnDecodeThread() : false;
 }
 
 ReentrantMonitor& MediaDecoder::GetReentrantMonitor() {
