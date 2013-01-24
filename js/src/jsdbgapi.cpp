@@ -36,7 +36,6 @@
 #include "frontend/BytecodeEmitter.h"
 #include "frontend/Parser.h"
 #include "vm/Debugger.h"
-#include "ion/Ion.h"
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -87,8 +86,8 @@ js::ScriptDebugPrologue(JSContext *cx, AbstractFramePtr frame)
                                    cx->runtime->debugHooks.callHookData));
     }
 
-    Value rval;
-    JSTrapStatus status = Debugger::onEnterFrame(cx, &rval);
+    RootedValue rval(cx);
+    JSTrapStatus status = Debugger::onEnterFrame(cx, rval.address());
     switch (status) {
       case JSTRAP_CONTINUE:
         break;
@@ -124,6 +123,48 @@ js::ScriptDebugEpilogue(JSContext *cx, AbstractFramePtr frame, bool okArg)
     }
 
     return Debugger::onLeaveFrame(cx, ok);
+}
+
+JSTrapStatus
+js::DebugExceptionUnwind(JSContext *cx, AbstractFramePtr frame, jsbytecode *pc)
+{
+    JS_ASSERT(cx->compartment->debugMode());
+
+    if (!cx->runtime->debugHooks.throwHook && cx->compartment->getDebuggees().empty())
+        return JSTRAP_CONTINUE;
+
+    /* Call debugger throw hook if set. */
+    Value rval;
+    JSTrapStatus status = Debugger::onExceptionUnwind(cx, &rval);
+    if (status == JSTRAP_CONTINUE) {
+        if (JSThrowHook handler = cx->runtime->debugHooks.throwHook) {
+            RootedScript script(cx, frame.script());
+            status = handler(cx, script, pc, &rval, cx->runtime->debugHooks.throwHookData);
+        }
+    }
+
+    switch (status) {
+      case JSTRAP_ERROR:
+        cx->clearPendingException();
+        break;
+
+      case JSTRAP_RETURN:
+        cx->clearPendingException();
+        frame.setReturnValue(rval);
+        break;
+
+      case JSTRAP_THROW:
+        cx->setPendingException(rval);
+        break;
+
+      case JSTRAP_CONTINUE:
+        break;
+
+      default:
+        JS_NOT_REACHED("Invalid trap status");
+    }
+
+    return status;
 }
 
 JS_FRIEND_API(JSBool)
@@ -165,9 +206,11 @@ CheckDebugMode(JSContext *cx)
 }
 
 JS_PUBLIC_API(JSBool)
-JS_SetSingleStepMode(JSContext *cx, JSScript *script, JSBool singleStep)
+JS_SetSingleStepMode(JSContext *cx, JSScript *scriptArg, JSBool singleStep)
 {
+    RootedScript script(cx, scriptArg);
     assertSameCompartment(cx, script);
+
     if (!CheckDebugMode(cx))
         return JS_FALSE;
 
@@ -175,8 +218,10 @@ JS_SetSingleStepMode(JSContext *cx, JSScript *script, JSBool singleStep)
 }
 
 JS_PUBLIC_API(JSBool)
-JS_SetTrap(JSContext *cx, JSScript *script, jsbytecode *pc, JSTrapHandler handler, jsval closure)
+JS_SetTrap(JSContext *cx, JSScript *scriptArg, jsbytecode *pc, JSTrapHandler handler, jsval closureArg)
 {
+    RootedScript script(cx, scriptArg);
+    RootedValue closure(cx, closureArg);
     assertSameCompartment(cx, script, closure);
 
     if (!CheckDebugMode(cx))
@@ -245,10 +290,8 @@ JS_SetWatchPoint(JSContext *cx, JSObject *obj_, jsid id,
 {
     assertSameCompartment(cx, obj_);
 
-    RootedObject obj(cx, obj_), closure(cx, closure_);
-
-    JSObject *origobj = obj;
-    obj = GetInnerObject(cx, obj);
+    RootedObject origobj(cx, obj_), closure(cx, closure_);
+    RootedObject obj(cx, GetInnerObject(cx, origobj));
     if (!obj)
         return false;
 
@@ -535,45 +578,6 @@ JS_GetFramePC(JSContext *cx, JSStackFrame *fpArg)
     return Valueify(fpArg)->pcQuadratic(cx->stack, 100);
 }
 
-JS_PUBLIC_API(void *)
-JS_GetFrameAnnotation(JSContext *cx, JSStackFrame *fpArg)
-{
-    StackFrame *fp = Valueify(fpArg);
-    if (fp->annotation() && fp->scopeChain()->compartment()->principals) {
-        /*
-         * Give out an annotation only if privileges have not been revoked
-         * or disabled globally.
-         */
-        return fp->annotation();
-    }
-
-    return NULL;
-}
-
-JS_PUBLIC_API(void)
-JS_SetTopFrameAnnotation(JSContext *cx, void *annotation)
-{
-    AutoAssertNoGC nogc;
-    StackFrame *fp = cx->fp();
-    JS_ASSERT_IF(fp->beginsIonActivation(), !fp->annotation());
-
-    // Note that if this frame is running in Ion, the actual calling frame
-    // could be inlined or a callee and thus we won't have a correct |fp|.
-    // To account for this, ion::InvalidationBailout will transfer an
-    // annotation from the old cx->fp() to the new top frame. This works
-    // because we will never EnterIon on a frame with an annotation.
-    fp->setAnnotation(annotation);
-
-    UnrootedScript script = fp->script();
-
-    ReleaseAllJITCode(cx->runtime->defaultFreeOp());
-
-    // Ensure that we'll never try to compile this again.
-    JS_ASSERT(!script->hasAnyIonScript());
-    script->ion = ION_DISABLED_SCRIPT;
-    script->parallelIon = ION_DISABLED_SCRIPT;
-}
-
 JS_PUBLIC_API(JSObject *)
 JS_GetFrameScopeChain(JSContext *cx, JSStackFrame *fpArg)
 {
@@ -829,7 +833,7 @@ GetPropertyDesc(JSContext *cx, JSObject *obj_, HandleShape shape, JSPropertyDesc
     RootedObject obj(cx, obj_);
 
     JSBool wasThrowing = cx->isExceptionPending();
-    Value lastException = UndefinedValue();
+    RootedValue lastException(cx, UndefinedValue());
     if (wasThrowing)
         lastException = cx->getPendingException();
     cx->clearPendingException();
@@ -916,22 +920,29 @@ JS_GetPropertyDescArray(JSContext *cx, JSObject *obj_, JSPropertyDescArray *pda)
     pd = cx->pod_malloc<JSPropertyDesc>(obj->propertyCount());
     if (!pd)
         return false;
-    for (Shape::Range r = obj->lastProperty()->all(); !r.empty(); r.popFront()) {
-        pd[i].id = JSVAL_NULL;
-        pd[i].value = JSVAL_NULL;
-        pd[i].alias = JSVAL_NULL;
-        if (!js_AddRoot(cx, &pd[i].id, NULL))
-            goto bad;
-        if (!js_AddRoot(cx, &pd[i].value, NULL))
-            goto bad;
-        RootedShape shape(cx, const_cast<Shape *>(&r.front()));
-        if (!GetPropertyDesc(cx, obj, shape, &pd[i]))
-            goto bad;
-        if ((pd[i].flags & JSPD_ALIAS) && !js_AddRoot(cx, &pd[i].alias, NULL))
-            goto bad;
-        if (++i == obj->propertyCount())
-            break;
+
+    {
+        Shape::Range r(obj->lastProperty()->all());
+        Shape::Range::AutoRooter rooter(cx, &r);
+        RootedShape shape(cx);
+        for (; !r.empty(); r.popFront()) {
+            pd[i].id = JSVAL_NULL;
+            pd[i].value = JSVAL_NULL;
+            pd[i].alias = JSVAL_NULL;
+            if (!js_AddRoot(cx, &pd[i].id, NULL))
+                goto bad;
+            if (!js_AddRoot(cx, &pd[i].value, NULL))
+                goto bad;
+            shape = const_cast<Shape *>(&r.front());
+            if (!GetPropertyDesc(cx, obj, shape, &pd[i]))
+                goto bad;
+            if ((pd[i].flags & JSPD_ALIAS) && !js_AddRoot(cx, &pd[i].alias, NULL))
+                goto bad;
+            if (++i == obj->propertyCount())
+                break;
+        }
     }
+
     pda->length = i;
     pda->array = pd;
     return true;

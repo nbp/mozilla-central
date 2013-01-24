@@ -133,9 +133,11 @@ LOCAL_INCLUDES += \
  -I$(topsrcdir)/media/webrtc/signaling/src/peerconnection \
  -I$(topsrcdir)/media/webrtc/signaling/media-conduit\
  -I$(topsrcdir)/media/webrtc/trunk/third_party/libjingle/source/ \
+ -I$(topsrcdir)/xpcom/base/ \
  $(NULL)
 
 ifneq ($(OS_TARGET),WINNT)
+ifneq (gonk,$(MOZ_WIDGET_TOOLKIT))
 ifdef JS_SHARED_LIBRARY
 LIBS += $(MOZ_ZLIB_LIBS)
 endif
@@ -145,6 +147,7 @@ CPP_UNIT_TESTS = \
   mediapipeline_unittest.cpp \
   mediaconduit_unittests.cpp \
   $(NULL)
+endif
 endif
 
 include $(topsrcdir)/config/config.mk

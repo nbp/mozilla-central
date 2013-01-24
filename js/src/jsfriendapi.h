@@ -314,6 +314,7 @@ SizeOfDataIfCDataObject(JSMallocSizeOfFun mallocSizeOf, JSObject *obj);
 namespace shadow {
 
 struct TypeObject {
+    Class       *clasp;
     JSObject    *proto;
 };
 
@@ -383,7 +384,7 @@ extern JS_FRIEND_DATA(js::Class) ObjectClass;
 inline js::Class *
 GetObjectClass(RawObject obj)
 {
-    return reinterpret_cast<const shadow::Object*>(obj)->shape->base->clasp;
+    return reinterpret_cast<const shadow::Object*>(obj)->type->clasp;
 }
 
 inline JSClass *
@@ -492,10 +493,16 @@ SetReservedSlot(RawObject obj, size_t slot, const Value &value)
 {
     JS_ASSERT(slot < JSCLASS_RESERVED_SLOTS(GetObjectClass(obj)));
     shadow::Object *sobj = reinterpret_cast<shadow::Object *>(obj);
-    if (sobj->slotRef(slot).isMarkable())
+    if (sobj->slotRef(slot).isMarkable()
+#ifdef JSGC_GENERATIONAL
+        || value.isMarkable()
+#endif
+       )
+    {
         SetReservedSlotWithBarrier(obj, slot, value);
-    else
+    } else {
         sobj->slotRef(slot) = value;
+    }
 }
 
 JS_FRIEND_API(uint32_t)

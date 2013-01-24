@@ -323,7 +323,7 @@ IonCode::New(JSContext *cx, uint8_t *code, uint32_t bufferSize, JSC::ExecutableP
 {
     AssertCanGC();
 
-    IonCode *codeObj = gc::NewGCThing<IonCode>(cx, gc::FINALIZE_IONCODE, sizeof(IonCode));
+    IonCode *codeObj = gc::NewGCThing<IonCode, ALLOW_GC>(cx, gc::FINALIZE_IONCODE, sizeof(IonCode));
     if (!codeObj) {
         pool->release();
         return NULL;
@@ -1038,25 +1038,6 @@ CompileBackEnd(MIRGenerator *mir)
     return codegen;
 }
 
-class AutoDestroyAllocator
-{
-    LifoAlloc *alloc;
-
-  public:
-    AutoDestroyAllocator(LifoAlloc *alloc) : alloc(alloc) {}
-
-    void cancel()
-    {
-        alloc = NULL;
-    }
-
-    ~AutoDestroyAllocator()
-    {
-        if (alloc)
-            js_delete(alloc);
-    }
-};
-
 class SequentialCompileContext {
 public:
     ExecutionMode executionMode() {
@@ -1064,7 +1045,7 @@ public:
     }
 
     AbortReason compile(IonBuilder *builder, MIRGraph *graph,
-                        AutoDestroyAllocator &autoDestroy);
+                        ScopedJSDeletePtr<LifoAlloc> &autoDelete);
 };
 
 void
@@ -1095,7 +1076,7 @@ AttachFinishedCompilations(JSContext *cx)
             // previously, though any GC activity would discard the builder.
             codegen->masm.constructRoot(cx);
 
-            types::AutoEnterTypeInference enterTypes(cx);
+            types::AutoEnterAnalysis enterTypes(cx);
 
             ExecutionMode executionMode = builder->info().executionMode();
             types::AutoEnterCompilation enterCompiler(cx, CompilerOutputKind(executionMode));
@@ -1146,7 +1127,7 @@ IonCompile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *o
     if (!alloc)
         return AbortReason_Alloc;
 
-    AutoDestroyAllocator autoDestroy(alloc);
+    ScopedJSDeletePtr<LifoAlloc> autoDelete(alloc);
 
     TempAllocator *temp = alloc->new_<TempAllocator>(alloc);
     if (!temp)
@@ -1164,7 +1145,7 @@ IonCompile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *o
     if (!info)
         return AbortReason_Alloc;
 
-    types::AutoEnterTypeInference enter(cx, true);
+    types::AutoEnterAnalysis enter(cx);
     TypeInferenceOracle oracle;
 
     if (!oracle.init(cx, script))
@@ -1182,7 +1163,7 @@ IonCompile(JSContext *cx, HandleScript script, HandleFunction fun, jsbytecode *o
     if (!builder)
         return AbortReason_Alloc;
 
-    AbortReason abortReason  = compileContext.compile(builder, graph, autoDestroy);
+    AbortReason abortReason  = compileContext.compile(builder, graph, autoDelete);
     if (abortReason != AbortReason_NoAbort)
         IonSpew(IonSpew_Abort, "IM Compilation failed.");
 
@@ -1213,7 +1194,7 @@ OffThreadCompilationAvailable(JSContext *cx)
 
 AbortReason
 SequentialCompileContext::compile(IonBuilder *builder, MIRGraph *graph,
-                                  AutoDestroyAllocator &autoDestroy)
+                                  ScopedJSDeletePtr<LifoAlloc> &autoDelete)
 {
     JS_ASSERT(!builder->script()->ion);
     JSContext *cx = GetIonContext()->cx;
@@ -1238,19 +1219,18 @@ SequentialCompileContext::compile(IonBuilder *builder, MIRGraph *graph,
 
         // The allocator and associated data will be destroyed after being
         // processed in the finishedOffThreadCompilations list.
-        autoDestroy.cancel();
+        autoDelete.forget();
 
         return AbortReason_NoAbort;
     }
 
-    CodeGenerator *codegen = CompileBackEnd(builder);
+    ScopedJSDeletePtr<CodeGenerator> codegen(CompileBackEnd(builder));
     if (!codegen) {
         IonSpew(IonSpew_Abort, "Failed during back-end compilation.");
         return AbortReason_Disable;
     }
 
     bool success = codegen->link();
-    js_delete(codegen);
 
     IonSpewEndFunction();
 
@@ -1299,11 +1279,6 @@ CheckFrame(StackFrame *fp)
 
     if (fp->isDebuggerFrame()) {
         IonSpew(IonSpew_Abort, "debugger frame");
-        return false;
-    }
-
-    if (fp->annotation()) {
-        IonSpew(IonSpew_Abort, "frame is annotated");
         return false;
     }
 

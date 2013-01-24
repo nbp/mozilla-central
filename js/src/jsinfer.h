@@ -371,38 +371,35 @@ enum {
     OBJECT_FLAG_PROPERTY_COUNT_LIMIT  =
         OBJECT_FLAG_PROPERTY_COUNT_MASK >> OBJECT_FLAG_PROPERTY_COUNT_SHIFT,
 
+    /* Whether any objects this represents may have sparse indexes. */
+    OBJECT_FLAG_SPARSE_INDEXES        = 0x00010000,
+
+    /* Whether any objects this represents may not have packed dense elements. */
+    OBJECT_FLAG_NON_PACKED            = 0x00020000,
+
     /*
-     * Whether any objects this represents are not arrays, are arrays whose
-     * length does not fit in an int32_t, or are arrays with sparse indexes.
+     * Whether any objects this represents may be arrays whose length does not
+     * fit in an int32.
      */
-    OBJECT_FLAG_NON_DENSE_ARRAY       = 0x00010000,
-
-    /* Whether any objects this represents are not packed arrays. */
-    OBJECT_FLAG_NON_PACKED_ARRAY      = 0x00020000,
-
-    /* Whether any objects this represents are not typed arrays. */
-    OBJECT_FLAG_NON_TYPED_ARRAY       = 0x00040000,
-
-    /* Whether any objects this represents are not DOM objects. */
-    OBJECT_FLAG_NON_DOM               = 0x00080000,
+    OBJECT_FLAG_LENGTH_OVERFLOW       = 0x00040000,
 
     /* Whether any represented script is considered uninlineable in JM. */
-    OBJECT_FLAG_UNINLINEABLE          = 0x00100000,
+    OBJECT_FLAG_UNINLINEABLE          = 0x00080000,
 
     /* Whether any objects have an equality hook. */
-    OBJECT_FLAG_SPECIAL_EQUALITY      = 0x00200000,
+    OBJECT_FLAG_SPECIAL_EQUALITY      = 0x00100000,
 
     /* Whether any objects have been iterated over. */
-    OBJECT_FLAG_ITERATED              = 0x00400000,
+    OBJECT_FLAG_ITERATED              = 0x00200000,
 
     /* For a global object, whether flags were set on the RegExpStatics. */
-    OBJECT_FLAG_REGEXP_FLAGS_SET      = 0x00800000,
+    OBJECT_FLAG_REGEXP_FLAGS_SET      = 0x00400000,
 
     /* Whether any objects emulate undefined; see EmulatesUndefined. */
-    OBJECT_FLAG_EMULATES_UNDEFINED    = 0x01000000,
+    OBJECT_FLAG_EMULATES_UNDEFINED    = 0x00800000,
 
     /* Flags which indicate dynamic properties of represented objects. */
-    OBJECT_FLAG_DYNAMIC_MASK          = 0x01ff0000,
+    OBJECT_FLAG_DYNAMIC_MASK          = 0x00ff0000,
 
     /*
      * Whether all properties of this object are considered unknown.
@@ -546,9 +543,9 @@ class StackTypeSet : public TypeSet
 
     void addSubset(JSContext *cx, TypeSet *target);
     void addGetProperty(JSContext *cx, HandleScript script, jsbytecode *pc,
-                        StackTypeSet *target, jsid id);
+                        StackTypeSet *target, RawId id);
     void addSetProperty(JSContext *cx, HandleScript script, jsbytecode *pc,
-                        StackTypeSet *target, jsid id);
+                        StackTypeSet *target, RawId id);
     void addSetElement(JSContext *cx, HandleScript script, jsbytecode *pc,
                        StackTypeSet *objectTypes, StackTypeSet *valueTypes);
     void addCall(JSContext *cx, TypeCallsite *site);
@@ -592,17 +589,20 @@ class StackTypeSet : public TypeSet
     /* Whether the type set contains objects with any of a set of flags. */
     bool hasObjectFlags(JSContext *cx, TypeObjectFlags flags);
 
-    /*
-     * Get the typed array type of all objects in this set. Returns
-     * TypedArray::TYPE_MAX if the set contains different array types.
-     */
+    /* Get the class shared by all objects in this set, or NULL. */
+    Class *getKnownClass();
+
+    /* Get the typed array type of all objects in this set, or TypedArray::TYPE_MAX. */
     int getTypedArrayType();
+
+    /* Whether all objects have JSCLASS_IS_DOMJSCLASS set. */
+    bool isDOMClass();
 
     /* Get the single value which can appear in this type set, otherwise NULL. */
     RawObject getSingleton();
 
     /* Whether any objects in the type set needs a barrier on id. */
-    bool propertyNeedsBarrier(JSContext *cx, jsid id);
+    bool propertyNeedsBarrier(JSContext *cx, RawId id);
 
     /*
      * Whether this set contains all types in other, except (possibly) the
@@ -641,7 +641,7 @@ class HeapTypeSet : public TypeSet
 
     void addSubset(JSContext *cx, TypeSet *target);
     void addGetProperty(JSContext *cx, HandleScript script, jsbytecode *pc,
-                        StackTypeSet *target, jsid id);
+                        StackTypeSet *target, RawId id);
     void addCallProperty(JSContext *cx, HandleScript script, jsbytecode *pc, jsid id);
     void addFilterPrimitives(JSContext *cx, TypeSet *target);
     void addSubsetBarrier(JSContext *cx, HandleScript script, jsbytecode *pc, TypeSet *target);
@@ -820,7 +820,7 @@ struct Property
     inline Property(jsid id);
     inline Property(const Property &o);
 
-    static uint32_t keyBits(jsid id) { return uint32_t(JSID_BITS(id)); }
+    static uint32_t keyBits(RawId id) { return uint32_t(JSID_BITS(id)); }
     static jsid getKey(Property *p) { return p->id; }
 };
 
@@ -902,6 +902,9 @@ struct TypeNewScript
 /* Type information about an object accessed by a script. */
 struct TypeObject : gc::Cell
 {
+    /* Class shared by objects using this type. */
+    Class *clasp;
+
     /* Prototype shared by objects using this type. */
     HeapPtrObject proto;
 
@@ -980,11 +983,7 @@ struct TypeObject : gc::Cell
     /* If this is an interpreted function, the function object. */
     HeapPtrFunction interpretedFunction;
 
-#if JS_BITS_PER_WORD == 32
-    void *padding;
-#endif
-
-    inline TypeObject(TaggedProto proto, bool isFunction, bool unknown);
+    inline TypeObject(Class *clasp, TaggedProto proto, bool isFunction, bool unknown);
 
     bool isFunction() { return !!(flags & OBJECT_FLAG_FUNCTION); }
 
@@ -1009,16 +1008,13 @@ struct TypeObject : gc::Cell
      * assignment, and the own types of the property will be used instead of
      * aggregate types.
      */
-    inline HeapTypeSet *getProperty(JSContext *cx, jsid id, bool own);
+    inline HeapTypeSet *getProperty(JSContext *cx, RawId id, bool own);
 
     /* Get a property only if it already exists. */
-    inline HeapTypeSet *maybeGetProperty(JSContext *cx, jsid id);
+    inline HeapTypeSet *maybeGetProperty(RawId id, JSContext *cx);
 
     inline unsigned getPropertyCount();
     inline Property *getProperty(unsigned i);
-
-    /* Set flags on this object which are implied by the specified key. */
-    inline void setFlagsFromKey(JSContext *cx, JSProtoKey kind);
 
     /*
      * Get the global object which all objects of this type are parented to,
@@ -1028,7 +1024,7 @@ struct TypeObject : gc::Cell
 
     /* Helpers */
 
-    bool addProperty(JSContext *cx, jsid id, Property **pprop);
+    bool addProperty(JSContext *cx, RawId id, Property **pprop);
     bool addDefiniteProperties(JSContext *cx, HandleObject obj);
     bool matchDefiniteProperties(HandleObject obj);
     void addPrototype(JSContext *cx, TypeObject *proto);
@@ -1078,16 +1074,21 @@ struct TypeObject : gc::Cell
  */
 struct TypeObjectEntry
 {
-    typedef TaggedProto Lookup;
+    struct Lookup {
+        Class *clasp;
+        TaggedProto proto;
 
-    static inline HashNumber hash(TaggedProto base);
-    static inline bool match(TypeObject *key, TaggedProto lookup);
+        Lookup(Class *clasp, TaggedProto proto) : clasp(clasp), proto(proto) {}
+    };
+
+    static inline HashNumber hash(const Lookup &lookup);
+    static inline bool match(TypeObject *key, const Lookup &lookup);
 };
 typedef HashSet<ReadBarriered<TypeObject>, TypeObjectEntry, SystemAllocPolicy> TypeObjectSet;
 
 /* Whether to use a new type object when calling 'new' at script/pc. */
 bool
-UseNewType(JSContext *cx, HandleScript script, jsbytecode *pc);
+UseNewType(JSContext *cx, UnrootedScript script, jsbytecode *pc);
 
 /* Whether to use a new type object for an initializer opcode at script/pc. */
 bool
@@ -1180,7 +1181,7 @@ class TypeScript
     static inline void MonitorString(JSContext *cx, HandleScript script, jsbytecode *pc);
     static inline void MonitorUnknown(JSContext *cx, HandleScript script, jsbytecode *pc);
 
-    static inline void GetPcScript(JSContext *cx, MutableHandleScript script, jsbytecode **pc);
+    static inline void GetPcScript(JSContext *cx, JSScript **script, jsbytecode **pc);
     static inline void MonitorOverflow(JSContext *cx);
     static inline void MonitorString(JSContext *cx);
     static inline void MonitorUnknown(JSContext *cx);
@@ -1383,8 +1384,8 @@ struct TypeCompartment
      * or JSProto_Object to indicate a type whose class is unknown (not just
      * js_ObjectClass).
      */
-    TypeObject *newTypeObject(JSContext *cx, JSProtoKey kind, Handle<TaggedProto> proto,
-                              bool unknown = false, bool isDOM = false);
+    TypeObject *newTypeObject(JSContext *cx, Class *clasp, Handle<TaggedProto> proto,
+                              bool unknown = false);
 
     /* Get or make an object for an allocation site, and add to the allocation site table. */
     TypeObject *addAllocationSiteTypeObject(JSContext *cx, AllocationSiteKey key);
@@ -1398,7 +1399,7 @@ struct TypeCompartment
 
     /* Mark a script as needing recompilation once inference has finished. */
     void addPendingRecompile(JSContext *cx, const RecompileInfo &info);
-    void addPendingRecompile(JSContext *cx, HandleScript script, jsbytecode *pc);
+    void addPendingRecompile(JSContext *cx, UnrootedScript script, jsbytecode *pc);
 
     /* Monitor future effects on a bytecode. */
     void monitorBytecode(JSContext *cx, HandleScript script, uint32_t offset,

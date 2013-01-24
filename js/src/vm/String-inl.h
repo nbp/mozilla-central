@@ -22,25 +22,70 @@
 namespace js {
 
 static JS_ALWAYS_INLINE JSInlineString *
-NewShortString(JSContext *cx, const jschar *chars, size_t length)
+NewShortString(JSContext *cx, Latin1Chars chars)
 {
-    SkipRoot skip(cx, &chars);
+    size_t len = chars.length();
+    JS_ASSERT(JSShortString::lengthFits(len));
+    UnrootedInlineString str = JSInlineString::lengthFits(len)
+                               ? JSInlineString::new_<ALLOW_GC>(cx)
+                               : JSShortString::new_<ALLOW_GC>(cx);
+    if (!str)
+        return NULL;
+
+    jschar *p = str->init(len);
+    for (size_t i = 0; i < len; ++i)
+        p[i] = static_cast<jschar>(chars[i]);
+    p[len] = '\0';
+    Probes::createString(cx, str, len);
+    return str;
+}
+
+static JS_ALWAYS_INLINE JSInlineString *
+NewShortString(JSContext *cx, StableTwoByteChars chars)
+{
+    size_t len = chars.length();
 
     /*
      * Don't bother trying to find a static atom; measurement shows that not
      * many get here (for one, Atomize is catching them).
      */
-    JS_ASSERT(JSShortString::lengthFits(length));
-    JSInlineString *str = JSInlineString::lengthFits(length)
-                          ? JSInlineString::new_(cx)
-                          : JSShortString::new_(cx);
+    JS_ASSERT(JSShortString::lengthFits(len));
+    JSInlineString *str = JSInlineString::lengthFits(len)
+                          ? JSInlineString::new_<ALLOW_GC>(cx)
+                          : JSShortString::new_<ALLOW_GC>(cx);
     if (!str)
         return NULL;
 
-    jschar *storage = str->init(length);
-    PodCopy(storage, chars, length);
-    storage[length] = 0;
-    Probes::createString(cx, str, length);
+    jschar *storage = str->init(len);
+    PodCopy(storage, chars.start().get(), len);
+    storage[len] = 0;
+    Probes::createString(cx, str, len);
+    return str;
+}
+
+static JS_ALWAYS_INLINE JSInlineString *
+NewShortString(JSContext *cx, TwoByteChars chars)
+{
+    size_t len = chars.length();
+
+    /*
+     * Don't bother trying to find a static atom; measurement shows that not
+     * many get here (for one, Atomize is catching them).
+     */
+    JS_ASSERT(JSShortString::lengthFits(len));
+    JSInlineString *str = JSInlineString::lengthFits(len)
+                          ? JSInlineString::new_<DONT_ALLOW_GC>(cx)
+                          : JSShortString::new_<DONT_ALLOW_GC>(cx);
+    if (!str) {
+        jschar tmp[JSShortString::MAX_SHORT_LENGTH];
+        PodCopy(tmp, chars.start().get(), len);
+        return NewShortString(cx, StableTwoByteChars(tmp, len));
+    }
+
+    jschar *storage = str->init(len);
+    PodCopy(storage, chars.start().get(), len);
+    storage[len] = 0;
+    Probes::createString(cx, str, len);
     return str;
 }
 
@@ -112,10 +157,10 @@ JSString::readBarrier(JSString *str)
 }
 
 JS_ALWAYS_INLINE bool
-JSString::validateLength(JSContext *cx, size_t length)
+JSString::validateLength(JSContext *maybecx, size_t length)
 {
     if (JS_UNLIKELY(length > JSString::MAX_LENGTH)) {
-        js_ReportAllocationOverflow(cx);
+        js_ReportAllocationOverflow(maybecx);
         return false;
     }
 
@@ -132,12 +177,16 @@ JSRope::init(JSString *left, JSString *right, size_t length)
     js::StringWriteBarrierPost(compartment(), &d.s.u2.right);
 }
 
+template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSRope *
-JSRope::new_(JSContext *cx, js::HandleString left, js::HandleString right, size_t length)
+JSRope::newStringMaybeAllowGC(JSContext *cx,
+                              typename js::MaybeRooted<JSString*, allowGC>::HandleType left,
+                              typename js::MaybeRooted<JSString*, allowGC>::HandleType right,
+                              size_t length)
 {
     if (!validateLength(cx, length))
         return NULL;
-    JSRope *str = (JSRope *)js_NewGCString(cx);
+    JSRope *str = (JSRope *) js_NewGCString<allowGC>(cx);
     if (!str)
         return NULL;
     str->init(left, right, length);
@@ -192,9 +241,9 @@ JSDependentString::new_(JSContext *cx, JSLinearString *baseArg, const jschar *ch
      * is more efficient to immediately undepend here.
      */
     if (JSShortString::lengthFits(length))
-        return js::NewShortString(cx, chars, length);
+        return js::NewShortString(cx, js::TwoByteChars(chars, length));
 
-    JSDependentString *str = (JSDependentString *)js_NewGCString(cx);
+    JSDependentString *str = (JSDependentString *)js_NewGCString<js::ALLOW_GC>(cx);
     if (!str)
         return NULL;
     str->init(base, chars, length);
@@ -244,17 +293,18 @@ JSStableString::new_(JSContext *cx, const jschar *chars, size_t length)
 
     if (!validateLength(cx, length))
         return NULL;
-    JSStableString *str = (JSStableString *)js_NewGCString(cx);
+    JSStableString *str = (JSStableString *)js_NewGCString<js::ALLOW_GC>(cx);
     if (!str)
         return NULL;
     str->init(chars, length);
     return str;
 }
 
+template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSInlineString *
 JSInlineString::new_(JSContext *cx)
 {
-    return (JSInlineString *)js_NewGCString(cx);
+    return (JSInlineString *)js_NewGCString<allowGC>(cx);
 }
 
 JS_ALWAYS_INLINE jschar *
@@ -273,10 +323,11 @@ JSInlineString::resetLength(size_t length)
     JS_ASSERT(lengthFits(length) || (isShort() && JSShortString::lengthFits(length)));
 }
 
+template <js::AllowGC allowGC>
 JS_ALWAYS_INLINE JSShortString *
 JSShortString::new_(JSContext *cx)
 {
-    return js_NewGCShortString(cx);
+    return js_NewGCShortString<allowGC>(cx);
 }
 
 JS_ALWAYS_INLINE void

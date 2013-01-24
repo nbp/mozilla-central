@@ -103,6 +103,7 @@ webidl_files = \
   SVGAngle.webidl \
   SVGAnimatedAngle.webidl \
   SVGAnimatedBoolean.webidl \
+  SVGAnimatedLength.webidl \
   SVGAnimatedLengthList.webidl \
   SVGAnimatedNumberList.webidl \
   SVGAnimatedPathData.webidl \
@@ -114,6 +115,7 @@ webidl_files = \
   SVGAnimateTransformElement.webidl \
   SVGAnimationElement.webidl \
   SVGCircleElement.webidl \
+  SVGClipPathElement.webidl \
   SVGDefsElement.webidl \
   SVGDescElement.webidl \
   SVGElement.webidl \
@@ -128,6 +130,7 @@ webidl_files = \
   SVGLinearGradientElement.webidl \
   SVGLineElement.webidl \
   SVGLocatableElement.webidl \
+  SVGMaskElement.webidl \
   SVGMatrix.webidl \
   SVGMetadataElement.webidl \
   SVGMPathElement.webidl \
@@ -188,6 +191,7 @@ endif
 ifdef MOZ_WEBRTC
 webidl_files += \
   MediaStreamList.webidl \
+  RTCIceServer.webidl \
   $(NULL)
 endif
 

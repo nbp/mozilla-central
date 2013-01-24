@@ -679,7 +679,7 @@ js::FunctionToString(JSContext *cx, HandleFunction fun, bool bodyOnly, bool lamb
 
             // Fish out the argument names.
             BindingVector *localNames = cx->new_<BindingVector>(cx);
-            js::ScopedDeletePtr<BindingVector> freeNames(localNames);
+            ScopedJSDeletePtr<BindingVector> freeNames(localNames);
             if (!FillBindingVector(script, localNames))
                 return NULL;
             for (unsigned i = 0; i < fun->nargs; i++) {
@@ -824,7 +824,7 @@ fun_toSource(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js_fun_call(JSContext *cx, unsigned argc, Value *vp)
 {
-    Value fval = vp[1];
+    RootedValue fval(cx, vp[1]);
 
     if (!js_IsCallable(fval)) {
         ReportIncompatibleMethod(cx, CallReceiverFromVp(vp), &FunctionClass);
@@ -832,10 +832,8 @@ js_fun_call(JSContext *cx, unsigned argc, Value *vp)
     }
 
     Value *argv = vp + 2;
-    Value thisv;
-    if (argc == 0) {
-        thisv.setUndefined();
-    } else {
+    RootedValue thisv(cx, UndefinedValue());
+    if (argc != 0) {
         thisv = argv[0];
 
         argc--;
@@ -899,7 +897,7 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
             JS_ASSERT(frame.isNative());
             // Stop on the next Ion JS Frame.
             ++frame;
-            ion::InlineFrameIterator iter(&frame);
+            ion::InlineFrameIterator iter(cx, &frame);
 
             unsigned length = iter.numActualArgs();
             JS_ASSERT(length <= StackSpace::ARGS_LENGTH_MAX);
@@ -912,7 +910,7 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
             args.setThis(vp[2]);
 
             /* Steps 7-8. */
-            iter.forEachCanonicalActualArg(CopyTo(args.array()), 0, -1);
+            iter.forEachCanonicalActualArg(cx, CopyTo(args.array()), 0, -1);
         } else
 #endif
         {
@@ -1061,7 +1059,7 @@ JSFunction::initializeLazyScript(JSContext *cx)
 JSBool
 js::CallOrConstructBoundFunction(JSContext *cx, unsigned argc, Value *vp)
 {
-    JSFunction *fun = vp[0].toObject().toFunction();
+    RootedFunction fun(cx, vp[0].toObject().toFunction());
     JS_ASSERT(fun->isBoundFunction());
 
     bool constructing = IsConstructing(vp);
@@ -1380,8 +1378,6 @@ js::Function(JSContext *cx, unsigned argc, Value *vp)
     }
 #endif
 
-    JS::Anchor<JSString *> strAnchor(NULL);
-
     RootedString str(cx);
     if (!args.length())
         str = cx->runtime->emptyString;
@@ -1392,7 +1388,8 @@ js::Function(JSContext *cx, unsigned argc, Value *vp)
     JSStableString *stable = str->ensureStable(cx);
     if (!stable)
         return false;
-    strAnchor.set(str);
+
+    JS::Anchor<JSString *> strAnchor(str);
     StableCharPtr chars = stable->chars();
     size_t length = stable->length();
 
@@ -1501,15 +1498,15 @@ js_CloneFunctionObject(JSContext *cx, HandleFunction fun, HandleObject parent,
         clone->initializeExtended();
     }
 
-    if (cx->compartment == fun->compartment() && !types::UseNewTypeForClone(fun)) {
+    if (cx->compartment == fun->compartment() &&
+        !fun->hasSingletonType() &&
+        !types::UseNewTypeForClone(fun))
+    {
         /*
-         * We can use the same type as the original function provided that (a)
-         * its prototype is correct, and (b) its type is not a singleton. The
-         * first case will hold in all compileAndGo code, and the second case
-         * will have been caught by CloneFunctionObject coming from function
-         * definitions or read barriers, so will not get here.
+         * Clone the function, reusing its script. We can use the same type as
+         * the original function provided that its prototype is correct.
          */
-        if (fun->getProto() == proto && !fun->hasSingletonType())
+        if (fun->getProto() == proto)
             clone->setType(fun->type());
     } else {
         if (!JSObject::setSingletonType(cx, clone))
@@ -1571,7 +1568,7 @@ js_DefineFunction(JSContext *cx, HandleObject obj, HandleId id, Native native,
 void
 js::ReportIncompatibleMethod(JSContext *cx, CallReceiver call, Class *clasp)
 {
-    Value thisv = call.thisv();
+    RootedValue thisv(cx, call.thisv());
 
 #ifdef DEBUG
     if (thisv.isObject()) {

@@ -417,7 +417,7 @@ Shape::writeBarrierPre(UnrootedShape shape)
 }
 
 inline void
-Shape::writeBarrierPost(UnrootedShape shape, void *addr)
+Shape::writeBarrierPost(RawShape shape, void *addr)
 {
 }
 
@@ -507,8 +507,9 @@ MarkNonNativePropertyFound(MutableHandleShape propp)
     propp.set(reinterpret_cast<Shape*>(1));
 }
 
+template <AllowGC allowGC>
 static inline void
-MarkDenseElementFound(MutableHandleShape propp)
+MarkDenseElementFound(typename MaybeRooted<Shape*, allowGC>::MutableHandleType propp)
 {
     propp.set(reinterpret_cast<Shape*>(1));
 }
