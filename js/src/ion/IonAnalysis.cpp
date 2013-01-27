@@ -1447,7 +1447,43 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
         return true;
     }
 
-    int remain = 0;
+    // Update double to packedD convertion
+    MToDouble *kernelSum = NULL;
+    MToDouble *kernelFactor = NULL;
+    for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+        for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
+            switch (iter->id()) {
+                case 39: { // 39 MConstant 0.0
+                    JS_ASSERT(iter->isConstant());
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+
+                    // outer loop
+                case 53: { // 53 loadSlot, kernelSum
+                    // movddup of the divisor.
+                    JS_ASSERT(iter->isLoadSlot());
+                    kernelSum = MToDouble::New(*iter);
+                    kernelSum->setResultType(MIRType_PackedD);
+                    block->insertAfter(*iter, kernelSum);
+                    break;
+                }
+
+                    // inner loop
+                case 113: { // 113 loadElement, kernel[Math.abs(j)][Math.abs(i)]
+                    // movddup of the factor.
+                    JS_ASSERT(iter->isLoadElement());
+                    kernelFactor = MToDouble::New(*iter);
+                    kernelFactor->setResultType(MIRType_PackedD);
+                    block->insertAfter(*iter, kernelFactor);
+                    break;
+                }
+            }
+        }
+    }
+    JS_ASSERT(kernelSum);
+    JS_ASSERT(kernelFactor);
+
     for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
         MPhi *previous = NULL;
         for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd();) {
@@ -1480,9 +1516,6 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
             phi++;
         }
 
-        MToDouble *kernelSum = NULL;
-        MToDouble *kernelFactor = NULL;
-
         // inner loop
         MLoadElement *loadElem = NULL;
         MMul *mul = NULL;
@@ -1494,33 +1527,6 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
 
         for (MInstructionIterator iter(block->begin()); iter != block->end();) {
             switch (iter->id()) {
-                case 39: { // 39 MConstant 0.0
-                    JS_ASSERT(iter->isConstant());
-                    iter->setResultType(MIRType_PackedD);
-                    remain--;
-                    break;
-                }
-
-                    // outer loop
-                case 53: { // 53 loadSlot, kernelSum
-                    // movddup of the divisor.
-                    JS_ASSERT(iter->isLoadSlot());
-                    kernelSum = MToDouble::New(*iter);
-                    kernelSum->setResultType(MIRType_PackedD);
-                    block->insertAfter(*iter, kernelSum);
-                    break;
-                }
-
-                    // inner loop
-                case 113: { // 113 loadElement, kernel[Math.abs(j)][Math.abs(i)]
-                    // movddup of the factor.
-                    JS_ASSERT(iter->isLoadElement());
-                    kernelFactor = MToDouble::New(*iter);
-                    kernelFactor->setResultType(MIRType_PackedD);
-                    block->insertAfter(*iter, kernelFactor);
-                    break;
-                }
-
                     //
                     // Capture first instances.
                     //
@@ -1538,6 +1544,9 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
                 case 114: { // 114 mul, squidImageData[.. + 0] * kernel[..][..]
                     JS_ASSERT(!mul);
                     mul = iter->toMul();
+                    JS_ASSERT(mul->rhs()->id() == 113);
+                    JS_ASSERT(kernelFactor);
+                    mul->replaceOperand(1, kernelFactor);
                     // Change type to be a packed multiplication.
                     iter->setResultType(MIRType_PackedD);
                     break;
@@ -1556,6 +1565,9 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
                 case 181: { // 181 div, r / kernelSum
                     JS_ASSERT(!div);
                     div = iter->toDiv();
+                    JS_ASSERT(div->rhs()->id() == 53);
+                    JS_ASSERT(kernelSum);
+                    div->replaceOperand(1, kernelSum);
                     // Change type to be a packed multiplication.
                     iter->setResultType(MIRType_PackedD);
                     break;
