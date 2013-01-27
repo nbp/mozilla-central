@@ -107,6 +107,8 @@ class CodeGeneratorX86Shared : public CodeGeneratorShared
     virtual bool visitNotI(LNotI *comp);
     virtual bool visitNotD(LNotD *comp);
     virtual bool visitMathD(LMathD *math);
+    virtual bool visitMathPD(LMathPD *math);
+    virtual bool visitDupD(LDupD *ins);
     virtual bool visitFloor(LFloor *lir);
     virtual bool visitRound(LRound *lir);
     virtual bool visitGuardShape(LGuardShape *guard);

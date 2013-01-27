@@ -42,10 +42,13 @@ class CodeGeneratorX64 : public CodeGeneratorX86Shared
     bool visitBox(LBox *box);
     bool visitUnbox(LUnbox *unbox);
     bool visitDouble(LDouble *ins);
+    bool visitPackedD(LPackedD *ins);
     bool visitLoadSlotV(LLoadSlotV *ins);
     bool visitLoadSlotT(LLoadSlotT *load);
     bool visitStoreSlotT(LStoreSlotT *store);
     bool visitLoadElementT(LLoadElementT *load);
+    bool visitLoadElementPD(LLoadElementPD *load);
+    bool visitStoreElementPD(LStoreElementPD *store);
     bool visitImplicitThis(LImplicitThis *lir);
     bool visitRecompileCheck(LRecompileCheck *lir);
     bool visitInterruptCheck(LInterruptCheck *lir);

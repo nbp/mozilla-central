@@ -1040,6 +1040,39 @@ CodeGeneratorX86Shared::visitMathD(LMathD *math)
 }
 
 bool
+CodeGeneratorX86Shared::visitMathPD(LMathPD *math)
+{
+    FloatRegister lhs = ToFloatRegister(math->lhs());
+    Operand rhs = ToOperand(math->rhs());
+
+    JS_ASSERT(ToFloatRegister(math->output()) == lhs);
+
+    switch (math->jsop()) {
+      case JSOP_ADD:
+        masm.addpd(rhs, lhs);
+        break;
+      case JSOP_MUL:
+        masm.mulpd(rhs, lhs);
+        break;
+      case JSOP_DIV:
+        masm.divpd(rhs, lhs);
+        break;
+      default:
+        JS_NOT_REACHED("unexpected opcode");
+        return false;
+    }
+    return true;
+}
+
+bool
+CodeGeneratorX86Shared::visitDupD(LDupD *ins)
+{
+    masm.movddup(ToFloatRegister(ins->input()),
+                 ToFloatRegister(ins->output()));
+    return true;
+}
+
+bool
 CodeGeneratorX86Shared::visitFloor(LFloor *lir)
 {
     FloatRegister input = ToFloatRegister(lir->input());

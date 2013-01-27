@@ -364,7 +364,7 @@ class MacroAssemblerX86Shared : public Assembler
     }
 
     void loadPackedInt32OrDouble(const Operand &operand, const FloatRegister dest,
-                                 const FloatRegister packedIntTags, Label &failure)
+                                 const FloatRegister packedIntTags)
     {
         Label end, lowIsInt, highIsInt;
 

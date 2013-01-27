@@ -199,8 +199,39 @@ class LMulI : public LBinaryMath<0, 1>
     }
 };
 
+// Duplicated constant of packed double.
+class LDupD : public LInstructionHelper<1, 1, 0>
+{
+  public:
+    LIR_HEADER(DupD)
+
+    LDupD(const LAllocation &input)
+    {
+        setOperand(0, input);
+    }
+    const LAllocation *input() {
+        return getOperand(0);
+    }
+};
+
+// Performs an add, sub, mul, or div on two double values.
+class LMathPD : public LBinaryMath<0>
+{
+    JSOp jsop_;
+
+  public:
+    LIR_HEADER(MathPD)
+
+    LMathPD(JSOp jsop)
+      : jsop_(jsop)
+    { }
+
+    JSOp jsop() const {
+        return jsop_;
+    }
+};
+
 } // namespace ion
 } // namespace js
 
 #endif // jsion_lir_x86_shared_h__
-

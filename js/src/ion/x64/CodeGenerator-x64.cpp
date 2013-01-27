@@ -47,6 +47,16 @@ CodeGeneratorX64::visitDouble(LDouble *ins)
     return true;
 }
 
+bool
+CodeGeneratorX64::visitPackedD(LPackedD *ins)
+{
+    const LDefinition *out = ins->output();
+    FloatRegister dest = ToFloatRegister(out);
+    JS_ASSERT(ins->getDouble() == 0.0);
+    masm.xorpd(dest, dest);
+    return true;
+}
+
 FrameSizeClass
 FrameSizeClass::FromDepth(uint32_t frameDepth)
 {
@@ -255,13 +265,33 @@ CodeGeneratorX64::visitLoadElementT(LLoadElementT *load)
     return true;
 }
 
-
 void
 CodeGeneratorX64::storeElementTyped(const LAllocation *value, MIRType valueType, MIRType elementType,
                                     const Register &elements, const LAllocation *index)
 {
     Operand dest = createArrayElementOperand(elements, index);
     storeUnboxedValue(value, valueType, dest, elementType);
+}
+
+bool
+CodeGeneratorX64::visitLoadElementPD(LLoadElementPD *load)
+{
+    Operand source = createArrayElementOperand(ToRegister(load->elements()), load->index());
+
+    JS_ASSERT(load->mir()->type() == MIRType_PackedD);
+    masm.loadPackedInt32OrDouble(source, ToFloatRegister(load->output()),
+                                 ToFloatRegister(load->intTagMask()));
+    return true;
+}
+
+bool
+CodeGeneratorX64::visitStoreElementPD(LStoreElementPD *store)
+{
+    Operand dest = createArrayElementOperand(ToRegister(store->elements()), store->index());
+
+    JS_ASSERT(store->mir()->type() == MIRType_PackedD);
+    masm.movapd(ToFloatRegister(store->value()), dest);
+    return true;
 }
 
 bool
