@@ -1441,68 +1441,202 @@ bool
 ion::EmulateSIMDOptim(MIRGraph &graph)
 {
     // Filter out other functions.
-    if (graph.info().lineno() != 2 || !strstr("gaussian-blur.js", graph.info().filename()))
+    if (graph.entryBlock()->info().lineno() != 3 ||
+        !strstr("tests/kraken-1.1/imaging-gaussian-blur.js", graph.entryBlock()->info().filename()))
+    {
         return true;
+    }
 
     int remain = 0;
-    do {
-        for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
-            if (mir->shouldCancel("Specialize Gaussian Blur"))
-                return false;
-
-            MPhi *previous = NULL;
-            for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd();) {
-                switch (phi->id()) {
-                    case 66: case 68:
-                    case 87: case 89:
-                    case 168: case 170: {
-                        previous = *iter;
-                        break;
-                    }
-                    case 67: case 68:
-                    case 88: case 90:
-                    case 169: case 171: {
-                        // Replace consecutive double Phi by the first one which
-                        // hold both values.
-                        previous->setResultType(MIRType_PackedD);
-
-                        // All uses would be removed, but in the mean time keep
-                        // the graph correct.
-                        phi->replaceAllUsesWith(previous);
-                        phi = block->discardPhiAt(phi);
-                        continue;
-                    }
-                    default:
-                        break;
+    for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+        MPhi *previous = NULL;
+        for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd();) {
+            switch (phi->id()) {
+                case 66: case 68:
+                case 87: case 89:
+                case 161: case 163:
+                case 168: case 170: {
+                    previous = *phi;
+                    break;
                 }
-                iter++;
-            }
+                case 67: case 69:
+                case 88: case 90:
+                case 162: case 164:
+                case 169: case 171: {
+                    // Replace consecutive double Phi by the first one which
+                    // hold both values.
+                    previous->setResultType(MIRType_PackedD);
 
-            MToDouble *kernelSum = NULL;
-            MToDouble *kernelFactor = NULL;
-            for (MInstructionIterator iter(block->begin()); iter != block->end(); iter++) {
-                switch (iter->id()) {
-                    case 39: { // 39 MConstant 0.0
-                        iter->setResultType(MIRType_PackedD);
-                        remain--;
-                        break;
-                    }
-                    case 53: { // 53 loadSlot, kernelSum
-                        kernelSum = MToDouble::New(*iter);
-                        // movddup of the divisor.
-                        block->insertAfter(*iter, kernelSum);
-                        break;
-                    }
-                    case 113: { // 113 loadElement, kernel[Math.abs(j)][Math.abs(i)]
-                        kernelFactor = MToDouble::New(*iter);
-                        // movddup of the factor.
-                        block->insertAfter(*iter, kernelFactor);
-                        break;
-                    }
-                    default:
-                        break;
+                    // All uses would be removed, but in the mean time keep
+                    // the graph correct.
+                    phi->replaceAllUsesWith(previous);
+                    previous = NULL;
+                    phi = block->discardPhiAt(phi);
+                    continue;
                 }
+                default:
+                    break;
             }
+            phi++;
         }
-    } while (remain);
+
+        MToDouble *kernelSum = NULL;
+        MToDouble *kernelFactor = NULL;
+
+        // inner loop
+        MLoadElement *loadElem = NULL;
+        MMul *mul = NULL;
+        MAdd *add = NULL;
+
+        // outer loop
+        MDiv *div = NULL;
+        MStoreElement *storeElem = NULL;
+
+        for (MInstructionIterator iter(block->begin()); iter != block->end();) {
+            switch (iter->id()) {
+                case 39: { // 39 MConstant 0.0
+                    JS_ASSERT(iter->isConstant());
+                    iter->setResultType(MIRType_PackedD);
+                    remain--;
+                    break;
+                }
+
+                    // outer loop
+                case 53: { // 53 loadSlot, kernelSum
+                    // movddup of the divisor.
+                    JS_ASSERT(iter->isLoadSlot());
+                    kernelSum = MToDouble::New(*iter);
+                    kernelSum->setResultType(MIRType_PackedD);
+                    block->insertAfter(*iter, kernelSum);
+                    break;
+                }
+
+                    // inner loop
+                case 113: { // 113 loadElement, kernel[Math.abs(j)][Math.abs(i)]
+                    // movddup of the factor.
+                    JS_ASSERT(iter->isLoadElement());
+                    kernelFactor = MToDouble::New(*iter);
+                    kernelFactor->setResultType(MIRType_PackedD);
+                    block->insertAfter(*iter, kernelFactor);
+                    break;
+                }
+
+                    //
+                    // Capture first instances.
+                    //
+
+                    // Inner loop
+                case 141:
+                case 110: { // 110 loadElement, squidImageData[.. + 0]
+                    JS_ASSERT(!loadElem);
+                    loadElem = iter->toLoadElement();
+                    // Change type to be a packed load.
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+                case 142:
+                case 114: { // 114 mul, squidImageData[.. + 0] * kernel[..][..]
+                    JS_ASSERT(!mul);
+                    mul = iter->toMul();
+                    // Change type to be a packed multiplication.
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+                case 144:
+                case 116: { // 116 add, r += .. * ..
+                    JS_ASSERT(!add);
+                    add = iter->toAdd();
+                    // Change type to be a packed addition.
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+
+                    // Outer loop
+                case 201:
+                case 181: { // 181 div, r / kernelSum
+                    JS_ASSERT(!div);
+                    div = iter->toDiv();
+                    // Change type to be a packed multiplication.
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+                case 204:
+                case 184: { // 194 storeElement, squidImageData[..] = .. / ..
+                    JS_ASSERT(!storeElem);
+                    storeElem = iter->toStoreElement();
+                    // Change type to be a packed load.
+                    iter->setResultType(MIRType_PackedD);
+                    break;
+                }
+
+                    //
+                    // Replace second instances.
+                    //
+
+                    // Inner loop
+                case 152:
+                case 124: { // 124 add, 4 * ((y + j) * width + (x + i)) *+* 1
+                    if(!iter->isAdd()) break;
+                    iter->replaceAllUsesWith(loadElem->index());
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+                case 155:
+                case 127: { // 127 loadelement, squidImageData[.. + 1]
+                    if(!iter->isLoadElement()) break;
+                    iter->replaceAllUsesWith(loadElem);
+                    loadElem = NULL;
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+                case 156:
+                case 128: { // 128 mul, squidImageData[..] * kernel[..][..]
+                    if(!iter->isMul()) break;
+                    iter->replaceAllUsesWith(mul);
+                    mul = NULL;
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+                case 158:
+                case 130: { // 130 add, g += .. * ..
+                    if(!iter->isAdd()) break;
+                    iter->replaceAllUsesWith(add);
+                    add = NULL;
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+
+                    // Outer loop
+
+                case 209:
+                case 189: { // 189 add, 4 * ((y + j) * width + (x + i)) *+* 1
+                    if(!iter->isAdd()) break;
+                    iter->replaceAllUsesWith(storeElem->index());
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+                case 211:
+                case 191: { // 191 div, ..
+                    if(!iter->isDiv()) break;
+                    iter->replaceAllUsesWith(div);
+                    div = NULL;
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+                case 214:
+                case 194: {
+                    if(!iter->isStoreElement()) break;
+                    iter->replaceAllUsesWith(storeElem);
+                    storeElem = NULL;
+                    iter = block->discardAt(iter);
+                    continue;
+                }
+
+                default:
+                    break;
+            }
+            iter++;
+        }
+    }
+    return true;
 }
