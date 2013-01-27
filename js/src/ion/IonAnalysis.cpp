@@ -1547,6 +1547,7 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
                     JS_ASSERT(mul->rhs()->id() == 113);
                     JS_ASSERT(kernelFactor);
                     mul->replaceOperand(1, kernelFactor);
+                    mul->setSpecialization(MIRType_PackedD);
                     // Change type to be a packed multiplication.
                     iter->setResultType(MIRType_PackedD);
                     break;
@@ -1555,6 +1556,7 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
                 case 116: { // 116 add, r += .. * ..
                     JS_ASSERT(!add);
                     add = iter->toAdd();
+                    add->setSpecialization(MIRType_PackedD);
                     // Change type to be a packed addition.
                     iter->setResultType(MIRType_PackedD);
                     break;
@@ -1568,6 +1570,7 @@ ion::EmulateSIMDOptim(MIRGraph &graph)
                     JS_ASSERT(div->rhs()->id() == 53);
                     JS_ASSERT(kernelSum);
                     div->replaceOperand(1, kernelSum);
+                    div->setSpecialization(MIRType_PackedD);
                     // Change type to be a packed multiplication.
                     iter->setResultType(MIRType_PackedD);
                     break;

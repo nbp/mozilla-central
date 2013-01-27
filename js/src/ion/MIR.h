@@ -2267,6 +2267,9 @@ class MBinaryArithInstruction
     MIRType specialization() const {
         return specialization_;
     }
+    void setSpecialization(MIRType t) {
+        specialization_ = t;
+    }
 
     MDefinition *foldsTo(bool useValueNumbers);
 
