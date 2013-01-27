@@ -341,6 +341,7 @@ MConstant::printOpcode(FILE *fp)
         fprintf(fp, "0x%x", value().toInt32());
         break;
       case MIRType_Double:
+      case MIRType_PackedD:
         fprintf(fp, "%f", value().toDouble());
         break;
       case MIRType_Object:
