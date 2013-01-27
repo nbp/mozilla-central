@@ -118,6 +118,7 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
           case MIRType_Object:
           case MIRType_Boolean:
           case MIRType_Double:
+          case MIRType_PackedD:
           {
             LAllocation *payload = snapshot->payloadOfSlot(i);
             JSValueType type = ValueTypeFromMIRType(mir->type());

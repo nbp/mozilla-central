@@ -297,6 +297,7 @@ ValueTypeFromMIRType(MIRType type)
     case MIRType_Int32:
       return JSVAL_TYPE_INT32;
     case MIRType_Double:
+    case MIRType_PackedD:
       return JSVAL_TYPE_DOUBLE;
     case MIRType_String:
       return JSVAL_TYPE_STRING;
