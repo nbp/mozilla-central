@@ -411,7 +411,7 @@ class MacroAssemblerX86Shared : public Assembler
 
         // Convert the highest Int32 value to a double.
         {
-            bind(&lowIsInt);
+            bind(&highIsInt);
             // Swap the lowest with the highest.
             pshufd(dest, dest, 0x8b);
 
