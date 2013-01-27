@@ -290,7 +290,8 @@ CodeGeneratorX64::visitStoreElementPD(LStoreElementPD *store)
     Operand dest = createArrayElementOperand(ToRegister(store->elements()), store->index());
 
     JS_ASSERT(store->mir()->type() == MIRType_PackedD);
-    masm.movapd(ToFloatRegister(store->value()), dest);
+    masm.lea(dest, ScratchReg);
+    masm.movapd(ToFloatRegister(store->value()), Operand(ScratchReg, 0));
     return true;
 }
 

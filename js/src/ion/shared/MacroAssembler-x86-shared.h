@@ -369,7 +369,8 @@ class MacroAssemblerX86Shared : public Assembler
         Label end, lowIsInt, highIsInt;
 
         // TODO: check alignment, or bailed
-        movapd(operand, dest);
+        lea(operand, ScratchReg);
+        movapd(Operand(ScratchReg, 0), dest);
 
         // Remove the payload.
         xorpd(ScratchFloatReg, ScratchFloatReg);
