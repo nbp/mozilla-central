@@ -3760,6 +3760,17 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "  be 'null', because they are roots."),
 
 #endif
+    JS_FN_HELP("watchForLeak", WatchForLeak, 1, 0,
+"watchForLeak(target)",
+"  Add the first argument in a watch list. Returns it first argument."),
+    JS_FN_HELP("liveWatchedObjects", LiveWatchedObjects, 1, 0,
+"liveWatchedObjects()",
+"  Returns the list of watched element which are still reachable and map then\n"
+"  to one of their parent."),
+    JS_FN_HELP("stopWatchingLeaks", StopWatchingLeaks, 0, 0,
+"stopWatchingLeaks()",
+"  Clear meta-data needed for tracking logical leaks."),
+
     JS_FN_HELP("build", BuildDate, 0, 0,
 "build()",
 "  Show build date and time."),

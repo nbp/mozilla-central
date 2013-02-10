@@ -155,6 +155,9 @@ struct GSNCache {
 
 typedef Vector<ScriptAndCounts, 0, SystemAllocPolicy> ScriptAndCountsVector;
 
+// To avoid a depenency on jsweakmap, we use a weaker type here.
+typedef WeakMapBase *LiveWatchedSetBase;
+
 struct ConservativeGCData
 {
     /*
@@ -925,6 +928,10 @@ struct JSRuntime : js::RuntimeFriendFields
 
     /* Strong references on scripts held for PCCount profiling API. */
     js::ScriptAndCountsVector *scriptAndCountsVector;
+
+    /* Weak reference on object watched for logical leaks. */
+    js::LiveWatchedSetBase liveWatchedSet;
+    bool                updateWatchedSet;
 
     /* Well-known numbers held for use by this runtime's contexts. */
     js::Value           NaNValue;

@@ -14,4 +14,8 @@
 JSBool FindReferences(JSContext *cx, unsigned argc, jsval *vp);
 #endif /* DEBUG */
 
+JSBool WatchForLeak(JSContext *cx, unsigned argc, jsval *vp);
+JSBool LiveWatchedObjects(JSContext *cx, unsigned argc, jsval *vp);
+JSBool StopWatchingLeaks(JSContext *cx, unsigned argc, jsval *vp);
+
 #endif /* jsheaptools_h___ */

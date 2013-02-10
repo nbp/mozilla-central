@@ -714,6 +714,13 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
             MarkScriptRoot(trc, &vec[i].script, "scriptAndCountsVector");
     }
 
+    /*
+     * Register the watch list for detecting logical leaks, such as elements are
+     * removed during the sweep phase.
+     */
+    if (rt->liveWatchedSet)
+        rt->liveWatchedSet->trace(trc);
+
     if (!IS_GC_MARKING_TRACER(trc) || rt->atomsCompartment->zone()->isCollecting()) {
         MarkAtoms(trc);
 #ifdef JS_ION

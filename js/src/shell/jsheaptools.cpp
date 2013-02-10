@@ -7,6 +7,7 @@
 
 #include <string.h>
 
+#include "jsfriendapi.h"
 #include "jsapi.h"
 
 #include "jsalloc.h"
@@ -563,3 +564,49 @@ FindReferences(JSContext *cx, unsigned argc, jsval *vp)
 }
 
 #endif /* DEBUG */
+
+
+
+/* See help(watchForLeak). */
+JSBool
+WatchForLeak(JSContext *cx, unsigned argc, jsval *vp)
+{
+    if (argc < 1) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_MORE_ARGS_NEEDED,
+                             "watchForLeak", "0", "s");
+        return false;
+    }
+
+    RootedValue target(cx, JS_ARGV(cx, vp)[0]);
+    if (!target.isObject()) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_UNEXPECTED_TYPE,
+                             "argument", "not an object");
+        return false;
+    }
+
+    if (!js::WatchForLeak(cx, target))
+        return false;
+    JS_SET_RVAL(cx, vp, target);
+    return true;
+}
+
+/* See help(liveWatchedObjects). */
+JSBool
+LiveWatchedObjects(JSContext *cx, unsigned argc, jsval *vp)
+{
+    RootedValue target(cx, UndefinedValue());
+
+    if (!js::LiveWatchedObjects(cx, &target))
+        return false;
+    JS_SET_RVAL(cx, vp, target);
+    return true;
+}
+
+/* See help(stopWatchingLeaks). */
+JSBool
+StopWatchingLeaks(JSContext *cx, unsigned argc, jsval *vp)
+{
+    js::StopWatchingLeaks(cx);
+    JS_SET_RVAL(cx, vp, UndefinedValue());
+    return true;
+}

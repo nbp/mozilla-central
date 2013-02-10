@@ -8,6 +8,7 @@
 #include "mozilla/GuardObjects.h"
 #include "mozilla/StandardInteger.h"
 
+
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsfriendapi.h"
@@ -1015,3 +1016,341 @@ js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(JSContext *cx,
     if (callback)
         callback(cx, beginType);
 }
+
+/*
+ * API for tracking logical leaks in JavaScript programs.
+ */
+namespace js {
+
+struct AutoEnterUpdateWatched
+{
+    AutoEnterUpdateWatched(JSRuntime *rt) : rt_(rt) {
+        JS_ASSERT(!rt->updateWatchedSet);
+        rt->updateWatchedSet = true;
+    }
+
+    ~AutoEnterUpdateWatched() {
+        rt_->updateWatchedSet = false;
+    }
+
+  private:
+    JSRuntime *rt_;
+};
+
+// This type is also defined in jsweakmap.cpp
+typedef WeakMap<EncapsulatedPtrObject, RelocatableValue> ObjectValueMap;
+typedef ObjectValueMap LiveWatchedSet;
+
+static LiveWatchedSet *liveWatchedSet(JSRuntime *rt) {
+    return static_cast<LiveWatchedSet *>(rt->liveWatchedSet);
+}
+
+/*
+ * A JSTracer that register parent JSObject which have a path to a watched JSObject.
+ *
+ * LogicalLeakWatcher must be allocated in a stack frame. (They contain an
+ * AutoArrayRooter, and those must be allocated and destroyed in a stack-like
+ * order.)
+ *
+ * LogicalLeakWatcher keep all the roots they find in their traversal alive
+ * until they are destroyed. So you don't need to worry about nodes going away
+ * while you're using them.
+ */
+class LogicalLeakWatcher : public JSTracer
+{
+  public:
+
+    /* This is used to keep track of visited cells. */
+    typedef HashSet<void *, DefaultHasher<void *>, SystemAllocPolicy> Set;
+    Set marked;
+
+    LiveWatchedSet &watchList;
+    AutoEnterUpdateWatched updater;
+
+    /* Construct a LogicalLeakWatcher for |context|'s heap. */
+    LogicalLeakWatcher(JSContext *cx)
+      : watchList(*liveWatchedSet(cx->runtime)),
+        updater(cx->runtime),
+        rooter(cx, 0, NULL),
+        parent(UndefinedValue())
+    {
+        JS_TracerInit(this, JS_GetRuntime(cx), traverseEdgeWithThis);
+    }
+
+    bool init() { return marked.init(); }
+
+    /* Fill the watchList. */
+    bool visitHeap();
+
+  private:
+    /*
+     * Once we've produced a reversed map of the heap, we need to keep the
+     * engine from freeing the objects we've found in it, until we're done using
+     * the map. Even if we're only using the map to construct a result object,
+     * and not rearranging the heap ourselves, any allocation could cause a
+     * garbage collection, which could free objects held internally by the
+     * engine (for example, JaegerMonkey object templates, used by jit scripts).
+     *
+     * So, each time visitHeap reaches any object, we add it to 'roots', which
+     * is cited by 'rooter', so the object will stay alive long enough for us to
+     * include it in the results, if needed.
+     *
+     * Note that AutoArrayRooters must be constructed and destroyed in a
+     * stack-like order, so the same rule applies to this LogicalLeakWatcher. The
+     * easiest way to satisfy this requirement is to only allocate LogicalLeakWatchers
+     * as local variables in functions, or in types that themselves follow that
+     * rule. This is kind of dumb, but JSAPI doesn't provide any less restricted
+     * way to register arrays of roots.
+     */
+    Vector<Value, 0, SystemAllocPolicy> roots;
+    AutoArrayRooter rooter;
+
+    /* A work item in the stack of nodes whose children we need to traverse. */
+    struct Child {
+        Child(void *cell, JSGCTraceKind kind) : cell(cell), kind(kind) { }
+        void *cell;
+        JSGCTraceKind kind;
+    };
+
+    /* Class for setting new parent, and then restoring the original. */
+    class AutoParent {
+      public:
+        AutoParent(LogicalLeakWatcher *watcher, const Child &newParent)
+          : watcher(watcher)
+        {
+            Value v = LogicalLeakWatcher::nodeToValue(newParent);
+            savedParent = watcher->parent;
+            watcher->parent = v;
+        }
+        ~AutoParent() {
+            watcher->parent = savedParent;
+        }
+      private:
+        LogicalLeakWatcher *watcher;
+        Value savedParent;
+    };
+
+    /*
+     * A stack of work items. We represent the stack explicitly to avoid
+     * overflowing the C++ stack when traversing long chains of objects.
+     */
+    Vector<Child, 0, SystemAllocPolicy> work;
+
+    /* When traverseEdge is called, the Cell and kind at which the edge originated. */
+    Value parent;
+
+    /* Traverse an edge. */
+    bool traverseEdge(void *cell, JSGCTraceKind kind);
+
+    /*
+     * JS_TraceRuntime and JS_TraceChildren don't propagate error returns,
+     * and out-of-memory errors, by design, don't establish an exception in
+     * |context|, so traverseEdgeWithThis uses this to communicate the
+     * result of the traversal to visitHeap.
+     */
+    bool traversalStatus;
+
+    /* Static member function wrapping 'traverseEdge'. */
+    static void traverseEdgeWithThis(JSTracer *tracer, void **thingp, JSGCTraceKind kind) {
+        LogicalLeakWatcher *watcher = static_cast<LogicalLeakWatcher *>(tracer);
+        if (!watcher->traverseEdge(*thingp, kind))
+            watcher->traversalStatus = false;
+    }
+
+    /* Return a jsval representing a node, if possible; otherwise, return JSVAL_VOID. */
+    static Value nodeToValue(const Child &child) {
+        if (child.kind != JSTRACE_OBJECT)
+            return NullValue();
+        JSObject *object = static_cast<JSObject *>(child.cell);
+        return ObjectValue(*object);
+    }
+
+    /* Visit the child node right now. */
+    bool visitNow(const Child &child) {
+        JS_TraceChildren(this, child.cell, child.kind);
+        return traversalStatus;
+    }
+    /* Add the child node in the work list to visit it later. */
+    bool visitLater(const Child &child) {
+        return work.append(child);
+    }
+    /* Visit non-object children in a depth-first manner. */
+    bool visit(const Child &child) {
+        if (child.kind == JSTRACE_OBJECT)
+            return visitLater(child);
+        return visitNow(child);
+    }
+};
+
+bool
+LogicalLeakWatcher::traverseEdge(void *cell, JSGCTraceKind kind)
+{
+    const Child child(cell, kind);
+    Value v = nodeToValue(child);
+
+    /*
+     * If the object is in the watch list, register it in the pre-allocated
+     * slots of the arrays.
+     */
+    if (v.isObject()) {
+        LiveWatchedSet::Ptr watched = watchList.lookup(&v.toObject());
+        if (watched && !watched->value.isObject())
+            watched->value = parent;
+    }
+
+    Set::AddPtr p = marked.lookupForAdd(cell);
+    if (!p) {
+        /* see comment above roots. */
+        if (v.isObject()) {
+            if (!roots.append(v))
+                return false;
+            rooter.changeArray(roots.begin(), roots.length());
+        }
+
+        /*
+         * We've never visited this cell before. Add it to the map (thus
+         * marking it as visited), and put it on the work stack, to be
+         * visited from the main loop.
+         */
+        if (!marked.relookupOrAdd(p, cell, cell) || !visit(child))
+            return false;
+    }
+
+    return true;
+}
+
+bool
+LogicalLeakWatcher::visitHeap()
+{
+    traversalStatus = true;
+    parent = NullValue(); // used to identify rooted values.
+
+    /* Prime the work stack with the roots of collection. */
+    JS_TraceRuntime(this);
+    if (!traversalStatus)
+        return false;
+
+    /* Traverse children until the stack is empty. */
+    while (!work.empty()) {
+        const Child child = work.popCopy();
+        AutoParent autoParent(this, child);
+        if (!visitNow(child))
+            return false;
+    }
+
+    return true;
+}
+
+JS_FRIEND_API(JSBool)
+WatchForLeak(JSContext *cx, JSHandleValue watched)
+{
+    if (!watched.isObject())
+        return true;
+
+    JSRuntime *rt = cx->runtime;
+    if (!rt->liveWatchedSet) {
+        rt->liveWatchedSet = cx->new_<LiveWatchedSet>(cx);
+        if (!rt->liveWatchedSet || !liveWatchedSet(rt)->init())
+            return false;
+    }
+
+    return liveWatchedSet(rt)->put(&watched.toObject(), UndefinedValue());
+}
+
+JS_FRIEND_API(JSBool)
+LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched)
+{
+    JSRuntime *rt = cx->runtime;
+
+    /* The weak map might have been freed */
+    size_t length = rt->liveWatchedSet ? liveWatchedSet(rt)->count() : 0;
+
+    /* Allocate the result map (array) */
+    RootedObject map(cx, NewDenseAllocatedArray(cx, length));
+    if (!length) {
+        watched.setObject(*map);
+        return true;
+    }
+
+    /* Allocate all the pairs with undefined values */
+    RootedObject assocObject(cx, NULL);
+    RootedValue assoc(cx, UndefinedValue());
+    RootedValue lhs(cx, UndefinedValue());
+    RootedValue rhs(cx, UndefinedValue());
+
+    size_t i = 0;
+    for (; i < length; --i) {
+        assocObject = NewDenseAllocatedArray(cx, 2);
+        if (!assocObject)
+            return false;
+
+        assoc.setObject(*assocObject);
+        if (!JS_SetElement(cx, assocObject, 0, (jsval*) &lhs) ||
+            !JS_SetElement(cx, assocObject, 1, (jsval*) &rhs) ||
+            !JS_SetElement(cx, map, i, (jsval*) &assoc))
+        {
+            return false;
+        }
+    }
+
+    /* reset the value before the next search */
+    {
+        AutoAssertNoGC nogc;
+        LiveWatchedSet &watchList = *liveWatchedSet(rt);
+        for (js::LiveWatchedSet::Range r = watchList.all(); !r.empty(); r.popFront(), ++i)
+            watchList.put(r.front().key, UndefinedValue());
+    }
+
+    /* Update the weak map indexes. */
+    LogicalLeakWatcher watcher(cx);
+    if (!watcher.init() || !watcher.visitHeap())
+        return false;
+
+    /* The weak map might have been freed */
+    length = rt->liveWatchedSet ? liveWatchedSet(rt)->count() : 0;
+    if (!length) {
+        watched.setObject(*map);
+        return true;
+    }
+
+    /* Fill the allocated result */
+    i = 0;
+    for (js::LiveWatchedSet::Range r = liveWatchedSet(rt)->all(); !r.empty(); r.popFront(), ++i) {
+        lhs.setObject(*r.front().key);
+        rhs = r.front().value;
+        if (!JS_GetElement(cx, map, i, (jsval*) &assoc) ||
+            !JS_SetElement(cx, &assoc.toObject(), 0, (jsval*) &lhs) ||
+            !JS_SetElement(cx, &assoc.toObject(), 1, (jsval*) &rhs))
+        {
+            return false;
+        }
+    }
+
+    watched.setObject(*map);
+    return true;
+}
+
+static void
+ReleaseWatchedSet(FreeOp *fop)
+{
+    JSRuntime *rt = fop->runtime();
+    JS_ASSERT(rt->liveWatchedSet);
+    JS_ASSERT(liveWatchedSet(rt)->empty());
+    JS_ASSERT(!rt->updateWatchedSet);
+
+    WeakMapBase::removeWeakMapFromList(rt->liveWatchedSet);
+    fop->delete_(rt->liveWatchedSet);
+    rt->liveWatchedSet = NULL;
+}
+
+JS_FRIEND_API(void)
+StopWatchingLeaks(JSContext *cx)
+{
+    JSRuntime *rt = cx->runtime;
+    if (!rt->liveWatchedSet)
+        return;
+    liveWatchedSet(rt)->clear();
+    ReleaseWatchedSet(rt->defaultFreeOp());
+}
+
+} /* namespace js */

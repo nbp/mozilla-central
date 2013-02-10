@@ -1420,4 +1420,34 @@ class JS_FRIEND_API(AutoCTypesActivityCallback) {
 
 } /* namespace js */
 
+/*
+ * API for tracking logical leaks in JavaScript programs.
+ */
+namespace js {
+
+/*
+ * Register objects/strings which have to be remember weakly to run as smoothly
+ * as possible with any GC. Object registered with this function will appear in
+ * the output of LiveWatchedObjects as long as a non-weak reference is kept on
+ * the watched object.
+ */
+extern JS_FRIEND_API(JSBool)
+WatchForLeak(JSContext *cx, JSHandleValue watched);
+
+/*
+ * Returns a list of tuples where a watched object is associated to one of the
+ * objects which is holding references to it.
+ */
+extern JS_FRIEND_API(JSBool)
+LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched);
+
+/*
+ * Returns a list of tuples where a watched object is associated to one of the
+ * objects which is holding references to it.
+ */
+extern JS_FRIEND_API(void)
+StopWatchingLeaks(JSContext *cx);
+
+} /* namespace js */
+
 #endif /* jsfriendapi_h___ */
