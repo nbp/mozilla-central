@@ -1279,7 +1279,7 @@ LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched)
     RootedValue rhs(cx, UndefinedValue());
 
     size_t i = 0;
-    for (; i < length; --i) {
+    for (; i < length; ++i) {
         assocObject = NewDenseAllocatedArray(cx, 2);
         if (!assocObject)
             return false;
