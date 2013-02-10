@@ -33,12 +33,7 @@ function testAliasedVar() {
     var f = wrap(watchForLeak({ value : "aliased-var" }));
     assertEq(liveWatchedObjects().length, 1);
     assertEq(liveWatchedObjects()[0][0], f());
-    // Hum, this is confusing, the scope object has all the properties of the
-    // scope but it has a null proto which means it is printed as being null,
-    // but it is not null.  Also, attempt to print the scope object cause SEGV,
-    // better considering it as a non-object.
-    assertEq(liveWatchedObjects()[0][1] === null, false);
-    assertEq(liveWatchedObjects()[0][1].x, f());
+    assertEq(liveWatchedObjects()[0][1], f);
     stopWatchingLeaks();
 }
 

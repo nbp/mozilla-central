@@ -1046,6 +1046,15 @@ static LiveWatchedSet *liveWatchedSet(JSRuntime *rt) {
 }
 
 /*
+ * During the heap traversal, do not settle on object which have objects which
+ * are not supposed to be directly manipulated in JavaScript.
+ */
+const size_t excludedClassesNum = 4;
+const Class *excludedClasses[excludedClassesNum] = {
+    &CallClass, &DeclEnvClass, &WithClass, &ModuleClass
+};
+
+/*
  * A JSTracer that register parent JSObject which have a path to a watched JSObject.
  *
  * LogicalLeakWatcher must be allocated in a stack frame. (They contain an
@@ -1157,9 +1166,20 @@ class LogicalLeakWatcher : public JSTracer
             watcher->traversalStatus = false;
     }
 
+    static bool validObject(const Child &child) {
+        JS_ASSERT(child.kind == JSTRACE_OBJECT);
+        JSObject *object = static_cast<JSObject *>(child.cell);
+
+        for (size_t i = 0; i < excludedClassesNum; ++i) {
+            if (object->hasClass(excludedClasses[i]))
+                return false;
+        }
+        return true;
+    }
+
     /* Return a jsval representing a node, if possible; otherwise, return JSVAL_VOID. */
     static Value nodeToValue(const Child &child) {
-        if (child.kind != JSTRACE_OBJECT)
+        if (child.kind != JSTRACE_OBJECT || !validObject(child))
             return NullValue();
         JSObject *object = static_cast<JSObject *>(child.cell);
         return ObjectValue(*object);
@@ -1176,9 +1196,9 @@ class LogicalLeakWatcher : public JSTracer
     }
     /* Visit non-object children in a depth-first manner. */
     bool visit(const Child &child) {
-        if (child.kind == JSTRACE_OBJECT)
-            return visitLater(child);
-        return visitNow(child);
+        if (child.kind != JSTRACE_OBJECT || !validObject(child))
+            return visitNow(child);
+        return visitLater(child);
     }
 };
 
