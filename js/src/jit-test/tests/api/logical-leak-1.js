@@ -10,6 +10,21 @@ function testSimpleChain() {
 
 testSimpleChain();
 
+function testWatchMultiple() {
+    var c = {
+       a: watchForLeak({ value : "a" }),
+       b: watchForLeak({ value : "b" }),
+       value: "c"
+    };
+
+    assertEq(liveWatchedObjects().length, 2);
+    assertEq(liveWatchedObjects()[0][1], c);
+    assertEq(liveWatchedObjects()[1][1], c);
+    stopWatchingLeaks();
+}
+
+testWatchMultiple();
+
 function testAliasedVar() {
     function wrap(x) {
         return function () { return x; };
