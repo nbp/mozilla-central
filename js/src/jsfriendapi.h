@@ -1448,6 +1448,10 @@ LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched);
 extern JS_FRIEND_API(void)
 StopWatchingLeaks(JSContext *cx);
 
+/* Attempt to recover the location where the object has been allocated. */
+extern JS_FRIEND_API(JSBool)
+GetAllocationSite(JSContext *cx, JSHandleObject object, JSMutableHandleValue loc);
+
 } /* namespace js */
 
 #endif /* jsfriendapi_h___ */

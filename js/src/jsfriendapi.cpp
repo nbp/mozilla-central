@@ -16,10 +16,12 @@
 #include "jswrapper.h"
 #include "jsweakmap.h"
 #include "jswatchpoint.h"
+#include "jsinfer.h"
 
 #include "builtin/TestingFunctions.h"
 
 #include "jsobjinlines.h"
+#include "jsinferinlines.h"
 
 using namespace js;
 using namespace JS;
@@ -1371,6 +1373,64 @@ StopWatchingLeaks(JSContext *cx)
         return;
     liveWatchedSet(rt)->clear();
     ReleaseWatchedSet(rt->defaultFreeOp());
+}
+
+JS_FRIEND_API(JSBool)
+GetAllocationSite(JSContext *cx, JSHandleObject object, JSMutableHandleValue loc)
+{
+    using namespace js::types;
+    loc.setUndefined();
+
+    TypeObject *obj = object->getType(cx);
+    if (!obj)
+        return true;
+
+    AllocationSiteKey location;
+    AllocationSiteTable *allocSites = cx->compartment->types.allocationSiteTable;
+    if (!allocSites)
+        return true;
+
+    /* Match the TypeObject to find the allocation site of the object. */
+    for (AllocationSiteTable::Range r = allocSites->all(); !r.empty(); r.popFront()) {
+        if (r.front().value == obj) {
+            location.script = r.front().key.script;
+            location.offset = r.front().key.offset;
+            location.kind = r.front().key.kind;
+            break;
+        }
+    }
+
+    RootedValue objectCtor(cx, UndefinedValue());
+    RootedObject global(cx, JS_GetGlobalObject(cx));
+    if (!JS_GetProperty(cx, global, "Object", objectCtor.address()))
+        return false;
+    if (!objectCtor.isObject())
+        return false;
+
+    RootedObject locObj(cx, JS_New(cx, &objectCtor.toObject(), 0, NULL));
+    if (!locObj)
+        return false;
+
+    const char *filename = JS_GetScriptFilename(cx, location.script);
+    if (!filename)
+        return false;
+
+    RootedValue v(cx);
+    RootedString filenameStr(cx, JS_NewStringCopyZ(cx, filename));
+    if (!filenameStr)
+        return false;
+
+    v.setString(filenameStr);
+    if (!JS_SetProperty(cx, locObj, "filename", v.address()))
+        return false;
+
+    jsbytecode *pc = location.script->code + location.offset;
+    v.setInt32(JS_PCToLineNumber(cx, location.script, pc));
+    if (!JS_SetProperty(cx, locObj, "line", v.address()))
+        return false;
+
+    loc.setObject(*locObj);
+    return true;
 }
 
 } /* namespace js */

@@ -2282,6 +2282,30 @@ DumpObject(JSContext *cx, unsigned argc, jsval *vp)
 #endif /* DEBUG */
 
 static JSBool
+GetAllocationSite(JSContext *cx, unsigned argc, jsval *vp)
+{
+    if (argc < 1) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_MORE_ARGS_NEEDED,
+                             "watchForLeak", "0", "s");
+        return false;
+    }
+
+    RootedValue target(cx, JS_ARGV(cx, vp)[0]);
+    if (!target.isObject()) {
+        JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_UNEXPECTED_TYPE,
+                             "argument", "not an object");
+        return false;
+    }
+
+    RootedObject obj(cx, &target.toObject());
+    RootedValue allocSite(cx, UndefinedValue());
+    if (!js::GetAllocationSite(cx, obj, &allocSite))
+        return false;
+    JS_SET_RVAL(cx, vp, allocSite);
+    return true;
+}
+
+static JSBool
 BuildDate(JSContext *cx, unsigned argc, jsval *vp)
 {
     char version[20] = "\n";
@@ -3770,6 +3794,10 @@ static JSFunctionSpecWithHelp shell_functions[] = {
     JS_FN_HELP("stopWatchingLeaks", StopWatchingLeaks, 0, 0,
 "stopWatchingLeaks()",
 "  Clear meta-data needed for tracking logical leaks."),
+
+    JS_FN_HELP("getAllocationSite", GetAllocationSite, 0, 0,
+"getAllocationSite(object)",
+"  Attempt to recover the location of the allocation of the given object."),
 
     JS_FN_HELP("build", BuildDate, 0, 0,
 "build()",
