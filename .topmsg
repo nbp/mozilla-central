@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Add API for detecting and tracking logical leaks.
+Subject: Add an API to recover the location of an object creation.
+
