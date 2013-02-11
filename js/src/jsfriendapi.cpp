@@ -1300,15 +1300,22 @@ LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched)
     RootedValue lhs(cx, UndefinedValue());
     RootedValue rhs(cx, UndefinedValue());
 
+    RootedValue objectCtor(cx, UndefinedValue());
+    RootedObject global(cx, JS_GetGlobalObject(cx));
+    if (!JS_GetProperty(cx, global, "Object", objectCtor.address()))
+        return false;
+    if (!objectCtor.isObject())
+        return false;
+
     size_t i = 0;
     for (; i < length; ++i) {
-        assocObject = NewDenseAllocatedArray(cx, 2);
+        assocObject = JS_New(cx, &objectCtor.toObject(), 0, NULL);
         if (!assocObject)
             return false;
 
         assoc.setObject(*assocObject);
-        if (!JS_SetElement(cx, assocObject, 0, (jsval*) &lhs) ||
-            !JS_SetElement(cx, assocObject, 1, (jsval*) &rhs) ||
+        if (!JS_SetProperty(cx, assocObject, "watched", (jsval*) &lhs) ||
+            !JS_SetProperty(cx, assocObject, "holder",  (jsval*) &rhs) ||
             !JS_SetElement(cx, map, i, (jsval*) &assoc))
         {
             return false;
@@ -1341,8 +1348,8 @@ LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched)
         lhs.setObject(*r.front().key);
         rhs = r.front().value;
         if (!JS_GetElement(cx, map, i, (jsval*) &assoc) ||
-            !JS_SetElement(cx, &assoc.toObject(), 0, (jsval*) &lhs) ||
-            !JS_SetElement(cx, &assoc.toObject(), 1, (jsval*) &rhs))
+            !JS_SetProperty(cx, &assoc.toObject(), "watched", (jsval*) &lhs) ||
+            !JS_SetProperty(cx, &assoc.toObject(), "holder",  (jsval*) &rhs))
         {
             return false;
         }
