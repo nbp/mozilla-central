@@ -1,10 +1,11 @@
 
 function testSimpleChain() {
-    var b = { a: watchForLeak({ value : "simple-chain", toString: function () { return "a" } }), toString: function () { return "b" } };
+    var b = { a: watchForLeak({ value : "simple-chain" }) };
 
-    assertEq(liveWatchedObjects().length, 1);
-    assertEq(liveWatchedObjects()[0][0], b.a);
-    assertEq(liveWatchedObjects()[0][1], b);
+    var result = liveWatchedObjects();
+    assertEq(result.length, 1);
+    assertEq(result[0].watched, b.a);
+    assertEq(result[0].holder, b);
     stopWatchingLeaks();
 }
 
@@ -17,9 +18,10 @@ function testWatchMultiple() {
        value: "c"
     };
 
-    assertEq(liveWatchedObjects().length, 2);
-    assertEq(liveWatchedObjects()[0][1], c);
-    assertEq(liveWatchedObjects()[1][1], c);
+    var result = liveWatchedObjects();
+    assertEq(result.length, 2);
+    assertEq(result[0].holder, c);
+    assertEq(result[1].holder, c);
     stopWatchingLeaks();
 }
 
@@ -31,9 +33,11 @@ function testAliasedVar() {
     }
 
     var f = wrap(watchForLeak({ value : "aliased-var" }));
-    assertEq(liveWatchedObjects().length, 1);
-    assertEq(liveWatchedObjects()[0][0], f());
-    assertEq(liveWatchedObjects()[0][1], f);
+
+    var result = liveWatchedObjects();
+    assertEq(result.length, 1);
+    assertEq(result[0].watched, f());
+    assertEq(result[0].holder, f);
     stopWatchingLeaks();
 }
 
