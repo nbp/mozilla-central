@@ -1442,8 +1442,7 @@ extern JS_FRIEND_API(JSBool)
 LiveWatchedObjects(JSContext *cx, JSMutableHandleValue watched);
 
 /*
- * Returns a list of tuples where a watched object is associated to one of the
- * objects which is holding references to it.
+ * Clear the list of watched objects, and free internal memory.
  */
 extern JS_FRIEND_API(void)
 StopWatchingLeaks(JSContext *cx);
