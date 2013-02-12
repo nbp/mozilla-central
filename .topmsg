@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 840696 - GetElem produces an IC if both Arrays and Typed arrays are used. r=
+Subject: Bug 840696 part 1 - Enable GetElem IC if typed arrays & arrays are mix-up. r=
+
