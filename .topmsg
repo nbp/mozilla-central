@@ -1,0 +1,2 @@
+From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
+Subject: Bug 840696 - GetElem produces an IC if both Arrays and Typed arrays are used. r=
