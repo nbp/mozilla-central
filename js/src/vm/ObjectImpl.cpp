@@ -8,17 +8,13 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 
-#include "jsscope.h"
-#include "jsobjinlines.h"
-
-#include "js/TemplateLib.h"
-
-#include "Debugger.h"
-#include "ObjectImpl.h"
-
 #include "gc/Barrier-inl.h"
+#include "js/TemplateLib.h"
+#include "vm/Debugger.h"
+#include "vm/ObjectImpl.h"
 
-#include "ObjectImpl-inl.h"
+#include "vm/ObjectImpl-inl.h"
+#include "vm/Shape-inl.h"
 
 using namespace js;
 
@@ -81,7 +77,7 @@ CheckArgCompartment(JSContext *cx, JSObject *obj, HandleValue v,
  * Reject non-callable getters and setters.
  */
 bool
-PropDesc::unwrapDebuggerObjectsInto(JSContext *cx, Debugger *dbg, JSObject *obj,
+PropDesc::unwrapDebuggerObjectsInto(JSContext *cx, Debugger *dbg, HandleObject obj,
                                     PropDesc *unwrapped) const
 {
     MOZ_ASSERT(!isUndefined());
@@ -127,7 +123,7 @@ PropDesc::unwrapDebuggerObjectsInto(JSContext *cx, Debugger *dbg, JSObject *obj,
  * so reconstitute desc->pd_ if needed.
  */
 bool
-PropDesc::wrapInto(JSContext *cx, JSObject *obj, const jsid &id, jsid *wrappedId,
+PropDesc::wrapInto(JSContext *cx, HandleObject obj, const jsid &id, jsid *wrappedId,
                    PropDesc *desc) const
 {
     MOZ_ASSERT(!isUndefined());
@@ -153,6 +149,30 @@ static ObjectElements emptyElementsHeader(0, 0);
 /* Objects with no elements share one empty set of elements. */
 HeapSlot *js::emptyObjectElements =
     reinterpret_cast<HeapSlot *>(uintptr_t(&emptyElementsHeader) + sizeof(ObjectElements));
+
+/* static */ bool
+ObjectElements::ConvertElementsToDoubles(JSContext *cx, uintptr_t elementsPtr)
+{
+    /*
+     * This function is infallible, but has a fallible interface so that it can
+     * be called directly from Ion code. Only arrays can have their dense
+     * elements converted to doubles, and arrays never have empty elements.
+     */
+    HeapSlot *elementsHeapPtr = (HeapSlot *) elementsPtr;
+    JS_ASSERT(elementsHeapPtr != emptyObjectElements);
+
+    ObjectElements *header = ObjectElements::fromElements(elementsHeapPtr);
+    JS_ASSERT(!header->convertDoubleElements);
+
+    Value *vp = (Value *) elementsPtr;
+    for (size_t i = 0; i < header->initializedLength; i++) {
+        if (vp[i].isInt32())
+            vp[i].setDouble(vp[i].toInt32());
+    }
+
+    header->convertDoubleElements = 1;
+    return true;
+}
 
 #ifdef DEBUG
 void
@@ -223,25 +243,25 @@ js::ObjectImpl::checkShapeConsistency()
 void
 js::ObjectImpl::initSlotRange(uint32_t start, const Value *vector, uint32_t length)
 {
-    JSCompartment *comp = compartment();
+    JS::Zone *zone = this->zone();
     HeapSlot *fixedStart, *fixedEnd, *slotsStart, *slotsEnd;
     getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     for (HeapSlot *sp = fixedStart; sp < fixedEnd; sp++)
-        sp->init(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
     for (HeapSlot *sp = slotsStart; sp < slotsEnd; sp++)
-        sp->init(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
 }
 
 void
 js::ObjectImpl::copySlotRange(uint32_t start, const Value *vector, uint32_t length)
 {
-    JSCompartment *comp = compartment();
+    JS::Zone *zone = this->zone();
     HeapSlot *fixedStart, *fixedEnd, *slotsStart, *slotsEnd;
     getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     for (HeapSlot *sp = fixedStart; sp < fixedEnd; sp++)
-        sp->set(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->set(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
     for (HeapSlot *sp = slotsStart; sp < slotsEnd; sp++)
-        sp->set(comp, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->set(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
 }
 
 #ifdef DEBUG

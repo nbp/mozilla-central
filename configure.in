@@ -432,16 +432,6 @@ fi
 AC_SUBST(CRTDLLVERSION)
 AC_SUBST(CRTEXPDLLVERSION)
 
-if test -n "$MOZ_METRO"; then
-  case "$target" in
-  *-mingw*)
-    ;;
-  *)
-    AC_MSG_ERROR([Metro builds only valid on the windows platform.]);
-    ;;
-  esac
-fi
-
 MOZ_ARG_WITH_STRING(windows-version,
 [  --with-windows-version=WINSDK_TARGETVER
                           Windows SDK version to target. Lowest version
@@ -1446,6 +1436,7 @@ if test "$GNU_CC"; then
 
     _DEFINES_CFLAGS='-include $(DEPTH)/mozilla-config.h -DMOZILLA_CLIENT'
     _USE_CPP_INCLUDE_FLAG=1
+    ASFLAGS="$ASFLAGS $_DEFINES_CFLAGS"
 
 elif test "$SOLARIS_SUNPRO_CC"; then
     DSO_CFLAGS=''
@@ -5213,12 +5204,8 @@ dnl the master list above.
 if test -n "$MOZ_WEBRTC"; then
     case "$target" in
     *-android*|*-linuxandroid*)
-        if test -n "$MOZ_B2G"; then
-            MOZ_WEBRTC=1
-        else
-            dnl Make sure doesn't get matched by *-linux*
-            MOZ_WEBRTC=
-        fi
+        dnl Make sure doesn't get matched by *-linux*
+        MOZ_WEBRTC=
         ;;
     *-linux*|*-mingw*|*-darwin*)
         dnl Leave enabled
@@ -5246,20 +5233,18 @@ if test -n "$MOZ_WEBRTC"; then
     MOZ_VP8_ENCODER=1
     MOZ_VP8_ERROR_CONCEALMENT=1
 
-    if test "$MOZ_WIDGET_TOOLKIT" != "gonk"; then
-       dnl OpenSLES is only available in Android 2.3 and later; we'll change this
-       dnl hard dependency to a dynamic load with graceful runtime failure before
-       dnl we make --enable-webrtc on by default in Android (bug 815905)
-       dnl
-       if test "$OS_TARGET" = "Android"; then
-          LDFLAGS="$LDFLAGS -lOpenSLES"
-       fi
-       case "$target" in
-          *-android*|*-linuxandroid*)
-          LDFLAGS="$LDFLAGS -lOpenSLES"
-          ;;
-       esac
+    dnl OpenSLES is only available in Android 2.3 and later; we'll change this
+    dnl hard dependency to a dynamic load with graceful runtime failure before
+    dnl we make --enable-webrtc on by default in Android (bug 815905)
+    dnl
+    if test "$OS_TARGET" = "Android"; then
+       LDFLAGS="$LDFLAGS -lOpenSLES"
     fi
+    case "$target" in
+    *-android*|*-linuxandroid*)
+       LDFLAGS="$LDFLAGS -lOpenSLES"
+       ;;
+    esac
 
 dnl enable once Signaling lands
     MOZ_WEBRTC_SIGNALING=1
@@ -6196,7 +6181,7 @@ if test "$OS_ARCH" = "WINNT"; then
     if test -n "$MAKENSISU" -a "$MAKENSISU" != ":"; then
       AC_MSG_RESULT([yes])
       changequote(,)
-      MAKENSISU_VER=`"$MAKENSISU" -version 2>/dev/null | sed -e '/-Unicode/!s/.*//g' -e 's/^v\([0-9]\+\.[0-9]\+\)\-Unicode$/\1/g'`
+      MAKENSISU_VER=`"$MAKENSISU" -version 2>/dev/null | sed -e '/-Unicode/!s/.*//g' -e 's/^v\([0-9]\+\.[0-9]\+\).*\-Unicode$/\1/g'`
       changequote([,])
       if test ! "$MAKENSISU_VER" = ""; then
           MAKENSISU_MAJOR_VER=`echo $MAKENSISU_VER | $AWK -F\. '{ print $1 }'`
@@ -7917,7 +7902,7 @@ dnl ========================================================
 MOZ_ARG_HEADER(Static build options)
 
 # split JS out by default to avoid VS2005 PGO crash (bug 591836).
-if test "$OS_ARCH" = "WINNT" -a "$CPU_ARCH" != "x86_64" ; then
+if test "$OS_ARCH" = "WINNT"; then
   ENABLE_SHARED_JS=1
 fi
 
@@ -8526,10 +8511,11 @@ AC_SUBST(MOZ_OS2_TOOLS)
 AC_SUBST(MOZ_POST_DSO_LIB_COMMAND)
 AC_SUBST(MOZ_POST_PROGRAM_COMMAND)
 AC_SUBST(MOZ_LINKER_EXTRACT)
-AC_SUBST(MOZ_PER_WINDOW_PRIVATE_BROWSING)
 
-if test -n "$MOZ_PER_WINDOW_PRIVATE_BROWSING" ; then
-    AC_DEFINE(MOZ_PER_WINDOW_PRIVATE_BROWSING)
+AC_SUBST(MOZ_JSDOWNLOADS)
+
+if test -n "$MOZ_JSDOWNLOADS" ; then
+    AC_DEFINE(MOZ_JSDOWNLOADS)
 fi
 
 dnl ========================================================
@@ -8993,34 +8979,20 @@ if test "${OS_TARGET}" = "WINNT"; then
    EXTRA_GYP_DEFINES="-D MSVS_VERSION=${_MSVS_VERSION} -D MSVS_OS_BITS=${OS_BITS}"
 
 elif test "${OS_TARGET}" = "Android"; then
-   if test "${MOZ_WIDGET_TOOLKIT}" != "gonk"; then
-      EXTRA_GYP_DEFINES="-D gtest_target_type=executable -D android_toolchain=${android_toolchain} -G os=android "
-   fi
+   EXTRA_GYP_DEFINES="-D gtest_target_type=executable -D android_toolchain=${android_toolchain} -G os=android "
    if test -n "$ARM_ARCH" && test "$ARM_ARCH" -lt 7; then
-      EXTRA_GYP_DEFINES="${EXTRA_GYP_DEFINES} -D armv7=0 "
+      EXTRA_GYP_DEFINES+=" -D armv7=0 "
    else
-      EXTRA_GYP_DEFINES="${EXTRA_GYP_DEFINES} -D armv7=1 "
+      EXTRA_GYP_DEFINES+=" -D armv7=1 "
    fi
 fi
 
 if test -n "$MOZ_WEBRTC"; then
    AC_MSG_RESULT("generating WebRTC Makefiles...")
 
-   if test "${MOZ_WIDGET_TOOLKIT}" = "gonk"; then
-      EXTRA_GYP_DEFINES="${EXTRA_GYP_DEFINES} -D moz_widget_toolkit_gonk=1"
-   else
-      EXTRA_GYP_DEFINES="${EXTRA_GYP_DEFINES} -D moz_widget_toolkit_gonk=0"
-   fi
-
 dnl Any --include files must also appear in -D FORCED_INCLUDE_FILE= entries
 dnl so that regeneration via dependencies works correctly
    WEBRTC_CONFIG="-D build_with_mozilla=1 --include ${srcdir}/media/webrtc/webrtc_config.gypi -D FORCED_INCLUDE_FILE=${srcdir}/media/webrtc/webrtc_config.gypi"
-
-   if test -n HAVE_CLOCK_MONOTONIC; then
-      WEBRTC_CONFIG="${WEBRTC_CONFIG} -D moz_have_clock_monotonic=1"
-   else
-      WEBRTC_CONFIG="${WEBRTC_CONFIG} -D moz_have_clock_monotonic=0"
-   fi
 
    GYP_WEBRTC_OPTIONS="--format=mozmake ${WEBRTC_CONFIG} -D target_arch=${WEBRTC_TARGET_ARCH} ${EXTRA_GYP_DEFINES} --depth=${srcdir}/media/webrtc/trunk --toplevel-dir=${srcdir} -G OBJDIR=${_objdir}"
 
@@ -9093,7 +9065,6 @@ MOZ_WIDGET_TOOLKIT=${MOZ_WIDGET_TOOLKIT} \
 UNIVERSAL_BINARY=${UNIVERSAL_BINARY} \
 MOZ_CRASHREPORTER=${MOZ_CRASHREPORTER} \
 MOZ_APP_NAME=${MOZ_APP_NAME} \
-MOZ_PER_WINDOW_PRIVATE_BROWSING=${MOZ_PER_WINDOW_PRIVATE_BROWSING} \
   $PYTHON ${_topsrcdir}/config/writemozinfo.py ./mozinfo.json.tmp
 if cmp -s ./mozinfo.json.tmp ./mozinfo.json; then
   rm ./mozinfo.json.tmp

@@ -335,7 +335,6 @@
 #include "nsIDOMSVGEvent.h"
 #include "nsIDOMSVGFilterElement.h"
 #include "nsIDOMSVGFilters.h"
-#include "nsIDOMSVGFitToViewBox.h"
 #include "nsIDOMSVGForeignObjectElem.h"
 #include "nsIDOMSVGGElement.h"
 #include "nsIDOMSVGGradientElement.h"
@@ -358,7 +357,6 @@
 #include "nsIDOMSVGSVGElement.h"
 #include "nsIDOMSVGSwitchElement.h"
 #include "nsIDOMSVGSymbolElement.h"
-#include "nsIDOMSVGTests.h"
 #include "nsIDOMSVGTextElement.h"
 #include "nsIDOMSVGTextPathElement.h"
 #include "nsIDOMSVGTitleElement.h"
@@ -377,7 +375,6 @@
 // Device Storage
 #include "nsIDOMDeviceStorage.h"
 #include "nsIDOMDeviceStorageCursor.h"
-#include "nsIDOMDeviceStorageStat.h"
 
 // Drag and drop
 #include "nsIDOMDataTransfer.h"
@@ -465,13 +462,13 @@ using mozilla::dom::workers::ResolveWorkerClasses;
 #ifdef MOZ_B2G_RIL
 #include "Telephony.h"
 #include "TelephonyCall.h"
-#include "CallEvent.h"
 #include "nsIDOMVoicemail.h"
 #include "nsIDOMVoicemailEvent.h"
 #include "nsIDOMIccManager.h"
 #include "StkCommandEvent.h"
 #include "nsIDOMMozCellBroadcast.h"
 #include "nsIDOMMozCellBroadcastEvent.h"
+#include "CFStateChangeEvent.h"
 #endif // MOZ_B2G_RIL
 
 #ifdef MOZ_B2G_FM
@@ -482,7 +479,6 @@ using mozilla::dom::workers::ResolveWorkerClasses;
 #include "BluetoothManager.h"
 #include "BluetoothAdapter.h"
 #include "BluetoothDevice.h"
-#include "BluetoothPropertyEvent.h"
 #endif
 
 #include "nsIDOMNavigatorSystemMessages.h"
@@ -1324,9 +1320,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(DeviceStorageCursor, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
-  NS_DEFINE_CLASSINFO_DATA(DeviceStorageStat, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
-
   NS_DEFINE_CLASSINFO_DATA(GeoGeolocation, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
   
@@ -1377,6 +1370,9 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 
   NS_DEFINE_CLASSINFO_DATA(MozCellBroadcast, nsDOMGenericSH,
+                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
+
+  NS_DEFINE_CLASSINFO_DATA(CFStateChangeEvent, nsDOMGenericSH,
                            DOM_DEFAULT_SCRIPTABLE_FLAGS)
 #endif
 
@@ -1500,8 +1496,6 @@ static nsDOMClassInfoData sClassInfoData[] = {
                            EVENTTARGET_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(TelephonyCall, nsEventTargetSH,
                            EVENTTARGET_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(CallEvent, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(MozVoicemail, nsEventTargetSH,
                            EVENTTARGET_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(MozVoicemailEvent, nsDOMGenericSH,
@@ -1521,11 +1515,9 @@ static nsDOMClassInfoData sClassInfoData[] = {
   NS_DEFINE_CLASSINFO_DATA(BluetoothManager, nsEventTargetSH,
                            EVENTTARGET_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(BluetoothAdapter, nsEventTargetSH,
-                           EVENTTARGET_SCRIPTABLE_FLAGS)  
+                           EVENTTARGET_SCRIPTABLE_FLAGS)
   NS_DEFINE_CLASSINFO_DATA(BluetoothDevice, nsEventTargetSH,
                            EVENTTARGET_SCRIPTABLE_FLAGS)
-  NS_DEFINE_CLASSINFO_DATA(BluetoothPropertyEvent, nsDOMGenericSH,
-                           DOM_DEFAULT_SCRIPTABLE_FLAGS)
 #endif
 
   NS_DEFINE_CLASSINFO_DATA(CameraManager, nsDOMGenericSH,
@@ -2997,7 +2989,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
 
 #define DOM_CLASSINFO_SVG_GRAPHIC_ELEMENT_MAP_ENTRIES \
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)           \
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
 
   // XXX - the proto chain stuff is sort of hackish, because of the MI in
@@ -3031,7 +3022,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN(SVGAnimateElement, nsIDOMSVGAnimateElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimationElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimateElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMElementTimeControl)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
@@ -3040,7 +3030,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(SVGAnimateTransformElement,
                           nsIDOMSVGAnimateTransformElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimationElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimateTransformElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMElementTimeControl)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
@@ -3049,7 +3038,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(SVGAnimateMotionElement,
                           nsIDOMSVGAnimateMotionElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimationElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimateMotionElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMElementTimeControl)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
@@ -3058,7 +3046,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(SVGSetElement,
                           nsIDOMSVGSetElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGAnimationElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGSetElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMElementTimeControl)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
@@ -3276,7 +3263,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN(SVGMarkerElement, nsIDOMSVGMarkerElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGMarkerElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFitToViewBox)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
   DOM_CLASSINFO_MAP_END
 
@@ -3298,7 +3284,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN(SVGPatternElement, nsIDOMSVGPatternElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGPatternElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFitToViewBox)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGURIReference)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGUnitTypes)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
@@ -3346,7 +3331,6 @@ nsDOMClassInfo::Init()
 
   DOM_CLASSINFO_MAP_BEGIN(SVGSVGElement, nsIDOMSVGSVGElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGSVGElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFitToViewBox)
     DOM_CLASSINFO_SVG_GRAPHIC_ELEMENT_MAP_ENTRIES
   DOM_CLASSINFO_MAP_END
 
@@ -3358,8 +3342,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(SVGSymbolElement, nsIDOMSVGSymbolElement)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGSymbolElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGTests)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFitToViewBox)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
   DOM_CLASSINFO_MAP_END
 
@@ -3395,7 +3377,6 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_END
 
   DOM_CLASSINFO_MAP_BEGIN(SVGViewElement, nsIDOMSVGViewElement)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMSVGFitToViewBox)
     DOM_CLASSINFO_SVG_ELEMENT_MAP_ENTRIES
   DOM_CLASSINFO_MAP_END
 
@@ -3584,10 +3565,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(DeviceStorageStat, nsIDOMDeviceStorageStat)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMDeviceStorageStat)
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(GeoGeolocation, nsIDOMGeoGeolocation)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMGeoGeolocation)
   DOM_CLASSINFO_MAP_END
@@ -3666,6 +3643,11 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(MozCellBroadcastEvent, nsIDOMMozCellBroadcastEvent)
      DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozCellBroadcastEvent)
      DOM_CLASSINFO_EVENT_MAP_ENTRIES
+  DOM_CLASSINFO_MAP_END
+
+  DOM_CLASSINFO_MAP_BEGIN(CFStateChangeEvent, nsIDOMCFStateChangeEvent)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMCFStateChangeEvent)
+     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEvent)
   DOM_CLASSINFO_MAP_END
 #endif // MOZ_B2G_RIL
 
@@ -3910,11 +3892,6 @@ nsDOMClassInfo::Init()
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
   DOM_CLASSINFO_MAP_END
 
-  DOM_CLASSINFO_MAP_BEGIN(CallEvent, nsIDOMCallEvent)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMCallEvent)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMEvent)
-  DOM_CLASSINFO_MAP_END
-
   DOM_CLASSINFO_MAP_BEGIN(MozVoicemail, nsIDOMMozVoicemail)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMMozVoicemail)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMEventTarget)
@@ -3952,14 +3929,9 @@ nsDOMClassInfo::Init()
   DOM_CLASSINFO_MAP_BEGIN(BluetoothAdapter, nsIDOMBluetoothAdapter)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMBluetoothAdapter)
   DOM_CLASSINFO_MAP_END
-    
+
   DOM_CLASSINFO_MAP_BEGIN(BluetoothDevice, nsIDOMBluetoothDevice)
     DOM_CLASSINFO_MAP_ENTRY(nsIDOMBluetoothDevice)
-  DOM_CLASSINFO_MAP_END
-
-  DOM_CLASSINFO_MAP_BEGIN(BluetoothPropertyEvent, nsIDOMBluetoothPropertyEvent)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMBluetoothPropertyEvent)
-    DOM_CLASSINFO_MAP_ENTRY(nsIDOMEvent)
   DOM_CLASSINFO_MAP_END
 #endif
 
@@ -7598,8 +7570,7 @@ nsElementSH::PostCreate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
   NS_ENSURE_TRUE(xblService, NS_ERROR_NOT_AVAILABLE);
 
   nsRefPtr<nsXBLBinding> binding;
-  xblService->LoadBindings(element, uri, principal, false,
-                           getter_AddRefs(binding), &dummy);
+  xblService->LoadBindings(element, uri, principal, getter_AddRefs(binding), &dummy);
   
   if (binding) {
     if (nsContentUtils::IsSafeToRunScript()) {

@@ -10,6 +10,7 @@
 #include "IonMacroAssembler.h"
 #include "gc/Root.h"
 #include "Bailouts.h"
+#include "vm/ForkJoin.h"
 
 using namespace js;
 using namespace js::ion;
@@ -307,11 +308,11 @@ MacroAssembler::newGCThing(const Register &result,
 
     JS_ASSERT(!templateObject->hasDynamicElements());
 
-    JSCompartment *compartment = GetIonContext()->compartment;
+    Zone *zone = GetIonContext()->compartment->zone();
 
 #ifdef JS_GC_ZEAL
     // Don't execute the inline path if gcZeal is active.
-    movePtr(ImmWord(compartment->rt), result);
+    movePtr(ImmWord(zone->rt), result);
     loadPtr(Address(result, offsetof(JSRuntime, gcZeal_)), result);
     branch32(Assembler::NotEqual, result, Imm32(0), fail);
 #endif
@@ -321,7 +322,7 @@ MacroAssembler::newGCThing(const Register &result,
     // If a FreeSpan is replaced, its members are updated in the freeLists table,
     // which the code below always re-reads.
     gc::FreeSpan *list = const_cast<gc::FreeSpan *>
-                         (compartment->arenas.getFreeList(allocKind));
+                         (zone->allocator.arenas.getFreeList(allocKind));
     loadPtr(AbsoluteAddress(&list->first), result);
     branchPtr(Assembler::BelowOrEqual, AbsoluteAddress(&list->last), result, fail);
 
@@ -355,6 +356,8 @@ MacroAssembler::initGCThing(const Register &obj, JSObject *templateObject)
                 Address(obj, elementsOffset + ObjectElements::offsetOfInitializedLength()));
         store32(Imm32(templateObject->getArrayLength()),
                 Address(obj, elementsOffset + ObjectElements::offsetOfLength()));
+        store32(Imm32(templateObject->shouldConvertDoubleElements() ? 1 : 0),
+                Address(obj, elementsOffset + ObjectElements::offsetOfConvertDoubleElements()));
     } else {
         storePtr(ImmWord(emptyObjectElements), Address(obj, JSObject::offsetOfElements()));
 

@@ -18,11 +18,6 @@ let SocialUI = {
     Services.obs.addObserver(this, "social:recommend-info-changed", false);
     Services.obs.addObserver(this, "social:frameworker-error", false);
     Services.obs.addObserver(this, "social:provider-set", false);
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    // this observer is necessary so things are also correctly updated
-    // when per-window PB isn't active
-    Services.obs.addObserver(this, "private-browsing", false);
-#endif
 
     Services.prefs.addObserver("social.sidebar.open", this, false);
     Services.prefs.addObserver("social.toast-notifications.enabled", this, false);
@@ -46,9 +41,6 @@ let SocialUI = {
     Services.obs.removeObserver(this, "social:recommend-info-changed");
     Services.obs.removeObserver(this, "social:frameworker-error");
     Services.obs.removeObserver(this, "social:provider-set");
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    Services.obs.removeObserver(this, "private-browsing");
-#endif
 
     Services.prefs.removeObserver("social.sidebar.open", this);
     Services.prefs.removeObserver("social.toast-notifications.enabled", this);
@@ -129,7 +121,7 @@ let SocialUI = {
           break;
         case "social:frameworker-error":
           if (this.enabled && Social.provider.origin == data) {
-            SocialSidebar.setSidebarErrorMessage("frameworker-error");
+            SocialSidebar.setSidebarErrorMessage();
           }
           break;
 
@@ -140,14 +132,6 @@ let SocialUI = {
             SocialToolbar.updateButton();
           }
           break;
-
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-        case "private-browsing":
-          this._updateEnabledState();
-          this._updateActiveUI();
-          SocialToolbar.init();
-          break;
-#endif
       }
     } catch (e) {
       Components.utils.reportError(e + "\n" + e.stack);
@@ -173,11 +157,8 @@ let SocialUI = {
   _updateActiveUI: function SocialUI_updateActiveUI() {
     // The "active" UI isn't dependent on there being a provider, just on
     // social being "active" (but also chromeless/PB)
-    let enabled = Social.active && !this._chromeless
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-                  && !PrivateBrowsingUtils.isWindowPrivate(window)
-#endif
-        ;
+    let enabled = Social.active && !this._chromeless &&
+                  !PrivateBrowsingUtils.isWindowPrivate(window);
     let broadcaster = document.getElementById("socialActiveBroadcaster");
     broadcaster.hidden = !enabled;
 
@@ -328,11 +309,7 @@ let SocialUI = {
 
   get enabled() {
     // Returns whether social is enabled *for this window*.
-    if (this._chromeless
-#ifdef MOZ_PER_WINDOW_PRIVATE_BROWSING
-        || PrivateBrowsingUtils.isWindowPrivate(window)
-#endif
-       )
+    if (this._chromeless || PrivateBrowsingUtils.isWindowPrivate(window))
       return false;
     return !!(Social.active && Social.provider && Social.provider.enabled);
   },
@@ -452,20 +429,6 @@ let SocialFlyout = {
     panel.appendChild(iframe);
   },
 
-  setUpProgressListener: function SF_setUpProgressListener() {
-    if (!this._progressListenerSet) {
-      this._progressListenerSet = true;
-      // Force a layout flush by calling .clientTop so
-      // that the docShell of this frame is created
-      this.panel.firstChild.clientTop;
-      this.panel.firstChild.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
-                                    .getInterface(Ci.nsIWebProgress)
-                                    .addProgressListener(new SocialErrorListener("flyout"),
-                                                         Ci.nsIWebProgress.NOTIFY_STATE_REQUEST |
-                                                         Ci.nsIWebProgress.NOTIFY_LOCATION);
-    }
-  },
-
   setFlyoutErrorMessage: function SF_setFlyoutErrorMessage() {
     let iframe = this.panel.firstChild;
     if (!iframe)
@@ -481,7 +444,10 @@ let SocialFlyout = {
     panel.hidePopup();
     if (!panel.firstChild)
       return
-    panel.removeChild(panel.firstChild);
+    let iframe = panel.firstChild;
+    if (iframe.socialErrorListener)
+      iframe.socialErrorListener.remove();
+    panel.removeChild(iframe);
   },
 
   onShown: function(aEvent) {
@@ -560,7 +526,10 @@ let SocialFlyout = {
       panel.moveTo(box.screenX, box.screenY + yAdjust);
     } else {
       panel.openPopup(anchor, "start_before", 0, yOffset, false, false);
-      this.setUpProgressListener();
+      // Force a layout flush by calling .clientTop so
+      // that the docShell of this frame is created
+      panel.firstChild.clientTop;
+      Social.setErrorListener(iframe, this.setFlyoutErrorMessage.bind(this))
     }
     this.yOffset = yOffset;
   }
@@ -946,13 +915,12 @@ var SocialToolbar = {
     socialToolbarItem.appendChild(toolbarButtons);
 
     for (let frame of createdFrames) {
+      if (frame.socialErrorListener) {
+        frame.socialErrorListener.remove();
+      }
       if (frame.docShell) {
         frame.docShell.isActive = false;
-        frame.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
-                      .getInterface(Ci.nsIWebProgress)
-                      .addProgressListener(new SocialErrorListener("notification-panel"),
-                                           Ci.nsIWebProgress.NOTIFY_STATE_REQUEST |
-                                           Ci.nsIWebProgress.NOTIFY_LOCATION);
+        Social.setErrorListener(frame, this.setPanelErrorMessage.bind(this));
       }
     }
   },
@@ -1077,18 +1045,10 @@ var SocialSidebar = {
   // Called once, after window load, when the Social.provider object is initialized
   init: function SocialSidebar_init() {
     let sbrowser = document.getElementById("social-sidebar-browser");
-    this.errorListener = new SocialErrorListener("sidebar");
-    this.configureSidebarDocShell(sbrowser.docShell);
-    this.update();
-  },
-
-  configureSidebarDocShell: function SocialSidebar_configureDocShell(aDocShell) {
+    Social.setErrorListener(sbrowser, this.setSidebarErrorMessage.bind(this));
     // setting isAppTab causes clicks on untargeted links to open new tabs
-    aDocShell.isAppTab = true;
-    aDocShell.QueryInterface(Ci.nsIWebProgress)
-             .addProgressListener(SocialSidebar.errorListener,
-                                  Ci.nsIWebProgress.NOTIFY_STATE_REQUEST |
-                                  Ci.nsIWebProgress.NOTIFY_LOCATION);
+    sbrowser.docShell.isAppTab = true;
+    this.update();
   },
 
   // Whether the sidebar can be shown for this window.
@@ -1145,7 +1105,7 @@ var SocialSidebar = {
     } else {
       sbrowser.setAttribute("origin", Social.provider.origin);
       if (Social.provider.errorState == "frameworker-error") {
-        SocialSidebar.setSidebarErrorMessage("frameworker-error");
+        SocialSidebar.setSidebarErrorMessage();
         return;
       }
 
@@ -1178,84 +1138,14 @@ var SocialSidebar = {
 
   _unloadTimeoutId: 0,
 
-  setSidebarErrorMessage: function(aType) {
+  setSidebarErrorMessage: function() {
     let sbrowser = document.getElementById("social-sidebar-browser");
-    switch (aType) {
-      case "sidebar-error":
-        let url = encodeURIComponent(Social.provider.sidebarURL);
-        sbrowser.loadURI("about:socialerror?mode=tryAgain&url=" + url, null, null);
-        break;
-
-      case "frameworker-error":
-        sbrowser.setAttribute("src", "about:socialerror?mode=workerFailure");
-        break;
+    // a frameworker error "trumps" a sidebar error.
+    if (Social.provider.errorState == "frameworker-error") {
+      sbrowser.setAttribute("src", "about:socialerror?mode=workerFailure");
+    } else {
+      let url = encodeURIComponent(Social.provider.sidebarURL);
+      sbrowser.loadURI("about:socialerror?mode=tryAgain&url=" + url, null, null);
     }
   }
 }
-
-// Error handling class used to listen for network errors in the social frames
-// and replace them with a social-specific error page
-function SocialErrorListener(aType) {
-  this.type = aType;
-}
-
-SocialErrorListener.prototype = {
-  QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
-                                         Ci.nsISupportsWeakReference,
-                                         Ci.nsISupports]),
-
-  onStateChange: function SPL_onStateChange(aWebProgress, aRequest, aState, aStatus) {
-    let failure = false;
-    if ((aState & Ci.nsIWebProgressListener.STATE_STOP)) {
-      if (aRequest instanceof Ci.nsIHttpChannel) {
-        try {
-          // Change the frame to an error page on 4xx (client errors)
-          // and 5xx (server errors)
-          failure = aRequest.responseStatus >= 400 &&
-                    aRequest.responseStatus < 600;
-        } catch (e) {}
-      }
-    }
-
-    // Calling cancel() will raise some OnStateChange notifications by itself,
-    // so avoid doing that more than once
-    if (failure && aStatus != Components.results.NS_BINDING_ABORTED) {
-      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
-      this.setErrorMessage(aWebProgress);
-    }
-  },
-
-  onLocationChange: function SPL_onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
-    let failure = aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE;
-    if (failure && Social.provider.errorState != "frameworker-error") {
-      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
-      window.setTimeout(function(self) {
-        self.setErrorMessage(aWebProgress);
-      }, 0, this);
-    }
-  },
-
-  onProgressChange: function SPL_onProgressChange() {},
-  onStatusChange: function SPL_onStatusChange() {},
-  onSecurityChange: function SPL_onSecurityChange() {},
-
-  setErrorMessage: function(aWebProgress) {
-    switch (this.type) {
-      case "flyout":
-        SocialFlyout.setFlyoutErrorMessage();
-        break;
-
-      case "sidebar":
-        // a frameworker error "trumps" a sidebar error.
-        let reason = Social.provider.errorState || "sidebar-error";
-        SocialSidebar.setSidebarErrorMessage(reason);
-        break;
-
-      case "notification-panel":
-        let frame = aWebProgress.QueryInterface(Ci.nsIDocShell)
-                                .chromeEventHandler;
-        SocialToolbar.setPanelErrorMessage(frame);
-        break;
-    }
-  }
-};

@@ -445,6 +445,10 @@ pref("media.volume.steps", 10);
 //Enable/disable marionette server, set listening port
 pref("marionette.defaultPrefs.enabled", true);
 pref("marionette.defaultPrefs.port", 2828);
+#ifndef MOZ_WIDGET_GONK
+// On desktop builds, we need to force the socket to listen on localhost only
+pref("marionette.force-local", true);
+#endif
 #endif
 
 #ifdef MOZ_UPDATER
@@ -543,7 +547,8 @@ pref("ui.showHideScrollbars", 1);
 // documents a 1s grace period before they're eligible to be marked as
 // background.
 pref("dom.ipc.processPriorityManager.enabled", true);
-pref("dom.ipc.processPriorityManager.gracePeriodMS", 1000);
+pref("dom.ipc.processPriorityManager.backgroundGracePeriodMS", 1000);
+pref("dom.ipc.processPriorityManager.temporaryPriorityMS", 5000);
 
 // Kernel parameters for how processes are killed on low-memory.
 pref("gonk.systemMemoryPressureRecoveryPollMS", 5000);

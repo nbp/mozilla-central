@@ -108,7 +108,7 @@ ReportObjectRequired(JSContext *cx)
 bool
 ValueToIdentifier(JSContext *cx, const Value &v, MutableHandleId id)
 {
-    if (!ValueToId(cx, v, id))
+    if (!ValueToId<CanGC>(cx, v, id))
         return false;
     if (!JSID_IS_ATOM(id) || !IsIdentifier(JSID_TO_ATOM(id))) {
         RootedValue val(cx, v);
@@ -562,8 +562,8 @@ Debugger::slowPathOnLeaveFrame(JSContext *cx, bool frameOk)
             Value rval;
             bool hookOk = Invoke(cx, ObjectValue(*frameobj), handler, 1, completion.address(),
                                  &rval);
-            Value nextValue;
-            JSTrapStatus nextStatus = dbg->parseResumptionValue(ac, hookOk, rval, &nextValue);
+            RootedValue nextValue(cx);
+            JSTrapStatus nextStatus = dbg->parseResumptionValue(ac, hookOk, rval, nextValue.address());
 
             /*
              * At this point, we are back in the debuggee compartment, and any error has
@@ -698,7 +698,7 @@ Debugger::wrapDebuggeeValue(JSContext *cx, MutableHandleValue vp)
                 js_ReportOutOfMemory(cx);
                 return false;
             }
-            HashTableWriteBarrierPost(cx->compartment, &objects, obj);
+            HashTableWriteBarrierPost(cx->zone(), &objects, obj);
 
             if (obj->compartment() != object->compartment()) {
                 CrossCompartmentKey key(CrossCompartmentKey::DebuggerObject, object, obj);
@@ -1257,7 +1257,7 @@ Debugger::onSingleStep(JSContext *cx, Value *vp)
 
     /* Call all the onStep handlers we found. */
     for (JSObject **p = frames.begin(); p != frames.end(); p++) {
-        JSObject *frame = *p;
+        RootedObject frame(cx, *p);
         Debugger *dbg = Debugger::fromChildJSObject(frame);
 
         Maybe<AutoCompartment> ac;
@@ -1418,7 +1418,7 @@ Debugger::markCrossCompartmentDebuggerObjectReferents(JSTracer *tracer)
      * compartments.
      */
     for (Debugger *dbg = rt->debuggerList.getFirst(); dbg; dbg = dbg->getNext()) {
-        if (!dbg->object->compartment()->isCollecting())
+        if (!dbg->object->zone()->isCollecting())
             dbg->markKeysInCompartment(tracer);
     }
 }
@@ -1468,7 +1468,7 @@ Debugger::markAllIteratively(GCMarker *trc)
                  *   - it actually has hooks that might be called
                  */
                 HeapPtrObject &dbgobj = dbg->toJSObjectRef();
-                if (!dbgobj->compartment()->isGCMarking())
+                if (!dbgobj->zone()->isGCMarking())
                     continue;
 
                 bool dbgMarked = IsObjectMarked(&dbgobj);
@@ -1581,7 +1581,7 @@ Debugger::detachAllDebuggersFromGlobal(FreeOp *fop, GlobalObject *global,
 }
 
 /* static */ void
-Debugger::findCompartmentEdges(JSCompartment *comp, js::gc::ComponentFinder<JSCompartment> &finder)
+Debugger::findCompartmentEdges(Zone *zone, js::gc::ComponentFinder<Zone> &finder)
 {
     /*
      * For debugger cross compartment wrappers, add edges in the opposite
@@ -1589,13 +1589,13 @@ Debugger::findCompartmentEdges(JSCompartment *comp, js::gc::ComponentFinder<JSCo
      * This ensure that debuggers and their debuggees are finalized in the same
      * group.
      */
-    for (Debugger *dbg = comp->rt->debuggerList.getFirst(); dbg; dbg = dbg->getNext()) {
-        JSCompartment *w = dbg->object->compartment();
-        if (w == comp || !w->isGCMarking())
+    for (Debugger *dbg = zone->rt->debuggerList.getFirst(); dbg; dbg = dbg->getNext()) {
+        Zone *w = dbg->object->zone();
+        if (w == zone || !w->isGCMarking())
             continue;
-        if (dbg->scripts.hasKeyInCompartment(comp) ||
-            dbg->objects.hasKeyInCompartment(comp) ||
-            dbg->environments.hasKeyInCompartment(comp))
+        if (dbg->scripts.hasKeyInZone(zone) ||
+            dbg->objects.hasKeyInZone(zone) ||
+            dbg->environments.hasKeyInZone(zone))
         {
             finder.addEdgeTo(w);
         }
@@ -2758,7 +2758,7 @@ DebuggerScript_getUrl(JSContext *cx, unsigned argc, Value *vp)
     THIS_DEBUGSCRIPT_SCRIPT(cx, argc, vp, "(get url)", args, obj, script);
 
     if (script->filename) {
-        JSString *str = js_NewStringCopyZ(cx, script->filename);
+        JSString *str = js_NewStringCopyZ<CanGC>(cx, script->filename);
         if (!str)
             return false;
         args.rval().setString(str);
@@ -3067,7 +3067,7 @@ DebuggerScript_getAllOffsets(JSContext *cx, unsigned argc, Value *vp)
                 RootedId id(cx);
                 offsets = NewDenseEmptyArray(cx);
                 if (!offsets ||
-                    !ValueToId(cx, NumberValue(lineno), &id))
+                    !ValueToId<CanGC>(cx, NumberValue(lineno), &id))
                 {
                     return false;
                 }
@@ -4139,7 +4139,7 @@ DebuggerObject_getOwnPropertyDescriptor(JSContext *cx, unsigned argc, Value *vp)
     THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "getOwnPropertyDescriptor", args, dbg, obj);
 
     RootedId id(cx);
-    if (!ValueToId(cx, argc >= 1 ? args[0] : UndefinedValue(), &id))
+    if (!ValueToId<CanGC>(cx, argc >= 1 ? args[0] : UndefinedValue(), &id))
         return false;
 
     /* Bug: This can cause the debuggee to run! */
@@ -4201,7 +4201,7 @@ DebuggerObject_getOwnPropertyNames(JSContext *cx, unsigned argc, Value *vp)
     for (size_t i = 0, len = keys.length(); i < len; i++) {
          jsid id = keys[i];
          if (JSID_IS_INT(id)) {
-             JSString *str = Int32ToString(cx, JSID_TO_INT(id));
+             JSString *str = Int32ToString<CanGC>(cx, JSID_TO_INT(id));
              if (!str)
                  return false;
              vals[i].setString(str);
@@ -4230,7 +4230,7 @@ DebuggerObject_defineProperty(JSContext *cx, unsigned argc, Value *vp)
     REQUIRE_ARGC("Debugger.Object.defineProperty", 2);
 
     RootedId id(cx);
-    if (!ValueToId(cx, args[0], &id))
+    if (!ValueToId<CanGC>(cx, args[0], &id))
         return false;
 
     const Value &descval = args[1];
@@ -4332,11 +4332,11 @@ static JSBool
 DebuggerObject_deleteProperty(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGOBJECT_OWNER_REFERENT(cx, argc, vp, "deleteProperty", args, dbg, obj);
-    Value nameArg = argc > 0 ? args[0] : UndefinedValue();
+    RootedValue nameArg(cx, argc > 0 ? args[0] : UndefinedValue());
 
     Maybe<AutoCompartment> ac;
     ac.construct(cx, obj);
-    if (!cx->compartment->wrap(cx, &nameArg))
+    if (!cx->compartment->wrap(cx, nameArg.address()))
         return false;
 
     ErrorCopier ec(ac, dbg->toJSObject());
@@ -4442,7 +4442,7 @@ ApplyOrCall(JSContext *cx, unsigned argc, Value *vp, ApplyOrCallMode mode)
      * Any JS exceptions thrown must be in the debugger compartment, so do
      * sanity checks and fallible conversions before entering the debuggee.
      */
-    Value calleev = ObjectValue(*obj);
+    RootedValue calleev(cx, ObjectValue(*obj));
     if (!obj->isCallable()) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_INCOMPATIBLE_PROTO,
                              "Debugger.Object", "apply", obj->getClass()->name);
@@ -4491,7 +4491,7 @@ ApplyOrCall(JSContext *cx, unsigned argc, Value *vp, ApplyOrCallMode mode)
      */
     Maybe<AutoCompartment> ac;
     ac.construct(cx, obj);
-    if (!cx->compartment->wrap(cx, &calleev) || !cx->compartment->wrap(cx, thisv.address()))
+    if (!cx->compartment->wrap(cx, calleev.address()) || !cx->compartment->wrap(cx, thisv.address()))
         return false;
     for (unsigned i = 0; i < callArgc; i++) {
         if (!cx->compartment->wrap(cx, &callArgv[i]))

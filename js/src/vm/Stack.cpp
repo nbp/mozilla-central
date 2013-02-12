@@ -16,6 +16,7 @@
 #include "ion/Bailouts.h"
 #endif
 #include "Stack.h"
+#include "ForkJoin.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
@@ -191,7 +192,8 @@ StackFrame::prevpcSlow(InlinedSite **pinlined)
     JS_ASSERT(!(flags_ & HAS_PREVPC));
 #if defined(JS_METHODJIT) && defined(JS_MONOIC)
     StackFrame *p = prev();
-    mjit::JITScript *jit = p->script()->getJIT(p->isConstructing(), p->compartment()->compileBarriers());
+    mjit::JITScript *jit = p->script()->getJIT(p->isConstructing(),
+                                               p->compartment()->zone()->compileBarriers());
     prevpc_ = jit->nativeToPC(ncode_, &prevInline_);
     flags_ |= HAS_PREVPC;
     if (pinlined)
@@ -1371,7 +1373,9 @@ StackIter::settleOnNewState()
             containsCall = data_.seg_->contains(data_.calls_);
 
             /* Eval-in-frame allows jumping into the middle of a segment. */
-            if (containsFrame && data_.seg_->fp() != data_.fp_) {
+            if (containsFrame &&
+                (data_.seg_->fp() != data_.fp_ || data_.seg_->maybeCalls() != data_.calls_))
+            {
                 /* Avoid duplicating logic; seg_ contains fp_, so no iloop. */
                 StackIter tmp = *this;
                 tmp.startOnSegment(data_.seg_);

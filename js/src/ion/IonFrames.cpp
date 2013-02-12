@@ -309,9 +309,9 @@ ion::HandleException(ResumeFromException *rfe)
 
     // Immediately remove any bailout frame guard that might be left over from
     // an error in between ConvertFrames and ThunkToInterpreter.
-    js_delete(cx->runtime->ionActivation->maybeTakeBailout());
+    js_delete(cx->mainThread().ionActivation->maybeTakeBailout());
 
-    IonFrameIterator iter(cx->runtime->ionTop);
+    IonFrameIterator iter(cx->mainThread().ionTop);
     while (!iter.isEntry()) {
         if (iter.isScripted()) {
             // Search each inlined frame for live iterator objects, and close
@@ -359,15 +359,15 @@ IonActivationIterator::settle()
 }
 
 IonActivationIterator::IonActivationIterator(JSContext *cx)
-  : top_(cx->runtime->ionTop),
-    activation_(cx->runtime->ionActivation)
+  : top_(cx->mainThread().ionTop),
+    activation_(cx->mainThread().ionActivation)
 {
     settle();
 }
 
 IonActivationIterator::IonActivationIterator(JSRuntime *rt)
-  : top_(rt->ionTop),
-    activation_(rt->ionActivation)
+  : top_(rt->mainThread.ionTop),
+    activation_(rt->mainThread.ionActivation)
 {
     settle();
 }
@@ -675,7 +675,7 @@ ion::GetPcScript(JSContext *cx, JSScript **scriptRes, jsbytecode **pcRes)
     JSRuntime *rt = cx->runtime;
 
     // Recover the return address.
-    IonFrameIterator it(rt->ionTop);
+    IonFrameIterator it(rt->mainThread.ionTop);
     uint8_t *retAddr = it.returnAddress();
     uint32_t hash = PcScriptCache::Hash(retAddr);
     JS_ASSERT(retAddr != NULL);
@@ -922,7 +922,7 @@ InlineFrameIterator::findNextFrame()
     script_ = frame_->script();
     pc_ = script_->code + si_.pcOffset();
 #ifdef DEBUG
-    numActualArgs_ = 0xbad;
+    numActualArgs_ = 0xbadbad;
 #endif
 
     // This unfortunately is O(n*m), because we must skip over outer frames
@@ -932,7 +932,10 @@ InlineFrameIterator::findNextFrame()
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 
         // Recover the number of actual arguments from the script.
-        numActualArgs_ = GET_ARGC(pc_);
+        if (JSOp(*pc_) != JSOP_FUNAPPLY)
+            numActualArgs_ = GET_ARGC(pc_);
+
+        JS_ASSERT(numActualArgs_ != 0xbadbad);
 
         // Skip over non-argument slots, as well as |this|.
         unsigned skipCount = (si_.slots() - 1) - numActualArgs_ - 1;

@@ -120,6 +120,7 @@ MapAllocToTraceKind(AllocKind kind)
     return map[kind];
 }
 
+#ifdef JSGC_GENERATIONAL
 static inline bool
 IsNurseryAllocable(AllocKind kind)
 {
@@ -152,6 +153,7 @@ IsNurseryAllocable(AllocKind kind)
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(map) == FINALIZE_LIMIT);
     return map[kind];
 }
+#endif
 
 static inline bool
 IsBackgroundFinalized(AllocKind kind)
@@ -414,6 +416,18 @@ struct ArenaLists {
     template <AllowGC allowGC>
     static void *refillFreeList(JSContext *cx, AllocKind thingKind);
 
+    /*
+     * Moves all arenas from |fromArenaLists| into |this|.  In
+     * parallel blocks, we temporarily create one ArenaLists per
+     * parallel thread.  When the parallel block ends, we move
+     * whatever allocations may have been performed back into the
+     * compartment's main arena list using this function.
+     */
+    void adoptArenas(JSRuntime *runtime, ArenaLists *fromArenaLists);
+
+    /* True if the ArenaHeader in question is found in this ArenaLists */
+    bool containsArena(JSRuntime *runtime, ArenaHeader *arenaHeader);
+
     void checkEmptyFreeLists() {
 #ifdef DEBUG
         for (size_t i = 0; i < mozilla::ArrayLength(freeLists); ++i)
@@ -434,12 +448,20 @@ struct ArenaLists {
     bool foregroundFinalize(FreeOp *fop, AllocKind thingKind, SliceBudget &sliceBudget);
     static void backgroundFinalize(FreeOp *fop, ArenaHeader *listHead, bool onBackgroundThread);
 
+    /*
+     * Invoked from IonMonkey-compiled parallel worker threads to
+     * perform an allocation.  In this case, |this| will be
+     * thread-local, but the compartment |comp| is shared between all
+     * threads.
+     */
+    void *parallelAllocate(JSCompartment *comp, AllocKind thingKind, size_t thingSize);
+
   private:
     inline void finalizeNow(FreeOp *fop, AllocKind thingKind);
     inline void queueForForegroundSweep(FreeOp *fop, AllocKind thingKind);
     inline void queueForBackgroundSweep(FreeOp *fop, AllocKind thingKind);
 
-    inline void *allocateFromArena(JSCompartment *comp, AllocKind thingKind);
+    inline void *allocateFromArena(JS::Zone *zone, AllocKind thingKind);
 };
 
 /*
@@ -467,6 +489,13 @@ struct GCPtrHasher
 
 typedef HashMap<void *, uint32_t, GCPtrHasher, SystemAllocPolicy> GCLocks;
 
+typedef enum JSGCRootType {
+    JS_GC_ROOT_VALUE_PTR,
+    JS_GC_ROOT_STRING_PTR,
+    JS_GC_ROOT_OBJECT_PTR,
+    JS_GC_ROOT_SCRIPT_PTR
+} JSGCRootType;
+
 struct RootInfo {
     RootInfo() {}
     RootInfo(const char *name, JSGCRootType type) : name(name), type(type) {}
@@ -479,6 +508,21 @@ typedef js::HashMap<void *,
                     js::DefaultHasher<void *>,
                     js::SystemAllocPolicy> RootedValueMap;
 
+extern JSBool
+AddValueRoot(JSContext *cx, js::Value *vp, const char *name);
+
+extern JSBool
+AddValueRootRT(JSRuntime *rt, js::Value *vp, const char *name);
+
+extern JSBool
+AddStringRoot(JSContext *cx, JSString **rp, const char *name);
+
+extern JSBool
+AddObjectRoot(JSContext *cx, JSObject **rp, const char *name);
+
+extern JSBool
+AddScriptRoot(JSContext *cx, JSScript **rp, const char *name);
+
 } /* namespace js */
 
 extern JSBool
@@ -487,12 +531,6 @@ js_InitGC(JSRuntime *rt, uint32_t maxbytes);
 extern void
 js_FinishGC(JSRuntime *rt);
 
-extern JSBool
-js_AddRoot(JSContext *cx, js::Value *vp, const char *name);
-
-extern JSBool
-js_AddGCThingRoot(JSContext *cx, void **rp, const char *name);
-
 /* Table of pointers with count valid members. */
 typedef struct JSPtrTable {
     size_t      count;
@@ -500,10 +538,10 @@ typedef struct JSPtrTable {
 } JSPtrTable;
 
 extern JSBool
-js_LockGCThingRT(JSRuntime *rt, void *thing);
+js_LockThing(JSRuntime *rt, void *thing);
 
 extern void
-js_UnlockGCThingRT(JSRuntime *rt, void *thing);
+js_UnlockThing(JSRuntime *rt, void *thing);
 
 namespace js {
 
@@ -519,13 +557,10 @@ TriggerGC(JSRuntime *rt, js::gcreason::Reason reason);
 
 /* Must be called with GC lock taken. */
 extern void
-TriggerCompartmentGC(JSCompartment *comp, js::gcreason::Reason reason);
+TriggerZoneGC(Zone *zone, js::gcreason::Reason reason);
 
 extern void
 MaybeGC(JSContext *cx);
-
-extern void
-ShrinkGCBuffers(JSRuntime *rt);
 
 extern void
 ReleaseAllJITCode(FreeOp *op);
@@ -1040,13 +1075,13 @@ struct GCMarker : public JSTracer {
 
   private:
 #ifdef DEBUG
-    void checkCompartment(void *p);
+    void checkZone(void *p);
 #else
-    void checkCompartment(void *p) {}
+    void checkZone(void *p) {}
 #endif
 
     void pushTaggedPtr(StackTag tag, void *ptr) {
-        checkCompartment(ptr);
+        checkZone(ptr);
         uintptr_t addr = reinterpret_cast<uintptr_t>(ptr);
         JS_ASSERT(!(addr & StackTagMask));
         if (!stack.push(addr | uintptr_t(tag)))
@@ -1054,7 +1089,7 @@ struct GCMarker : public JSTracer {
     }
 
     void pushValueArray(JSObject *obj, void *start, void *end) {
-        checkCompartment(obj);
+        checkZone(obj);
 
         JS_ASSERT(start <= end);
         uintptr_t tagged = reinterpret_cast<uintptr_t>(obj) | GCMarker::ValueArrayTag;

@@ -152,7 +152,7 @@ IsAddressableGCThing(JSRuntime *rt, uintptr_t w,
     if (!aheader->allocated())
         return CGCT_FREEARENA;
 
-    if (skipUncollectedCompartments && !aheader->compartment->isCollecting())
+    if (skipUncollectedCompartments && !aheader->zone->isCollecting())
         return CGCT_OTHERCOMPARTMENT;
 
     AllocKind thingKind = aheader->getAllocKind();
@@ -669,7 +669,7 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
 
     if (IS_GC_MARKING_TRACER(trc)) {
         for (CompartmentsIter c(rt); !c.done(); c.next()) {
-            if (!c->isCollecting())
+            if (!c->zone()->isCollecting())
                 c->markCrossCompartmentWrappers(trc);
         }
         Debugger::markCrossCompartmentDebuggerObjectReferents(trc);
@@ -689,8 +689,12 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
     for (RootRange r = rt->gcRootsHash.all(); !r.empty(); r.popFront()) {
         const RootEntry &entry = r.front();
         const char *name = entry.value.name ? entry.value.name : "root";
-        if (entry.value.type == JS_GC_ROOT_GCTHING_PTR)
-            MarkGCThingRoot(trc, reinterpret_cast<void **>(entry.key), name);
+        if (entry.value.type == JS_GC_ROOT_STRING_PTR)
+            MarkStringRoot(trc, reinterpret_cast<JSString **>(entry.key), name);
+        else if (entry.value.type == JS_GC_ROOT_OBJECT_PTR)
+            MarkObjectRoot(trc, reinterpret_cast<JSObject **>(entry.key), name);
+        else if (entry.value.type == JS_GC_ROOT_SCRIPT_PTR)
+            MarkScriptRoot(trc, reinterpret_cast<JSScript **>(entry.key), name);
         else
             MarkValueRoot(trc, reinterpret_cast<Value *>(entry.key), name);
     }
@@ -710,7 +714,7 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
             MarkScriptRoot(trc, &vec[i].script, "scriptAndCountsVector");
     }
 
-    if (!IS_GC_MARKING_TRACER(trc) || rt->atomsCompartment->isCollecting()) {
+    if (!IS_GC_MARKING_TRACER(trc) || rt->atomsCompartment->zone()->isCollecting()) {
         MarkAtoms(trc);
 #ifdef JS_ION
         /* Any Ion wrappers survive until the runtime is being torn down. */
@@ -726,7 +730,7 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
 
     /* We can't use GCCompartmentsIter if we're called from TraceRuntime. */
     for (CompartmentsIter c(rt); !c.done(); c.next()) {
-        if (IS_GC_MARKING_TRACER(trc) && !c->isCollecting())
+        if (IS_GC_MARKING_TRACER(trc) && !c->zone()->isCollecting())
             continue;
 
         if (IS_GC_MARKING_TRACER(trc) && c->isPreservingCode()) {

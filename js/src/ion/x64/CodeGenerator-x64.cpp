@@ -5,13 +5,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jsnum.h"
+
 #include "CodeGenerator-x64.h"
-#include "ion/shared/CodeGenerator-shared-inl.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
-#include "jsnum.h"
-#include "jsscope.h"
-#include "jsscopeinlines.h"
+#include "ion/shared/CodeGenerator-shared-inl.h"
+#include "vm/Shape.h"
+
+#include "vm/Shape-inl.h"
 
 using namespace js;
 using namespace js::ion;
@@ -249,7 +251,16 @@ bool
 CodeGeneratorX64::visitLoadElementT(LLoadElementT *load)
 {
     Operand source = createArrayElementOperand(ToRegister(load->elements()), load->index());
-    loadUnboxedValue(source, load->mir()->type(), load->output());
+
+    if (load->mir()->loadDoubles()) {
+        FloatRegister fpreg = ToFloatRegister(load->output());
+        if (source.kind() == Operand::REG_DISP)
+            masm.loadDouble(source.toAddress(), fpreg);
+        else
+            masm.loadDouble(source.toBaseIndex(), fpreg);
+    } else {
+        loadUnboxedValue(source, load->mir()->type(), load->output());
+    }
 
     JS_ASSERT(!load->mir()->needsHoleCheck());
     return true;

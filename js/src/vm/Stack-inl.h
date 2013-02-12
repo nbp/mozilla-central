@@ -76,7 +76,7 @@ inline mjit::JITScript *
 StackFrame::jit()
 {
     AutoAssertNoGC nogc;
-    return script()->getJIT(isConstructing(), script()->compartment()->compileBarriers());
+    return script()->getJIT(isConstructing(), script()->zone()->compileBarriers());
 }
 #endif
 
@@ -792,6 +792,14 @@ AbstractFramePtr::fun() const
 {
     if (isStackFrame())
         return asStackFrame()->fun();
+    JS_NOT_REACHED("Invalid frame");
+    return NULL;
+}
+inline JSFunction *
+AbstractFramePtr::maybeFun() const
+{
+    if (isStackFrame())
+        return asStackFrame()->maybeFun();
     JS_NOT_REACHED("Invalid frame");
     return NULL;
 }

@@ -203,7 +203,6 @@ private:
                       base::ProcessId aOtherProcess) MOZ_OVERRIDE;
 
     virtual bool RecvGetProcessAttributes(uint64_t* aId,
-                                          bool* aStartBackground,
                                           bool* aIsForApp,
                                           bool* aIsForBrowser) MOZ_OVERRIDE;
     virtual bool RecvGetXPCOMProcessAttributes(bool* aIsOffline) MOZ_OVERRIDE;
@@ -343,6 +342,8 @@ private:
     virtual bool RecvAudioChannelChangedNotification();
 
     virtual bool RecvBroadcastVolume(const nsString& aVolumeName);
+
+    virtual bool RecvRecordingDeviceEvents(const nsString& aRecordingStatus);
 
     virtual void ProcessingError(Result what) MOZ_OVERRIDE;
 

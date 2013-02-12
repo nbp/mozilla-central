@@ -397,8 +397,8 @@ DaylightSavingTA(double t, DateTimeInfo *dtInfo)
         t = MakeDate(day, TimeWithinDay(t));
     }
 
-    int64_t timeMilliseconds = static_cast<int64_t>(t);
-    int64_t offsetMilliseconds = dtInfo->getDSTOffsetMilliseconds(timeMilliseconds);
+    int64_t utcMilliseconds = static_cast<int64_t>(t);
+    int64_t offsetMilliseconds = dtInfo->getDSTOffsetMilliseconds(utcMilliseconds);
     return static_cast<double>(offsetMilliseconds);
 }
 
@@ -1187,7 +1187,7 @@ date_parse(JSContext *cx, unsigned argc, Value *vp)
         return true;
     }
 
-    UnrootedString str = ToString(cx, args[0]);
+    UnrootedString str = ToString<CanGC>(cx, args[0]);
     if (!str)
         return false;
 
@@ -2860,7 +2860,7 @@ date_toLocaleFormat_impl(JSContext *cx, CallArgs args)
     if (args.length() == 0)
         return ToLocaleStringHelper(cx, thisObj, args.rval());
 
-    RootedString fmt(cx, ToString(cx, args[0]));
+    RootedString fmt(cx, ToString<CanGC>(cx, args[0]));
     if (!fmt)
         return false;
 

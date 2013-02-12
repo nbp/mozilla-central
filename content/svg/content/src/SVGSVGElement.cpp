@@ -146,10 +146,9 @@ NS_IMPL_ADDREF_INHERITED(SVGSVGElement,SVGSVGElementBase)
 NS_IMPL_RELEASE_INHERITED(SVGSVGElement,SVGSVGElementBase)
 
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(SVGSVGElement)
-  NS_NODE_INTERFACE_TABLE5(SVGSVGElement, nsIDOMNode, nsIDOMElement,
+  NS_NODE_INTERFACE_TABLE4(SVGSVGElement, nsIDOMNode, nsIDOMElement,
                            nsIDOMSVGElement,
-                           nsIDOMSVGSVGElement,
-                           nsIDOMSVGFitToViewBox)
+                           nsIDOMSVGSVGElement)
   NS_DOM_INTERFACE_MAP_ENTRY_CLASSINFO(SVGSVGElement)
 NS_INTERFACE_MAP_END_INHERITING(SVGSVGElementBase)
 
@@ -429,15 +428,10 @@ SVGSVGElement::PauseAnimations()
 void
 SVGSVGElement::PauseAnimations(ErrorResult& rv)
 {
-  if (NS_SMILEnabled()) {
-    if (mTimedDocumentRoot) {
-      mTimedDocumentRoot->Pause(nsSMILTimeContainer::PAUSE_SCRIPT);
-    }
-    // else we're not the outermost <svg> or not bound to a tree, so silently fail
-    return;
+  if (mTimedDocumentRoot) {
+    mTimedDocumentRoot->Pause(nsSMILTimeContainer::PAUSE_SCRIPT);
   }
-  NS_NOTYETIMPLEMENTED("SVGSVGElement::PauseAnimations");
-  rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  // else we're not the outermost <svg> or not bound to a tree, so silently fail
 }
 
 /* void unpauseAnimations (); */
@@ -452,15 +446,10 @@ SVGSVGElement::UnpauseAnimations()
 void
 SVGSVGElement::UnpauseAnimations(ErrorResult& rv)
 {
-  if (NS_SMILEnabled()) {
-    if (mTimedDocumentRoot) {
-      mTimedDocumentRoot->Resume(nsSMILTimeContainer::PAUSE_SCRIPT);
-    }
-    // else we're not the outermost <svg> or not bound to a tree, so silently fail
-    return;
+  if (mTimedDocumentRoot) {
+    mTimedDocumentRoot->Resume(nsSMILTimeContainer::PAUSE_SCRIPT);
   }
-  NS_NOTYETIMPLEMENTED("SVGSVGElement::UnpauseAnimations");
-  rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  // else we're not the outermost <svg> or not bound to a tree, so silently fail
 }
 
 /* boolean animationsPaused (); */
@@ -475,13 +464,8 @@ SVGSVGElement::AnimationsPaused(bool *_retval)
 bool
 SVGSVGElement::AnimationsPaused(ErrorResult& rv)
 {
-  if (NS_SMILEnabled()) {
-    nsSMILTimeContainer* root = GetTimedDocumentRoot();
-    return root && root->IsPausedByType(nsSMILTimeContainer::PAUSE_SCRIPT);
-  }
-  NS_NOTYETIMPLEMENTED("SVGSVGElement::AnimationsPaused");
-  rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-  return false;
+  nsSMILTimeContainer* root = GetTimedDocumentRoot();
+  return root && root->IsPausedByType(nsSMILTimeContainer::PAUSE_SCRIPT);
 }
 
 /* float getCurrentTime (); */
@@ -496,18 +480,13 @@ SVGSVGElement::GetCurrentTime(float *_retval)
 float
 SVGSVGElement::GetCurrentTime(ErrorResult& rv)
 {
-  if (NS_SMILEnabled()) {
-    nsSMILTimeContainer* root = GetTimedDocumentRoot();
-    if (root) {
-      double fCurrentTimeMs = double(root->GetCurrentTime());
-      return (float)(fCurrentTimeMs / PR_MSEC_PER_SEC);
-    } else {
-      return 0.f;
-    }
+  nsSMILTimeContainer* root = GetTimedDocumentRoot();
+  if (root) {
+    double fCurrentTimeMs = double(root->GetCurrentTime());
+    return (float)(fCurrentTimeMs / PR_MSEC_PER_SEC);
+  } else {
+    return 0.f;
   }
-  NS_NOTYETIMPLEMENTED("SVGSVGElement::GetCurrentTime");
-  rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
-  return 0.f;
 }
 
 /* void setCurrentTime (in float seconds); */
@@ -523,28 +502,23 @@ SVGSVGElement::SetCurrentTime(float seconds)
 void
 SVGSVGElement::SetCurrentTime(float seconds, ErrorResult &rv)
 {
-  if (NS_SMILEnabled()) {
-    if (mTimedDocumentRoot) {
-      // Make sure the timegraph is up-to-date
-      FlushAnimations();
-      double fMilliseconds = double(seconds) * PR_MSEC_PER_SEC;
-      // Round to nearest whole number before converting, to avoid precision
-      // errors
-      nsSMILTime lMilliseconds = int64_t(NS_round(fMilliseconds));
-      mTimedDocumentRoot->SetCurrentTime(lMilliseconds);
-      AnimationNeedsResample();
-      // Trigger synchronous sample now, to:
-      //  - Make sure we get an up-to-date paint after this method
-      //  - re-enable event firing (it got disabled during seeking, and it
-      //  doesn't get re-enabled until the first sample after the seek -- so
-      //  let's make that happen now.)
-      FlushAnimations();
-    } // else we're not the outermost <svg> or not bound to a tree, so silently
-      // fail
-    return;
+  if (mTimedDocumentRoot) {
+    // Make sure the timegraph is up-to-date
+    FlushAnimations();
+    double fMilliseconds = double(seconds) * PR_MSEC_PER_SEC;
+    // Round to nearest whole number before converting, to avoid precision
+    // errors
+    nsSMILTime lMilliseconds = int64_t(NS_round(fMilliseconds));
+    mTimedDocumentRoot->SetCurrentTime(lMilliseconds);
+    AnimationNeedsResample();
+    // Trigger synchronous sample now, to:
+    //  - Make sure we get an up-to-date paint after this method
+    //  - re-enable event firing (it got disabled during seeking, and it
+    //  doesn't get re-enabled until the first sample after the seek -- so
+    //  let's make that happen now.)
+    FlushAnimations();
   }
-  NS_NOTYETIMPLEMENTED("SVGSVGElement::SetCurrentTime");
-  rv.Throw(NS_ERROR_NOT_IMPLEMENTED);
+  // else we're not the outermost <svg> or not bound to a tree, so silently fail
 }
 
 /* nsIDOMSVGNumber createSVGNumber (); */
@@ -700,15 +674,6 @@ SVGSVGElement::GetElementById(const nsAString& elementId, ErrorResult& rv)
 }
 
 //----------------------------------------------------------------------
-// nsIDOMSVGFitToViewBox methods
-
-/* readonly attribute nsIDOMSVGAnimatedRect viewBox; */
-NS_IMETHODIMP
-SVGSVGElement::GetViewBox(nsIDOMSVGAnimatedRect * *aViewBox)
-{
-  *aViewBox = ViewBox().get();
-  return NS_OK;
-}
 
 already_AddRefed<nsIDOMSVGAnimatedRect>
 SVGSVGElement::ViewBox()
@@ -716,15 +681,6 @@ SVGSVGElement::ViewBox()
   nsCOMPtr<nsIDOMSVGAnimatedRect> rect;
   mViewBox.ToDOMAnimatedRect(getter_AddRefs(rect), this);
   return rect.forget();
-}
-
-/* readonly attribute SVGPreserveAspectRatio preserveAspectRatio; */
-NS_IMETHODIMP
-SVGSVGElement::GetPreserveAspectRatio(nsISupports
-                                      **aPreserveAspectRatio)
-{
-  *aPreserveAspectRatio = PreserveAspectRatio().get();
-  return NS_OK;
 }
 
 already_AddRefed<DOMSVGAnimatedPreserveAspectRatio>

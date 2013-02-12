@@ -76,6 +76,7 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitSlots(LSlots *lir);
     bool visitStoreSlotV(LStoreSlotV *store);
     bool visitElements(LElements *lir);
+    bool visitConvertElementsToDoubles(LConvertElementsToDoubles *lir);
     bool visitTypeBarrier(LTypeBarrier *lir);
     bool visitMonitorTypes(LMonitorTypes *lir);
     bool visitCallNative(LCallNative *call);
@@ -253,6 +254,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     // be tested in the first place.)
     void testObjectTruthy(Register objreg, Label *ifTruthy, Label *ifFalsy, Register scratch,
                           OutOfLineTestObject *ool);
+
+    // Bailout if an element about to be written to is a hole.
+    bool emitStoreHoleCheck(Register elements, const LAllocation *index, LSnapshot *snapshot);
 };
 
 } // namespace ion
