@@ -455,22 +455,24 @@ IonScript::IonScript()
     invalidateEpilogueOffset_(0),
     invalidateEpilogueDataOffset_(0),
     bailoutExpected_(false),
-    snapshots_(0),
-    snapshotsSize_(0),
-    bailoutTable_(0),
-    bailoutEntries_(0),
-    constantTable_(0),
-    constantEntries_(0),
+    runtimeData_(0),
+    runtimeSize_(0),
+    cacheIndex_(0),
+    cacheEntries_(0),
     safepointIndexOffset_(0),
     safepointIndexEntries_(0),
-    frameSlots_(0),
-    frameSize_(0),
-    osiIndexOffset_(0),
-    osiIndexEntries_(0),
-    cacheList_(0),
-    cacheEntries_(0),
     safepointsStart_(0),
     safepointsSize_(0),
+    frameSlots_(0),
+    frameSize_(0),
+    bailoutTable_(0),
+    bailoutEntries_(0),
+    osiIndexOffset_(0),
+    osiIndexEntries_(0),
+    snapshots_(0),
+    snapshotsSize_(0),
+    constantTable_(0),
+    constantEntries_(0),
     scriptList_(0),
     scriptEntries_(0),
     refcount_(0),
@@ -484,8 +486,8 @@ static const int DataAlignment = 4;
 IonScript *
 IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t snapshotsSize,
                size_t bailoutEntries, size_t constants, size_t safepointIndices,
-               size_t osiIndices, size_t cacheEntries, size_t safepointsSize,
-               size_t scriptEntries)
+               size_t osiIndices, size_t cacheEntries, size_t runtimeSize,
+               size_t safepointsSize, size_t scriptEntries)
 {
     if (snapshotsSize >= MAX_BUFFER_SIZE ||
         (bailoutEntries >= MAX_BUFFER_SIZE / sizeof(uint32_t)))
@@ -502,7 +504,8 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     size_t paddedConstantsSize = AlignBytes(constants * sizeof(Value), DataAlignment);
     size_t paddedSafepointIndicesSize = AlignBytes(safepointIndices * sizeof(SafepointIndex), DataAlignment);
     size_t paddedOsiIndicesSize = AlignBytes(osiIndices * sizeof(OsiIndex), DataAlignment);
-    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(IonCache), DataAlignment);
+    size_t paddedCacheEntriesSize = AlignBytes(cacheEntries * sizeof(uint32_t), DataAlignment);
+    size_t paddedRuntimeSize = AlignBytes(runtimeSize, DataAlignment);
     size_t paddedSafepointSize = AlignBytes(safepointsSize, DataAlignment);
     size_t paddedScriptSize = AlignBytes(scriptEntries * sizeof(RawScript), DataAlignment);
     size_t bytes = paddedSnapshotsSize +
@@ -511,6 +514,7 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
                    paddedSafepointIndicesSize+
                    paddedOsiIndicesSize +
                    paddedCacheEntriesSize +
+                   paddedRuntimeSize +
                    paddedSafepointSize +
                    paddedScriptSize;
     uint8_t *buffer = (uint8_t *)cx->malloc_(sizeof(IonScript) + bytes);
@@ -522,33 +526,42 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
 
     uint32_t offsetCursor = sizeof(IonScript);
 
-    script->snapshots_ = offsetCursor;
-    script->snapshotsSize_ = snapshotsSize;
-    offsetCursor += paddedSnapshotsSize;
+    // Ordered by expected frequency of usage and by sequences of reads.
 
-    script->bailoutTable_ = offsetCursor;
-    script->bailoutEntries_ = bailoutEntries;
-    offsetCursor += paddedBailoutSize;
+    // for generating caches during the execution.
+    script->runtimeData_ = offsetCursor;
+    script->runtimeSize_ = runtimeSize;
+    offsetCursor += paddedRuntimeSize;
 
-    script->constantTable_ = offsetCursor;
-    script->constantEntries_ = constants;
-    offsetCursor += paddedConstantsSize;
+    script->cacheIndex_ = offsetCursor;
+    script->cacheEntries_ = cacheEntries;
+    offsetCursor += paddedCacheEntriesSize;
 
+    // for marking during GC.
     script->safepointIndexOffset_ = offsetCursor;
     script->safepointIndexEntries_ = safepointIndices;
     offsetCursor += paddedSafepointIndicesSize;
+
+    script->safepointsStart_ = offsetCursor;
+    script->safepointsSize_ = safepointsSize;
+    offsetCursor += paddedSafepointSize;
+
+    // for rare cases, such as f.arguments or bailouts.
+    script->bailoutTable_ = offsetCursor;
+    script->bailoutEntries_ = bailoutEntries;
+    offsetCursor += paddedBailoutSize;
 
     script->osiIndexOffset_ = offsetCursor;
     script->osiIndexEntries_ = osiIndices;
     offsetCursor += paddedOsiIndicesSize;
 
-    script->cacheList_ = offsetCursor;
-    script->cacheEntries_ = cacheEntries;
-    offsetCursor += paddedCacheEntriesSize;
+    script->snapshots_ = offsetCursor;
+    script->snapshotsSize_ = snapshotsSize;
+    offsetCursor += paddedSnapshotsSize;
 
-    script->safepointsStart_ = offsetCursor;
-    script->safepointsSize_ = safepointsSize;
-    offsetCursor += paddedSafepointSize;
+    script->constantTable_ = offsetCursor;
+    script->constantEntries_ = constants;
+    offsetCursor += paddedConstantsSize;
 
     script->scriptList_ = offsetCursor;
     script->scriptEntries_ = scriptEntries;
@@ -612,11 +625,9 @@ IonScript::copyScriptEntries(JSScript **scripts)
 void
 IonScript::copySafepointIndices(const SafepointIndex *si, MacroAssembler &masm)
 {
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     SafepointIndex *table = safepointIndices();
     memcpy(table, si, safepointIndexEntries_ * sizeof(SafepointIndex));
     for (size_t i = 0; i < safepointIndexEntries_; i++)
@@ -632,15 +643,19 @@ IonScript::copyOsiIndices(const OsiIndex *oi, MacroAssembler &masm)
 }
 
 void
-IonScript::copyCacheEntries(const IonCache *caches, MacroAssembler &masm)
+IonScript::copyRuntimeData(const uint8_t *data)
 {
-    memcpy(cacheList(), caches, numCaches() * sizeof(IonCache));
+    memcpy(runtimeData(), data, runtimeSize());
+}
 
-    /*
-     * Jumps in the caches reflect the offset of those jumps in the compiled
-     * code, not the absolute positions of the jumps. Update according to the
-     * final code address now.
-     */
+void
+IonScript::copyCacheEntries(const uint32_t *caches, MacroAssembler &masm)
+{
+    memcpy(cacheIndex(), caches, numCaches() * sizeof(uint32_t));
+
+    // Jumps in the caches reflect the offset of those jumps in the compiled
+    // code, not the absolute positions of the jumps. Update according to the
+    // final code address now.
     for (size_t i = 0; i < numCaches(); i++)
         getCache(i).updateBaseAddress(method_, masm);
 }

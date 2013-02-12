@@ -25,9 +25,11 @@ namespace ion {
 class OutOfLineCode;
 class CodeGenerator;
 class MacroAssembler;
+class IonCache;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
+
 class OutOfLineTruncateSlow;
 
 class CodeGeneratorShared : public LInstructionVisitor
@@ -58,8 +60,11 @@ class CodeGeneratorShared : public LInstructionVisitor
     // Mapping from bailout table ID to an offset in the snapshot buffer.
     js::Vector<SnapshotOffset, 0, SystemAllocPolicy> bailouts_;
 
+    // Allocated data space needed at runtime.
+    js::Vector<uint8_t, 0, SystemAllocPolicy> runtimeData_;
+
     // Vector of information about generated polymorphic inline caches.
-    js::Vector<IonCache, 0, SystemAllocPolicy> cacheList_;
+    js::Vector<uint32_t, 0, SystemAllocPolicy> cacheList_;
 
     // List of stack slots that have been pushed as arguments to an MCall.
     js::Vector<uint32_t, 0, SystemAllocPolicy> pushedArgumentSlots_;
@@ -151,11 +156,37 @@ class CodeGeneratorShared : public LInstructionVisitor
         return frameClass_ == FrameSizeClass::None() ? frameDepth_ : frameClass_.frameSize();
     }
 
+  private:
+    // Ensure the cache is an IonCache while expecting the size of the derived
+    // class.
+    size_t allocateCacheSize(const IonCache &, size_t size) {
+        using namespace mozilla;
+        size_t dataOffset = allocateData(size);
+        size_t index = cacheList_.length();
+        masm.collectOOM(cacheList_.append(dataOffset));
+        return index;
+    }
+
+    // This is needed by inlineCache to update the cache with the jump
+    // informations provided by the out-of-line path.
+    IonCache *getCache(size_t index) {
+        return reinterpret_cast<IonCache *>(&runtimeData_[cacheList_[index]]);
+    }
+
   protected:
 
-    size_t allocateCache(const IonCache &cache) {
-        size_t index = cacheList_.length();
-        masm.reportMemory(cacheList_.append(cache));
+    size_t allocateData(size_t size) {
+        JS_ASSERT(size % sizeof(void *) == 0);
+        size_t dataOffset = runtimeData_.length();
+        masm.collectOOM(runtimeData_.appendN(0, size));
+        return dataOffset;
+    }
+
+    template <typename T>
+    inline size_t allocateCache(const T &cache) {
+        size_t index = allocateCacheSize(cache, sizeof(mozilla::AlignedStorage2<T>));
+        // Use the copy constructor on the allocated space.
+        new (&runtimeData_[cacheList_.back()]) T(cache);
         return index;
     }
 
@@ -275,6 +306,9 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
+    inline bool inlineCache(LInstruction *lir, size_t cacheIndex);
+    IonCache *updateCachePrefix(size_t cacheIndex);
+
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
     bool generateOutOfLineCode();
@@ -362,7 +396,7 @@ class OutOfLineCodeBase : public OutOfLineCode
 
 // ArgSeq store arguments for OutOfLineCallVM.
 //
-// OutOfLineCallVM are created with "oolCallVM" function. The last argument of
+// OutOfLineCallVM are created with "oolCallVM" function. The third argument of
 // this function is an instance of a class which provides a "generate" function
 // to call the "pushArg" needed by the VMFunction call.  The list of argument
 // can be created by using the ArgList function which create an empty list of
@@ -401,6 +435,7 @@ class ArgSeq : public SeqType
     }
 };
 
+// Mark the end of an argument list.
 template <>
 class ArgSeq<void, void>
 {
