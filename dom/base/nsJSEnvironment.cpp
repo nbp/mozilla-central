@@ -146,8 +146,10 @@ static PRTime sLastCCEndTime;
 static bool sCCLockedOut;
 static PRTime sCCLockedOutTime;
 
-static js::GCSliceCallback sPrevGCSliceCallback;
+static JS::GCSliceCallback sPrevGCSliceCallback;
 static js::AnalysisPurgeCallback sPrevAnalysisPurgeCallback;
+
+static bool sHasRunGC;
 
 // The number of currently pending document loads. This count isn't
 // guaranteed to always reflect reality and can't easily as we don't
@@ -235,7 +237,7 @@ nsJSEnvironmentObserver::Observe(nsISupports* aSubject, const char* aTopic,
                                  const PRUnichar* aData)
 {
   if (sGCOnMemoryPressure && !nsCRT::strcmp(aTopic, "memory-pressure")) {
-    nsJSContext::GarbageCollectNow(js::gcreason::MEM_PRESSURE,
+    nsJSContext::GarbageCollectNow(JS::gcreason::MEM_PRESSURE,
                                    nsJSContext::NonIncrementalGC,
                                    nsJSContext::NonCompartmentGC,
                                    nsJSContext::ShrinkingGC);
@@ -1136,10 +1138,6 @@ nsJSContext::nsJSContext(JSRuntime *aRuntime, bool aGCOnDestruction,
 
 nsJSContext::~nsJSContext()
 {
-#ifdef DEBUG
-  nsCycleCollector_DEBUG_wasFreed(static_cast<nsIScriptContext*>(this));
-#endif
-
   *mPrev = mNext;
   if (mNext) {
     mNext->mPrev = mPrev;
@@ -1181,7 +1179,7 @@ nsJSContext::DestroyJSContext()
                                   js_options_dot_str, this);
 
   if (mGCOnDestruction) {
-    PokeGC(js::gcreason::NSJSCONTEXT_DESTROY);
+    PokeGC(JS::gcreason::NSJSCONTEXT_DESTROY);
   }
         
   // Let xpconnect destroy the JSContext when it thinks the time is right.
@@ -1251,8 +1249,15 @@ nsJSContext::EvaluateString(const nsAString& aScript,
 {
   SAMPLE_LABEL("JS", "EvaluateString");
   MOZ_ASSERT_IF(aOptions.versionSet, aOptions.version != JSVERSION_UNKNOWN);
+  MOZ_ASSERT_IF(aCoerceToString, aRetValue);
   NS_ENSURE_TRUE(mIsInitialized, NS_ERROR_NOT_INITIALIZED);
-  *aRetValue = JSVAL_VOID;
+  // Unfortunately, the JS engine actually compiles scripts with a return value
+  // in a different, less efficient way.  Furthermore, it can't JIT them in many
+  // cases.  So we need to be explicitly told whether the caller cares about the
+  // return value.  Callers use null to indicate they don't care.
+  if (aRetValue) {
+    *aRetValue = JSVAL_VOID;
+  }
 
   if (!mScriptsEnabled) {
     return NS_OK;
@@ -1287,7 +1292,7 @@ nsJSContext::EvaluateString(const nsAString& aScript,
     ok = JS::Evaluate(mContext, rootedScope, aOptions,
                       PromiseFlatString(aScript).get(),
                       aScript.Length(), aRetValue);
-    if (ok && !aRetValue->isUndefined() && aCoerceToString) {
+    if (ok && aCoerceToString && !aRetValue->isUndefined()) {
       JSString* str = JS_ValueToString(mContext, *aRetValue);
       ok = !!str;
       *aRetValue = ok ? JS::StringValue(str) : JS::UndefinedValue();
@@ -1296,10 +1301,12 @@ nsJSContext::EvaluateString(const nsAString& aScript,
   }
 
   if (!ok) {
+    if (aRetValue) {
+      *aRetValue = JS::UndefinedValue();
+    }
     // Tell XPConnect about any pending exceptions. This is needed
     // to avoid dropping JS exceptions in case we got here through
     // nested calls through XPConnect.
-
     ReportPendingException();
   }
 
@@ -1308,7 +1315,7 @@ nsJSContext::EvaluateString(const nsAString& aScript,
   ScriptEvaluated(true);
 
   // Wrap the return value into whatever compartment mContext was in.
-  if (!JS_WrapValue(mContext, aRetValue))
+  if (aRetValue && !JS_WrapValue(mContext, aRetValue))
     return NS_ERROR_OUT_OF_MEMORY;
   return NS_OK;
 }
@@ -2536,13 +2543,13 @@ FullGCTimerFired(nsITimer* aTimer, void* aClosure)
   NS_RELEASE(sFullGCTimer);
 
   uintptr_t reason = reinterpret_cast<uintptr_t>(aClosure);
-  nsJSContext::GarbageCollectNow(static_cast<js::gcreason::Reason>(reason),
+  nsJSContext::GarbageCollectNow(static_cast<JS::gcreason::Reason>(reason),
                                  nsJSContext::IncrementalGC);
 }
 
 //static
 void
-nsJSContext::GarbageCollectNow(js::gcreason::Reason aReason,
+nsJSContext::GarbageCollectNow(JS::gcreason::Reason aReason,
                                IsIncremental aIncremental,
                                IsCompartment aCompartment,
                                IsShrinking aShrinking,
@@ -2570,31 +2577,31 @@ nsJSContext::GarbageCollectNow(js::gcreason::Reason aReason,
 
   if (sCCLockedOut && aIncremental == IncrementalGC) {
     // We're in the middle of incremental GC. Do another slice.
-    js::PrepareForIncrementalGC(nsJSRuntime::sRuntime);
-    js::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
+    JS::PrepareForIncrementalGC(nsJSRuntime::sRuntime);
+    JS::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
     return;
   }
 
-  // Use compartment GC when we're not asked to do a shrinking GC nor
+  // Use zone GC when we're not asked to do a shrinking GC nor
   // global GC and compartment GC has been called less than
   // NS_MAX_COMPARTMENT_GC_COUNT times after the previous global GC.
   if (!sDisableExplicitCompartmentGC &&
       aShrinking != ShrinkingGC && aCompartment != NonCompartmentGC &&
       sCompartmentGCCount < NS_MAX_COMPARTMENT_GC_COUNT) {
-    js::PrepareForFullGC(nsJSRuntime::sRuntime);
+    JS::PrepareForFullGC(nsJSRuntime::sRuntime);
     for (nsJSContext* cx = sContextList; cx; cx = cx->mNext) {
       if (!cx->mActive && cx->mContext) {
         if (JSObject* global = cx->GetNativeGlobal()) {
-          js::SkipCompartmentForGC(js::GetObjectCompartment(global));
+          JS::SkipZoneForGC(js::GetObjectZone(global));
         }
       }
       cx->mActive = false;
     }
-    if (js::IsGCScheduled(nsJSRuntime::sRuntime)) {
+    if (JS::IsGCScheduled(nsJSRuntime::sRuntime)) {
       if (aIncremental == IncrementalGC) {
-        js::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
+        JS::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
       } else {
-        js::GCForReason(nsJSRuntime::sRuntime, aReason);
+        JS::GCForReason(nsJSRuntime::sRuntime, aReason);
       }
     }
     return;
@@ -2603,11 +2610,11 @@ nsJSContext::GarbageCollectNow(js::gcreason::Reason aReason,
   for (nsJSContext* cx = sContextList; cx; cx = cx->mNext) {
     cx->mActive = false;
   }
-  js::PrepareForFullGC(nsJSRuntime::sRuntime);
+  JS::PrepareForFullGC(nsJSRuntime::sRuntime);
   if (aIncremental == IncrementalGC) {
-    js::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
+    JS::IncrementalGC(nsJSRuntime::sRuntime, aReason, aSliceMillis);
   } else {
-    js::GCForReason(nsJSRuntime::sRuntime, aReason);
+    JS::GCForReason(nsJSRuntime::sRuntime, aReason);
   }
 }
 
@@ -2619,7 +2626,7 @@ nsJSContext::ShrinkGCBuffersNow()
 
   KillShrinkGCBuffersTimer();
 
-  JS_ShrinkGCBuffers(nsJSRuntime::sRuntime);
+  JS::ShrinkGCBuffers(nsJSRuntime::sRuntime);
 }
 
 // Return true if any JSContext has a "global object" with a gray
@@ -2636,7 +2643,7 @@ AnyGrayGlobalParent()
   while ((cx = JS_ContextIterator(nsJSRuntime::sRuntime, &iter))) {
     if (JSObject *global = JS_GetGlobalObject(cx)) {
       if (JSObject *parent = js::GetObjectParent(global)) {
-        if (js::GCThingIsMarkedGray(parent) &&
+        if (JS::GCThingIsMarkedGray(parent) &&
             !js::IsSystemCompartment(js::GetGCThingCompartment(parent))) {
           return true;
         }
@@ -2686,8 +2693,8 @@ FinishAnyIncrementalGC()
 {
   if (sCCLockedOut) {
     // We're in the middle of an incremental GC, so finish it.
-    js::PrepareForIncrementalGC(nsJSRuntime::sRuntime);
-    js::FinishIncrementalGC(nsJSRuntime::sRuntime, js::gcreason::CC_FORCED);
+    JS::PrepareForIncrementalGC(nsJSRuntime::sRuntime);
+    JS::FinishIncrementalGC(nsJSRuntime::sRuntime, JS::gcreason::CC_FORCED);
   }
 }
 
@@ -2770,7 +2777,7 @@ nsJSContext::CycleCollectNow(nsICycleCollectorListener *aListener,
   // If we collected a substantial amount of cycles, poke the GC since more objects
   // might be unreachable now.
   if (sCCollectedWaitingForGC > 250) {
-    PokeGC(js::gcreason::CC_WAITING);
+    PokeGC(JS::gcreason::CC_WAITING);
   }
 
   PRTime endCCTime = PR_Now();
@@ -2888,7 +2895,7 @@ void
 InterSliceGCTimerFired(nsITimer *aTimer, void *aClosure)
 {
   NS_RELEASE(sInterSliceGCTimer);
-  nsJSContext::GarbageCollectNow(js::gcreason::INTER_SLICE_GC,
+  nsJSContext::GarbageCollectNow(JS::gcreason::INTER_SLICE_GC,
                                  nsJSContext::IncrementalGC,
                                  nsJSContext::CompartmentGC,
                                  nsJSContext::NonShrinkingGC,
@@ -2902,7 +2909,7 @@ GCTimerFired(nsITimer *aTimer, void *aClosure)
   NS_RELEASE(sGCTimer);
 
   uintptr_t reason = reinterpret_cast<uintptr_t>(aClosure);
-  nsJSContext::GarbageCollectNow(static_cast<js::gcreason::Reason>(reason),
+  nsJSContext::GarbageCollectNow(static_cast<JS::gcreason::Reason>(reason),
                                  nsJSContext::IncrementalGC,
                                  nsJSContext::CompartmentGC);
 }
@@ -3019,12 +3026,12 @@ nsJSContext::LoadEnd()
 
   // Its probably a good idea to GC soon since we have finished loading.
   sLoadingInProgress = false;
-  PokeGC(js::gcreason::LOAD_END);
+  PokeGC(JS::gcreason::LOAD_END);
 }
 
 // static
 void
-nsJSContext::PokeGC(js::gcreason::Reason aReason, int aDelay)
+nsJSContext::PokeGC(JS::gcreason::Reason aReason, int aDelay)
 {
   if (sGCTimer || sShuttingDown) {
     // There's already a timer for GC'ing, just return
@@ -3075,7 +3082,7 @@ nsJSContext::PokeShrinkGCBuffers()
 void
 nsJSContext::MaybePokeCC()
 {
-  if (sCCTimer || sShuttingDown) {
+  if (sCCTimer || sShuttingDown || !sHasRunGC) {
     return;
   }
 
@@ -3145,7 +3152,7 @@ nsJSContext::KillCCTimer()
 }
 
 void
-nsJSContext::GC(js::gcreason::Reason aReason)
+nsJSContext::GC(JS::gcreason::Reason aReason)
 {
   mActive = true;
   PokeGC(aReason);
@@ -3179,11 +3186,11 @@ NotifyGCEndRunnable::Run()
 }
 
 static void
-DOMGCSliceCallback(JSRuntime *aRt, js::GCProgress aProgress, const js::GCDescription &aDesc)
+DOMGCSliceCallback(JSRuntime *aRt, JS::GCProgress aProgress, const JS::GCDescription &aDesc)
 {
   NS_ASSERTION(NS_IsMainThread(), "GCs must run on the main thread");
 
-  if (aProgress == js::GC_CYCLE_END) {
+  if (aProgress == JS::GC_CYCLE_END) {
     PRTime delta = GetCollectionTimeDelta();
 
     if (sPostGCEventsToConsole) {
@@ -3208,15 +3215,15 @@ DOMGCSliceCallback(JSRuntime *aRt, js::GCProgress aProgress, const js::GCDescrip
   }
 
   // Prevent cycle collections and shrinking during incremental GC.
-  if (aProgress == js::GC_CYCLE_BEGIN) {
+  if (aProgress == JS::GC_CYCLE_BEGIN) {
     sCCLockedOut = true;
     nsJSContext::KillShrinkGCBuffersTimer();
-  } else if (aProgress == js::GC_CYCLE_END) {
+  } else if (aProgress == JS::GC_CYCLE_END) {
     sCCLockedOut = false;
   }
 
   // The GC has more work to do, so schedule another GC slice.
-  if (aProgress == js::GC_SLICE_END) {
+  if (aProgress == JS::GC_SLICE_END) {
     nsJSContext::KillInterSliceGCTimer();
     if (!sShuttingDown) {
       CallCreateInstance("@mozilla.org/timer;1", &sInterSliceGCTimer);
@@ -3227,20 +3234,21 @@ DOMGCSliceCallback(JSRuntime *aRt, js::GCProgress aProgress, const js::GCDescrip
     }
   }
 
-  if (aProgress == js::GC_CYCLE_END) {
+  if (aProgress == JS::GC_CYCLE_END) {
     // May need to kill the inter-slice GC timer
     nsJSContext::KillInterSliceGCTimer();
 
     sCCollectedWaitingForGC = 0;
     sCleanupsSinceLastGC = 0;
     sNeedsFullCC = true;
+    sHasRunGC = true;
     nsJSContext::MaybePokeCC();
 
     if (aDesc.isCompartment) {
       ++sCompartmentGCCount;
       if (!sFullGCTimer && !sShuttingDown) {
         CallCreateInstance("@mozilla.org/timer;1", &sFullGCTimer);
-        js::gcreason::Reason reason = js::gcreason::FULL_GC_TIMER;
+        JS::gcreason::Reason reason = JS::gcreason::FULL_GC_TIMER;
         sFullGCTimer->InitWithFuncCallback(FullGCTimerFired,
                                            reinterpret_cast<void *>(reason),
                                            NS_FULL_GC_DELAY,
@@ -3353,6 +3361,7 @@ nsJSRuntime::Startup()
   sCCLockedOut = false;
   sCCLockedOutTime = 0;
   sLastCCEndTime = 0;
+  sHasRunGC = false;
   sPendingLoadCount = 0;
   sLoadingInProgress = false;
   sCCollectedWaitingForGC = 0;
@@ -3567,7 +3576,7 @@ nsJSRuntime::Init()
   // Let's make sure that our main thread is the same as the xpcom main thread.
   NS_ASSERTION(NS_IsMainThread(), "bad");
 
-  sPrevGCSliceCallback = js::SetGCSliceCallback(sRuntime, DOMGCSliceCallback);
+  sPrevGCSliceCallback = JS::SetGCSliceCallback(sRuntime, DOMGCSliceCallback);
   sPrevAnalysisPurgeCallback = js::SetAnalysisPurgeCallback(sRuntime, DOMAnalysisPurgeCallback);
 
   // Set up the structured clone callbacks.

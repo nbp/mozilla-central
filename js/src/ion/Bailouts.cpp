@@ -81,7 +81,7 @@ GetBailedJSScript(JSContext *cx)
 
     // Just after the frame conversion, we can safely interpret the ionTop as JS
     // frame because it targets the bailed JS frame converted to an exit frame.
-    IonJSFrameLayout *frame = reinterpret_cast<IonJSFrameLayout*>(cx->runtime->ionTop);
+    IonJSFrameLayout *frame = reinterpret_cast<IonJSFrameLayout*>(cx->mainThread().ionTop);
     switch (GetCalleeTokenTag(frame->calleeToken())) {
       case CalleeToken_Function: {
         JSFunction *fun = CalleeTokenToFunction(frame->calleeToken());
@@ -179,7 +179,12 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
 
     IonSpew(IonSpew_Bailouts, " new PC is offset %u within script %p (line %d)",
             pcOff, (void *)script(), PCToLineNumber(script(), regs.pc));
-    JS_ASSERT(exprStackSlots == js_ReconstructStackDepth(cx, script(), regs.pc));
+
+    // For fun.apply({}, arguments) the reconstructStackDepth will be atleast 4,
+    // but it could be that we inlined the funapply. In that case exprStackSlots,
+    // will have the real arguments in the slots and not always be equal.
+    JS_ASSERT_IF(JSOp(*regs.pc) != JSOP_FUNAPPLY,
+                 exprStackSlots == js_ReconstructStackDepth(cx, script(), regs.pc));
 }
 
 static StackFrame *
@@ -192,8 +197,11 @@ PushInlinedFrame(JSContext *cx, StackFrame *callerFrame)
     // which will not be the case when we inline getters (in which case it would be a
     // JSOP_GETPROP). That will have to be handled differently.
     FrameRegs &regs = cx->regs();
-    JS_ASSERT(JSOp(*regs.pc) == JSOP_CALL || JSOp(*regs.pc) == JSOP_NEW);
+    JS_ASSERT(JSOp(*regs.pc) == JSOP_CALL || JSOp(*regs.pc) == JSOP_NEW ||
+              JSOp(*regs.pc) == JSOP_FUNAPPLY);
     int callerArgc = GET_ARGC(regs.pc);
+    if (JSOp(*regs.pc) == JSOP_FUNAPPLY)
+        callerArgc = callerFrame->nactual();
     const Value &calleeVal = regs.sp[-callerArgc - 2];
 
     RootedFunction fun(cx, calleeVal.toObject().toFunction());
@@ -360,7 +368,7 @@ ion::Bailout(BailoutStack *sp)
     AutoAssertNoGC nogc;
     JSContext *cx = GetIonContext()->cx;
     // We don't have an exit frame.
-    cx->runtime->ionTop = NULL;
+    cx->mainThread().ionTop = NULL;
     IonActivationIterator ionActivations(cx);
     IonBailoutIterator iter(ionActivations, sp);
     IonActivation *activation = ionActivations.activation();
@@ -386,7 +394,7 @@ ion::InvalidationBailout(InvalidationBailoutStack *sp, size_t *frameSizeOut)
     JSContext *cx = GetIonContext()->cx;
 
     // We don't have an exit frame.
-    cx->runtime->ionTop = NULL;
+    cx->mainThread().ionTop = NULL;
     IonActivationIterator ionActivations(cx);
     IonBailoutIterator iter(ionActivations, sp);
     IonActivation *activation = ionActivations.activation();
@@ -458,7 +466,7 @@ uint32_t
 ion::ReflowTypeInfo(uint32_t bailoutResult)
 {
     JSContext *cx = GetIonContext()->cx;
-    IonActivation *activation = cx->runtime->ionActivation;
+    IonActivation *activation = cx->mainThread().ionActivation;
 
     IonSpew(IonSpew_Bailouts, "reflowing type info");
 
@@ -584,7 +592,7 @@ uint32_t
 ion::ThunkToInterpreter(Value *vp)
 {
     JSContext *cx = GetIonContext()->cx;
-    IonActivation *activation = cx->runtime->ionActivation;
+    IonActivation *activation = cx->mainThread().ionActivation;
     BailoutClosure *br = activation->takeBailout();
     InterpMode resumeMode = JSINTERP_BAILOUT;
 

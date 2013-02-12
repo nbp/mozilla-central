@@ -112,6 +112,16 @@ struct IonOptions
     // Default: 3
     uint32_t maxInlineDepth;
 
+    // The maximum inlining depth for functions.
+    //
+    // Inlining small functions has almost no compiling overhead
+    // and removes the otherwise needed call overhead.
+    // The value is currently very low.
+    // Actually it is only needed to make sure we don't blow out the stack.
+    //
+    // Default: 10
+    uint32_t smallFunctionMaxInlineDepth;
+
     // The bytecode length limit for small function.
     //
     // The default for this was arrived at empirically via benchmarking.
@@ -191,6 +201,7 @@ struct IonOptions
         usesBeforeInlining(usesBeforeCompile),
         maxStackArgs(4096),
         maxInlineDepth(3),
+        smallFunctionMaxInlineDepth(10),
         smallFunctionMaxBytecodeLength(100),
         smallFunctionUsesBeforeInlining(usesBeforeInlining / 4),
         polyInlineMax(4),
@@ -250,9 +261,10 @@ IonContext *GetIonContext();
 
 bool SetIonContext(IonContext *ctx);
 
-MethodStatus CanEnterAtBranch(JSContext *cx, HandleScript script,
-                              StackFrame *fp, jsbytecode *pc);
-MethodStatus CanEnter(JSContext *cx, HandleScript script, StackFrame *fp, bool newType);
+MethodStatus CanEnterAtBranch(JSContext *cx, JSScript *script,
+                              AbstractFramePtr fp, jsbytecode *pc, bool isConstructing);
+MethodStatus CanEnter(JSContext *cx, JSScript *script, AbstractFramePtr fp,
+                      bool isConstructing, bool newType);
 MethodStatus CanEnterUsingFastInvoke(JSContext *cx, HandleScript script, uint32_t numActualArgs);
 
 enum IonExecStatus

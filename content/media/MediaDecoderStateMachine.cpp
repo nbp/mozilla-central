@@ -506,7 +506,8 @@ void MediaDecoderStateMachine::SendStreamAudio(AudioData* aAudio,
                                                DecodedStreamData* aStream,
                                                AudioSegment* aOutput)
 {
-  NS_ASSERTION(OnDecodeThread(), "Should be on decode thread.");
+  NS_ASSERTION(OnDecodeThread() ||
+               OnStateMachineThread(), "Should be on decode thread or state machine thread");
   mDecoder->GetReentrantMonitor().AssertCurrentThreadIn();
 
   if (aAudio->mTime <= aStream->mLastAudioPacketTime) {
@@ -1210,7 +1211,7 @@ uint32_t MediaDecoderStateMachine::PlaySilence(uint32_t aFrames,
 }
 
 uint32_t MediaDecoderStateMachine::PlayFromAudioQueue(uint64_t aFrameOffset,
-                                                          uint32_t aChannels)
+                                                      uint32_t aChannels)
 {
   NS_ASSERTION(OnAudioThread(), "Only call on audio thread.");
   NS_ASSERTION(!mAudioStream->IsPaused(), "Don't play when paused");
@@ -1218,7 +1219,6 @@ uint32_t MediaDecoderStateMachine::PlayFromAudioQueue(uint64_t aFrameOffset,
   {
     ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
     NS_WARN_IF_FALSE(IsPlaying(), "Should be playing");
-    NS_ASSERTION(!mAudioCaptured, "Audio cannot be captured here!");
     // Awaken the decode loop if it's waiting for space to free up in the
     // audio queue.
     mDecoder->GetReentrantMonitor().NotifyAll();
@@ -2101,6 +2101,13 @@ nsresult MediaDecoderStateMachine::RunStateMachine()
         StopPlayback();
       }
 
+      if (mDecoder->GetState() == MediaDecoder::PLAY_STATE_PLAYING &&
+          !IsPlaying()) {
+        // We are playing, but the state machine does not know it yet. Tell it
+        // that it is, so that the clock can be properly queried.
+        StartPlayback();
+      }
+
       if (IsPausedAndDecoderWaiting()) {
         // The decode buffers are full, and playback is paused. Shutdown the
         // decode thread.
@@ -2377,7 +2384,7 @@ void MediaDecoderStateMachine::AdvanceFrame()
     if (frame && !currentFrame) {
       int64_t now = IsPlaying() ? clock_time : mPlayDuration;
 
-      remainingTime = frame->mTime - mStartTime - now;
+      remainingTime = frame->mTime - now;
     }
   }
 
@@ -2424,7 +2431,7 @@ void MediaDecoderStateMachine::AdvanceFrame()
       return;
     }
     mDecoder->GetFrameStatistics().NotifyPresentedFrame();
-    remainingTime = currentFrame->mEndTime - mStartTime - clock_time;
+    remainingTime = currentFrame->mEndTime - clock_time;
     currentFrame = nullptr;
   }
 

@@ -19,9 +19,10 @@
 #include "ion/IonInstrumentation.h"
 #include "ion/TypeOracle.h"
 
-#include "jsscope.h"
 #include "jstypedarray.h"
 #include "jscompartment.h"
+
+#include "vm/Shape.h"
 
 namespace js {
 namespace ion {
@@ -159,11 +160,11 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void loadJSContext(const Register &dest) {
         movePtr(ImmWord(GetIonContext()->compartment->rt), dest);
-        loadPtr(Address(dest, offsetof(JSRuntime, ionJSContext)), dest);
+        loadPtr(Address(dest, offsetof(JSRuntime, mainThread.ionJSContext)), dest);
     }
     void loadIonActivation(const Register &dest) {
         movePtr(ImmWord(GetIonContext()->compartment->rt), dest);
-        loadPtr(Address(dest, offsetof(JSRuntime, ionActivation)), dest);
+        loadPtr(Address(dest, offsetof(JSRuntime, mainThread.ionActivation)), dest);
     }
 
     template<typename T>
@@ -381,9 +382,9 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     void branchTestNeedsBarrier(Condition cond, const Register &scratch, Label *label) {
         JS_ASSERT(cond == Zero || cond == NonZero);
-        JSCompartment *comp = GetIonContext()->compartment;
-        movePtr(ImmWord(comp), scratch);
-        Address needsBarrierAddr(scratch, JSCompartment::OffsetOfNeedsBarrier());
+        JS::Zone *zone = GetIonContext()->compartment->zone();
+        movePtr(ImmWord(zone), scratch);
+        Address needsBarrierAddr(scratch, JS::Zone::OffsetOfNeedsBarrier());
         branchTest32(cond, needsBarrierAddr, Imm32(0x1), label);
     }
 

@@ -7,12 +7,14 @@
 
 #include "mozilla/DebugOnly.h"
 
+#include "jsnum.h"
+
 #include "CodeGenerator-x86.h"
-#include "ion/shared/CodeGenerator-shared-inl.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
-#include "jsnum.h"
-#include "jsscope.h"
+#include "ion/shared/CodeGenerator-shared-inl.h"
+#include "vm/Shape.h"
+
 #include "jsscriptinlines.h"
 
 using namespace js;
@@ -238,10 +240,19 @@ CodeGeneratorX86::visitLoadElementT(LLoadElementT *load)
             return false;
     }
 
-    if (load->mir()->type() == MIRType_Double)
-        masm.loadInt32OrDouble(source, ToFloatRegister(load->output()));
-    else
+    if (load->mir()->type() == MIRType_Double) {
+        FloatRegister fpreg = ToFloatRegister(load->output());
+        if (load->mir()->loadDoubles()) {
+            if (source.kind() == Operand::REG_DISP)
+                masm.loadDouble(source.toAddress(), fpreg);
+            else
+                masm.loadDouble(source.toBaseIndex(), fpreg);
+        } else {
+            masm.loadInt32OrDouble(source, fpreg);
+        }
+    } else {
         masm.movl(masm.ToPayload(source), ToRegister(load->output()));
+    }
 
     return true;
 }

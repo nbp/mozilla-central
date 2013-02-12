@@ -27,7 +27,6 @@
 #include "jsfun.h"
 #include "jsnum.h"
 #include "jsopcode.h"
-#include "jsscope.h"
 #include "jsscript.h"
 #include "jsautooplen.h"        // generated headers last
 
@@ -37,14 +36,15 @@
 #include "frontend/TokenStream.h"
 #include "vm/Debugger.h"
 #include "vm/RegExpObject.h"
+#include "vm/Shape.h"
 
 #include "jsatominlines.h"
-#include "jsscopeinlines.h"
 #include "jsscriptinlines.h"
 
 #include "frontend/ParseMaps-inl.h"
 #include "frontend/ParseNode-inl.h"
 #include "frontend/SharedContext-inl.h"
+#include "vm/Shape-inl.h"
 
 /* Allocation chunk counts, must be powers of two in general. */
 #define BYTECODE_CHUNK_LENGTH  1024    /* initial bytecode chunk length */
@@ -3745,7 +3745,7 @@ ParseNode::getConstantValue(JSContext *cx, bool strictChecks, Value *vp)
                 RootedId id(cx);
                 if (idvalue.isInt32() && INT_FITS_IN_JSID(idvalue.toInt32()))
                     id = INT_TO_JSID(idvalue.toInt32());
-                else if (!InternNonIntElementId(cx, obj, idvalue, &id))
+                else if (!InternNonIntElementId<CanGC>(cx, obj, idvalue, &id))
                     return false;
                 if (!JSObject::defineGeneric(cx, obj, id, value, NULL, NULL, JSPROP_ENUMERATE))
                     return false;
@@ -5396,10 +5396,15 @@ EmitCallOrNew(JSContext *cx, BytecodeEmitter *bce, ParseNode *pn, ptrdiff_t top)
          * will just cause the inner scripts to be repeatedly cloned.
          */
         JS_ASSERT(!bce->emittingRunOnceLambda);
-        bce->emittingRunOnceLambda = true;
-        if (!EmitTree(cx, bce, pn2))
-            return false;
-        bce->emittingRunOnceLambda = false;
+        if (bce->checkSingletonContext()) {
+            bce->emittingRunOnceLambda = true;
+            if (!EmitTree(cx, bce, pn2))
+                return false;
+            bce->emittingRunOnceLambda = false;
+        } else {
+            if (!EmitTree(cx, bce, pn2))
+                return false;
+        }
         callop = false;
         break;
       default:

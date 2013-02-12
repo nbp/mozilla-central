@@ -84,9 +84,6 @@ this.Social = {
     }
 
     if (!this._addedObservers) {
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-      Services.obs.addObserver(this, "private-browsing", false);
-#endif
       Services.obs.addObserver(this, "social:pref-changed", false);
       this._addedObservers = true;
     }
@@ -133,22 +130,6 @@ this.Social = {
   },
 
   observe: function(aSubject, aTopic, aData) {
-#ifndef MOZ_PER_WINDOW_PRIVATE_BROWSING
-    if (aTopic == "private-browsing") {
-      if (aData == "enter") {
-        this._enabledBeforePrivateBrowsing = this.enabled;
-        this.enabled = false;
-      } else if (aData == "exit") {
-        // if the user has explicitly re-enabled social in PB mode, then upon
-        // leaving we want to tear the world down then reenable to prevent
-        // information leaks during this transition.
-        // The next 2 lines rely on the fact that setting this.enabled to
-        // its current value doesn't actually do anything...
-        this.enabled = false;
-        this.enabled = this._enabledBeforePrivateBrowsing;
-      }
-    } else
-#endif
     if (aTopic == "social:pref-changed") {
       // Make sure our provider's enabled state matches the overall state of the
       // social components.
@@ -284,9 +265,81 @@ this.Social = {
     port.close();
   },
 
-  _sharedUrls: {}
+  _sharedUrls: {},
+
+  setErrorListener: function(iframe, errorHandler) {
+    if (iframe.socialErrorListener)
+      return iframe.socialErrorListener;
+    return new SocialErrorListener(iframe, errorHandler);
+  }
 };
 
 function schedule(callback) {
   Services.tm.mainThread.dispatch(callback, Ci.nsIThread.DISPATCH_NORMAL);
 }
+
+
+// Error handling class used to listen for network errors in the social frames
+// and replace them with a social-specific error page
+function SocialErrorListener(iframe, errorHandler) {
+  this.setErrorMessage = errorHandler;
+  this.iframe = iframe;
+  iframe.socialErrorListener = this;
+  iframe.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                                   .getInterface(Ci.nsIWebProgress)
+                                   .addProgressListener(this,
+                                                        Ci.nsIWebProgress.NOTIFY_STATE_REQUEST |
+                                                        Ci.nsIWebProgress.NOTIFY_LOCATION);
+}
+
+SocialErrorListener.prototype = {
+  QueryInterface: XPCOMUtils.generateQI([Ci.nsIWebProgressListener,
+                                         Ci.nsISupportsWeakReference,
+                                         Ci.nsISupports]),
+
+  remove: function() {
+    this.iframe.docShell.QueryInterface(Ci.nsIInterfaceRequestor)
+                                     .getInterface(Ci.nsIWebProgress)
+                                     .removeProgressListener(this);
+    delete this.iframe.socialErrorListener;
+  },
+
+  onStateChange: function SPL_onStateChange(aWebProgress, aRequest, aState, aStatus) {
+    let failure = false;
+    if ((aState & Ci.nsIWebProgressListener.STATE_STOP)) {
+      if (aRequest instanceof Ci.nsIHttpChannel) {
+        try {
+          // Change the frame to an error page on 4xx (client errors)
+          // and 5xx (server errors)
+          failure = aRequest.responseStatus >= 400 &&
+                    aRequest.responseStatus < 600;
+        } catch (e) {}
+      }
+    }
+
+    // Calling cancel() will raise some OnStateChange notifications by itself,
+    // so avoid doing that more than once
+    if (failure && aStatus != Components.results.NS_BINDING_ABORTED) {
+      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
+      Social.provider.errorState = "content-error";
+      this.setErrorMessage(aWebProgress.QueryInterface(Ci.nsIDocShell)
+                              .chromeEventHandler);
+    }
+  },
+
+  onLocationChange: function SPL_onLocationChange(aWebProgress, aRequest, aLocation, aFlags) {
+    let failure = aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_ERROR_PAGE;
+    if (failure && Social.provider.errorState != "frameworker-error") {
+      aRequest.cancel(Components.results.NS_BINDING_ABORTED);
+      Social.provider.errorState = "content-error";
+      schedule(function() {
+        this.setErrorMessage(aWebProgress.QueryInterface(Ci.nsIDocShell)
+                              .chromeEventHandler);
+      }.bind(this));
+    }
+  },
+
+  onProgressChange: function SPL_onProgressChange() {},
+  onStatusChange: function SPL_onStatusChange() {},
+  onSecurityChange: function SPL_onSecurityChange() {},
+};
