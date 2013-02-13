@@ -528,7 +528,6 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
 
     // Ordered by expected frequency of usage and by sequences of reads.
 
-    // for generating caches during the execution.
     script->runtimeData_ = offsetCursor;
     script->runtimeSize_ = runtimeSize;
     offsetCursor += paddedRuntimeSize;
@@ -537,7 +536,6 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     script->cacheEntries_ = cacheEntries;
     offsetCursor += paddedCacheEntriesSize;
 
-    // for marking during GC.
     script->safepointIndexOffset_ = offsetCursor;
     script->safepointIndexEntries_ = safepointIndices;
     offsetCursor += paddedSafepointIndicesSize;
@@ -546,7 +544,6 @@ IonScript::New(JSContext *cx, uint32_t frameSlots, uint32_t frameSize, size_t sn
     script->safepointsSize_ = safepointsSize;
     offsetCursor += paddedSafepointSize;
 
-    // for rare cases, such as f.arguments or bailouts.
     script->bailoutTable_ = offsetCursor;
     script->bailoutEntries_ = bailoutEntries;
     offsetCursor += paddedBailoutSize;
