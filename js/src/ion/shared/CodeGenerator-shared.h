@@ -29,7 +29,6 @@ class IonCache;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
-class OutOfLineUpdateCache;
 
 class OutOfLineTruncateSlow;
 
@@ -157,7 +156,7 @@ class CodeGeneratorShared : public LInstructionVisitor
         return frameClass_ == FrameSizeClass::None() ? frameDepth_ : frameClass_.frameSize();
     }
 
-  private:
+  protected:
     // Ensure the cache is an IonCache while expecting the size of the derived
     // class.
     size_t allocateCacheSize(const IonCache &, size_t size) {
@@ -308,7 +307,6 @@ class CodeGeneratorShared : public LInstructionVisitor
                                     const StoreOutputTo &out);
 
     bool addCache(LInstruction *lir, size_t cacheIndex);
-    bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);

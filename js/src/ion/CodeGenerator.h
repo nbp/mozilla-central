@@ -29,6 +29,7 @@ class OutOfLineUnboxDouble;
 class OutOfLineStoreElementHole;
 class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
+class OutOfLineUpdateCache;
 
 class CodeGenerator : public CodeGeneratorSpecific
 {
@@ -195,6 +196,8 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitUnboxDouble(LUnboxDouble *lir);
     bool visitOutOfLineUnboxDouble(OutOfLineUnboxDouble *ool);
     bool visitOutOfLineStoreElementHole(OutOfLineStoreElementHole *ool);
+
+    bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
 
     bool visitGetPropertyCacheV(LGetPropertyCacheV *ins);
     bool visitGetPropertyCacheT(LGetPropertyCacheT *ins);

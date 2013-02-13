@@ -104,7 +104,7 @@ CodeGeneratorShared::addCache(LInstruction *lir, size_t cacheIndex)
 }
 
 bool
-CodeGeneratorShared::visitOutOfLineCache(OutOfLineUpdateCache *ool)
+CodeGenerator::visitOutOfLineCache(OutOfLineUpdateCache *ool)
 {
     size_t cacheIndex = ool->getCacheIndex();
     IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
