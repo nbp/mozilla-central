@@ -99,7 +99,7 @@ CodeGeneratorShared::addCache(LInstruction *lir, size_t cacheIndex)
     CodeOffsetLabel label = masm.labelForPatch();
     masm.bind(ool->rejoin());
 
-    cache->bindInline(jump, label);
+    cache->setInlineJump(jump, label);
     return true;
 }
 
@@ -110,7 +110,7 @@ CodeGenerator::visitOutOfLineCache(OutOfLineUpdateCache *ool)
     IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
 
     // Register the location of the OOL path in the IC.
-    cache->bindOutOfLine(masm.labelForPatch());
+    cache->setFallbackLabel(masm.labelForPatch());
 
     // Dispatch to ICs' accept functions.
     return cache->accept(this, ool);

@@ -198,20 +198,21 @@ class IonCache
         return disabled_;
     }
 
-    // Bind inline boundaries of the cache. This include the patchable jump
-    // location and the location where the successful exit rejoin the inline
-    // path.
-    void bindInline(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
+    // Set the initial jump state of the cache. The initialJump is the inline
+    // jump that will point to out-of-line code (such as the slow path, or
+    // stubs), and the rejoinLabel is the position that all out-of-line paths
+    // will rejoin to.
+    void setInlineJump(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
 
         JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
     }
 
-    // Bind out-of-line boundaries of the cache. This include the location of
-    // the update function call.  This location will be set to the exitJump of
-    // the last generated stub.
-    void bindOutOfLine(CodeOffsetLabel cacheLabel) {
+    // Set the initial 'out-of-line' jump state of the cache. Yhe cacheLabel is
+    // the location of the out-of-line update (slow) path.  This location will
+    // be set to the exitJump of the last generated stub.
+    void setFallbackLabel(CodeOffsetLabel cacheLabel) {
         cacheLabel_ = cacheLabel;
     }
 
