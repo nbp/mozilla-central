@@ -2892,7 +2892,7 @@ class LGetElementCacheV : public LInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 
     }
 };
 
-class LGetElementCacheT : public LInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 0>
+class LGetElementCacheT : public LInstructionHelper<1, 1 + BOX_PIECES, 0>
 {
   public:
     LIR_HEADER(GetElementCacheT)
