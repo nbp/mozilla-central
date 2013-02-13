@@ -113,7 +113,7 @@ CodeGeneratorShared::visitOutOfLineCache(OutOfLineUpdateCache *ool)
     cache->bindOutOfLine(masm.labelForPatch());
 
     // Dispatch to ICs' accept functions.
-    return cache->accept(codegen, ool);
+    return cache->accept(this, ool);
 }
 
 StringObject *
