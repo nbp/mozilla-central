@@ -13,7 +13,6 @@
 #include "jsfriendapi.h"
 #include "jsinterp.h"
 #include "jsprobes.h"
-#include "jsxml.h"
 #include "jsgc.h"
 
 #include "builtin/Object.h" // For js::obj_construct
@@ -101,12 +100,12 @@ NewObjectCache::fillType(EntryIndex entry, Class *clasp, js::types::TypeObject *
 }
 
 inline JSObject *
-NewObjectCache::newObjectFromHit(JSContext *cx, EntryIndex entry_)
+NewObjectCache::newObjectFromHit(JSContext *cx, EntryIndex entry_, js::gc::InitialHeap heap)
 {
     JS_ASSERT(unsigned(entry_) < mozilla::ArrayLength(entries));
     Entry *entry = &entries[entry_];
 
-    JSObject *obj = js_NewGCObject<NoGC>(cx, entry->kind);
+    JSObject *obj = js_NewGCObject<NoGC>(cx, entry->kind, heap);
     if (obj) {
         copyCachedToObject(obj, reinterpret_cast<JSObject *>(&entry->templateObject));
         Probes::createObject(cx, obj);
@@ -134,31 +133,6 @@ struct PreserveRegsGuard
     JSContext *cx;
     FrameRegs &regs_;
 };
-
-#if JS_HAS_XML_SUPPORT
-
-class AutoNamespaceArray : protected AutoGCRooter {
-  public:
-    AutoNamespaceArray(JSContext *cx)
-        : AutoGCRooter(cx, NAMESPACES), context(cx) {
-        array.init();
-    }
-
-    ~AutoNamespaceArray() {
-        array.finish(context->runtime->defaultFreeOp());
-    }
-
-    uint32_t length() const { return array.length; }
-
-  private:
-    JSContext *context;
-    friend void AutoGCRooter::trace(JSTracer *trc);
-
-  public:
-    JSXMLArray<JSObject> array;
-};
-
-#endif /* JS_HAS_XML_SUPPORT */
 
 #ifdef JS_CRASH_DIAGNOSTICS
 class CompartmentChecker
@@ -494,23 +468,6 @@ JSContext::maybeOverrideVersion(JSVersion newVersion)
     return true;
 }
 
-inline unsigned
-JSContext::getCompileOptions() const { return js::VersionFlagsToOptions(findVersion()); }
-
-inline unsigned
-JSContext::allOptions() const { return getRunOptions() | getCompileOptions(); }
-
-inline void
-JSContext::setCompileOptions(unsigned newcopts)
-{
-    JS_ASSERT((newcopts & JSCOMPILEOPTION_MASK) == newcopts);
-    if (JS_LIKELY(getCompileOptions() == newcopts))
-        return;
-    JSVersion version = findVersion();
-    JSVersion newVersion = js::OptionFlagsToVersion(newcopts, version);
-    maybeOverrideVersion(newVersion);
-}
-
 inline js::LifoAlloc &
 JSContext::analysisLifoAlloc()
 {
@@ -611,6 +568,12 @@ inline JS::Zone *
 JSContext::zone()
 {
     return compartment->zone();
+}
+
+inline void
+JSContext::updateMallocCounter(size_t nbytes)
+{
+    runtime->updateMallocCounter(zone(), nbytes);
 }
 
 #endif /* jscntxtinlines_h___ */
