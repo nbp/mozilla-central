@@ -4022,7 +4022,8 @@ CodeGenerator::visitNameIC(OutOfLineUpdateCache *ool, NameIC *ic)
 }
 
 bool
-CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
+CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins)
+{
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
@@ -4034,7 +4035,8 @@ CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
 }
 
 bool
-CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins) {
+CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins)
+{
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
     Register objReg = ToRegister(ins->getOperand(0));
     PropertyName *name = ins->mir()->name();
@@ -4176,7 +4178,8 @@ CodeGenerator::visitCallDeleteProperty(LCallDeleteProperty *lir)
 }
 
 bool
-CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins) {
+CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins)
+{
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
     Register objReg = ToRegister(ins->getOperand(0));
     ConstantOrRegister value = TypedOrValueRegister(ToValue(ins, LSetPropertyCacheV::Value));
@@ -4188,7 +4191,8 @@ CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins) {
 }
 
 bool
-CodeGenerator::visitSetPropertyCacheT(LSetPropertyCacheT *ins) {
+CodeGenerator::visitSetPropertyCacheT(LSetPropertyCacheT *ins)
+{
     RegisterSet liveRegs = ins->safepoint()->liveRegs();
     Register objReg = ToRegister(ins->getOperand(0));
     ConstantOrRegister value;
