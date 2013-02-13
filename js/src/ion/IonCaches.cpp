@@ -115,7 +115,13 @@ IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
 }
 
 const size_t IonCache::MAX_STUBS = 16;
-const ImmWord IonCache::CODE_MARK = ImmWord(uintptr_t(0xdeadc0de));
+
+// Value used instead of the IonCode self-reference of generated stubs. This
+// value is needed for marking calls made inside stubs. This value would be
+// replaced by the attachStub function after the allocation of the IonCode. The
+// self-reference is used to keep the stub path alive even if the IonScript is
+// invalidated or if the IC is flushed.
+const ImmWord STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
 
 void
 IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
@@ -149,13 +155,13 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
         lastJump_ = exitJump;
     }
 
-    // Replace the CODE_MARK constant by the address of the generated stub, such
+    // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
     // MarkIonExitFrame).
     if (stubLabel) {
         stubLabel->fixup(&masm);
         Assembler::patchDataWithValueCheck(CodeLocationLabel(code, *stubLabel),
-                                           ImmWord(uintptr_t(code)), CODE_MARK);
+                                           ImmWord(uintptr_t(code)), STUB_ADDR);
     }
 }
 
@@ -576,7 +582,7 @@ struct GetNativePropertyStub
         // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
         // WARNING: value here.
         // WARNING:
-        stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
+        stubCodePatchOffset = masm.PushWithPatch(STUB_ADDR);
 
         if (callNative) {
             JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -1187,7 +1193,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
     // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
     // WARNING: value here.
     // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
+    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(STUB_ADDR);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);

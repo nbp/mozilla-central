@@ -228,22 +228,6 @@ class IonCache
         return stubCount_ < MAX_STUBS;
     }
 
-    // Value used instead of the IonCode self-reference of generated stubs. This
-    // value is needed for marking calls made inside stubs. This value would be
-    // replaced by the attachStub function after the allocation of the
-    // IonCode. Such self-reference is used when a marking phase happen within
-    // such calls, in which case we need to keep the stub path alive even if the
-    // IonScript is invalidated or if the IC is flushed.
-    static const ImmWord CODE_MARK;
-
-#ifdef DEBUG
-    // Cast code mark to a pointer such as it can be compared to what is read
-    // from the stack during the marking phase.
-    static IonCode *codeMark() {
-        return reinterpret_cast<IonCode *>(const_cast<ImmWord*>(&CODE_MARK)->asPointer());
-    }
-#endif
-
     // Return value of linkCode (see linkCode). This special value is used to
     // identify the fact that the cache might have been flushed or that the
     // IonScript might be invalidated since we entered the update function.
