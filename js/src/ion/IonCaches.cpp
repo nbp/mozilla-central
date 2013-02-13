@@ -97,21 +97,19 @@ IonCache::CacheName(IonCache::Kind kind)
     return names[kind];
 }
 
-IonCode * const IonCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
-
-IonCode *
-IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
+IonCache::LinkStatus
+IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code)
 {
     AssertCanGC();
     Linker linker(masm);
-    IonCode *code = linker.newCode(cx);
+    *code = linker.newCode(cx);
     if (!code)
-        return NULL;
+        return LINK_ERROR;
 
     if (ion->invalidated())
-        return IonCache::CACHE_FLUSHED;
+        return CACHE_FLUSHED;
 
-    return code;
+    return LINK_GOOD;
 }
 
 const size_t IonCache::MAX_STUBS = 16;
@@ -170,9 +168,10 @@ IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
                             const char *attachKind, CodeOffsetJump &rejoinOffset,
                             CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCache::CACHE_FLUSHED)
-        return !!code;
+    IonCode *code = NULL;
+    LinkStatus status = linkCode(cx, masm, ion, &code);
+    if (status != LINK_GOOD)
+        return status != LINK_ERROR;
 
     attachStub(masm, code, rejoinOffset, exitOffset, stubLabel);
 

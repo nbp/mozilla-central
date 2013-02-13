@@ -226,17 +226,17 @@ class IonCache
         return stubCount_ < MAX_STUBS;
     }
 
-    // Return value of linkCode (see linkCode). This special value is used to
-    // identify the fact that the cache might have been flushed or that the
-    // IonScript might be invalidated since we entered the update function.
-    static IonCode * const CACHE_FLUSHED;
+    enum LinkStatus {
+        LINK_ERROR,
+        CACHE_FLUSHED,
+        LINK_GOOD
+    };
 
     // Use the Linker to link the generated code and check if any
-    // monitoring/allocation caused an invalidation of the running ion
-    // script. If there is no allocation issue, but the code cannot be attached
-    // later, this function will return CACHE_FLUSHED.  If there is any fatal
-    // error, this function will return a NULL pointer.
-    IonCode *linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion);
+    // monitoring/allocation caused an invalidation of the running ion script,
+    // this function returns CACHE_FLUSHED. In case of allocation issue this
+    // function returns LINK_ERROR.
+    LinkStatus linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code);
 
     // Fixup variables and update jumps in the list of stubs.  Increment the
     // number of attached stubs accordingly.
