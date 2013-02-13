@@ -321,12 +321,24 @@ class GetPropertyIC : public IonCache
 
     CACHE_HEADER(GetProperty)
 
-    Register object() const { return object_; }
-    PropertyName *name() const { return name_; }
-    TypedOrValueRegister output() const { return output_; }
-    bool allowGetters() const { return allowGetters_; }
-    bool hasArrayLengthStub() const { return hasArrayLengthStub_; }
-    bool hasTypedArrayLengthStub() const { return hasTypedArrayLengthStub_; }
+    Register object() const {
+        return object_;
+    }
+    PropertyName *name() const {
+        return name_;
+    }
+    TypedOrValueRegister output() const {
+        return output_;
+    }
+    bool allowGetters() const {
+        return allowGetters_;
+    }
+    bool hasArrayLengthStub() const {
+        return hasArrayLengthStub_;
+    }
+    bool hasTypedArrayLengthStub() const {
+        return hasTypedArrayLengthStub_;
+    }
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
@@ -366,11 +378,21 @@ class SetPropertyIC : public IonCache
 
     CACHE_HEADER(SetProperty)
 
-    Register object() const { return object_; }
-    PropertyName *name() const { return name_; }
-    ConstantOrRegister value() const { return value_; }
-    bool isSetName() const { return isSetName_; }
-    bool strict() const { return strict_; }
+    Register object() const {
+        return object_;
+    }
+    PropertyName *name() const {
+        return name_;
+    }
+    ConstantOrRegister value() const {
+        return value_;
+    }
+    bool isSetName() const {
+        return isSetName_;
+    }
+    bool strict() const {
+        return strict_;
+    }
 
     bool attachNativeExisting(JSContext *cx, IonScript *ion, HandleObject obj, HandleShape shape);
     bool attachSetterCall(JSContext *cx, IonScript *ion, HandleObject obj,
