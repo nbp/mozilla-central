@@ -1,3 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 840696 part 1 - Enable GetElem IC if typed arrays & arrays are mix-up. r=
-
+Subject: Bug 840696 part 2 - IonMonkey: Add typed array support to GetElem ICs. r=
