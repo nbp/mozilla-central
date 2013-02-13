@@ -29,6 +29,7 @@ class IonCache;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
+class OutOfLineUpdateCache;
 
 class OutOfLineTruncateSlow;
 
@@ -306,8 +307,8 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    inline bool addCache(LInstruction *lir, size_t cacheIndex);
-    IonCache *updateCachePrefix(size_t cacheIndex);
+    bool addCache(LInstruction *lir, size_t cacheIndex);
+    bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);

@@ -62,10 +62,8 @@ class OutOfLineUpdateCache :
         return &repatchEntry_;
     }
 
-    // Dispatch to ICs' accept functions.
     bool accept(CodeGenerator *codegen) {
-        IonCache *cache = codegen->updateCachePrefix(cacheIndex_);
-        return cache->accept(codegen, this);
+        return codegen->visitOutOfLineCache(this);
     }
 
     // ICs' visit functions delegating the work to the CodeGen visit funtions.
@@ -105,12 +103,17 @@ CodeGeneratorShared::addCache(LInstruction *lir, size_t cacheIndex)
     return true;
 }
 
-IonCache *
-CodeGeneratorShared::updateCachePrefix(size_t cacheIndex)
+bool
+CodeGeneratorShared::visitOutOfLineCache(OutOfLineUpdateCache *ool)
 {
+    size_t cacheIndex = ool->getCacheIndex();
     IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
+
+    // Register the location of the OOL path in the IC.
     cache->bindOutOfLine(masm.labelForPatch());
-    return cache;
+
+    // Dispatch to ICs' accept functions.
+    return cache->accept(codegen, ool);
 }
 
 StringObject *
