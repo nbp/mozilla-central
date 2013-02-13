@@ -1930,7 +1930,6 @@ LIRGenerator::visitGetElementCache(MGetElementCache *ins)
 {
     JS_ASSERT(ins->object()->type() == MIRType_Object);
     JS_ASSERT(ins->index()->type() == MIRType_Value);
-    JS_ASSERT(ins->type() == MIRType_Value);
 
     if (ins->type() == MIRType_Value) {
         LGetElementCacheV *lir = new LGetElementCacheV(useRegister(ins->object()));
