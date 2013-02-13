@@ -1669,7 +1669,6 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
     CodeOffsetJump exitOffset = masm.jumpWithPatch(&exit_);
     masm.bind(&exit_);
 
-    setHasDenseStub();
     return linkAndAttachStub(cx, masm, ion, "typed array", rejoinOffset, &exitOffset);
 }
 
