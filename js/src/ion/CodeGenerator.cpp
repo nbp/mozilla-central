@@ -3764,9 +3764,7 @@ CodeGenerator::link()
     ionScript->setMethod(code);
     ionScript->setDeoptTable(deoptTable_);
 
-    // Ordered by expected frequency of usage and by sequences of reads.
-
-    // for generating caches during the execution.
+    // for generating inline caches during the execution.
     if (runtimeData_.length())
         ionScript->copyRuntimeData(&runtimeData_[0]);
     if (cacheList_.length())
@@ -3778,7 +3776,7 @@ CodeGenerator::link()
     if (safepoints_.size())
         ionScript->copySafepoints(&safepoints_);
 
-    // for rare cases, such as f.arguments or bailouts.
+    // for reconvering from an Ion Frame.
     if (bailouts_.length())
         ionScript->copyBailoutTable(&bailouts_[0]);
     if (osiIndices_.length())
