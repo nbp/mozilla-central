@@ -359,7 +359,7 @@ class SetPropertyIC : public IonCache
     RegisterSet liveRegs_;
 
     Register object_;
-    PropertyName *name_; // rooting issues ?!
+    PropertyName *name_;
     ConstantOrRegister value_;
     bool isSetName_;
     bool strict_;
