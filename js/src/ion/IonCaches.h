@@ -77,12 +77,8 @@ class IonCacheVisitor
 //
 // * IonCache usage
 //
-// An IonCache is the base structure of a cache which is generating code stubs
-// with its update function. A cache derive from the IonCache class and use
-// CACHE_HEADER to pre-declare a few members such as UpdateInfo (VMFunction) and
-// the accept function. The name of the derived cache must be registered in the
-// IONCACHE_KIND_LIST used to provide convertion operations and to provide
-// default accessors.
+// IonCache is the base structure of an inline cache, which generates code stubs
+// dynamically and attaches them to an IonScript.
 //
 // A cache must at least provide a static update function which will usualy have
 // a JSContext*, followed by the cache index. The rest of the arguments of the
@@ -94,8 +90,7 @@ class IonCacheVisitor
 // The CodeGenerator visit function, as opposed to other visit functions, has
 // two arguments. The first one is the OutOfLineUpdateCache which stores the LIR
 // instruction. The second one is the IC object.  This function would be called
-// once the IC is registered with the addCache function of the
-// CodeGeneratorShared.
+// once the IC is registered with the addCache function of CodeGeneratorShared.
 //
 // To register a cache, you must call the addCache function as follow:
 //
@@ -171,7 +166,9 @@ class IonCache
         JS_ASSERT(stubCount_);
     }
 
-    CodeLocationLabel cacheLabel() const { return cacheLabel_; }
+    CodeLocationLabel cacheLabel() const {
+        return cacheLabel_;
+    }
     CodeLocationLabel rejoinLabel() const {
         uint8_t *ptr = initialJump_.raw();
 #ifdef JS_CPU_ARM
