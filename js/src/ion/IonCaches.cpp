@@ -1509,6 +1509,8 @@ bool
 GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
                             const Value &idval, PropertyName *name)
 {
+    JS_ASSERT(index().reg().hasValue());
+
     RootedObject holder(cx);
     RootedShape shape(cx);
     if (!JSObject::lookupProperty(cx, obj, name, &holder, &shape))
@@ -1550,9 +1552,6 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     Label failures;
     MacroAssembler masm;
 
-    Register scratchReg = output().scratchReg();
-    JS_ASSERT(scratchReg != InvalidReg);
-
     // Guard object's shape.
     RootedObject globalObj(cx, &script->global());
     RootedShape shape(cx, obj->lastProperty());
@@ -1561,21 +1560,32 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     masm.branchTestObjShape(Assembler::NotEqual, object(), shape, &failures);
 
     // Ensure the index is an int32 value.
-    ValueOperand val = index().reg().valueReg();
-    masm.branchTestInt32(Assembler::NotEqual, val, &failures);
+    Register indexReg = output().scratchReg();
+
+    JS_ASSERT(!index().constant());
+    if (index().reg().hasValue()) {
+        indexReg = output().scratchReg();
+        JS_ASSERT(indexReg != InvalidReg);
+        ValueOperand val = index().reg().valueReg();
+
+        masm.branchTestInt32(Assembler::NotEqual, val, &failures);
+
+        // Unbox the index.
+        masm.unboxInt32(val, indexReg);
+    } else {
+        JS_ASSERT(!index().reg().typedReg().isFloat());
+        indexReg = index().reg().typedReg().gpr();
+    }
 
     // Load elements vector.
     masm.push(object());
     masm.loadPtr(Address(object(), JSObject::offsetOfElements()), object());
 
-    // Unbox the index.
-    masm.unboxInt32(val, scratchReg);
-
     Label hole;
 
     // Guard on the initialized length.
     Address initLength(object(), ObjectElements::offsetOfInitializedLength());
-    masm.branch32(Assembler::BelowOrEqual, initLength, scratchReg, &hole);
+    masm.branch32(Assembler::BelowOrEqual, initLength, indexReg, &hole);
 
     // If we do not expect a value type, we reuse the object() register which
     // has been saved on the stack to hold the type such as we can test for
@@ -1592,7 +1602,7 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     }
 
     // Load the value.
-    masm.loadValue(BaseIndex(object(), scratchReg, TimesEight), out);
+    masm.loadValue(BaseIndex(object(), indexReg, TimesEight), out);
 
     // Hole check.
     masm.branchTestMagic(Assembler::Equal, out, &hole);
@@ -1636,12 +1646,19 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
     masm.branchTestObjClass(Assembler::NotEqual, object(), tmpReg, obj->getClass(), &failures);
 
     // Ensure the index is an int32 value.
-    ValueOperand val = index().reg().valueReg();
-    masm.branchTestInt32(Assembler::NotEqual, val, &failures);
-
-    // Unbox the index.
     Register indexReg = tmpReg;
-    masm.unboxInt32(val, indexReg);
+
+    JS_ASSERT(!index().constant());
+    if (index().reg().hasValue()) {
+        ValueOperand val = index().reg().valueReg();
+        masm.branchTestInt32(Assembler::NotEqual, val, &failures);
+
+        // Unbox the index.
+        masm.unboxInt32(val, indexReg);
+    } else {
+        JS_ASSERT(!index().reg().typedReg().isFloat());
+        indexReg = index().reg().typedReg().gpr();
+    }
 
     // Guard on the initialized length.
     Address length(object(), TypedArray::lengthOffset());

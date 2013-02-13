@@ -5382,8 +5382,9 @@ IonBuilder::jsop_getelem()
     // getprop stubs.
     bool mustMonitorResult = false;
     bool cacheable = false;
+    bool intIndex = false;
 
-    oracle->elementReadGeneric(script, pc, &cacheable, &mustMonitorResult);
+    oracle->elementReadGeneric(script, pc, &cacheable, &mustMonitorResult, &intIndex);
 
     if (cacheable)
         ins = MGetElementCache::New(lhs, rhs, mustMonitorResult);
@@ -5399,7 +5400,7 @@ IonBuilder::jsop_getelem()
     types::StackTypeSet *barrier = oracle->propertyReadBarrier(script, pc);
     types::StackTypeSet *types = oracle->propertyRead(script, pc);
 
-    if (cacheable && !barrier) {
+    if (cacheable && intIndex && !barrier) {
         bool needHoleCheck = !oracle->elementReadIsPacked(script, pc);
         JSValueType knownType = getGetElemKnownType(needHoleCheck, types);
 
