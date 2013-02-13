@@ -94,25 +94,25 @@ class IonCacheVisitor
 // The CodeGenerator visit function, as opposed to other visit functions, has
 // two arguments. The first one is the OutOfLineUpdateCache which stores the LIR
 // instruction. The second one is the IC object.  This function would be called
-// once the IC is registered with the inlineCache function of the
+// once the IC is registered with the addCache function of the
 // CodeGeneratorShared.
 //
-// To register a cache, you must call the inlineCache function as follow:
+// To register a cache, you must call the addCache function as follow:
 //
 //     MyCodeIC cache(inputReg1, inputValueReg2, outputReg);
-//     if (!inlineCache(lir, allocateCache(cache)))
+//     if (!addCache(lir, allocateCache(cache)))
 //         return false;
 //
 // Once the cache is allocated with the allocateCache function, any modification
 // made to the cache would be ignored.
 //
-// The inlineCache function will produce a patchable jump at the location where
+// The addCache function will produce a patchable jump at the location where
 // it is called. This jump will execute generated stubs and fallback on the code
 // of the visitMyCodeIC function if no stub match.
 //
-//   Warning: As the inlineCache function fallback on a VMCall, calls to
-// inlineCache should not be in the same path as another VMCall or in the same
-// path of another inlineCache as this is not supported by the invalidation
+//   Warning: As the addCache function fallback on a VMCall, calls to
+// addCache should not be in the same path as another VMCall or in the same
+// path of another addCache as this is not supported by the invalidation
 // procedure.
 class IonCache
 {

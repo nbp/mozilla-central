@@ -167,7 +167,7 @@ class CodeGeneratorShared : public LInstructionVisitor
         return index;
     }
 
-    // This is needed by inlineCache to update the cache with the jump
+    // This is needed by addCache to update the cache with the jump
     // informations provided by the out-of-line path.
     IonCache *getCache(size_t index) {
         return reinterpret_cast<IonCache *>(&runtimeData_[cacheList_[index]]);
@@ -306,7 +306,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    inline bool inlineCache(LInstruction *lir, size_t cacheIndex);
+    inline bool addCache(LInstruction *lir, size_t cacheIndex);
     IonCache *updateCachePrefix(size_t cacheIndex);
 
   protected:

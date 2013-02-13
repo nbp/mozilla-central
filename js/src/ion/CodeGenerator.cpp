@@ -83,7 +83,7 @@ class OutOfLineUpdateCache :
 // CodeGeneratorShared such as we can specialize inline caches in function of
 // the architecture.
 bool
-CodeGeneratorShared::inlineCache(LInstruction *lir, size_t cacheIndex)
+CodeGeneratorShared::addCache(LInstruction *lir, size_t cacheIndex)
 {
     IonCache *cache = static_cast<IonCache *>(getCache(cacheIndex));
     MInstruction *mir = lir->mirRaw()->toInstruction();
@@ -3963,7 +3963,7 @@ CodeGenerator::visitCallsiteCloneCache(LCallsiteCloneCache *ins)
     Register output = ToRegister(ins->output());
 
     CallsiteCloneIC cache(callee, mir->block()->info().script(), mir->callPc(), output);
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef JSObject *(*CallsiteCloneICFn)(JSContext *, size_t, HandleObject);
@@ -3996,7 +3996,7 @@ CodeGenerator::visitGetNameCache(LGetNameCache *ins)
     bool isTypeOf = ins->mir()->accessKind() != MGetNameCache::NAME;
 
     NameIC cache(isTypeOf, scopeChain, ins->mir()->name(), output);
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef bool (*NameICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
@@ -4029,7 +4029,7 @@ CodeGenerator::visitGetPropertyCacheV(LGetPropertyCacheV *ins) {
     TypedOrValueRegister output = TypedOrValueRegister(GetValueOutput(ins));
 
     GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 bool
@@ -4041,7 +4041,7 @@ CodeGenerator::visitGetPropertyCacheT(LGetPropertyCacheT *ins) {
     TypedOrValueRegister output(ins->mir()->type(), ToAnyRegister(ins->getDef(0)));
 
     GetPropertyIC cache(liveRegs, objReg, name, output, allowGetters);
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef bool (*GetPropertyICFn)(JSContext *, size_t, HandleObject, MutableHandleValue);
@@ -4075,7 +4075,7 @@ CodeGenerator::visitGetElementCacheV(LGetElementCacheV *ins)
 
     GetElementIC cache(obj, index, output, ins->mir()->monitoredResult());
 
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef bool (*GetElementICFn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
@@ -4108,7 +4108,7 @@ CodeGenerator::visitBindNameCache(LBindNameCache *ins)
     Register output = ToRegister(ins->output());
     BindNameIC cache(scopeChain, ins->mir()->name(), output);
 
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef JSObject *(*BindNameICFn)(JSContext *, size_t, HandleObject);
@@ -4183,7 +4183,7 @@ CodeGenerator::visitSetPropertyCacheV(LSetPropertyCacheV *ins) {
 
     SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
                         isSetName, ins->mir()->strict());
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 bool
@@ -4200,7 +4200,7 @@ CodeGenerator::visitSetPropertyCacheT(LSetPropertyCacheT *ins) {
 
     SetPropertyIC cache(liveRegs, objReg, ins->mir()->name(), value,
                         isSetName, ins->mir()->strict());
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef bool (*SetPropertyICFn)(JSContext *, size_t, HandleObject, HandleValue);
