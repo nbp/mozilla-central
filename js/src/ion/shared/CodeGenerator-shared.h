@@ -159,7 +159,7 @@ class CodeGeneratorShared : public LInstructionVisitor
   protected:
     // Ensure the cache is an IonCache while expecting the size of the derived
     // class.
-    size_t allocateCacheSize(const IonCache &, size_t size) {
+    size_t allocateCache(const IonCache &, size_t size) {
         using namespace mozilla;
         size_t dataOffset = allocateData(size);
         size_t index = cacheList_.length();
@@ -184,7 +184,7 @@ class CodeGeneratorShared : public LInstructionVisitor
 
     template <typename T>
     inline size_t allocateCache(const T &cache) {
-        size_t index = allocateCacheSize(cache, sizeof(mozilla::AlignedStorage2<T>));
+        size_t index = allocateCache(cache, sizeof(mozilla::AlignedStorage2<T>));
         // Use the copy constructor on the allocated space.
         new (&runtimeData_[cacheList_.back()]) T(cache);
         return index;
