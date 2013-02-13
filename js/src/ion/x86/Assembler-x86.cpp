@@ -11,6 +11,8 @@
 using namespace js;
 using namespace js::ion;
 
+const Register TypedOrValueRegister::InvalidReg = InvalidReg;
+
 void
 Assembler::executableCopy(uint8_t *buffer)
 {

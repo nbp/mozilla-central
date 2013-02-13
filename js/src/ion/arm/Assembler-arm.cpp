@@ -18,6 +18,8 @@
 using namespace js;
 using namespace js::ion;
 
+const Register TypedOrValueRegister::InvalidReg = InvalidReg;
+
 // Encode a standard register when it is being used as src1, the dest, and
 // an extra register. These should never be called with an InvalidReg.
 uint32_t

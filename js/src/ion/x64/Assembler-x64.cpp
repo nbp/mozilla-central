@@ -13,6 +13,8 @@
 using namespace js;
 using namespace js::ion;
 
+const Register TypedOrValueRegister::InvalidReg = InvalidReg;
+
 void
 Assembler::writeRelocation(JmpSrc src, Relocation::Kind reloc)
 {

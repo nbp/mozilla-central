@@ -1550,6 +1550,9 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     Label failures;
     MacroAssembler masm;
 
+    Register scratchReg = output().scratchReg();
+    JS_ASSERT(scratchReg != InvalidReg);
+
     // Guard object's shape.
     RootedObject globalObj(cx, &script->global());
     RootedShape shape(cx, obj->lastProperty());
@@ -1566,8 +1569,6 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     masm.loadPtr(Address(object(), JSObject::offsetOfElements()), object());
 
     // Unbox the index.
-    ValueOperand out = output().valueReg();
-    Register scratchReg = out.scratchReg();
     masm.unboxInt32(val, scratchReg);
 
     Label hole;
@@ -1575,6 +1576,20 @@ GetElementIC::attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, c
     // Guard on the initialized length.
     Address initLength(object(), ObjectElements::offsetOfInitializedLength());
     masm.branch32(Assembler::BelowOrEqual, initLength, scratchReg, &hole);
+
+    // If we do not expect a value type, we reuse the object() register which
+    // has been saved on the stack to hold the type such as we can test for
+    // hole. The payload will remain the same and we won't need any unboxing.
+    ValueOperand out;
+    if (!output().hasValue()) {
+#if defined(JS_NUNBOX32)
+        out = ValueOperand(object(), output().typedReg().gpr());
+#else
+        out = ValueOperand(output().typedReg().gpr());
+#endif
+    } else {
+        out = output().valueReg();
+    }
 
     // Load the value.
     masm.loadValue(BaseIndex(object(), scratchReg, TimesEight), out);
@@ -1613,14 +1628,8 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
     // The array type is the object within the table of typed array classes.
     int arrayType = obj->getClass() - &TypedArray::classes[0];
 
-    Register tmpReg;
-    if (output().hasValue()) {
-        tmpReg = output().valueReg().scratchReg();
-    } else {
-        JS_ASSERT(output().type() == MIRType_Int32);
-        tmpReg = output().typedReg().gpr();
-    }
-    JS_ASSERT(object() != tmpReg);
+    Register tmpReg = output().scratchReg();
+    JS_ASSERT(tmpReg != InvalidReg);
 
     // Check that the typed array is of the same type as the current object
     // because load size differ in function of the typed array data width.

@@ -134,6 +134,7 @@ class TypedOrValueRegister
 {
     // Type of value being stored.
     MIRType type_;
+    static const Register InvalidReg;
 
     // Space to hold either an AnyRegister or a ValueOperand.
     union U {
@@ -186,6 +187,14 @@ class TypedOrValueRegister
 
     ValueOperand valueReg() {
         return dataValue();
+    }
+
+    Register scratchReg() {
+        if (hasValue())
+            return valueReg().scratchReg();
+        if (!typedReg().isFloat())
+            return typedReg().gpr();
+        return InvalidReg;
     }
 };
 
