@@ -148,7 +148,7 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
 
         // When the last stub fails, it fallback to the ool call which can
         // produce a stub.
-        PatchJump(exitJump, cacheLabel());
+        PatchJump(exitJump, fallbackLabel());
 
         // Next time we generate a stub, we will patch the exitJump to try the
         // new stub.
@@ -1047,7 +1047,7 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 {
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
-    cacheLabel_.repoint(code, &masm);
+    fallbackLabel_.repoint(code, &masm);
 }
 
 void
@@ -1062,7 +1062,7 @@ IonCache::reset()
 {
     // Skip all generated stub by patching the original stub to go directly to
     // the update function.
-    PatchJump(initialJump_, cacheLabel_);
+    PatchJump(initialJump_, fallbackLabel_);
 
     this->stubCount_ = 0;
     this->lastJump_ = initialJump_;

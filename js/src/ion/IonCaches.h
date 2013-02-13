@@ -145,7 +145,7 @@ class IonCache
 
     CodeLocationJump initialJump_;
     CodeLocationJump lastJump_;
-    CodeLocationLabel cacheLabel_;
+    CodeLocationLabel fallbackLabel_;
 
     // Offset from the initial jump to the rejoin label.
 #ifdef JS_CPU_ARM
@@ -166,8 +166,8 @@ class IonCache
         JS_ASSERT(stubCount_);
     }
 
-    CodeLocationLabel cacheLabel() const {
-        return cacheLabel_;
+    CodeLocationLabel fallbackLabel() const {
+        return fallbackLabel_;
     }
     CodeLocationLabel rejoinLabel() const {
         uint8_t *ptr = initialJump_.raw();
@@ -187,7 +187,7 @@ class IonCache
         stubCount_(0),
         initialJump_(),
         lastJump_(),
-        cacheLabel_(),
+        fallbackLabel_(),
         script(NULL),
         pc(NULL)
     {
@@ -209,11 +209,11 @@ class IonCache
         JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
     }
 
-    // Set the initial 'out-of-line' jump state of the cache. Yhe cacheLabel is
+    // Set the initial 'out-of-line' jump state of the cache. The fallbackLabel is
     // the location of the out-of-line update (slow) path.  This location will
     // be set to the exitJump of the last generated stub.
-    void setFallbackLabel(CodeOffsetLabel cacheLabel) {
-        cacheLabel_ = cacheLabel;
+    void setFallbackLabel(CodeOffsetLabel fallbackLabel) {
+        fallbackLabel_ = fallbackLabel;
     }
 
     // Update labels once the code is copied and finalized.
