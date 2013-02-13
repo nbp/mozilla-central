@@ -160,7 +160,6 @@ class CodeGeneratorShared : public LInstructionVisitor
     // Ensure the cache is an IonCache while expecting the size of the derived
     // class.
     size_t allocateCache(const IonCache &, size_t size) {
-        using namespace mozilla;
         size_t dataOffset = allocateData(size);
         size_t index = cacheList_.length();
         masm.propagateOOM(cacheList_.append(dataOffset));
