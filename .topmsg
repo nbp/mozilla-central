@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 840696 part 2 - IonMonkey: Add typed array support to GetElem ICs. r=
+Subject: Bug 840696 part 3 - IonMonkey: Specialize the return type of GetElem ICs. r=
