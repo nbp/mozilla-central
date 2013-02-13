@@ -163,7 +163,7 @@ class CodeGeneratorShared : public LInstructionVisitor
         using namespace mozilla;
         size_t dataOffset = allocateData(size);
         size_t index = cacheList_.length();
-        masm.collectOOM(cacheList_.append(dataOffset));
+        masm.propagateOOM(cacheList_.append(dataOffset));
         return index;
     }
 
@@ -178,7 +178,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     size_t allocateData(size_t size) {
         JS_ASSERT(size % sizeof(void *) == 0);
         size_t dataOffset = runtimeData_.length();
-        masm.collectOOM(runtimeData_.appendN(0, size));
+        masm.propagateOOM(runtimeData_.appendN(0, size));
         return dataOffset;
     }
 
