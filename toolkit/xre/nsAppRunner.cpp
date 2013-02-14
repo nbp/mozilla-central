@@ -26,6 +26,7 @@
 #include "mozilla/Util.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/Likely.h"
+#include "mozilla/Telemetry.h"
 
 #include "nsAppRunner.h"
 #include "mozilla/AppData.h"
@@ -1708,6 +1709,8 @@ ProfileLockedDialog(nsIFile* aProfileDir, nsIFile* aProfileLocalDir,
   ScopedXPCOMStartup xpcom;
   rv = xpcom.Initialize();
   NS_ENSURE_SUCCESS(rv, rv);
+
+  mozilla::Telemetry::WriteFailedProfileLock(aProfileDir);
 
   rv = xpcom.SetWindowCreator(aNative);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
@@ -3448,8 +3451,14 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   if (CheckArg("process-updates")) {
     SaveToEnv("MOZ_PROCESS_UPDATES=1");
   }
+  nsCOMPtr<nsIFile> exeFile, exeDir;
+  rv = mDirProvider.GetFile(XRE_EXECUTABLE_FILE, &persistent,
+                            getter_AddRefs(exeFile));
+  NS_ENSURE_SUCCESS(rv, 1);
+  rv = exeFile->GetParent(getter_AddRefs(exeDir));
+  NS_ENSURE_SUCCESS(rv, 1);
   ProcessUpdates(mDirProvider.GetGREDir(),
-                 mDirProvider.GetAppDir(),
+                 exeDir,
                  updRoot,
                  gRestartArgc,
                  gRestartArgv,

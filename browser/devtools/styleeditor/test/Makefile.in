@@ -18,13 +18,13 @@ _BROWSER_TEST_FILES = \
                  browser_styleeditor_cmd_edit.html \
                  browser_styleeditor_import.js \
                  browser_styleeditor_init.js \
-                 $(filter disabled-temporarily--bug-817294, browser_styleeditor_loading.js) \
+                 browser_styleeditor_loading.js \
                  browser_styleeditor_new.js \
                  browser_styleeditor_passedinsheet.js \
                  browser_styleeditor_pretty.js \
                  browser_styleeditor_private_perwindowpb.js \
                  browser_styleeditor_readonly.js \
-                 $(filter disabled-for-intermittent-failures--bug-707891, browser_styleeditor_reopen.js) \
+                 browser_styleeditor_reopen.js \
                  browser_styleeditor_sv_keynav.js \
                  browser_styleeditor_sv_resize.js \
                  head.js \
@@ -32,6 +32,7 @@ _BROWSER_TEST_FILES = \
                  four.html \
                  head.js \
                  helpers.js \
+                 longload.html \
                  media.html \
                  media-small.css \
                  minified.html \

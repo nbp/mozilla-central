@@ -334,6 +334,18 @@ MConstant::MConstant(const js::Value &vp)
     setMovable();
 }
 
+void
+MConstant::analyzeTruncateBackward()
+{
+    if (js::ion::EdgeCaseAnalysis::AllUsesTruncate(this) &&
+        value_.isDouble() && isBigIntOutput())
+    {
+        // Truncate the double to int, since all uses truncates it.
+        value_.setInt32(ToInt32(value_.toDouble()));
+        setResultType(MIRType_Int32);
+    }
+}
+
 HashNumber
 MConstant::valueHash() const
 {
@@ -982,9 +994,8 @@ MMod::fallible()
 void
 MAdd::analyzeTruncateBackward()
 {
-    if (!isTruncated()) {
+    if (!isTruncated())
         setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
-    }
     if (isTruncated() && isTruncated() < 20) {
         // Super obvious optimization... If this operation is a double
         // BUT it happens to look like a large precision int that eventually
@@ -1283,6 +1294,7 @@ MCompare::inputType()
       case Compare_Double:
         return MIRType_Double;
       case Compare_String:
+      case Compare_StrictString:
         return MIRType_String;
       case Compare_Object:
         return MIRType_Object;
@@ -1360,6 +1372,18 @@ MCompare::infer(const TypeOracle::BinaryTypes &b, JSContext *cx)
     // Handle string comparisons. (Relational string compares are still unsupported).
     if (!relationalEq && lhs == MIRType_String && rhs == MIRType_String) {
         compareType_ = Compare_String;
+        return;
+    }
+
+    if (strictEq && lhs == MIRType_String) {
+        // Lowering expects the rhs to be definitly string.
+        compareType_ = Compare_StrictString;
+        swapOperands();
+        return;
+    }
+
+    if (strictEq && rhs == MIRType_String) {
+        compareType_ = Compare_StrictString;
         return;
     }
 
@@ -1666,6 +1690,31 @@ MCompare::tryFold(bool *result)
         }
     }
 
+    if (compareType_ == Compare_StrictString) {
+        JS_ASSERT(op == JSOP_STRICTEQ || op == JSOP_STRICTNE);
+        JS_ASSERT(rhs()->type() == MIRType_String);
+
+        switch (lhs()->type()) {
+          case MIRType_Value:
+            return false;
+          case MIRType_Boolean:
+          case MIRType_Int32:
+          case MIRType_Double:
+          case MIRType_Object:
+          case MIRType_Null:
+          case MIRType_Undefined:
+            *result = (op == JSOP_STRICTNE);
+            return true;
+          case MIRType_String:
+            // Compare_String specialization should handle this.
+            JS_NOT_REACHED("Wrong specialization");
+            return false;
+          default:
+            JS_NOT_REACHED("Unexpected type");
+            return false;
+        }
+    }
+
     return false;
 }
 
@@ -1828,6 +1877,29 @@ MBeta::computeRange()
     } else {
         setRange(range);
     }
+}
+
+bool
+MNewObject::shouldUseVM() const
+{
+    return templateObject()->hasSingletonType() ||
+           templateObject()->hasDynamicSlots();
+}
+
+bool
+MNewArray::shouldUseVM() const
+{
+    JS_ASSERT(count() < JSObject::NELEMENTS_LIMIT);
+
+    size_t maxArraySlots =
+        gc::GetGCKindSlots(gc::FINALIZE_OBJECT_LAST) - ObjectElements::VALUES_PER_HEADER;
+
+    // Allocate space using the VMCall
+    // when mir hints it needs to get allocated immediatly,
+    // but only when data doesn't fit the available array slots.
+    bool allocating = isAllocating() && count() > maxArraySlots;
+
+    return templateObject()->hasSingletonType() || allocating;
 }
 
 bool

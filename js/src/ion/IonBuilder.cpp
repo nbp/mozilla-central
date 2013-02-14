@@ -2088,6 +2088,7 @@ IonBuilder::tableSwitch(JSOp op, jssrcnote *sn)
     // .: Offset of case high
 
     JS_ASSERT(op == JSOP_TABLESWITCH);
+    JS_ASSERT(SN_TYPE(sn) == SRC_SWITCH);
 
     // Pop input.
     MDefinition *ins = current->pop();
@@ -3131,7 +3132,9 @@ IonBuilder::makeInliningDecision(AutoObjectVector &targets, uint32_t argc)
         if (targetScript->length > js_IonOptions.smallFunctionMaxBytecodeLength)
             allFunctionsAreSmall = false;
 
-        if (calleeUses * js_IonOptions.inlineUseCountRatio < callerUses) {
+        if (targetScript->length > 1 && // Always inline the empty script.
+            calleeUses * js_IonOptions.inlineUseCountRatio < callerUses)
+        {
             IonSpew(IonSpew_Inlining, "Not inlining, callee is not hot");
             return false;
         }
@@ -3368,12 +3371,7 @@ bool
 IonBuilder::inlineScriptedCalls(AutoObjectVector &targets, AutoObjectVector &originals,
                                 CallInfo &callInfo)
 {
-    // Add typeInference hints if not set
-    if (!callInfo.hasTypeInfo()) {
-        types::StackTypeSet *barrier;
-        types::StackTypeSet *types = oracle->returnTypeSet(script(), pc, &barrier);
-        callInfo.setTypeInfo(types, barrier);
-    }
+    JS_ASSERT(callInfo.hasTypeInfo());
 
     // Unwrap the arguments
     JS_ASSERT(callInfo.isWrapped());
@@ -3773,7 +3771,7 @@ IonBuilder::createThisScriptedSingleton(HandleFunction target, MDefinition *call
     if (!types::TypeScript::ThisTypes(target->nonLazyScript())->hasType(types::Type::ObjectType(type)))
         return NULL;
 
-    RootedObject templateObject(cx, js_CreateThisForFunctionWithProto(cx, target, proto));
+    RootedObject templateObject(cx, CreateThisForFunctionWithProto(cx, target, proto));
     if (!templateObject)
         return NULL;
 
@@ -4061,18 +4059,22 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
             return false;
     }
 
+    CallInfo callInfo(cx, constructing);
+    if (!callInfo.init(current, argc))
+        return false;
+
+    types::StackTypeSet *barrier;
+    types::StackTypeSet *types = oracle->returnTypeSet(script(), pc, &barrier);
+    callInfo.setTypeInfo(types, barrier);
+
     // Inline native call.
     if (inliningEnabled() && targets.length() == 1 && targets[0]->toFunction()->isNative()) {
-        RootedFunction target(cx, targets[0]->toFunction());
-        InliningStatus status = inlineNativeCall(target->native(), argc, constructing);
+        InliningStatus status = inlineNativeCall(callInfo, targets[0]->toFunction()->native());
         if (status != InliningStatus_NotInlined)
             return status != InliningStatus_Error;
     }
 
     // Inline scriped call(s).
-    CallInfo callInfo(cx, constructing);
-    if (!callInfo.init(current, argc))
-        return false;
     if (inliningEnabled() && targets.length() > 0 && makeInliningDecision(targets, argc))
         return inlineScriptedCalls(targets, originals, callInfo);
 
@@ -4081,7 +4083,7 @@ IonBuilder::jsop_call(uint32_t argc, bool constructing)
     if (targets.length() == 1)
         target = targets[0]->toFunction();
 
-    return makeCall(target, callInfo, calleeTypes, hasClones);
+    return makeCallBarrier(target, callInfo, calleeTypes, hasClones);
 }
 
 MDefinition *
@@ -4349,15 +4351,13 @@ IonBuilder::jsop_compare(JSOp op)
 JSObject *
 IonBuilder::getNewArrayTemplateObject(uint32_t count)
 {
-    RootedObject templateObject(cx, NewDenseUnallocatedArray(cx, count));
+    RootedScript scriptRoot(cx, script());
+    NewObjectKind newKind = types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Array);
+    RootedObject templateObject(cx, NewDenseUnallocatedArray(cx, count, NULL, newKind));
     if (!templateObject)
         return NULL;
 
-    RootedScript scriptRoot(cx, script());
-    if (types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Array)) {
-        if (!JSObject::setSingletonType(cx, templateObject))
-            return NULL;
-    } else {
+    if (newKind != SingletonObject) {
         types::TypeObject *type = types::TypeScript::InitObject(cx, scriptRoot, pc, JSProto_Array);
         if (!type)
             return NULL;
@@ -4395,21 +4395,19 @@ IonBuilder::jsop_newobject(HandleObject baseObj)
 
     RootedObject templateObject(cx);
 
+    RootedScript scriptRoot(cx, script());
+    NewObjectKind newKind = types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Object);
     if (baseObj) {
-        templateObject = CopyInitializerObject(cx, baseObj);
+        templateObject = CopyInitializerObject(cx, baseObj, newKind);
     } else {
-        gc::AllocKind kind = GuessObjectGCKind(0);
-        templateObject = NewBuiltinClassInstance(cx, &ObjectClass, kind);
+        gc::AllocKind allocKind = GuessObjectGCKind(0);
+        templateObject = NewBuiltinClassInstance(cx, &ObjectClass, allocKind, newKind);
     }
 
     if (!templateObject)
         return false;
 
-    RootedScript scriptRoot(cx, script());
-    if (types::UseNewTypeForInitializer(cx, scriptRoot, pc, JSProto_Object)) {
-        if (!JSObject::setSingletonType(cx, templateObject))
-            return false;
-    } else {
+    if (newKind != SingletonObject) {
         types::TypeObject *type = types::TypeScript::InitObject(cx, scriptRoot, pc, JSProto_Object);
         if (!type)
             return false;
@@ -4508,6 +4506,16 @@ IonBuilder::jsop_initprop(HandlePropertyName name)
         !b.lhsTypes->propertyNeedsBarrier(cx, id))
     {
         needsBarrier = false;
+    }
+
+    // In parallel execution, we never require write barriers.  See
+    // forkjoin.cpp for more information.
+    switch (info().executionMode()) {
+      case SequentialExecution:
+        break;
+      case ParallelExecution:
+        needsBarrier = false;
+        break;
     }
 
     if (templateObject->isFixedSlot(shape->slot())) {
@@ -5449,11 +5457,11 @@ IonBuilder::jsop_getelem_dense()
     bool loadDouble = !barrier &&
                       loopDepth_ &&
                       !readOutOfBounds &&
+                      !needsHoleCheck &&
+                      knownType == JSVAL_TYPE_DOUBLE &&
                       oracle->elementReadShouldAlwaysLoadDoubles(script(), pc);
-    if (loadDouble) {
-        JS_ASSERT(!needsHoleCheck && knownType == JSVAL_TYPE_DOUBLE);
+    if (loadDouble)
         elements = addConvertElementsToDoubles(elements);
-    }
 
     MInitializedLength *initLength = MInitializedLength::New(elements);
     current->add(initLength);
@@ -5489,8 +5497,8 @@ IonBuilder::jsop_getelem_dense()
     return pushTypeBarrier(load, types, barrier);
 }
 
-static MInstruction *
-GetTypedArrayLength(MDefinition *obj)
+MInstruction *
+IonBuilder::getTypedArrayLength(MDefinition *obj)
 {
     if (obj->isConstant()) {
         JSObject *array = &obj->toConstant()->value().toObject();
@@ -5501,8 +5509,8 @@ GetTypedArrayLength(MDefinition *obj)
     return MTypedArrayLength::New(obj);
 }
 
-static MInstruction *
-GetTypedArrayElements(MDefinition *obj)
+MInstruction *
+IonBuilder::getTypedArrayElements(MDefinition *obj)
 {
     if (obj->isConstant()) {
         JSObject *array = &obj->toConstant()->value().toObject();
@@ -5565,14 +5573,14 @@ IonBuilder::jsop_getelem_typed(int arrayType)
         }
 
         // Get the length.
-        MInstruction *length = GetTypedArrayLength(obj);
+        MInstruction *length = getTypedArrayLength(obj);
         current->add(length);
 
         // Bounds check.
         id = addBoundsCheck(id, length);
 
         // Get the elements vector.
-        MInstruction *elements = GetTypedArrayElements(obj);
+        MInstruction *elements = getTypedArrayElements(obj);
         current->add(elements);
 
         // Load the element.
@@ -5742,14 +5750,14 @@ IonBuilder::jsop_setelem_typed(int arrayType)
     id = idInt32;
 
     // Get the length.
-    MInstruction *length = GetTypedArrayLength(obj);
+    MInstruction *length = getTypedArrayLength(obj);
     current->add(length);
 
     // Bounds check.
     id = addBoundsCheck(id, length);
 
     // Get the elements vector.
-    MInstruction *elements = GetTypedArrayElements(obj);
+    MInstruction *elements = getTypedArrayElements(obj);
     current->add(elements);
 
     // Clamp value to [0, 255] for Uint8ClampedArray.
@@ -5813,7 +5821,7 @@ IonBuilder::jsop_length_fastPath()
 
         if (sig.inTypes->getTypedArrayType() != TypedArray::TYPE_MAX) {
             MDefinition *obj = current->pop();
-            MInstruction *length = GetTypedArrayLength(obj);
+            MInstruction *length = getTypedArrayLength(obj);
             current->add(length);
             current->push(length);
             return true;

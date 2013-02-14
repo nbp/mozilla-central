@@ -1425,7 +1425,9 @@ static unsigned int ConvertAndroidKeyCodeToDOMKeyCode(int androidKeyCode)
         case AndroidKeyEvent::KEYCODE_DPAD_LEFT:          return NS_VK_LEFT;
         case AndroidKeyEvent::KEYCODE_DPAD_RIGHT:         return NS_VK_RIGHT;
         case AndroidKeyEvent::KEYCODE_DPAD_CENTER:        return NS_VK_RETURN;
-        // KEYCODE_VOLUME_UP (24) ... KEYCODE_Z (54)
+        case AndroidKeyEvent::KEYCODE_VOLUME_UP:          return NS_VK_VOLUME_UP;
+        case AndroidKeyEvent::KEYCODE_VOLUME_DOWN:        return NS_VK_VOLUME_DOWN;
+        // KEYCODE_VOLUME_POWER (26) ... KEYCODE_Z (54)
         case AndroidKeyEvent::KEYCODE_COMMA:              return NS_VK_COMMA;
         case AndroidKeyEvent::KEYCODE_PERIOD:             return NS_VK_PERIOD;
         case AndroidKeyEvent::KEYCODE_ALT_LEFT:           return NS_VK_ALT;
@@ -1446,7 +1448,8 @@ static unsigned int ConvertAndroidKeyCodeToDOMKeyCode(int androidKeyCode)
         case AndroidKeyEvent::KEYCODE_SEMICOLON:          return NS_VK_SEMICOLON;
         // KEYCODE_APOSTROPHE (75)
         case AndroidKeyEvent::KEYCODE_SLASH:              return NS_VK_SLASH;
-        // KEYCODE_AT (77) ... KEYCODE_MUTE (91)
+        // KEYCODE_AT (77) ... KEYCODE_MEDIA_FAST_FORWARD (90)
+        case AndroidKeyEvent::KEYCODE_MUTE:               return NS_VK_VOLUME_MUTE;
         case AndroidKeyEvent::KEYCODE_PAGE_UP:            return NS_VK_PAGE_UP;
         case AndroidKeyEvent::KEYCODE_PAGE_DOWN:          return NS_VK_PAGE_DOWN;
         // KEYCODE_PICTSYMBOLS (94) ... KEYCODE_BUTTON_MODE (110)
@@ -1586,14 +1589,6 @@ nsWindow::HandleSpecialKey(AndroidGeckoEvent *ae)
                     doCommand = true;
                 }
                 break;
-            case AndroidKeyEvent::KEYCODE_VOLUME_UP:
-                command = nsGkAtoms::VolumeUp;
-                doCommand = true;
-                break;
-            case AndroidKeyEvent::KEYCODE_VOLUME_DOWN:
-                command = nsGkAtoms::VolumeDown;
-                doCommand = true;
-                break;
             case AndroidKeyEvent::KEYCODE_MENU:
                 gMenu = true;
                 gMenuConsumed = isLongPress;
@@ -1667,8 +1662,6 @@ nsWindow::OnKeyEvent(AndroidGeckoEvent *ae)
     case AndroidKeyEvent::KEYCODE_BACK:
     case AndroidKeyEvent::KEYCODE_MENU:
     case AndroidKeyEvent::KEYCODE_SEARCH:
-    case AndroidKeyEvent::KEYCODE_VOLUME_UP:
-    case AndroidKeyEvent::KEYCODE_VOLUME_DOWN:
         HandleSpecialKey(ae);
         return;
     }
@@ -1766,6 +1759,19 @@ nsWindow::OnIMEEvent(AndroidGeckoEvent *ae)
     if (ae->Action() == AndroidGeckoEvent::IME_ACKNOWLEDGE_FOCUS) {
         MOZ_ASSERT(mIMEMaskEventsCount > 0);
         mIMEMaskEventsCount--;
+        if (!mIMEMaskEventsCount) {
+            // The focusing handshake sequence is complete, and Java is waiting
+            // on Gecko. Now we can notify Java of the newly focused content
+            mIMETextChanges.Clear();
+            mIMESelectionChanged = false;
+            // OnIMETextChange also notifies selection
+            // Use 'INT32_MAX / 2' here because subsequent text changes might
+            // combine with this text change, and overflow might occur if
+            // we just use INT32_MAX
+            OnIMETextChange(0, INT32_MAX / 2, INT32_MAX / 2);
+            FlushIMEChanges();
+        }
+        AndroidBridge::NotifyIME(AndroidBridge::NOTIFY_IME_REPLY_EVENT, 0);
         return;
     }
     if (mIMEMaskEventsCount > 0) {
@@ -2069,16 +2075,7 @@ nsWindow::OnIMEFocusChange(bool aFocus)
 {
     ALOGIME("IME: OnIMEFocusChange: f=%d", aFocus);
 
-    if (aFocus) {
-        mIMETextChanges.Clear();
-        mIMESelectionChanged = false;
-        // OnIMETextChange also notifies selection
-        // Use 'INT32_MAX / 2' here because subsequent text changes might
-        // combine with this text change, and overflow might occur if
-        // we just use INT32_MAX
-        OnIMETextChange(0, INT32_MAX / 2, INT32_MAX / 2);
-        FlushIMEChanges();
-    } else {
+    if (!aFocus) {
         // Mask events because we lost focus. On the next focus event, Gecko will notify
         // Java, and Java will send an acknowledge focus event back to Gecko. That is
         // where we unmask event handling
@@ -2311,18 +2308,18 @@ nsWindow::ScheduleComposite()
 }
 
 void
-nsWindow::SchedulePauseComposition()
-{
-    if (sCompositorParent) {
-        sCompositorParent->SchedulePauseOnCompositorThread();
-    }
-}
-
-void
 nsWindow::ScheduleResumeComposition(int width, int height)
 {
     if (sCompositorParent && sCompositorParent->ScheduleResumeOnCompositorThread(width, height)) {
         sCompositorPaused = false;
+    }
+}
+
+void
+nsWindow::ForceIsFirstPaint()
+{
+    if (sCompositorParent) {
+        sCompositorParent->ForceIsFirstPaint();
     }
 }
 

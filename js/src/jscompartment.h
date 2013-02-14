@@ -17,7 +17,6 @@
 #include "jsgc.h"
 #include "jsobj.h"
 
-#include "gc/StoreBuffer.h"
 #include "gc/FindSCCs.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
@@ -132,26 +131,20 @@ namespace js {
  * parallel or sequential mode, you should make it take an
  * |Allocator*| rather than a |JSContext*|.
  */
-class Allocator
+class Allocator : public MallocProvider<Allocator>
 {
-    JSCompartment*const compartment;
+    JS::Zone *zone;
 
   public:
-    explicit Allocator(JSCompartment *compartment);
+    explicit Allocator(JS::Zone *zone);
 
     js::gc::ArenaLists arenas;
 
     inline void *parallelNewGCThing(gc::AllocKind thingKind, size_t thingSize);
 
-    inline void *malloc_(size_t bytes);
-    inline void *calloc_(size_t bytes);
-    inline void *realloc_(void *p, size_t bytes);
-    inline void *realloc_(void *p, size_t oldBytes, size_t newBytes);
-    template <class T> inline T *pod_malloc();
-    template <class T> inline T *pod_calloc();
-    template <class T> inline T *pod_malloc(size_t numElems);
-    template <class T> inline T *pod_calloc(size_t numElems);
-    JS_DECLARE_NEW_METHODS(new_, malloc_, JS_ALWAYS_INLINE)
+    inline void *onOutOfMemory(void *p, size_t nbytes);
+    inline void updateMallocCounter(size_t nbytes);
+    inline void reportAllocationOverflow();
 };
 
 } /* namespace js */
@@ -200,11 +193,6 @@ struct JSCompartment : private JS::shadow::Zone, public js::gc::GraphNodeBase<JS
      * allocator.  This is used at the end of a parallel section.
      */
     void adoptWorkerAllocator(js::Allocator *workerAllocator);
-
-#ifdef JSGC_GENERATIONAL
-    js::gc::Nursery              gcNursery;
-    js::gc::StoreBuffer          gcStoreBuffer;
-#endif
 
   private:
     bool                         ionUsingBarriers_;
@@ -398,8 +386,7 @@ struct JSCompartment : private JS::shadow::Zone, public js::gc::GraphNodeBase<JS
     js::types::TypeObject *getNewType(JSContext *cx, js::Class *clasp, js::TaggedProto proto,
                                       JSFunction *fun = NULL);
 
-    js::types::TypeObject *getLazyType(JSContext *cx, js::Class *clasp,
-                                       js::Handle<js::TaggedProto> proto);
+    js::types::TypeObject *getLazyType(JSContext *cx, js::Class *clasp, js::TaggedProto proto);
 
     /*
      * Hash table of all manually call site-cloned functions from within
@@ -451,7 +438,7 @@ struct JSCompartment : private JS::shadow::Zone, public js::gc::GraphNodeBase<JS
     /* Mark cross-compartment wrappers. */
     void markCrossCompartmentWrappers(JSTracer *trc);
 
-    bool wrap(JSContext *cx, js::Value *vp, JSObject *existing = NULL);
+    bool wrap(JSContext *cx, JS::MutableHandleValue vp, JS::HandleObject existing = JS::NullPtr());
     bool wrap(JSContext *cx, JSString **strp);
     bool wrap(JSContext *cx, js::HeapPtrString *strp);
     bool wrap(JSContext *cx, JSObject **objp, JSObject *existing = NULL);

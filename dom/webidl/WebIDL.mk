@@ -17,6 +17,7 @@ webidl_files = \
   AudioNode.webidl \
   AudioParam.webidl \
   AudioSourceNode.webidl \
+  BatteryManager.webidl \
   BiquadFilterNode.webidl \
   Blob.webidl \
   CanvasRenderingContext2D.webidl \
@@ -56,26 +57,44 @@ webidl_files = \
   Function.webidl \
   GainNode.webidl \
   HTMLAnchorElement.webidl \
+  HTMLAreaElement.webidl \
+  HTMLBaseElement.webidl \
   HTMLBodyElement.webidl \
+  HTMLBRElement.webidl \
+  HTMLButtonElement.webidl \
   HTMLCollection.webidl \
   HTMLDataListElement.webidl \
+  HTMLDirectoryElement.webidl \
   HTMLDivElement.webidl \
   HTMLDListElement.webidl \
   HTMLDocument.webidl \
   HTMLElement.webidl \
+  HTMLFieldSetElement.webidl \
   HTMLFontElement.webidl \
   HTMLFrameSetElement.webidl \
+  HTMLHeadElement.webidl \
   HTMLHeadingElement.webidl \
+  HTMLHRElement.webidl \
+  HTMLHtmlElement.webidl \
   HTMLImageElement.webidl \
   HTMLLabelElement.webidl \
   HTMLLIElement.webidl \
+  HTMLLinkElement.webidl \
+  HTMLMapElement.webidl \
+  HTMLMetaElement.webidl \
+  HTMLMeterElement.webidl \
+  HTMLModElement.webidl \
   HTMLOListElement.webidl \
+  HTMLOptGroupElement.webidl \
   HTMLOptionsCollection.webidl \
   HTMLParagraphElement.webidl \
+  HTMLParamElement.webidl \
   HTMLPreElement.webidl \
   HTMLPropertiesCollection.webidl \
+  HTMLQuoteElement.webidl \
   HTMLScriptElement.webidl \
   HTMLSpanElement.webidl \
+  HTMLStyleElement.webidl \
   HTMLTableCaptionElement.webidl \
   HTMLTableCellElement.webidl \
   HTMLTableColElement.webidl \
@@ -85,6 +104,7 @@ webidl_files = \
   HTMLTitleElement.webidl \
   HTMLUListElement.webidl \
   ImageData.webidl \
+  LinkStyle.webidl \
   Location.webidl \
   MutationObserver.webidl \
   Node.webidl \
@@ -132,7 +152,6 @@ webidl_files = \
   SVGLengthList.webidl \
   SVGLinearGradientElement.webidl \
   SVGLineElement.webidl \
-  SVGLocatableElement.webidl \
   SVGMarkerElement.webidl \
   SVGMaskElement.webidl \
   SVGMatrix.webidl \
@@ -164,7 +183,6 @@ webidl_files = \
   SVGTextPositioningElement.webidl \
   SVGTitleElement.webidl \
   SVGTransform.webidl \
-  SVGTransformableElement.webidl \
   SVGTransformList.webidl \
   SVGTSpanElement.webidl \
   SVGUnitTypes.webidl \
@@ -184,8 +202,22 @@ webidl_files = \
   XMLHttpRequestEventTarget.webidl \
   XMLHttpRequestUpload.webidl \
   XMLSerializer.webidl \
+  XMLStylesheetProcessingInstruction.webidl \
   XPathEvaluator.webidl \
+  XULElement.webidl \
   $(NULL)
+
+ifdef MOZ_AUDIO_CHANNEL_MANAGER
+webidl_files += \
+  AudioChannelManager.webidl \
+  $(NULL)
+endif
+
+ifdef MOZ_MEDIA
+webidl_files += \
+  HTMLSourceElement.webidl \
+  $(NULL)
+endif
 
 ifdef MOZ_WEBGL
 webidl_files += \
