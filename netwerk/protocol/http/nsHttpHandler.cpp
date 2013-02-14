@@ -180,6 +180,7 @@ nsHttpHandler::nsHttpHandler()
     , mSpdyV3(true)
     , mCoalesceSpdy(true)
     , mUseAlternateProtocol(false)
+    , mSpdyPersistentSettings(false)
     , mSpdySendingChunkSize(ASpdySession::kSendingChunkSize)
     , mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize)
     , mSpdyPingThreshold(PR_SecondsToInterval(58))
@@ -641,7 +642,9 @@ nsHttpHandler::InitUserAgentComponents()
 
     bool isTablet;
     nsresult rv = infoService->GetPropertyAsBool(NS_LITERAL_STRING("tablet"), &isTablet);
-    if (NS_FAILED(rv) || !isTablet)
+    if (NS_SUCCEEDED(rv) && isTablet)
+        mCompatDevice.AssignLiteral("Tablet");
+    else
         mCompatDevice.AssignLiteral("Mobile");
 #endif
 
@@ -1098,6 +1101,13 @@ nsHttpHandler::PrefsChanged(nsIPrefBranch *prefs, const char *pref)
                                 &cVar);
         if (NS_SUCCEEDED(rv))
             mUseAlternateProtocol = cVar;
+    }
+
+    if (PREF_CHANGED(HTTP_PREF("spdy.persistent-settings"))) {
+        rv = prefs->GetBoolPref(HTTP_PREF("spdy.persistent-settings"),
+                                &cVar);
+        if (NS_SUCCEEDED(rv))
+            mSpdyPersistentSettings = cVar;
     }
 
     if (PREF_CHANGED(HTTP_PREF("spdy.timeout"))) {

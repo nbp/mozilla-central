@@ -34,6 +34,16 @@ struct Arena;
 struct ArenaHeader;
 struct Chunk;
 
+/*
+ * This flag allows an allocation site to request a specific heap based upon the
+ * estimated lifetime or lifetime requirements of objects allocated from that
+ * site.
+ */
+enum InitialHeap {
+    DefaultHeap,
+    TenuredHeap
+};
+
 /* The GC allocation kinds. */
 enum AllocKind {
     FINALIZE_OBJECT0,
@@ -53,9 +63,6 @@ enum AllocKind {
     FINALIZE_SHAPE,
     FINALIZE_BASE_SHAPE,
     FINALIZE_TYPE_OBJECT,
-#if JS_HAS_XML_SUPPORT
-    FINALIZE_XML,
-#endif
     FINALIZE_SHORT_STRING,
     FINALIZE_STRING,
     FINALIZE_EXTERNAL_STRING,
@@ -801,7 +808,7 @@ struct Chunk
     }
 
   private:
-    inline void init();
+    inline void init(JSRuntime *rt);
 
     /* Search for a decommitted arena to allocate. */
     unsigned findDecommittedArenaOffset();

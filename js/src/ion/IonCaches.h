@@ -77,12 +77,8 @@ class IonCacheVisitor
 //
 // * IonCache usage
 //
-// An IonCache is the base structure of a cache which is generating code stubs
-// with its update function. A cache derive from the IonCache class and use
-// CACHE_HEADER to pre-declare a few members such as UpdateInfo (VMFunction) and
-// the accept function. The name of the derived cache must be registered in the
-// IONCACHE_KIND_LIST used to provide convertion operations and to provide
-// default accessors.
+// IonCache is the base structure of an inline cache, which generates code stubs
+// dynamically and attaches them to an IonScript.
 //
 // A cache must at least provide a static update function which will usualy have
 // a JSContext*, followed by the cache index. The rest of the arguments of the
@@ -94,25 +90,24 @@ class IonCacheVisitor
 // The CodeGenerator visit function, as opposed to other visit functions, has
 // two arguments. The first one is the OutOfLineUpdateCache which stores the LIR
 // instruction. The second one is the IC object.  This function would be called
-// once the IC is registered with the inlineCache function of the
-// CodeGeneratorShared.
+// once the IC is registered with the addCache function of CodeGeneratorShared.
 //
-// To register a cache, you must call the inlineCache function as follow:
+// To register a cache, you must call the addCache function as follow:
 //
 //     MyCodeIC cache(inputReg1, inputValueReg2, outputReg);
-//     if (!inlineCache(lir, allocateCache(cache)))
+//     if (!addCache(lir, allocateCache(cache)))
 //         return false;
 //
 // Once the cache is allocated with the allocateCache function, any modification
 // made to the cache would be ignored.
 //
-// The inlineCache function will produce a patchable jump at the location where
+// The addCache function will produce a patchable jump at the location where
 // it is called. This jump will execute generated stubs and fallback on the code
 // of the visitMyCodeIC function if no stub match.
 //
-//   Warning: As the inlineCache function fallback on a VMCall, calls to
-// inlineCache should not be in the same path as another VMCall or in the same
-// path of another inlineCache as this is not supported by the invalidation
+//   Warning: As the addCache function fallback on a VMCall, calls to
+// addCache should not be in the same path as another VMCall or in the same
+// path of another addCache as this is not supported by the invalidation
 // procedure.
 class IonCache
 {
@@ -150,7 +145,7 @@ class IonCache
 
     CodeLocationJump initialJump_;
     CodeLocationJump lastJump_;
-    CodeLocationLabel cacheLabel_;
+    CodeLocationLabel fallbackLabel_;
 
     // Offset from the initial jump to the rejoin label.
 #ifdef JS_CPU_ARM
@@ -171,7 +166,9 @@ class IonCache
         JS_ASSERT(stubCount_);
     }
 
-    CodeLocationLabel cacheLabel() const { return cacheLabel_; }
+    CodeLocationLabel fallbackLabel() const {
+        return fallbackLabel_;
+    }
     CodeLocationLabel rejoinLabel() const {
         uint8_t *ptr = initialJump_.raw();
 #ifdef JS_CPU_ARM
@@ -187,10 +184,11 @@ class IonCache
     IonCache()
       : pure_(false),
         idempotent_(false),
+        disabled_(false),
         stubCount_(0),
         initialJump_(),
         lastJump_(),
-        cacheLabel_(),
+        fallbackLabel_(),
         script(NULL),
         pc(NULL)
     {
@@ -201,21 +199,22 @@ class IonCache
         return disabled_;
     }
 
-    // Bind inline boundaries of the cache. This include the patchable jump
-    // location and the location where the successful exit rejoin the inline
-    // path.
-    void bindInline(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
+    // Set the initial jump state of the cache. The initialJump is the inline
+    // jump that will point to out-of-line code (such as the slow path, or
+    // stubs), and the rejoinLabel is the position that all out-of-line paths
+    // will rejoin to.
+    void setInlineJump(CodeOffsetJump initialJump, CodeOffsetLabel rejoinLabel) {
         initialJump_ = initialJump;
         lastJump_ = initialJump;
 
         JS_ASSERT(rejoinLabel.offset() == initialJump.offset() + REJOIN_LABEL_OFFSET);
     }
 
-    // Bind out-of-line boundaries of the cache. This include the location of
-    // the update function call.  This location will be set to the exitJump of
-    // the last generated stub.
-    void bindOutOfLine(CodeOffsetLabel cacheLabel) {
-        cacheLabel_ = cacheLabel;
+    // Set the initial 'out-of-line' jump state of the cache. The fallbackLabel is
+    // the location of the out-of-line update (slow) path.  This location will
+    // be set to the exitJump of the last generated stub.
+    void setFallbackLabel(CodeOffsetLabel fallbackLabel) {
+        fallbackLabel_ = fallbackLabel;
     }
 
     // Update labels once the code is copied and finalized.
@@ -228,33 +227,17 @@ class IonCache
         return stubCount_ < MAX_STUBS;
     }
 
-    // Value used instead of the IonCode self-reference of generated stubs. This
-    // value is needed for marking calls made inside stubs. This value would be
-    // replaced by the attachStub function after the allocation of the
-    // IonCode. Such self-reference is used when a marking phase happen within
-    // such calls, in which case we need to keep the stub path alive even if the
-    // IonScript is invalidated or if the IC is flushed.
-    static const ImmWord CODE_MARK;
-
-#ifdef DEBUG
-    // Cast code mark to a pointer such as it can be compared to what is read
-    // from the stack during the marking phase.
-    static IonCode *codeMark() {
-        return reinterpret_cast<IonCode *>(const_cast<ImmWord*>(&CODE_MARK)->asPointer());
-    }
-#endif
-
-    // Return value of linkCode (see linkCode). This special value is used to
-    // identify the fact that the cache might have been flushed or that the
-    // IonScript might be invalidated since we entered the update function.
-    static IonCode * const CACHE_FLUSHED;
+    enum LinkStatus {
+        LINK_ERROR,
+        CACHE_FLUSHED,
+        LINK_GOOD
+    };
 
     // Use the Linker to link the generated code and check if any
-    // monitoring/allocation caused an invalidation of the running ion
-    // script. If there is no allocation issue, but the code cannot be attached
-    // later, this function will return CACHE_FLUSHED.  If there is any fatal
-    // error, this function will return a NULL pointer.
-    IonCode *linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion);
+    // monitoring/allocation caused an invalidation of the running ion script,
+    // this function returns CACHE_FLUSHED. In case of allocation issue this
+    // function returns LINK_ERROR.
+    LinkStatus linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code);
 
     // Fixup variables and update jumps in the list of stubs.  Increment the
     // number of attached stubs accordingly.
@@ -339,12 +322,24 @@ class GetPropertyIC : public IonCache
 
     CACHE_HEADER(GetProperty)
 
-    Register object() const { return object_; }
-    PropertyName *name() const { return name_; }
-    TypedOrValueRegister output() const { return output_; }
-    bool allowGetters() const { return allowGetters_; }
-    bool hasArrayLengthStub() const { return hasArrayLengthStub_; }
-    bool hasTypedArrayLengthStub() const { return hasTypedArrayLengthStub_; }
+    Register object() const {
+        return object_;
+    }
+    PropertyName *name() const {
+        return name_;
+    }
+    TypedOrValueRegister output() const {
+        return output_;
+    }
+    bool allowGetters() const {
+        return allowGetters_;
+    }
+    bool hasArrayLengthStub() const {
+        return hasArrayLengthStub_;
+    }
+    bool hasTypedArrayLengthStub() const {
+        return hasTypedArrayLengthStub_;
+    }
 
     bool attachReadSlot(JSContext *cx, IonScript *ion, JSObject *obj, JSObject *holder,
                         HandleShape shape);
@@ -365,7 +360,7 @@ class SetPropertyIC : public IonCache
     RegisterSet liveRegs_;
 
     Register object_;
-    PropertyName *name_; // rooting issues ?!
+    PropertyName *name_;
     ConstantOrRegister value_;
     bool isSetName_;
     bool strict_;
@@ -384,11 +379,21 @@ class SetPropertyIC : public IonCache
 
     CACHE_HEADER(SetProperty)
 
-    Register object() const { return object_; }
-    PropertyName *name() const { return name_; }
-    ConstantOrRegister value() const { return value_; }
-    bool isSetName() const { return isSetName_; }
-    bool strict() const { return strict_; }
+    Register object() const {
+        return object_;
+    }
+    PropertyName *name() const {
+        return name_;
+    }
+    ConstantOrRegister value() const {
+        return value_;
+    }
+    bool isSetName() const {
+        return isSetName_;
+    }
+    bool strict() const {
+        return strict_;
+    }
 
     bool attachNativeExisting(JSContext *cx, IonScript *ion, HandleObject obj, HandleShape shape);
     bool attachSetterCall(JSContext *cx, IonScript *ion, HandleObject obj,
@@ -442,8 +447,7 @@ class GetElementIC : public IonCache
         hasDenseStub_ = true;
     }
 
-    bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval,
-                       PropertyName *name);
+    bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval, HandlePropertyName name);
     bool attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
     bool attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
 

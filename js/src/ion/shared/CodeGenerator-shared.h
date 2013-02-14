@@ -26,6 +26,7 @@ class OutOfLineCode;
 class CodeGenerator;
 class MacroAssembler;
 class IonCache;
+class OutOfLineParallelAbort;
 
 template <class ArgSeq, class StoreOutputTo>
 class OutOfLineCallVM;
@@ -36,6 +37,7 @@ class CodeGeneratorShared : public LInstructionVisitor
 {
     js::Vector<OutOfLineCode *, 0, SystemAllocPolicy> outOfLineCode_;
     OutOfLineCode *oolIns;
+    OutOfLineParallelAbort *oolParallelAbort_;
 
   public:
     MacroAssembler masm;
@@ -156,18 +158,17 @@ class CodeGeneratorShared : public LInstructionVisitor
         return frameClass_ == FrameSizeClass::None() ? frameDepth_ : frameClass_.frameSize();
     }
 
-  private:
+  protected:
     // Ensure the cache is an IonCache while expecting the size of the derived
     // class.
-    size_t allocateCacheSize(const IonCache &, size_t size) {
-        using namespace mozilla;
+    size_t allocateCache(const IonCache &, size_t size) {
         size_t dataOffset = allocateData(size);
         size_t index = cacheList_.length();
-        masm.collectOOM(cacheList_.append(dataOffset));
+        masm.propagateOOM(cacheList_.append(dataOffset));
         return index;
     }
 
-    // This is needed by inlineCache to update the cache with the jump
+    // This is needed by addCache to update the cache with the jump
     // informations provided by the out-of-line path.
     IonCache *getCache(size_t index) {
         return reinterpret_cast<IonCache *>(&runtimeData_[cacheList_[index]]);
@@ -178,13 +179,13 @@ class CodeGeneratorShared : public LInstructionVisitor
     size_t allocateData(size_t size) {
         JS_ASSERT(size % sizeof(void *) == 0);
         size_t dataOffset = runtimeData_.length();
-        masm.collectOOM(runtimeData_.appendN(0, size));
+        masm.propagateOOM(runtimeData_.appendN(0, size));
         return dataOffset;
     }
 
     template <typename T>
     inline size_t allocateCache(const T &cache) {
-        size_t index = allocateCacheSize(cache, sizeof(mozilla::AlignedStorage2<T>));
+        size_t index = allocateCache(cache, sizeof(mozilla::AlignedStorage2<T>));
         // Use the copy constructor on the allocated space.
         new (&runtimeData_[cacheList_.back()]) T(cache);
         return index;
@@ -306,8 +307,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     inline OutOfLineCode *oolCallVM(const VMFunction &fun, LInstruction *ins, const ArgSeq &args,
                                     const StoreOutputTo &out);
 
-    inline bool inlineCache(LInstruction *lir, size_t cacheIndex);
-    IonCache *updateCachePrefix(size_t cacheIndex);
+    bool addCache(LInstruction *lir, size_t cacheIndex);
 
   protected:
     bool addOutOfLineCode(OutOfLineCode *code);
@@ -327,6 +327,15 @@ class CodeGeneratorShared : public LInstructionVisitor
     bool visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo> *ool);
 
     bool visitOutOfLineTruncateSlow(OutOfLineTruncateSlow *ool);
+
+  public:
+    // When compiling parallel code, all bailouts just abort funnel to
+    // this same point and hence abort execution altogether:
+    virtual bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool) = 0;
+    bool callTraceLIR(uint32_t blockIndex, LInstruction *lir, const char *bailoutName = NULL);
+
+  protected:
+    bool ensureOutOfLineParallelAbort(Label **result);
 };
 
 // Wrapper around Label, on the heap, to avoid a bogus assert with OOM.
@@ -575,6 +584,17 @@ CodeGeneratorShared::visitOutOfLineCallVM(OutOfLineCallVM<ArgSeq, StoreOutputTo>
     masm.jump(ool->rejoin());
     return true;
 }
+
+
+// An out-of-line parallel abort thunk.
+class OutOfLineParallelAbort : public OutOfLineCode
+{
+  public:
+    OutOfLineParallelAbort()
+    { }
+
+    bool generate(CodeGeneratorShared *codegen);
+};
 
 } // namespace ion
 } // namespace js

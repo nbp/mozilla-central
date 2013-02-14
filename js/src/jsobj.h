@@ -20,7 +20,6 @@
 #include "jsatom.h"
 #include "jsclass.h"
 #include "jsfriendapi.h"
-#include "jsinfer.h"
 
 #include "gc/Barrier.h"
 #include "gc/Heap.h"
@@ -237,7 +236,6 @@ extern Class StringClass;
 extern Class StrictArgumentsObjectClass;
 extern Class WeakMapClass;
 extern Class WithClass;
-extern Class XMLFilterClass;
 
 class ArgumentsObject;
 class ArrayBufferObject;
@@ -301,6 +299,7 @@ class JSObject : public js::ObjectImpl
     /* Make a non-array object with the specified initial state. */
     static inline JSObject *create(JSContext *cx,
                                    js::gc::AllocKind kind,
+                                   js::gc::InitialHeap heap,
                                    js::HandleShape shape,
                                    js::HandleTypeObject type,
                                    js::HeapSlot *slots);
@@ -308,6 +307,7 @@ class JSObject : public js::ObjectImpl
     /* Make an array object with the specified initial state. */
     static inline JSObject *createArray(JSContext *cx,
                                         js::gc::AllocKind kind,
+                                        js::gc::InitialHeap heap,
                                         js::HandleShape shape,
                                         js::HandleTypeObject type,
                                         uint32_t length);
@@ -700,45 +700,6 @@ class JSObject : public js::ObjectImpl
     static const uint32_t ITER_CLASS_NFIXED_SLOTS = 1;
 
     /*
-     * XML-related getters and setters.
-     */
-
-    /*
-     * Slots for XML-related classes are as follows:
-     * - NamespaceClass.base reserves the *_NAME_* and *_NAMESPACE_* slots.
-     * - QNameClass.base, AttributeNameClass, AnyNameClass reserve
-     *   the *_NAME_* and *_QNAME_* slots.
-     * - Others (XMLClass, js_XMLFilterClass) don't reserve any slots.
-     */
-  private:
-    static const uint32_t JSSLOT_NAME_PREFIX          = 0;   // shared
-    static const uint32_t JSSLOT_NAME_URI             = 1;   // shared
-
-    static const uint32_t JSSLOT_NAMESPACE_DECLARED   = 2;
-
-    static const uint32_t JSSLOT_QNAME_LOCAL_NAME     = 2;
-
-  public:
-    static const uint32_t NAMESPACE_CLASS_RESERVED_SLOTS = 3;
-    static const uint32_t QNAME_CLASS_RESERVED_SLOTS     = 3;
-
-    inline JSLinearString *getNamePrefix() const;
-    inline jsval getNamePrefixVal() const;
-    inline void setNamePrefix(JSLinearString *prefix);
-    inline void clearNamePrefix();
-
-    inline JSLinearString *getNameURI() const;
-    inline jsval getNameURIVal() const;
-    inline void setNameURI(JSLinearString *uri);
-
-    inline jsval getNamespaceDeclared() const;
-    inline void setNamespaceDeclared(jsval decl);
-
-    inline JSAtom *getQNameLocalName() const;
-    inline jsval getQNameLocalNameVal() const;
-    inline void setQNameLocalName(JSAtom *name);
-
-    /*
      * Back to generic stuff.
      */
     inline bool isCallable();
@@ -1026,12 +987,6 @@ class JSObject : public js::ObjectImpl
     inline bool isStopIteration() const;
     inline bool isTypedArray() const;
     inline bool isWeakMap() const;
-#if JS_HAS_XML_SUPPORT
-    inline bool isNamespace() const;
-    inline bool isQName() const;
-    inline bool isXML() const;
-    inline bool isXMLId() const;
-#endif
 
     /* Subtypes of ScopeObject. */
     inline bool isBlock() const;
@@ -1206,19 +1161,6 @@ bool
 js_FindClassObject(JSContext *cx, JSProtoKey protoKey, js::MutableHandleValue vp,
                    js::Class *clasp = NULL);
 
-// Specialized call for constructing |this| with a known function callee,
-// and a known prototype.
-extern JSObject *
-js_CreateThisForFunctionWithProto(JSContext *cx, js::HandleObject callee, JSObject *proto);
-
-// Specialized call for constructing |this| with a known function callee.
-extern JSObject *
-js_CreateThisForFunction(JSContext *cx, js::HandleObject callee, bool newType);
-
-// Generic call for constructing |this|.
-extern JSObject *
-js_CreateThis(JSContext *cx, js::Class *clasp, js::HandleObject callee);
-
 /*
  * Find or create a property named by id in obj's scope, with the given getter
  * and setter, slot, attributes, and other members.
@@ -1234,7 +1176,50 @@ js_DefineOwnProperty(JSContext *cx, JS::HandleObject obj, JS::HandleId id,
 
 namespace js {
 
-JSObject *
+/*
+ * The NewObjectKind allows an allocation site to specify the type properties
+ * and lifetime requirements that must be fixed at allocation time.
+ */
+enum NewObjectKind {
+    /* This is the default. Most objects are generic. */
+    GenericObject,
+
+    /*
+     * Singleton objects are treated specially by the type system. This flag
+     * ensures that the new object is automatically set up correctly as a
+     * singleton and is allocated in the correct heap.
+     */
+    SingletonObject,
+
+    /*
+     * Objects which may be marked as a singleton after allocation must still
+     * be allocated on the correct heap, but are not automatically setup as a
+     * singleton after allocation.
+     */
+    MaybeSingletonObject
+};
+
+inline gc::InitialHeap
+InitialHeapForNewKind(NewObjectKind newKind)
+{
+    return newKind == GenericObject ? gc::DefaultHeap : gc::TenuredHeap;
+}
+
+// Specialized call for constructing |this| with a known function callee,
+// and a known prototype.
+extern JSObject *
+CreateThisForFunctionWithProto(JSContext *cx, js::HandleObject callee, JSObject *proto,
+                               NewObjectKind newKind = GenericObject);
+
+// Specialized call for constructing |this| with a known function callee.
+extern JSObject *
+CreateThisForFunction(JSContext *cx, js::HandleObject callee, bool newType);
+
+// Generic call for constructing |this|.
+extern JSObject *
+CreateThis(JSContext *cx, js::Class *clasp, js::HandleObject callee);
+
+extern JSObject *
 CloneObject(JSContext *cx, HandleObject obj, Handle<js::TaggedProto> proto, HandleObject parent);
 
 /*

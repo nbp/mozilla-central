@@ -174,6 +174,14 @@ public:
         mObserver->OnSetRemoteDescriptionError(mCode);
         break;
 
+      case ADDICECANDIDATE:
+        mObserver->OnAddIceCandidateSuccess(mCode);
+        break;
+
+      case ADDICECANDIDATEERROR:
+        mObserver->OnAddIceCandidateError(mCode);
+        break;
+
       case REMOTESTREAMADD:
         {
           nsDOMMediaStream* stream = nullptr;
@@ -200,7 +208,6 @@ public:
         }
 
       case UPDATELOCALDESC:
-      case UPDATEREMOTEDESC:
         /* No action necessary */
         break;
 
@@ -242,8 +249,18 @@ PeerConnectionImpl::PeerConnectionImpl()
 PeerConnectionImpl::~PeerConnectionImpl()
 {
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
-  PeerConnectionCtx::GetInstance()->mPeerConnections.erase(mHandle);
+  if (PeerConnectionCtx::isActive()) {
+    PeerConnectionCtx::GetInstance()->mPeerConnections.erase(mHandle);
+  } else {
+    CSFLogErrorS(logTag, "PeerConnectionCtx is already gone. Ignoring...");
+  }
+
   CloseInt(false);
+
+#ifdef MOZILLA_INTERNAL_API
+  // Deregister as an NSS Shutdown Object
+  shutdown(calledFromObject);
+#endif
 
   // Since this and Initialize() occur on MainThread, they can't both be
   // running at once
@@ -604,8 +621,14 @@ PeerConnectionImpl::ConnectDataConnection(uint16_t aLocalport,
   PC_AUTO_ENTER_API_CALL_NO_CHECK();
 
 #ifdef MOZILLA_INTERNAL_API
+  if (mDataConnection) {
+    CSFLogError(logTag,"%s DataConnection already connected",__FUNCTION__);
+    // Ignore the request to connect when already connected.  This entire
+    // implementation is temporary.  Ignore aNumstreams as it's merely advisory
+    // and we increase the number of streams dynamically as needed.
+    return NS_OK;
+  }
   mDataConnection = new mozilla::DataChannelConnection(this);
-  NS_ENSURE_TRUE(mDataConnection,NS_ERROR_FAILURE);
   if (!mDataConnection->Init(aLocalport, aNumstreams, true)) {
     CSFLogError(logTag,"%s DataConnection Init Failed",__FUNCTION__);
     return NS_ERROR_FAILURE;
@@ -1135,6 +1158,20 @@ PeerConnectionImpl::ShutdownMedia(bool aIsSynchronous)
                 aIsSynchronous ? NS_DISPATCH_SYNC : NS_DISPATCH_NORMAL);
 }
 
+#ifdef MOZILLA_INTERNAL_API
+// If NSS is shutting down, then we need to get rid of the DTLS
+// identity right now; otherwise, we'll cause wreckage when we do
+// finally deallocate it in our destructor.
+void
+PeerConnectionImpl::virtualDestroyNSSReference()
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  CSFLogDebugS(logTag, __FUNCTION__ << ": "
+               << "NSS shutting down; freeing our DtlsIdentity.");
+  mIdentity = nullptr;
+}
+#endif
+
 void
 PeerConnectionImpl::onCallEvent(ccapi_call_event_e aCallEvent,
                                 CSF::CC_CallPtr aCall, CSF::CC_CallInfoPtr aInfo)
@@ -1159,7 +1196,7 @@ PeerConnectionImpl::onCallEvent(ccapi_call_event_e aCallEvent,
       break;
 
     case SETREMOTEDESC:
-    case UPDATEREMOTEDESC:
+    case ADDICECANDIDATE:
       mRemoteSDP = aInfo->getSDP();
       break;
 
@@ -1233,22 +1270,21 @@ PeerConnectionImpl::GetHandle()
 void
 PeerConnectionImpl::IceGatheringCompleted(NrIceCtx *aCtx)
 {
+  (void) aCtx;
   // Do an async call here to unwind the stack. refptr keeps the PC alive.
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceGatheringCompleted_m,
-                             aCtx),
+                             &PeerConnectionImpl::IceGatheringCompleted_m),
                 NS_DISPATCH_NORMAL);
 }
 
 nsresult
-PeerConnectionImpl::IceGatheringCompleted_m(NrIceCtx *aCtx)
+PeerConnectionImpl::IceGatheringCompleted_m()
 {
   PC_AUTO_ENTER_API_CALL(false);
-  MOZ_ASSERT(aCtx);
 
-  CSFLogDebugS(logTag, __FUNCTION__ << ": ctx: " << static_cast<void*>(aCtx));
+  CSFLogDebugS(logTag, __FUNCTION__);
 
   mIceState = kIceWaiting;
 
@@ -1270,22 +1306,21 @@ PeerConnectionImpl::IceGatheringCompleted_m(NrIceCtx *aCtx)
 void
 PeerConnectionImpl::IceCompleted(NrIceCtx *aCtx)
 {
+  (void) aCtx;
   // Do an async call here to unwind the stack. refptr keeps the PC alive.
   nsRefPtr<PeerConnectionImpl> pc(this);
   RUN_ON_THREAD(mThread,
                 WrapRunnable(pc,
-                             &PeerConnectionImpl::IceCompleted_m,
-                             aCtx),
+                             &PeerConnectionImpl::IceCompleted_m),
                 NS_DISPATCH_NORMAL);
 }
 
 nsresult
-PeerConnectionImpl::IceCompleted_m(NrIceCtx *aCtx)
+PeerConnectionImpl::IceCompleted_m()
 {
   PC_AUTO_ENTER_API_CALL(false);
-  MOZ_ASSERT(aCtx);
 
-  CSFLogDebugS(logTag, __FUNCTION__ << ": ctx: " << static_cast<void*>(aCtx));
+  CSFLogDebugS(logTag, __FUNCTION__);
 
   mIceState = kIceConnected;
 
