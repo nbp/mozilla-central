@@ -999,7 +999,7 @@ js::ion::GetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Mu
 
     RootedId id(cx, NameToId(name));
     if (obj->getOps()->getProperty) {
-        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
+        if (!JSObject::getGeneric(cx, obj, obj, id, vp))
             return false;
     } else {
         if (!GetPropertyHelper(cx, obj, id, 0, vp))
@@ -1566,7 +1566,7 @@ js::ion::SetPropertyCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Ha
 
 bool
 IonCacheGetElement::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
-                                  const Value &idval, PropertyName *name)
+                                  const Value &idval, HandlePropertyName name)
 {
     RootedObject holder(cx);
     RootedShape shape(cx);
@@ -1732,7 +1732,8 @@ js::ion::GetElementCache(JSContext *cx, size_t cacheIndex, HandleObject obj, Han
 
             uint32_t dummy;
             if (idval.isString() && JSID_IS_ATOM(id) && !JSID_TO_ATOM(id)->isIndex(&dummy)) {
-                if (!cache.attachGetProp(cx, ion, obj, idval, JSID_TO_ATOM(id)->asPropertyName()))
+                RootedPropertyName name(cx, JSID_TO_ATOM(id)->asPropertyName());
+                if (!cache.attachGetProp(cx, ion, obj, idval, name))
                     return false;
                 attachedStub = true;
             }

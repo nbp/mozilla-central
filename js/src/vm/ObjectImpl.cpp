@@ -8,11 +8,14 @@
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 
-#include "gc/Barrier-inl.h"
 #include "js/TemplateLib.h"
+#include "js/Value.h"
 #include "vm/Debugger.h"
 #include "vm/ObjectImpl.h"
 
+#include "jsatominlines.h"
+
+#include "gc/Barrier-inl.h"
 #include "vm/ObjectImpl-inl.h"
 #include "vm/Shape-inl.h"
 
@@ -135,12 +138,16 @@ PropDesc::wrapInto(JSContext *cx, HandleObject obj, const jsid &id, jsid *wrappe
         return false;
 
     *desc = *this;
-    if (!comp->wrap(cx, &desc->value_))
+    RootedValue value(cx, desc->value_);
+    RootedValue get(cx, desc->get_);
+    RootedValue set(cx, desc->set_);
+
+    if (!comp->wrap(cx, &value) || !comp->wrap(cx, &get) || !comp->wrap(cx, &set))
         return false;
-    if (!comp->wrap(cx, &desc->get_))
-        return false;
-    if (!comp->wrap(cx, &desc->set_))
-        return false;
+
+    desc->value_ = value;
+    desc->get_ = get;
+    desc->set_ = set;
     return !obj->isProxy() || desc->makeObject(cx);
 }
 
@@ -243,13 +250,13 @@ js::ObjectImpl::checkShapeConsistency()
 void
 js::ObjectImpl::initSlotRange(uint32_t start, const Value *vector, uint32_t length)
 {
-    JS::Zone *zone = this->zone();
+    JSRuntime *rt = runtime();
     HeapSlot *fixedStart, *fixedEnd, *slotsStart, *slotsEnd;
     getSlotRange(start, length, &fixedStart, &fixedEnd, &slotsStart, &slotsEnd);
     for (HeapSlot *sp = fixedStart; sp < fixedEnd; sp++)
-        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(rt, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
     for (HeapSlot *sp = slotsStart; sp < slotsEnd; sp++)
-        sp->init(zone, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
+        sp->init(rt, this->asObjectPtr(), HeapSlot::Slot, start++, *vector++);
 }
 
 void

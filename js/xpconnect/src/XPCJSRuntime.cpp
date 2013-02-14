@@ -238,6 +238,16 @@ EnsureCompartmentPrivate(JSCompartment *c)
 }
 
 bool
+IsXBLScope(JSCompartment *compartment)
+{
+    // We always eagerly create compartment privates for XBL scopes.
+    CompartmentPrivate *priv = GetCompartmentPrivate(compartment);
+    if (!priv || !priv->scope)
+        return false;
+    return priv->scope->IsXBLScope();
+}
+
+bool
 IsUniversalXPConnectEnabled(JSCompartment *compartment)
 {
     CompartmentPrivate *priv = GetCompartmentPrivate(compartment);
@@ -1646,13 +1656,6 @@ ReportCompartmentStats(const JS::CompartmentStats &cStats,
                      "heap that holds references to executable code pools "
                      "used by IonMonkey.");
 
-#if JS_HAS_XML_SUPPORT
-    CREPORT_GC_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("gc-heap/xml"),
-                     cStats.gcHeapXML,
-                     "Memory on the garbage-collected JavaScript "
-                     "heap that holds E4X XML objects.");
-#endif
-
     CREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("objects-extra/slots"),
                   cStats.objectsExtra.slots,
                   "Memory allocated for the non-fixed object "
@@ -2347,6 +2350,7 @@ CompartmentNameCallback(JSRuntime *rt, JSCompartment *comp,
 }
 
 bool XPCJSRuntime::gExperimentalBindingsEnabled;
+bool XPCJSRuntime::gXBLScopesEnabled;
 
 static bool
 PreserveWrapper(JSContext *cx, JSObject *obj)
@@ -2525,6 +2529,9 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     DOM_InitInterfaces();
     Preferences::AddBoolVarCache(&gExperimentalBindingsEnabled,
                                  "dom.experimental_bindings",
+                                 false);
+    Preferences::AddBoolVarCache(&gXBLScopesEnabled,
+                                 "dom.xbl_scopes",
                                  false);
 
 

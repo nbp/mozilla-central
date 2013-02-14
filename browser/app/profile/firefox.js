@@ -234,6 +234,10 @@ pref("browser.shell.checkDefaultBrowser", true);
 pref("browser.startup.page",                1);
 pref("browser.startup.homepage",            "chrome://branding/locale/browserconfig.properties");
 
+pref("browser.slowStartup.notificationDisabled", false);
+pref("browser.slowStartup.timeThreshold", 60000);
+pref("browser.slowStartup.maxSamples", 5);
+
 // This url, if changed, MUST continue to point to an https url. Pulling arbitrary content to inject into
 // this page over http opens us up to a man-in-the-middle attack that we'd rather not face. If you are a downstream
 // repackager of this code using an alternate snippet url, please keep your users safe
@@ -326,9 +330,6 @@ pref("browser.download.manager.resumeOnWakeDelay", 10000);
 // This allows disabling the Downloads Panel in favor of the old interface.
 pref("browser.download.useToolkitUI", false);
 
-// This controls retention behavior in the Downloads Panel only.
-pref("browser.download.panel.removeFinishedDownloads", false);
-
 // This records whether or not the panel has been shown at least once.
 pref("browser.download.panel.shown", false);
 
@@ -404,7 +405,11 @@ pref("browser.tabs.loadBookmarksInBackground", false);
 pref("browser.tabs.tabClipWidth", 140);
 pref("browser.tabs.animate", true);
 pref("browser.tabs.onTop", true);
+#ifdef XP_WIN
 pref("browser.tabs.drawInTitlebar", true);
+#else
+pref("browser.tabs.drawInTitlebar", false);
+#endif
 
 // Where to show tab close buttons:
 // 0  on active tab only
@@ -521,9 +526,10 @@ pref("browser.gesture.pinch.out.shift", "");
 pref("browser.gesture.pinch.in.shift", "");
 #endif
 pref("browser.gesture.twist.latched", false);
-pref("browser.gesture.twist.threshold", 25);
-pref("browser.gesture.twist.right", "");
-pref("browser.gesture.twist.left", "");
+pref("browser.gesture.twist.threshold", 0);
+pref("browser.gesture.twist.right", "cmd_gestureRotateRight");
+pref("browser.gesture.twist.left", "cmd_gestureRotateLeft");
+pref("browser.gesture.twist.end", "cmd_gestureRotateEnd");
 pref("browser.gesture.tap", "cmd_fullZoomReset");
 
 // 0: Nothing happens
@@ -1183,10 +1189,6 @@ pref("image.mem.max_decoded_image_kb", 256000);
 
 // Default social providers
 pref("social.manifest.facebook", "{\"origin\":\"https://www.facebook.com\",\"name\":\"Facebook Messenger\",\"workerURL\":\"https://www.facebook.com/desktop/fbdesktop2/socialfox/fbworker.js.php\",\"iconURL\":\"data:image/x-icon;base64,iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8%2F9hAAAAX0lEQVQ4jWP4%2F%2F8%2FAyUYTFhHzjgDxP9JxGeQDSBVMxgTbUBCxer%2Fr999%2BQ8DJBuArJksA9A10s8AXIBoA0B%2BR%2FY%2FjD%2BEwoBoA1yT5v3PbdmCE8MAshhID%2FUMoDgzUYIBj0Cgi7ar4coAAAAASUVORK5CYII%3D\",\"sidebarURL\":\"https://www.facebook.com/desktop/fbdesktop2/?socialfox=true\"}");
-
-// Comma-separated list of nsIURI::prePaths that are allowed to activate
-// built-in social functionality.
-pref("social.activation.whitelist", "https://www.facebook.com");
 
 pref("social.sidebar.open", true);
 pref("social.sidebar.unload_timeout_ms", 10000);

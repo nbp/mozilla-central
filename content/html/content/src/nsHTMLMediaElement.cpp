@@ -733,8 +733,18 @@ NS_IMETHODIMP nsHTMLMediaElement::Load()
   AbortExistingLoads();
   SetPlaybackRate(mDefaultPlaybackRate);
   QueueSelectResourceTask();
+  ResetState();
   mIsRunningLoadMethod = false;
   return NS_OK;
+}
+
+void nsHTMLMediaElement::ResetState()
+{
+  mMediaSize = nsIntSize(-1, -1);
+  VideoFrameContainer* container = GetVideoFrameContainer();
+  if (container) {
+    container->Reset();
+  }
 }
 
 static bool HasSourceChildren(nsIContent *aElement)
@@ -1059,6 +1069,21 @@ nsresult nsHTMLMediaElement::LoadResource()
     mChannel = nullptr;
   }
 
+  int16_t shouldLoad = nsIContentPolicy::ACCEPT;
+  nsresult rv = NS_CheckContentLoadPolicy(nsIContentPolicy::TYPE_MEDIA,
+                                          mLoadingSrc,
+                                          NodePrincipal(),
+                                          static_cast<Element*>(this),
+                                          EmptyCString(), // mime type
+                                          nullptr, // extra
+                                          &shouldLoad,
+                                          nsContentUtils::GetContentPolicy(),
+                                          nsContentUtils::GetSecurityManager());
+  NS_ENSURE_SUCCESS(rv, rv);
+  if (NS_CP_REJECTED(shouldLoad)) {
+    return NS_ERROR_FAILURE;
+  }
+
   // Set the media element's CORS mode only when loading a resource
   mCORSMode = AttrValueToCORSMode(GetParsedAttr(nsGkAtoms::crossorigin));
 
@@ -1073,21 +1098,6 @@ nsresult nsHTMLMediaElement::LoadResource()
     mMimeType = other->mMimeType;
     if (NS_SUCCEEDED(rv))
       return rv;
-  }
-
-  int16_t shouldLoad = nsIContentPolicy::ACCEPT;
-  nsresult rv = NS_CheckContentLoadPolicy(nsIContentPolicy::TYPE_MEDIA,
-                                          mLoadingSrc,
-                                          NodePrincipal(),
-                                          static_cast<Element*>(this),
-                                          EmptyCString(), // mime type
-                                          nullptr, // extra
-                                          &shouldLoad,
-                                          nsContentUtils::GetContentPolicy(),
-                                          nsContentUtils::GetSecurityManager());
-  NS_ENSURE_SUCCESS(rv, rv);
-  if (NS_CP_REJECTED(shouldLoad)) {
-    return NS_ERROR_FAILURE;
   }
 
   if (IsMediaStreamURI(mLoadingSrc)) {
@@ -2161,10 +2171,11 @@ nsHTMLMediaElement::CanPlayType(const nsAString& aType, nsAString& aResult)
 already_AddRefed<MediaDecoder>
 nsHTMLMediaElement::CreateDecoder(const nsACString& aType)
 {
+  // If you change this list to add support for new decoders for codecs that
+  // can be used by <audio>, please consider updating MediaDecodeTask::CreateDecoder
+  // as well.
 
 #ifdef MOZ_GSTREAMER
-  // When enabled, use GStreamer for H.264, but not for codecs handled by our
-  // bundled decoders, unless the "media.prefer-gstreamer" pref is set.
   if (DecoderTraits::IsGStreamerSupportedType(aType)) {
     nsRefPtr<GStreamerDecoder> decoder = new GStreamerDecoder();
     if (decoder->Init(this)) {
@@ -2439,13 +2450,13 @@ public:
     } else {
       event = NS_NewRunnableMethod(this, &StreamListener::DoNotifyUnblocked);
     }
-    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event);
+    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
   }
   virtual void NotifyFinished(MediaStreamGraph* aGraph)
   {
     nsCOMPtr<nsIRunnable> event =
       NS_NewRunnableMethod(this, &StreamListener::DoNotifyFinished);
-    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event);
+    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
   }
   virtual void NotifyHasCurrentData(MediaStreamGraph* aGraph,
                                     bool aHasCurrentData)
@@ -2460,7 +2471,7 @@ public:
     if (aHasCurrentData) {
       nsCOMPtr<nsIRunnable> event =
         NS_NewRunnableMethod(this, &StreamListener::DoNotifyHaveCurrentData);
-      aGraph->DispatchToMainThreadAfterStreamStateUpdate(event);
+      aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
     }
   }
   virtual void NotifyOutput(MediaStreamGraph* aGraph)
@@ -2471,7 +2482,7 @@ public:
     mPendingNotifyOutput = true;
     nsCOMPtr<nsIRunnable> event =
       NS_NewRunnableMethod(this, &StreamListener::DoNotifyOutput);
-    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event);
+    aGraph->DispatchToMainThreadAfterStreamStateUpdate(event.forget());
   }
 
 private:
@@ -2597,6 +2608,7 @@ void nsHTMLMediaElement::ProcessMediaFragmentURI()
 void nsHTMLMediaElement::MetadataLoaded(int aChannels,
                                         int aRate,
                                         bool aHasAudio,
+                                        bool aHasVideo,
                                         const MetadataTags* aTags)
 {
   mChannels = aChannels;
@@ -2609,6 +2621,13 @@ void nsHTMLMediaElement::MetadataLoaded(int aChannels,
   if (mDecoder && mDecoder->IsTransportSeekable() && mDecoder->IsMediaSeekable()) {
     ProcessMediaFragmentURI();
     mDecoder->SetFragmentEndTime(mFragmentEnd);
+  }
+
+  // If this element had a video track, but consists only of an audio track now,
+  // delete the VideoFrameContainer. This happens when the src is changed to an
+  // audio only file.
+  if (!aHasVideo) {
+    mVideoFrameContainer = nullptr;
   }
 }
 
@@ -2953,6 +2972,14 @@ void nsHTMLMediaElement::NotifyAutoplayDataReady()
 
 VideoFrameContainer* nsHTMLMediaElement::GetVideoFrameContainer()
 {
+  // If we have loaded the metadata, and the size of the video is still
+  // (-1, -1), the media has no video. Don't go a create a video frame
+  // container.
+  if (mReadyState >= nsIDOMHTMLMediaElement::HAVE_METADATA &&
+      mMediaSize == nsIntSize(-1, -1)) {
+    return nullptr;
+  }
+
   if (mVideoFrameContainer)
     return mVideoFrameContainer;
 

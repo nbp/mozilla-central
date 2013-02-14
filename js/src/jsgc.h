@@ -108,9 +108,6 @@ MapAllocToTraceKind(AllocKind kind)
         JSTRACE_SHAPE,      /* FINALIZE_SHAPE */
         JSTRACE_BASE_SHAPE, /* FINALIZE_BASE_SHAPE */
         JSTRACE_TYPE_OBJECT,/* FINALIZE_TYPE_OBJECT */
-#if JS_HAS_XML_SUPPORT      /* FINALIZE_XML */
-        JSTRACE_XML,
-#endif
         JSTRACE_STRING,     /* FINALIZE_SHORT_STRING */
         JSTRACE_STRING,     /* FINALIZE_STRING */
         JSTRACE_STRING,     /* FINALIZE_EXTERNAL_STRING */
@@ -142,9 +139,6 @@ IsNurseryAllocable(AllocKind kind)
         false,     /* FINALIZE_SHAPE */
         false,     /* FINALIZE_BASE_SHAPE */
         false,     /* FINALIZE_TYPE_OBJECT */
-#if JS_HAS_XML_SUPPORT
-        false,     /* FINALIZE_XML */
-#endif
         true,      /* FINALIZE_SHORT_STRING */
         true,      /* FINALIZE_STRING */
         false,     /* FINALIZE_EXTERNAL_STRING */
@@ -173,12 +167,9 @@ IsBackgroundFinalized(AllocKind kind)
         false,     /* FINALIZE_OBJECT16 */
         true,      /* FINALIZE_OBJECT16_BACKGROUND */
         false,     /* FINALIZE_SCRIPT */
-        false,     /* FINALIZE_SHAPE */
-        false,     /* FINALIZE_BASE_SHAPE */
+        true,      /* FINALIZE_SHAPE */
+        true,     /* FINALIZE_BASE_SHAPE */
         false,     /* FINALIZE_TYPE_OBJECT */
-#if JS_HAS_XML_SUPPORT
-        false,     /* FINALIZE_XML */
-#endif
         true,      /* FINALIZE_SHORT_STRING */
         true,      /* FINALIZE_STRING */
         false,     /* FINALIZE_EXTERNAL_STRING */
@@ -262,6 +253,9 @@ struct ArenaLists {
     /* For each arena kind, a list of arenas remaining to be swept. */
     ArenaHeader *arenaListsToSweep[FINALIZE_LIMIT];
 
+    /* Shape areneas to be swept in the foreground. */
+    ArenaHeader *gcShapeArenasToSweep;
+
   public:
     ArenaLists() {
         for (size_t i = 0; i != FINALIZE_LIMIT; ++i)
@@ -270,6 +264,7 @@ struct ArenaLists {
             backgroundFinalizeState[i] = BFS_DONE;
         for (size_t i = 0; i != FINALIZE_LIMIT; ++i)
             arenaListsToSweep[i] = NULL;
+        gcShapeArenasToSweep = NULL;
     }
 
     ~ArenaLists() {
@@ -285,6 +280,11 @@ struct ArenaLists {
                 aheader->chunk()->releaseArena(aheader);
             }
         }
+    }
+
+    static uintptr_t getFreeListOffset(AllocKind thingKind) {
+        uintptr_t offset = offsetof(ArenaLists, freeLists);
+        return offset + thingKind * sizeof(FreeSpan);
     }
 
     const FreeSpan *getFreeList(AllocKind thingKind) const {
@@ -454,7 +454,7 @@ struct ArenaLists {
      * thread-local, but the compartment |comp| is shared between all
      * threads.
      */
-    void *parallelAllocate(JSCompartment *comp, AllocKind thingKind, size_t thingSize);
+    void *parallelAllocate(JS::Zone *zone, AllocKind thingKind, size_t thingSize);
 
   private:
     inline void finalizeNow(FreeOp *fop, AllocKind thingKind);
@@ -1004,13 +1004,6 @@ struct GCMarker : public JSTracer {
         pushTaggedPtr(TypeTag, type);
     }
 
-#if JS_HAS_XML_SUPPORT
-    void pushXML(JSXML *xml) {
-        pushTaggedPtr(XmlTag, xml);
-    }
-
-#endif
-
     void pushIonCode(ion::IonCode *code) {
         pushTaggedPtr(IonCodeTag, code);
     }
@@ -1065,7 +1058,7 @@ struct GCMarker : public JSTracer {
     void startBufferingGrayRoots();
     void endBufferingGrayRoots();
     void resetBufferedGrayRoots();
-    void markBufferedGrayRoots(JSCompartment *comp);
+    void markBufferedGrayRoots(JS::Zone *zone);
 
     static void GrayCallback(JSTracer *trc, void **thing, JSGCTraceKind kind);
 
@@ -1115,7 +1108,7 @@ struct GCMarker : public JSTracer {
 
     void appendGrayRoot(void *thing, JSGCTraceKind kind);
 
-    /* The color is only applied to objects, functions and xml. */
+    /* The color is only applied to objects and functions. */
     uint32_t color;
 
     mozilla::DebugOnly<bool> started;
@@ -1197,8 +1190,10 @@ const int ZealAllocValue = 2;
 const int ZealFrameGCValue = 3;
 const int ZealVerifierPreValue = 4;
 const int ZealFrameVerifierPreValue = 5;
-const int ZealStackRootingSafeValue = 6;
-const int ZealStackRootingValue = 7;
+// These two values used to be distinct.  They no longer are, but both were
+// kept to avoid breaking fuzz tests.  Avoid using ZealStackRootingValue__2.
+const int ZealStackRootingValue = 6;
+const int ZealStackRootingValue__2 = 7;
 const int ZealIncrementalRootsThenFinish = 8;
 const int ZealIncrementalMarkAllThenFinish = 9;
 const int ZealIncrementalMultipleSlices = 10;

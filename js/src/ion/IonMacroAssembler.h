@@ -18,6 +18,9 @@
 #include "ion/IonCompartment.h"
 #include "ion/IonInstrumentation.h"
 #include "ion/TypeOracle.h"
+#include "ion/ParallelFunctions.h"
+
+#include "vm/ForkJoin.h"
 
 #include "jstypedarray.h"
 #include "jscompartment.h"
@@ -436,7 +439,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     template<typename T>
     void loadFromTypedArray(int arrayType, const T &src, const ValueOperand &dest, bool allowDouble,
-                            Label *fail);
+                            Register temp, Label *fail);
 
     template<typename S, typename T>
     void storeToTypedIntArray(int arrayType, const S &value, const T &dest) {
@@ -476,13 +479,36 @@ class MacroAssembler : public MacroAssemblerSpecific
         }
     }
 
+    Register extractString(const Address &address, Register scratch) {
+        return extractObject(address, scratch);
+    }
+    Register extractString(const ValueOperand &value, Register scratch) {
+        return extractObject(value, scratch);
+    }
+
     // Inline version of js_TypedArray_uint8_clamp_double.
     // This function clobbers the input register.
     void clampDoubleToUint8(FloatRegister input, Register output);
 
     // Inline allocation.
     void newGCThing(const Register &result, JSObject *templateObject, Label *fail);
+    void parNewGCThing(const Register &result,
+                       const Register &threadContextReg,
+                       const Register &tempReg1,
+                       const Register &tempReg2,
+                       JSObject *templateObject,
+                       Label *fail);
     void initGCThing(const Register &obj, JSObject *templateObject);
+
+    // Compares two strings for equality based on the JSOP.
+    // This checks for identical pointers, atoms and length and fails for everything else.
+    void compareStrings(JSOp op, Register left, Register right, Register result,
+                        Register temp, Label *fail);
+
+    // Checks the flags that signal that parallel code may need to interrupt or
+    // abort.  Branches to fail in that case.
+    void parCheckInterruptFlags(const Register &tempReg,
+                                Label *fail);
 
     // If the IonCode that created this assembler needs to transition into the VM,
     // we want to store the IonCode on the stack in order to mark it during a GC.

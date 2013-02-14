@@ -144,6 +144,13 @@ else
 fi
 AC_SUBST(JS_SHARED_LIBRARY)
 
+if test "$JS_STANDALONE" = no; then
+  JS_STANDALONE=
+else
+  JS_STANDALONE=1
+fi
+AC_SUBST(JS_STANDALONE)
+
 MOZ_ARG_WITH_STRING(gonk,
 [  --with-gonk=DIR
                location of gonk dir],
@@ -3813,15 +3820,6 @@ MOZ_ARG_WITH_STRING(jitreport-granularity,
   JITREPORT_GRANULARITY=3)
 
 AC_DEFINE_UNQUOTED(JS_DEFAULT_JITREPORT_GRANULARITY, $JITREPORT_GRANULARITY)
-
-dnl ========================================================
-dnl = E4X support (ECMA-357)
-dnl ========================================================
-JS_HAS_XML_SUPPORT=1
-MOZ_ARG_DISABLE_BOOL(e4x,
-[  --disable-e4x           Disable JS support for XML (ECMA-357)],
-    JS_HAS_XML_SUPPORT=0 )
-AC_DEFINE_UNQUOTED(JS_HAS_XML_SUPPORT, $JS_HAS_XML_SUPPORT)
 
 dnl ========================================================
 dnl =
