@@ -184,6 +184,7 @@ class IonCache
     IonCache()
       : pure_(false),
         idempotent_(false),
+        disabled_(false),
         stubCount_(0),
         initialJump_(),
         lastJump_(),
