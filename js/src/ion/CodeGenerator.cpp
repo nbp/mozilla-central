@@ -2194,7 +2194,7 @@ CodeGenerator::visitNewArray(LNewArray *lir)
     JS_ASSERT(gen->info().executionMode() == SequentialExecution);
     Register objReg = ToRegister(lir->output());
     JSObject *templateObject = lir->mir()->templateObject();
-    uint32_t count = lir->mir()->count();
+    DebugOnly<uint32_t> count = lir->mir()->count();
 
     JS_ASSERT(count < JSObject::NELEMENTS_LIMIT);
 
