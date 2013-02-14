@@ -1647,9 +1647,11 @@ GetElementIC::attachTypedArrayElement(JSContext *cx, IonScript *ion, JSObject *o
     int width = TypedArray::slotWidth(arrayType);
     BaseIndex source(elementReg, indexReg, ScaleFromElemWidth(width));
     if (output().hasValue())
-        masm.loadFromTypedArray(arrayType, source, output().valueReg(), true, &popAndFail);
+        masm.loadFromTypedArray(arrayType, source, output().valueReg(), true,
+                                elementReg, &popAndFail);
     else
-        masm.loadFromTypedArray(arrayType, source, output().typedReg(), InvalidReg, &popAndFail);
+        masm.loadFromTypedArray(arrayType, source, output().typedReg(),
+                                elementReg, &popAndFail);
 
     masm.pop(object());
     RepatchLabel rejoin_;
