@@ -4650,7 +4650,7 @@ CodeGenerator::visitGetElementCacheT(LGetElementCacheT *ins)
 
     GetElementIC cache(obj, index, output, ins->mir()->monitoredResult());
 
-    return inlineCache(ins, allocateCache(cache));
+    return addCache(ins, allocateCache(cache));
 }
 
 typedef bool (*GetElementICFn)(JSContext *, size_t, HandleObject, HandleValue, MutableHandleValue);
