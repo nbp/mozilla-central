@@ -159,8 +159,6 @@ let gInitialPages = [
 
 #ifdef MOZ_DATA_REPORTING
 #include browser-data-submission-info-bar.js
-
-let gDataNotificationInfoBar = new DataNotificationInfoBar();
 #endif
 
 #ifdef MOZ_SERVICES_SYNC
@@ -172,9 +170,7 @@ XPCOMUtils.defineLazyGetter(this, "Win7Features", function () {
   const WINTASKBAR_CONTRACTID = "@mozilla.org/windows-taskbar;1";
   if (WINTASKBAR_CONTRACTID in Cc &&
       Cc[WINTASKBAR_CONTRACTID].getService(Ci.nsIWinTaskbar).available) {
-    let temp = {};
-    Cu.import("resource:///modules/WindowsPreviewPerTab.jsm", temp);
-    let AeroPeek = temp.AeroPeek;
+    let AeroPeek = Cu.import("resource:///modules/WindowsPreviewPerTab.jsm", {}).AeroPeek;
     return {
       onOpenWindow: function () {
         AeroPeek.onOpenWindow(window);
@@ -740,6 +736,10 @@ const gFormSubmitObserver = {
 // the capturing phase and call stopPropagation on every event.
 
 let gGestureSupport = {
+  _currentRotation: 0,
+  _lastRotateDelta: 0,
+  _rotateMomentumThreshold: .75,
+
   /**
    * Add or remove mouse gesture event listeners
    *
@@ -799,6 +799,10 @@ let gGestureSupport = {
       case "MozTapGesture":
         aEvent.preventDefault();
         this._doAction(aEvent, ["tap"]);
+        break;
+      case "MozRotateGesture":
+        aEvent.preventDefault();
+        this._doAction(aEvent, ["twist", "end"]);
         break;
       /* case "MozPressTapGesture":
         break; */
@@ -916,7 +920,7 @@ let gGestureSupport = {
           let cmdEvent = document.createEvent("xulcommandevent");
           cmdEvent.initCommandEvent("command", true, true, window, 0,
                                     aEvent.ctrlKey, aEvent.altKey, aEvent.shiftKey,
-                                    aEvent.metaKey, null);
+                                    aEvent.metaKey, aEvent);
           node.dispatchEvent(cmdEvent);
         }
       } else {
@@ -975,6 +979,123 @@ let gGestureSupport = {
     catch (e) {
       return aDef;
     }
+  },
+
+  /**
+   * Perform rotation for ImageDocuments
+   *
+   * @param aEvent
+   *        The MozRotateGestureUpdate event triggering this call
+   */
+  rotate: function(aEvent) {
+    if (!(content.document instanceof ImageDocument))
+      return;
+
+    let contentElement = content.document.body.firstElementChild;
+    if (!contentElement)
+      return;
+
+    this.rotation = Math.round(this.rotation + aEvent.delta);
+    contentElement.style.transform = "rotate(" + this.rotation + "deg)";
+    this._lastRotateDelta = aEvent.delta;
+  },
+
+  /**
+   * Perform a rotation end for ImageDocuments
+   */
+  rotateEnd: function() {
+    if (!(content.document instanceof ImageDocument))
+      return;
+
+    let contentElement = content.document.body.firstElementChild;
+    if (!contentElement)
+      return;
+
+    let transitionRotation = 0;
+
+    // The reason that 360 is allowed here is because when rotating between
+    // 315 and 360, setting rotate(0deg) will cause it to rotate the wrong
+    // direction around--spinning wildly.
+    if (this.rotation <= 45)
+      transitionRotation = 0;
+    else if (this.rotation > 45 && this.rotation <= 135)
+      transitionRotation = 90;
+    else if (this.rotation > 135 && this.rotation <= 225)
+      transitionRotation = 180;
+    else if (this.rotation > 225 && this.rotation <= 315)
+      transitionRotation = 270;
+    else
+      transitionRotation = 360;
+
+    // If we're going fast enough, and we didn't already snap ahead of rotation,
+    // then snap ahead of rotation to simulate momentum
+    if (this._lastRotateDelta > this._rotateMomentumThreshold &&
+        this.rotation > transitionRotation)
+      transitionRotation += 90;
+    else if (this._lastRotateDelta < -1 * this._rotateMomentumThreshold &&
+             this.rotation < transitionRotation)
+      transitionRotation -= 90;
+
+    contentElement.classList.add("completeRotation");
+    contentElement.addEventListener("transitionend", this._clearCompleteRotation);
+
+    contentElement.style.transform = "rotate(" + transitionRotation + "deg)";
+    this.rotation = transitionRotation;
+  },
+
+  /**
+   * Gets the current rotation for the ImageDocument
+   */
+  get rotation() {
+    return this._currentRotation;
+  },
+
+  /**
+   * Sets the current rotation for the ImageDocument
+   *
+   * @param aVal
+   *        The new value to take.  Can be any value, but it will be bounded to
+   *        0 inclusive to 360 exclusive.
+   */
+  set rotation(aVal) {
+    this._currentRotation = aVal % 360;
+    if (this._currentRotation < 0)
+      this._currentRotation += 360;
+    return this._currentRotation;
+  },
+
+  /**
+   * When the location/tab changes, need to reload the current rotation for the
+   * image
+   */
+  restoreRotationState: function() {
+    if (!(content.document instanceof ImageDocument))
+      return;
+
+    let contentElement = content.document.body.firstElementChild;
+    let transformValue = content.window.getComputedStyle(contentElement, null)
+                                       .transform;
+
+    if (transformValue == "none") {
+      this.rotation = 0;
+      return;
+    }
+
+    // transformValue is a rotation matrix--split it and do mathemagic to
+    // obtain the real rotation value
+    transformValue = transformValue.split("(")[1]
+                                   .split(")")[0]
+                                   .split(",");
+    this.rotation = Math.round(Math.atan2(transformValue[1], transformValue[0]) *
+                               (180 / Math.PI));
+  },
+
+  /**
+   * Removes the transition rule by removing the completeRotation class
+   */
+  _clearCompleteRotation: function() {
+    this.classList.remove("completeRotation");
+    this.removeEventListener("transitionend", this._clearCompleteRotation);
   },
 };
 
@@ -1197,7 +1318,7 @@ var gBrowserInit = {
 
   _delayedStartup: function(uriToLoad, mustLoadSidebar) {
     let tmp = {};
-    Cu.import("resource:///modules/TelemetryTimestamps.jsm", tmp);
+    Cu.import("resource://gre/modules/TelemetryTimestamps.jsm", tmp);
     let TelemetryTimestamps = tmp.TelemetryTimestamps;
     TelemetryTimestamps.add("delayedStartupStarted");
 
@@ -1265,7 +1386,7 @@ var gBrowserInit = {
 
     gBrowser.addEventListener("pageshow", function(event) {
       // Filter out events that are not about the document load we are interested in
-      if (event.target == content.document)
+      if (content && event.target == content.document)
         setTimeout(pageShowEventHandlers, 0, event);
     }, true);
 
@@ -1350,10 +1471,9 @@ var gBrowserInit = {
 
 #ifdef XP_WIN
       if (Win7Features) {
-        let tempScope = {};
-        Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm",
-                  tempScope);
-        tempScope.DownloadTaskbarProgress.onBrowserWindowLoad(window);
+        let DownloadTaskbarProgress =
+          Cu.import("resource://gre/modules/DownloadTaskbarProgress.jsm", {}).DownloadTaskbarProgress;
+        DownloadTaskbarProgress.onBrowserWindowLoad(window);
       }
 #endif
     }, 10000);
@@ -2880,6 +3000,10 @@ var PrintPreviewListener = {
     if (gFindBarInitialized)
       gFindBar.close();
 
+    var globalNotificationBox = document.getElementById("global-notificationbox");
+    this._chromeState.globalNotificationsOpen = !globalNotificationBox.notificationsHidden;
+    globalNotificationBox.notificationsHidden = true;
+
     this._chromeState.syncNotificationsOpen = false;
     var syncNotifications = document.getElementById("sync-notifications");
     if (syncNotifications) {
@@ -2898,6 +3022,9 @@ var PrintPreviewListener = {
 
     if (this._chromeState.findOpen)
       gFindBar.open();
+
+    if (this._chromeState.globalNotificationsOpen)
+      document.getElementById("global-notificationbox").notificationsHidden = false;
 
     if (this._chromeState.syncNotificationsOpen)
       document.getElementById("sync-notifications").notificationsHidden = false;
@@ -3768,6 +3895,44 @@ function updateEditUIVisibility()
 }
 
 /**
+ * Makes the Character Encoding menu enabled or disabled as appropriate.
+ * To be called when the View menu or the app menu is opened.
+ */
+function updateCharacterEncodingMenuState()
+{
+  let charsetMenu = document.getElementById("charsetMenu");
+  let appCharsetMenu = document.getElementById("appmenu_charsetMenu");
+  let appDevCharsetMenu =
+    document.getElementById("appmenu_developer_charsetMenu");
+  // gBrowser is null on Mac when the menubar shows in the context of
+  // non-browser windows. The above elements may be null depending on 
+  // what parts of the menubar are present. E.g. no app menu on Mac.
+  if (gBrowser &&
+      gBrowser.docShell &&
+      gBrowser.docShell.mayEnableCharacterEncodingMenu) {
+    if (charsetMenu) {
+      charsetMenu.removeAttribute("disabled");
+    }
+    if (appCharsetMenu) {
+      appCharsetMenu.removeAttribute("disabled");
+    }
+    if (appDevCharsetMenu) {
+      appDevCharsetMenu.removeAttribute("disabled");
+    }
+  } else {
+    if (charsetMenu) {
+      charsetMenu.setAttribute("disabled", "true");
+    }
+    if (appCharsetMenu) {
+      appCharsetMenu.setAttribute("disabled", "true");
+    }
+    if (appDevCharsetMenu) {
+      appDevCharsetMenu.setAttribute("disabled", "true");
+    }
+  }
+}
+
+/**
  * Returns true if |aMimeType| is text-based, false otherwise.
  *
  * @param aMimeType
@@ -4031,7 +4196,6 @@ var XULBrowserWindow = {
   },
 
   onLocationChange: function (aWebProgress, aRequest, aLocationURI, aFlags) {
-    const nsIWebProgressListener = Ci.nsIWebProgressListener;
     var location = aLocationURI ? aLocationURI.spec : "";
     this._hostChanged = true;
 
@@ -4083,12 +4247,6 @@ var XULBrowserWindow = {
         // persist across the first location change.
         let nBox = gBrowser.getNotificationBox(selectedBrowser);
         nBox.removeTransientNotifications();
-
-        // Only need to call locationChange if the PopupNotifications object
-        // for this window has already been initialized (i.e. its getter no
-        // longer exists)
-        if (!__lookupGetter__("PopupNotifications"))
-          PopupNotifications.locationChange();
       }
     }
 
@@ -4123,6 +4281,18 @@ var XULBrowserWindow = {
         // Update starring UI
         PlacesStarButton.updateState();
         SocialShareButton.updateShareState();
+      }
+
+      // Filter out anchor navigation, history.push/pop/replaceState and
+      // tab switches.
+      if (aRequest) {
+        // Only need to call locationChange if the PopupNotifications object
+        // for this window has already been initialized (i.e. its getter no
+        // longer exists)
+        // XXX bug 839445: We never tell PopupNotifications about location
+        // changes in background tabs.
+        if (!__lookupGetter__("PopupNotifications"))
+          PopupNotifications.locationChange();
       }
 
       // Show or hide browser chrome based on the whitelist
@@ -4167,7 +4337,7 @@ var XULBrowserWindow = {
           (aLocationURI.schemeIs("about") || aLocationURI.schemeIs("chrome"))) {
         // Don't need to re-enable/disable find commands for same-document location changes
         // (e.g. the replaceStates in about:addons)
-        if (!(aFlags & nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT)) {
+        if (!(aFlags & Ci.nsIWebProgressListener.LOCATION_CHANGE_SAME_DOCUMENT)) {
           if (content.document.readyState == "interactive" || content.document.readyState == "complete")
             disableFindCommands(shouldDisableFind(content.document));
           else {
@@ -4188,6 +4358,8 @@ var XULBrowserWindow = {
       }
     }
     UpdateBackForwardCommands(gBrowser.webNavigation);
+
+    gGestureSupport.restoreRotationState();
 
     // See bug 358202, when tabs are switched during a drag operation,
     // timers don't fire on windows (bug 203573)
@@ -4514,9 +4686,14 @@ var TabsProgressListener = {
     // We can't look for this during onLocationChange since at that point the
     // document URI is not yet the about:-uri of the error page.
 
+    let doc = aWebProgress.DOMWindow.document;
     if (aStateFlags & Ci.nsIWebProgressListener.STATE_STOP &&
         Components.isSuccessCode(aStatus) &&
-        aWebProgress.DOMWindow.document.documentURI.startsWith("about:")) {
+        doc.documentURI.startsWith("about:") &&
+        !doc.documentElement.hasAttribute("hasBrowserHandlers")) {
+      // STATE_STOP may be received twice for documents, thus store an
+      // attribute to ensure handling it just once.
+      doc.documentElement.setAttribute("hasBrowserHandlers", "true");
       aBrowser.addEventListener("click", BrowserOnClick, true);
       aBrowser.addEventListener("pagehide", function onPageHide(event) {
         if (event.target.defaultView.frameElement)
@@ -4526,7 +4703,7 @@ var TabsProgressListener = {
       }, true);
 
       // We also want to make changes to page UI for unprivileged about pages.
-      BrowserOnAboutPageLoad(aWebProgress.DOMWindow.document);
+      BrowserOnAboutPageLoad(doc);
     }
   },
 
@@ -4867,9 +5044,11 @@ var TabsInTitlebar = {
 
       let tabsToolbar       = $("TabsToolbar");
 
+#ifdef MENUBAR_CAN_AUTOHIDE
       let appmenuButtonBox  = $("appmenu-button-container");
-      let captionButtonsBox = $("titlebar-buttonbox");
       this._sizePlaceholder("appmenu-button", rect(appmenuButtonBox).width);
+#endif
+      let captionButtonsBox = $("titlebar-buttonbox");
       this._sizePlaceholder("caption-buttons", rect(captionButtonsBox).width);
 
       let tabsToolbarRect = rect(tabsToolbar);
@@ -6046,7 +6225,7 @@ var IndexedDBPromptHelper = {
     }
 
     const hiddenTimeoutDuration = 30000; // 30 seconds
-    const firstTimeoutDuration = 360000; // 5 minutes
+    const firstTimeoutDuration = 300000; // 5 minutes
 
     var timeoutId;
 
@@ -7117,15 +7296,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "gDevToolsBrowser",
                                   "resource:///modules/devtools/gDevTools.jsm");
 
 XPCOMUtils.defineLazyGetter(this, "HUDConsoleUI", function () {
-  let tempScope = {};
-  Cu.import("resource:///modules/HUDService.jsm", tempScope);
-  try {
-    return tempScope.HUDService.consoleUI;
-  }
-  catch (ex) {
-    Components.utils.reportError(ex);
-    return null;
-  }
+  return Cu.import("resource:///modules/HUDService.jsm", {}).HUDService.consoleUI;
 });
 
 // Prompt user to restart the browser in safe mode

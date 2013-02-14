@@ -303,6 +303,7 @@ class AbstractFramePtr
     inline Value &unaliasedVar(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING);
     inline Value &unaliasedLocal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING);
     inline Value &unaliasedFormal(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING);
+    inline Value &unaliasedActual(unsigned i, MaybeCheckAliasing checkAliasing = CHECK_ALIASING);
 
     inline bool prevUpToDate() const;
     inline void setPrevUpToDate() const;
@@ -311,6 +312,9 @@ class AbstractFramePtr
     inline void *maybeHookData() const;
     inline void setHookData(void *data) const;
     inline void setReturnValue(const Value &rval) const;
+
+    inline void popBlock(JSContext *cx) const;
+    inline void popWith(JSContext *cx) const;
 };
 
 class NullFramePtr : public AbstractFramePtr
@@ -700,9 +704,8 @@ class StackFrame
     /*
      * With
      *
-     * Entering/leaving a with (or E4X filter) block pushes/pops an object 
-     * on the scope chain. Pushing uses pushOnScopeChain, popping should use
-     * popWith.
+     * Entering/leaving a |with| block pushes/pops an object on the scope chain.
+     * Pushing uses pushOnScopeChain, popping should use popWith.
      */
 
     void popWith(JSContext *cx);
@@ -1636,14 +1639,6 @@ class ContextStack
      * hence this query has little semantic meaning past "you can call fp()".
      */
     inline bool hasfp() const { return seg_ && seg_->maybeRegs(); }
-
-    /*
-     * Return the spindex value for 'vp' which can be used to call
-     * DecompileValueGenerator. (The spindex is either the negative offset of
-     * 'vp' from 'sp', if 'vp' points to a value in the innermost scripted
-     * stack frame, otherwise it is JSDVG_SEARCH_STACK.)
-     */
-    ptrdiff_t spIndexOf(const Value *vp);
 
     /*
      * Return the most recent script activation's registers with the same

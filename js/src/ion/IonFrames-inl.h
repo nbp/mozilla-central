@@ -30,12 +30,12 @@ SizeOfFramePrefix(FrameType type)
       case IonFrame_Entry:
         return IonEntryFrameLayout::Size();
       case IonFrame_OptimizedJS:
-      case IonFrame_Bailed_JS:
+      case IonFrame_Unwound_OptimizedJS:
         return IonJSFrameLayout::Size();
       case IonFrame_Rectifier:
         return IonRectifierFrameLayout::Size();
-      case IonFrame_Bailed_Rectifier:
-        return IonBailedRectifierFrameLayout::Size();
+      case IonFrame_Unwound_Rectifier:
+        return IonUnwoundRectifierFrameLayout::Size();
       case IonFrame_Exit:
         return IonExitFrameLayout::Size();
       case IonFrame_Osr:
@@ -98,8 +98,7 @@ GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void 
         *returnAddrOut = (void *) iter.returnAddressToFp();
 
     JS_ASSERT(iter.isScripted());
-    IonJSFrameLayout *frame = static_cast<IonJSFrameLayout*>(iter.current());
-    return ScriptFromCalleeToken(frame->calleeToken());
+    return iter.script();
 }
 
 } // namespace ion

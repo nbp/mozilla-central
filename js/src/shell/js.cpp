@@ -41,7 +41,6 @@
 #include "jstypedarray.h"
 #include "jstypedarrayinlines.h"
 #include "jsworkers.h"
-#include "jsxml.h"
 #include "jsperf.h"
 
 #include "builtin/TestingFunctions.h"
@@ -717,8 +716,6 @@ static const struct JSOption {
     {"strict",          JSOPTION_STRICT},
     {"typeinfer",       JSOPTION_TYPE_INFERENCE},
     {"werror",          JSOPTION_WERROR},
-    {"allow_xml",       JSOPTION_ALLOW_XML},
-    {"moar_xml",        JSOPTION_MOAR_XML},
     {"strict_mode",     JSOPTION_STRICT_MODE},
 };
 
@@ -1428,27 +1425,6 @@ AssertEq(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-static JSBool
-AssertJit(JSContext *cx, unsigned argc, jsval *vp)
-{
-#ifdef JS_METHODJIT
-    if (JS_GetOptions(cx) & JSOPTION_METHODJIT) {
-        /*
-         * Ignore calls to this native when inference is enabled, with
-         * METHODJIT_ALWAYS recompilation can happen and discard the script's
-         * jitcode.
-         */
-        if (!cx->typeInferenceEnabled() && cx->hasfp() && !cx->fp()->jit()) {
-            JS_ReportErrorNumber(cx, my_GetErrorMessage, NULL, JSSMSG_ASSERT_JIT_FAILED);
-            return false;
-        }
-    }
-#endif
-
-    JS_SET_RVAL(cx, vp, JSVAL_VOID);
-    return true;
-}
-
 static UnrootedScript
 ValueToScript(JSContext *cx, jsval v, JSFunction **funp = NULL)
 {
@@ -1742,11 +1718,6 @@ SrcNotes(JSContext *cx, HandleScript script, Sprinter *sp)
         offset += delta;
         SrcNoteType type = (SrcNoteType) SN_TYPE(sn);
         const char *name = js_SrcNoteSpec[type].name;
-        if (type == SRC_LABEL) {
-            /* Check if the source note is for a switch case. */
-            if (switchTableStart <= offset && offset < switchTableEnd)
-                name = "case";
-        }
         Sprint(sp, "%3u: %4u %5u [%4u] %-8s", unsigned(sn - notes), lineno, offset, delta, name);
         switch (type) {
           case SRC_COLSPAN:
@@ -1775,14 +1746,9 @@ SrcNotes(JSContext *cx, HandleScript script, Sprinter *sp)
             break;
           case SRC_COND:
           case SRC_WHILE:
-          case SRC_PCBASE:
           case SRC_PCDELTA:
-          case SRC_DECL:
-          case SRC_BRACE:
             Sprint(sp, " offset %u", unsigned(js_GetSrcNoteOffset(sn, 0)));
             break;
-          case SRC_LABEL:
-          case SRC_LABELBRACE:
           case SRC_BREAK2LABEL:
           case SRC_CONT2LABEL: {
             uint32_t index = js_GetSrcNoteOffset(sn, 0);
@@ -1794,17 +1760,6 @@ SrcNotes(JSContext *cx, HandleScript script, Sprinter *sp)
                 buf[len] = 0;
             }
             Sprint(sp, ")");
-            break;
-          }
-          case SRC_FUNCDEF: {
-            uint32_t index = js_GetSrcNoteOffset(sn, 0);
-            JSObject *obj = script->getObject(index);
-            JSFunction *fun = obj->toFunction();
-            JSString *str = JS_DecompileFunction(cx, fun, JS_DONT_PRETTY_PRINT);
-            JSAutoByteString bytes;
-            if (!str || !bytes.encode(cx, str))
-                ReportException(cx);
-            Sprint(sp, " function %u (%s)", index, !!bytes ? bytes.ptr() : "N/A");
             break;
           }
           case SRC_SWITCH: {
@@ -2561,7 +2516,7 @@ EvalInContext(JSContext *cx, unsigned argc, jsval *vp)
     unsigned lineno;
 
     JS_DescribeScriptedCaller(cx, script.address(), &lineno);
-    jsval rval;
+    RootedValue rval(cx);
     {
         Maybe<JSAutoCompartment> ac;
         unsigned flags;
@@ -2581,7 +2536,7 @@ EvalInContext(JSContext *cx, unsigned argc, jsval *vp)
         if (!JS_EvaluateUCScript(cx, sobj, src, srclen,
                                  script->filename,
                                  lineno,
-                                 &rval)) {
+                                 rval.address())) {
             return false;
         }
     }
@@ -3666,10 +3621,6 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "  Throw if the first two arguments are not the same (both +0 or both -0,\n"
 "  both NaN, or non-zero and ===)."),
 
-    JS_FN_HELP("assertJit", AssertJit, 0, 0,
-"assertJit()",
-"  Throw if the calling function failed to JIT."),
-
     JS_FN_HELP("setDebug", SetDebug, 1, 0,
 "setDebug(debug)",
 "  Set debug mode."),
@@ -3870,7 +3821,7 @@ static JSFunctionSpecWithHelp shell_functions[] = {
 "  Wrap an object into a noop wrapper."),
 
     JS_FN_HELP("wrapWithProto", WrapWithProto, 2, 0,
-"wrap(obj)",
+"wrapWithProto(obj)",
 "  Wrap an object into a noop wrapper with prototype semantics."),
 
     JS_FN_HELP("serialize", Serialize, 1, 0,

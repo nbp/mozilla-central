@@ -58,9 +58,16 @@ static StaticRefPtr<ProcessPriorityManager> sManager;
 //
 //   NSPR_LOG_MODULES=ProcessPriorityManager:5
 //
-// in your environment.
+// in your environment.  Or just comment out the "&& 0" below, if you're on
+// Android/B2G.
 
-#ifdef PR_LOGGING
+#if defined(ANDROID) && 0
+#include <android/log.h>
+#define LOG(fmt, ...) \
+  __android_log_print(ANDROID_LOG_INFO, \
+      "Gecko:ProcessPriorityManager", \
+      fmt, ## __VA_ARGS__)
+#elif defined(PR_LOGGING)
 static PRLogModuleInfo*
 GetPPMLog()
 {
@@ -219,7 +226,8 @@ private:
   nsWeakPtr mMemoryMinimizerRunnable;
 };
 
-NS_IMPL_ISUPPORTS2(ProcessPriorityManager, nsIObserver, nsIDOMEventListener)
+NS_IMPL_ISUPPORTS3(ProcessPriorityManager, nsIObserver,
+                   nsIDOMEventListener, nsITimerCallback)
 
 ProcessPriorityManager::ProcessPriorityManager()
   : mProcessPriority(ProcessPriority(-1))
@@ -393,8 +401,8 @@ ProcessPriorityManager::SetIsForeground()
     runnable->Cancel();
   }
 
-  LOG("Setting priority to FOREGROUND.");
   mProcessPriority = PROCESS_PRIORITY_FOREGROUND;
+  LOG("Setting priority to %s.", ProcessPriorityToString(mProcessPriority));
   hal::SetProcessPriority(getpid(), PROCESS_PRIORITY_FOREGROUND);
 }
 
@@ -407,7 +415,7 @@ ProcessPriorityManager::SetIsBackgroundNow()
   }
 
   mProcessPriority = backgroundPriority;
-  LOG("Setting priority to BACKGROUND (type %d)", mProcessPriority);
+  LOG("Setting priority to %s", ProcessPriorityToString(mProcessPriority));
   hal::SetProcessPriority(getpid(), mProcessPriority);
 
   // We're in the background; dump as much memory as we can.

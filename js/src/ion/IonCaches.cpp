@@ -46,9 +46,7 @@ CodeLocationJump::repoint(IonCode *code, MacroAssembler *masm)
 #ifdef JS_SMALL_BRANCH
     jumpTableEntry_ = Assembler::PatchableJumpAddress(code, (size_t) jumpTableEntryOffset);
 #endif
-#ifdef DEBUG
-    absolute_ = true;
-#endif
+    setAbsolute();
 }
 
 void
@@ -65,9 +63,7 @@ CodeLocationLabel::repoint(IonCode *code, MacroAssembler *masm)
      JS_ASSERT(new_off < code->instructionsSize());
 
      raw_ = code->raw() + new_off;
-#ifdef DEBUG
-     absolute_ = true;
-#endif
+     setAbsolute();
 }
 
 void
@@ -97,25 +93,29 @@ IonCache::CacheName(IonCache::Kind kind)
     return names[kind];
 }
 
-IonCode * const IonCache::CACHE_FLUSHED = reinterpret_cast<IonCode *>(1);
-
-IonCode *
-IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion)
+IonCache::LinkStatus
+IonCache::linkCode(JSContext *cx, MacroAssembler &masm, IonScript *ion, IonCode **code)
 {
     AssertCanGC();
     Linker linker(masm);
-    IonCode *code = linker.newCode(cx);
+    *code = linker.newCode(cx);
     if (!code)
-        return NULL;
+        return LINK_ERROR;
 
     if (ion->invalidated())
-        return IonCache::CACHE_FLUSHED;
+        return CACHE_FLUSHED;
 
-    return code;
+    return LINK_GOOD;
 }
 
 const size_t IonCache::MAX_STUBS = 16;
-const ImmWord IonCache::CODE_MARK = ImmWord(uintptr_t(0xdeadc0de));
+
+// Value used instead of the IonCode self-reference of generated stubs. This
+// value is needed for marking calls made inside stubs. This value would be
+// replaced by the attachStub function after the allocation of the IonCode. The
+// self-reference is used to keep the stub path alive even if the IonScript is
+// invalidated or if the IC is flushed.
+const ImmWord STUB_ADDR = ImmWord(uintptr_t(0xdeadc0de));
 
 void
 IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoinOffset,
@@ -142,20 +142,20 @@ IonCache::attachStub(MacroAssembler &masm, IonCode *code, CodeOffsetJump &rejoin
 
         // When the last stub fails, it fallback to the ool call which can
         // produce a stub.
-        PatchJump(exitJump, cacheLabel());
+        PatchJump(exitJump, fallbackLabel());
 
         // Next time we generate a stub, we will patch the exitJump to try the
         // new stub.
         lastJump_ = exitJump;
     }
 
-    // Replace the CODE_MARK constant by the address of the generated stub, such
+    // Replace the STUB_ADDR constant by the address of the generated stub, such
     // as it can be kept alive even if the cache is flushed (see
     // MarkIonExitFrame).
     if (stubLabel) {
         stubLabel->fixup(&masm);
         Assembler::patchDataWithValueCheck(CodeLocationLabel(code, *stubLabel),
-                                           ImmWord(uintptr_t(code)), CODE_MARK);
+                                           ImmWord(uintptr_t(code)), STUB_ADDR);
     }
 }
 
@@ -164,9 +164,10 @@ IonCache::linkAndAttachStub(JSContext *cx, MacroAssembler &masm, IonScript *ion,
                             const char *attachKind, CodeOffsetJump &rejoinOffset,
                             CodeOffsetJump *exitOffset, CodeOffsetLabel *stubLabel)
 {
-    IonCode *code = linkCode(cx, masm, ion);
-    if (code <= IonCache::CACHE_FLUSHED)
-        return !!code;
+    IonCode *code = NULL;
+    LinkStatus status = linkCode(cx, masm, ion, &code);
+    if (status != LINK_GOOD)
+        return status != LINK_ERROR;
 
     attachStub(masm, code, rejoinOffset, exitOffset, stubLabel);
 
@@ -576,7 +577,7 @@ struct GetNativePropertyStub
         // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
         // WARNING: value here.
         // WARNING:
-        stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
+        stubCodePatchOffset = masm.PushWithPatch(STUB_ADDR);
 
         if (callNative) {
             JS_ASSERT(shape->hasGetterValue() && shape->getterValue().isObject() &&
@@ -1001,12 +1002,7 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
 
     RootedId id(cx, NameToId(name));
     if (obj->getOps()->getProperty) {
-        JS_ASSERT(!cache.idempotent());
-        RootedScript script(cx);
-        jsbytecode *pc;
-        cache.getScriptedLocation(&script, &pc);
-
-        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
+        if (!JSObject::getGeneric(cx, obj, obj, id, vp))
             return false;
     } else {
         if (!GetPropertyHelper(cx, obj, id, 0, vp))
@@ -1041,7 +1037,7 @@ IonCache::updateBaseAddress(IonCode *code, MacroAssembler &masm)
 {
     initialJump_.repoint(code, &masm);
     lastJump_.repoint(code, &masm);
-    cacheLabel_.repoint(code, &masm);
+    fallbackLabel_.repoint(code, &masm);
 }
 
 void
@@ -1056,7 +1052,7 @@ IonCache::reset()
 {
     // Skip all generated stub by patching the original stub to go directly to
     // the update function.
-    PatchJump(initialJump_, cacheLabel_);
+    PatchJump(initialJump_, fallbackLabel_);
 
     this->stubCount_ = 0;
     this->lastJump_ = initialJump_;
@@ -1187,7 +1183,7 @@ SetPropertyIC::attachSetterCall(JSContext *cx, IonScript *ion,
     // WARNING: if the IonCode object ever moved, since we'd be rooting a nonsense
     // WARNING: value here.
     // WARNING:
-    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(IonCache::CODE_MARK);
+    CodeOffsetLabel stubCodePatchOffset = masm.PushWithPatch(STUB_ADDR);
 
     StrictPropertyOp target = shape->setterOp();
     JS_ASSERT(target);
@@ -1507,7 +1503,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
 
 bool
 GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
-                            const Value &idval, PropertyName *name)
+                            const Value &idval, HandlePropertyName name)
 {
     RootedObject holder(cx);
     RootedShape shape(cx);
@@ -1711,7 +1707,8 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         if (obj->isNative() && cache.monitoredResult()) {
             uint32_t dummy;
             if (idval.isString() && JSID_IS_ATOM(id) && !JSID_TO_ATOM(id)->isIndex(&dummy)) {
-                if (!cache.attachGetProp(cx, ion, obj, idval, JSID_TO_ATOM(id)->asPropertyName()))
+                RootedPropertyName name(cx, JSID_TO_ATOM(id)->asPropertyName());
+                if (!cache.attachGetProp(cx, ion, obj, idval, name))
                     return false;
                 attachedStub = true;
             }

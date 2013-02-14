@@ -9,7 +9,6 @@
 
 #include "jsprf.h"
 #include "jsstr.h"
-#include "jsxml.h"
 
 #include "gc/Marking.h"
 #include "methodjit/MethodJIT.h"
@@ -58,11 +57,6 @@ void * const js::NullPtr::constNullValue = NULL;
  * scanning functions, but they don't push onto an explicit stack.
  */
 
-#if JS_HAS_XML_SUPPORT
-static inline void
-PushMarkStack(GCMarker *gcmarker, JSXML *thing);
-#endif
-
 static inline void
 PushMarkStack(GCMarker *gcmarker, JSObject *thing);
 
@@ -90,9 +84,6 @@ static void MarkChildren(JSTracer *trc, UnrootedShape shape);
 static void MarkChildren(JSTracer *trc, UnrootedBaseShape base);
 static void MarkChildren(JSTracer *trc, types::TypeObject *type);
 static void MarkChildren(JSTracer *trc, ion::IonCode *code);
-#if JS_HAS_XML_SUPPORT
-static void MarkChildren(JSTracer *trc, JSXML *xml);
-#endif
 
 } /* namespace gc */
 } /* namespace js */
@@ -125,8 +116,8 @@ CheckMarkedThing(JSTracer *trc, T *thing)
 
     DebugOnly<JSRuntime *> rt = trc->runtime;
 
-    JS_ASSERT_IF(IS_GC_MARKING_TRACER(trc) && rt->gcManipulatingDeadCompartments,
-                 !thing->compartment()->scheduledForDestruction);
+    JS_ASSERT_IF(IS_GC_MARKING_TRACER(trc) && rt->gcManipulatingDeadZones,
+                 !thing->zone()->scheduledForDestruction);
 
 #ifdef DEBUG
     rt->assertValidThread();
@@ -138,11 +129,11 @@ CheckMarkedThing(JSTracer *trc, T *thing)
 
     JS_ASSERT_IF(rt->gcStrictCompartmentChecking,
                  thing->zone()->isCollecting() ||
-                 thing->compartment() == rt->atomsCompartment);
+                 thing->zone() == rt->atomsCompartment->zone());
 
     JS_ASSERT_IF(IS_GC_MARKING_TRACER(trc) && ((GCMarker *)trc)->getMarkColor() == GRAY,
                  thing->zone()->isGCMarkingGray() ||
-                 thing->compartment() == rt->atomsCompartment);
+                 thing->zone() == rt->atomsCompartment->zone());
 
     /*
      * Try to assert that the thing is allocated.  This is complicated by the
@@ -178,7 +169,7 @@ MarkInternal(JSTracer *trc, T **thingp)
     if (!trc->callback) {
         if (thing->zone()->isGCMarking()) {
             PushMarkStack(AsGCMarker(trc), thing);
-            thing->compartment()->maybeAlive = true;
+            thing->zone()->maybeAlive = true;
         }
     } else {
         trc->callback(trc, (void **)thingp, GetGCThingTraceKind(thing));
@@ -348,9 +339,6 @@ DeclMarkerImpl(String, JSFlatString)
 DeclMarkerImpl(String, JSLinearString)
 DeclMarkerImpl(String, PropertyName)
 DeclMarkerImpl(TypeObject, js::types::TypeObject)
-#if JS_HAS_XML_SUPPORT
-DeclMarkerImpl(XML, JSXML)
-#endif
 
 } /* namespace gc */
 } /* namespace js */
@@ -385,11 +373,6 @@ gc::MarkKind(JSTracer *trc, void **thingp, JSGCTraceKind kind)
       case JSTRACE_IONCODE:
         MarkInternal(trc, reinterpret_cast<ion::IonCode **>(thingp));
         break;
-#if JS_HAS_XML_SUPPORT
-      case JSTRACE_XML:
-        MarkInternal(trc, reinterpret_cast<JSXML **>(thingp));
-        break;
-#endif
     }
 }
 
@@ -733,18 +716,7 @@ gc::IsCellAboutToBeFinalized(Cell **thingp)
 
 #define JS_COMPARTMENT_ASSERT_STR(rt, thing)                            \
     JS_ASSERT((thing)->zone()->isGCMarking() ||                         \
-              (thing)->compartment() == (rt)->atomsCompartment);
-
-#if JS_HAS_XML_SUPPORT
-static void
-PushMarkStack(GCMarker *gcmarker, JSXML *thing)
-{
-    JS_COMPARTMENT_ASSERT(gcmarker->runtime, thing);
-
-    if (thing->markIfUnmarked(gcmarker->getMarkColor()))
-        gcmarker->pushXML(thing);
-}
-#endif
+              (thing)->zone() == (rt)->atomsCompartment->zone());
 
 static void
 PushMarkStack(GCMarker *gcmarker, JSObject *thing)
@@ -1118,14 +1090,6 @@ gc::MarkChildren(JSTracer *trc, ion::IonCode *code)
 #endif
 }
 
-#if JS_HAS_XML_SUPPORT
-static void
-gc::MarkChildren(JSTracer *trc, JSXML *xml)
-{
-    js_TraceXML(trc, xml);
-}
-#endif
-
 template<typename T>
 static void
 PushArenaTyped(GCMarker *gcmarker, ArenaHeader *aheader)
@@ -1165,12 +1129,6 @@ gc::PushArena(GCMarker *gcmarker, ArenaHeader *aheader)
       case JSTRACE_IONCODE:
         PushArenaTyped<js::ion::IonCode>(gcmarker, aheader);
         break;
-
-#if JS_HAS_XML_SUPPORT
-      case JSTRACE_XML:
-        PushArenaTyped<JSXML>(gcmarker, aheader);
-        break;
-#endif
     }
 }
 
@@ -1326,13 +1284,6 @@ GCMarker::processMarkStackOther(SliceBudget &budget, uintptr_t tag, uintptr_t ad
             }
         }
     }
-
-#if JS_HAS_XML_SUPPORT
-    else {
-        JS_ASSERT(tag == XmlTag);
-        MarkChildren(this, reinterpret_cast<JSXML *>(addr));
-    }
-#endif
 }
 
 inline void
@@ -1379,8 +1330,8 @@ GCMarker::processMarkStackTop(SliceBudget &budget)
         if (v.isString()) {
             JSString *str = v.toString();
             JS_COMPARTMENT_ASSERT_STR(runtime, str);
-            JS_ASSERT(str->compartment() == runtime->atomsCompartment ||
-                      str->compartment() == obj->compartment());
+            JS_ASSERT(str->zone() == runtime->atomsCompartment->zone() ||
+                      str->zone() == obj->zone());
             if (str->markIfUnmarked())
                 ScanString(this, str);
         } else if (v.isObject()) {
@@ -1526,12 +1477,6 @@ js::TraceChildren(JSTracer *trc, void *thing, JSGCTraceKind kind)
       case JSTRACE_TYPE_OBJECT:
         MarkChildren(trc, (types::TypeObject *)thing);
         break;
-
-#if JS_HAS_XML_SUPPORT
-      case JSTRACE_XML:
-        MarkChildren(trc, static_cast<JSXML *>(thing));
-        break;
-#endif
     }
 }
 
@@ -1669,7 +1614,7 @@ JS::UnmarkGrayGCThingRecursively(void *thing, JSGCTraceKind kind)
 
     UnmarkGrayGCThing(thing);
 
-    JSRuntime *rt = static_cast<Cell *>(thing)->compartment()->rt;
+    JSRuntime *rt = static_cast<Cell *>(thing)->zone()->rt;
     UnmarkGrayTracer trc(rt);
     JS_TraceChildren(&trc, thing, kind);
 }

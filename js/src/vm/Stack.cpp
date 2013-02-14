@@ -321,7 +321,7 @@ StackFrame::prologue(JSContext *cx, bool newType)
 
     if (isConstructing()) {
         RootedObject callee(cx, &this->callee());
-        JSObject *obj = js_CreateThisForFunction(cx, callee, newType);
+        JSObject *obj = CreateThisForFunction(cx, callee, newType);
         if (!obj)
             return false;
         functionThis() = ObjectValue(*obj);
@@ -857,20 +857,6 @@ ContextStack::ContextStack(JSContext *cx)
 ContextStack::~ContextStack()
 {
     JS_ASSERT(!seg_);
-}
-
-ptrdiff_t
-ContextStack::spIndexOf(const Value *vp)
-{
-    if (!hasfp())
-        return JSDVG_SEARCH_STACK;
-
-    Value *base = fp()->base();
-    Value *sp = regs().sp;
-    if (vp < base || vp >= sp)
-        return JSDVG_SEARCH_STACK;
-
-    return vp - sp;
 }
 
 bool
