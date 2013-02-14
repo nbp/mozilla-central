@@ -146,7 +146,7 @@ CallObject::create(JSContext *cx, HandleShape shape, HandleTypeObject type, Heap
     JS_ASSERT(CanBeFinalizedInBackground(kind, &CallClass));
     kind = gc::GetBackgroundAllocKind(kind);
 
-    JSObject *obj = JSObject::create(cx, kind, shape, type, slots);
+    JSObject *obj = JSObject::create(cx, kind, gc::DefaultHeap, shape, type, slots);
     if (!obj)
         return NULL;
     return &obj->asCall();
@@ -242,16 +242,17 @@ CallObject::createForFunction(JSContext *cx, AbstractFramePtr frame)
 }
 
 CallObject *
-CallObject::createForStrictEval(JSContext *cx, StackFrame *fp)
+CallObject::createForStrictEval(JSContext *cx, AbstractFramePtr frame)
 {
     AssertCanGC();
-    JS_ASSERT(fp->isStrictEvalFrame());
-    JS_ASSERT(cx->fp() == fp);
-    JS_ASSERT(cx->regs().pc == fp->script()->code);
+    JS_ASSERT(frame.isStrictEvalFrame());
+    JS_ASSERT_IF(frame.isStackFrame(), cx->fp() == frame.asStackFrame());
+    JS_ASSERT_IF(frame.isStackFrame(), cx->regs().pc == frame.script()->code);
 
     RootedFunction callee(cx);
-    RootedScript script(cx, fp->script());
-    return create(cx, script, fp->scopeChain(), callee);
+    RootedScript script(cx, frame.script());
+    RootedObject scopeChain(cx, frame.scopeChain());
+    return create(cx, script, scopeChain, callee);
 }
 
 JS_PUBLIC_DATA(Class) js::CallClass = {
@@ -298,7 +299,7 @@ DeclEnvObject::createTemplateObject(JSContext *cx, HandleFunction fun)
     if (!emptyDeclEnvShape)
         return NULL;
 
-    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, emptyDeclEnvShape, type, NULL));
+    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, gc::DefaultHeap, emptyDeclEnvShape, type, NULL));
     if (!obj)
         return NULL;
 
@@ -340,7 +341,7 @@ WithObject::create(JSContext *cx, HandleObject proto, HandleObject enclosing, ui
     if (!shape)
         return NULL;
 
-    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, shape, type, NULL));
+    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, gc::DefaultHeap, shape, type, NULL));
     if (!obj)
         return NULL;
 
@@ -627,7 +628,7 @@ ClonedBlockObject::create(JSContext *cx, Handle<StaticBlockObject *> block, Abst
 
     RootedShape shape(cx, block->lastProperty());
 
-    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, shape, type, slots));
+    RootedObject obj(cx, JSObject::create(cx, FINALIZE_KIND, gc::DefaultHeap, shape, type, slots));
     if (!obj)
         return NULL;
 
@@ -686,7 +687,7 @@ StaticBlockObject::create(JSContext *cx)
     if (!emptyBlockShape)
         return NULL;
 
-    JSObject *obj = JSObject::create(cx, FINALIZE_KIND, emptyBlockShape, type, NULL);
+    JSObject *obj = JSObject::create(cx, FINALIZE_KIND, gc::DefaultHeap, emptyBlockShape, type, NULL);
     if (!obj)
         return NULL;
 
@@ -1687,7 +1688,7 @@ DebugScopes::addDebugScope(JSContext *cx, ScopeObject &scope, DebugScopeObject &
         return false;
     }
 
-    HashTableWriteBarrierPost(cx->zone(), &scopes->proxiedScopes, &scope);
+    HashTableWriteBarrierPost(cx->runtime, &scopes->proxiedScopes, &scope);
     return true;
 }
 

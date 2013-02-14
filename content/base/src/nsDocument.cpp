@@ -6734,10 +6734,11 @@ nsDocument::FlushPendingNotifications(mozFlushType aType)
 }
 
 static bool
-Flush(nsIDocument* aDocument, void* aData)
+Copy(nsIDocument* aDocument, void* aData)
 {
-  const mozFlushType* type = static_cast<const mozFlushType*>(aData);
-  aDocument->FlushPendingNotifications(*type);
+  nsTArray<nsCOMPtr<nsIDocument> >* resources =
+    static_cast<nsTArray<nsCOMPtr<nsIDocument> >* >(aData);
+  resources->AppendElement(aDocument);
   return true;
 }
 
@@ -6746,11 +6747,15 @@ nsDocument::FlushExternalResources(mozFlushType aType)
 {
   NS_ASSERTION(aType >= Flush_Style,
     "should only need to flush for style or higher in external resources");
-
   if (GetDisplayDocument()) {
     return;
   }
-  EnumerateExternalResources(Flush, &aType);
+  nsTArray<nsCOMPtr<nsIDocument> > resources;
+  EnumerateExternalResources(Copy, &resources);
+
+  for (uint32_t i = 0; i < resources.Length(); i++) {
+    resources[i]->FlushPendingNotifications(aType);
+  }
 }
 
 void
@@ -7536,15 +7541,30 @@ nsDocument::UnblockOnload(bool aFireSync)
 
   --mOnloadBlockCount;
 
-  // If mScriptGlobalObject is null, we shouldn't be messing with the loadgroup
-  // -- it's not ours.
-  if (mOnloadBlockCount == 0 && mScriptGlobalObject) {
-    if (aFireSync && mAsyncOnloadBlockCount == 0) {
-      // Increment mOnloadBlockCount, since DoUnblockOnload will decrement it
-      ++mOnloadBlockCount;
-      DoUnblockOnload();
-    } else {
-      PostUnblockOnloadEvent();
+  if (mOnloadBlockCount == 0) {
+    if (mScriptGlobalObject) {
+      // Only manipulate the loadgroup in this case, because if mScriptGlobalObject
+      // is null, it's not ours.
+      if (aFireSync && mAsyncOnloadBlockCount == 0) {
+        // Increment mOnloadBlockCount, since DoUnblockOnload will decrement it
+        ++mOnloadBlockCount;
+        DoUnblockOnload();
+      } else {
+        PostUnblockOnloadEvent();
+      }
+    } else if (mIsBeingUsedAsImage) {
+      // To correctly unblock onload for a document that contains an SVG
+      // image, we need to know when all of the SVG document's resources are
+      // done loading, in a way comparable to |window.onload|. We fire this
+      // event to indicate that the SVG should be considered fully loaded.
+      // Because scripting is disabled on SVG-as-image documents, this event
+      // is not accessible to content authors. (See bug 837135.)
+      nsRefPtr<nsAsyncDOMEvent> e =
+        new nsAsyncDOMEvent(this,
+                            NS_LITERAL_STRING("MozSVGAsImageDocumentLoad"),
+                            false,
+                            false);
+      e->PostDOMEvent();
     }
   }
 }

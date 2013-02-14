@@ -446,7 +446,7 @@ class GetElementIC : public IonCache
         hasDenseStub_ = true;
     }
 
-    bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval, PropertyName *name);
+    bool attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj, const Value &idval, HandlePropertyName name);
     bool attachDenseElement(JSContext *cx, IonScript *ion, JSObject *obj, const Value &idval);
 
     static bool

@@ -441,7 +441,7 @@ typedef HashSet<ReadBarriered<UnownedBaseShape>,
 
 class Shape : public js::gc::Cell
 {
-    friend struct ::JSObject;
+    friend class ::JSObject;
     friend class ::JSFunction;
     friend class js::Bindings;
     friend class js::ObjectImpl;
@@ -820,6 +820,7 @@ class Shape : public js::gc::Cell
     void dumpSubtree(JSContext *cx, int level, FILE *fp) const;
 #endif
 
+    void sweep();
     void finalize(FreeOp *fop);
     void removeChild(UnrootedShape child);
 

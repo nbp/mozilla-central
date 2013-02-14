@@ -119,8 +119,8 @@ JS_NewObjectWithUniqueType(JSContext *cx, JSClass *clasp, JSObject *protoArg, JS
      * TypeObject attached to our proto with information about our object, since
      * we're not going to be using that TypeObject anyway.
      */
-    RootedObject obj(cx, JS_NewObjectWithGivenProto(cx, clasp, NULL, parent));
-    if (!obj || !JSObject::setSingletonType(cx, obj))
+    RootedObject obj(cx, NewObjectWithGivenProto(cx, (js::Class *)clasp, NULL, parent, SingletonObject));
+    if (!obj)
         return NULL;
     if (!JS_SplicePrototype(cx, obj, proto))
         return NULL;
@@ -276,7 +276,7 @@ JS_DefineFunctionsWithHelp(JSContext *cx, JSObject *objArg, const JSFunctionSpec
             return false;
 
         Rooted<jsid> id(cx, AtomToId(atom));
-        RootedFunction fun(cx, js_DefineFunction(cx, obj, id, fs->call, fs->nargs, fs->flags));
+        RootedFunction fun(cx, DefineFunction(cx, obj, id, fs->call, fs->nargs, fs->flags));
         if (!fun)
             return false;
 
@@ -401,7 +401,7 @@ js::DefineFunctionWithReserved(JSContext *cx, JSObject *objArg, const char *name
     if (!atom)
         return NULL;
     Rooted<jsid> id(cx, AtomToId(atom));
-    return js_DefineFunction(cx, obj, id, call, nargs, attrs, JSFunction::ExtendedFinalizeKind);
+    return DefineFunction(cx, obj, id, call, nargs, attrs, JSFunction::ExtendedFinalizeKind);
 }
 
 JS_FRIEND_API(JSFunction *)
@@ -422,8 +422,8 @@ js::NewFunctionWithReserved(JSContext *cx, JSNative native, unsigned nargs, unsi
     }
 
     JSFunction::Flags funFlags = JSAPIToJSFunctionFlags(flags);
-    return js_NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom,
-                          JSFunction::ExtendedFinalizeKind);
+    return NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom,
+                       JSFunction::ExtendedFinalizeKind);
 }
 
 JS_FRIEND_API(JSFunction *)
@@ -438,8 +438,8 @@ js::NewFunctionByIdWithReserved(JSContext *cx, JSNative native, unsigned nargs, 
 
     RootedAtom atom(cx, JSID_TO_ATOM(id));
     JSFunction::Flags funFlags = JSAPIToJSFunctionFlags(flags);
-    return js_NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom,
-                          JSFunction::ExtendedFinalizeKind);
+    return NewFunction(cx, NullPtr(), native, nargs, funFlags, parent, atom,
+                       JSFunction::ExtendedFinalizeKind);
 }
 
 JS_FRIEND_API(JSObject *)
@@ -500,15 +500,6 @@ js::SetPreserveWrapperCallback(JSRuntime *rt, PreserveWrapperCallback callback)
  * The below code is for temporary telemetry use. It can be removed when
  * sufficient data has been harvested.
  */
-
-// Defined in jsxml.cpp.
-extern size_t sE4XObjectsCreated;
-
-JS_FRIEND_API(size_t)
-JS_GetE4XObjectsCreated(JSContext *)
-{
-    return sE4XObjectsCreated;
-}
 
 namespace js {
 // Defined in vm/GlobalObject.cpp.
@@ -718,13 +709,6 @@ js::GetContextStructuredCloneCallbacks(JSContext *cx)
     return cx->runtime->structuredCloneCallbacks;
 }
 
-JS_FRIEND_API(JSVersion)
-js::VersionSetMoarXML(JSVersion version, bool enable)
-{
-    return enable ? JSVersion(uint32_t(version) | VersionFlags::MOAR_XML)
-                  : JSVersion(uint32_t(version) & ~VersionFlags::MOAR_XML);
-}
-
 JS_FRIEND_API(bool)
 js::CanCallContextDebugHandler(JSContext *cx)
 {
@@ -758,7 +742,7 @@ js::ContextHasOutstandingRequests(const JSContext *cx)
 JS_FRIEND_API(bool)
 js::HasUnrootedGlobal(const JSContext *cx)
 {
-    return cx->hasRunOption(JSOPTION_UNROOTED_GLOBAL);
+    return cx->hasOption(JSOPTION_UNROOTED_GLOBAL);
 }
 
 JS_FRIEND_API(void)
@@ -877,9 +861,9 @@ JS::IncrementalObjectBarrier(JSObject *obj)
     if (!obj)
         return;
 
-    JS_ASSERT(!obj->compartment()->rt->isHeapBusy());
+    JS_ASSERT(!obj->zone()->rt->isHeapBusy());
 
-    AutoMarkInDeadCompartment amn(obj->compartment());
+    AutoMarkInDeadZone amn(obj->zone());
 
     JSObject::writeBarrierPre(obj);
 }
@@ -891,11 +875,11 @@ JS::IncrementalReferenceBarrier(void *ptr, JSGCTraceKind kind)
         return;
 
     gc::Cell *cell = static_cast<gc::Cell *>(ptr);
-    JSCompartment *comp = cell->compartment();
+    Zone *zone = cell->zone();
 
-    JS_ASSERT(!comp->rt->isHeapBusy());
+    JS_ASSERT(!zone->rt->isHeapBusy());
 
-    AutoMarkInDeadCompartment amn(comp);
+    AutoMarkInDeadZone amn(zone);
 
     if (kind == JSTRACE_OBJECT)
         JSObject::writeBarrierPre(static_cast<JSObject*>(cell));
@@ -1008,7 +992,7 @@ js::AutoCTypesActivityCallback::AutoCTypesActivityCallback(JSContext *cx,
                                                            js::CTypesActivityType beginType,
                                                            js::CTypesActivityType endType
                                                            MOZ_GUARD_OBJECT_NOTIFIER_PARAM_IN_IMPL)
-  : cx(cx), callback(cx->runtime->ctypesActivityCallback), beginType(beginType), endType(endType)
+  : cx(cx), callback(cx->runtime->ctypesActivityCallback), endType(endType)
 {
     MOZ_GUARD_OBJECT_NOTIFIER_INIT;
 

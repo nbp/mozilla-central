@@ -496,7 +496,7 @@ protected:
   /**
    * Returns if valueAsNumber attribute applies for the current type.
    */
-  bool DoesValueAsNumberApply() const { return DoesMinMaxApply() || mType == NS_FORM_INPUT_TIME; }
+  bool DoesValueAsNumberApply() const { return DoesMinMaxApply(); }
 
   /**
    * Returns if the maxlength attribute applies for the current type.
@@ -704,12 +704,27 @@ protected:
   double GetStepBase() const;
 
   /**
+   * Returns the default step for the current type.
+   * @return the default step for the current type.
+   */
+  double GetDefaultStep() const;
+
+  /**
    * Apply a step change from stepUp or stepDown by multiplying aStep by the
    * current step value.
    *
    * @param aStep The value used to be multiplied against the step value.
    */
   nsresult ApplyStep(int32_t aStep);
+
+  /**
+   * Returns if the current type is an experimental mobile type.
+   */
+  static bool IsExperimentalMobileType(uint8_t aType)
+  {
+    return aType == NS_FORM_INPUT_NUMBER || aType == NS_FORM_INPUT_DATE ||
+           aType == NS_FORM_INPUT_TIME;
+  }
 
   nsCOMPtr<nsIControllers> mControllers;
 
@@ -759,10 +774,16 @@ protected:
   // Step scale factor values, for input types that have one.
   static const double kStepScaleFactorDate;
   static const double kStepScaleFactorNumber;
+  static const double kStepScaleFactorTime;
 
   // Default step base value when a type do not have specific one.
   static const double kDefaultStepBase;
-  // Float alue returned by GetStep() when the step attribute is set to 'any'.
+
+  // Default step used when there is no specified step.
+  static const double kDefaultStep;
+  static const double kDefaultStepTime;
+
+  // Float value returned by GetStep() when the step attribute is set to 'any'.
   static const double kStepAny;
 
   /**

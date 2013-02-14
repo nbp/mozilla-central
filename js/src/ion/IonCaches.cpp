@@ -1006,12 +1006,7 @@ GetPropertyIC::update(JSContext *cx, size_t cacheIndex,
 
     RootedId id(cx, NameToId(name));
     if (obj->getOps()->getProperty) {
-        JS_ASSERT(!cache.idempotent());
-        RootedScript script(cx);
-        jsbytecode *pc;
-        cache.getScriptedLocation(&script, &pc);
-
-        if (!GetPropertyGenericMaybeCallXML(cx, JSOp(*pc), obj, id, vp))
+        if (!JSObject::getGeneric(cx, obj, obj, id, vp))
             return false;
     } else {
         if (!GetPropertyHelper(cx, obj, id, 0, vp))
@@ -1512,7 +1507,7 @@ SetPropertyIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
 
 bool
 GetElementIC::attachGetProp(JSContext *cx, IonScript *ion, HandleObject obj,
-                            const Value &idval, PropertyName *name)
+                            const Value &idval, HandlePropertyName name)
 {
     RootedObject holder(cx);
     RootedShape shape(cx);
@@ -1635,7 +1630,8 @@ GetElementIC::update(JSContext *cx, size_t cacheIndex, HandleObject obj,
         if (obj->isNative() && cache.monitoredResult()) {
             uint32_t dummy;
             if (idval.isString() && JSID_IS_ATOM(id) && !JSID_TO_ATOM(id)->isIndex(&dummy)) {
-                if (!cache.attachGetProp(cx, ion, obj, idval, JSID_TO_ATOM(id)->asPropertyName()))
+                RootedPropertyName name(cx, JSID_TO_ATOM(id)->asPropertyName());
+                if (!cache.attachGetProp(cx, ion, obj, idval, name))
                     return false;
                 attachedStub = true;
             }
