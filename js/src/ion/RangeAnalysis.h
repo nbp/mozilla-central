@@ -235,7 +235,7 @@ class Range : public TempObject {
     }
 
     inline bool hasRoundingErrors() const {
-        return isFloat() && exponent() >= MaxIntExponent;
+        return isFloat() || exponent() >= MaxIntExponent;
     }
 
     inline bool isInfinite() const {
