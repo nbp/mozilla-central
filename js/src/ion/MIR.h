@@ -2026,6 +2026,7 @@ class MToDouble
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    void computeRange();
 };
 
 // Converts a primitive (either typed or untyped) to an int32. If the input is
@@ -2073,6 +2074,7 @@ class MToInt32 : public MUnaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    void computeRange();
 };
 
 // Converts a value or typed input to a truncated int32, for use with bitwise
@@ -2105,6 +2107,7 @@ class MTruncateToInt32 : public MUnaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    void computeRange();
 };
 
 // Converts any type to a string

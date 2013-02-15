@@ -91,6 +91,17 @@ class RangeAnalysis
 };
 
 class Range : public TempObject {
+  public:
+    // 52 bits of mantissa, so 2^52+1 cannot be represented without loss.
+    static const uint16_t MaxIntExponent = 52;
+
+    // Int32 are signed, so the value needs 31 bits except for INT_MIN value
+    // which needs 32 bits.
+    static const uint16_t MaxInt32Exponent = 31;
+
+    // 11 bits of signed exponent, so the max is encoded on 10 bits.
+    static const uint16_t MaxExponent = (1 << 11) - 1;
+
   private:
     // Absolute ranges.
     //
@@ -115,10 +126,15 @@ class Range : public TempObject {
     // To facilitate this trick, we maintain the invariants that:
     // 1) lower_infinite == true implies lower_ == JSVAL_INT_MIN
     // 2) upper_infinite == true implies upper_ == JSVAL_INT_MAX
+
     int32_t lower_;
     bool lower_infinite_;
+
     int32_t upper_;
     bool upper_infinite_;
+
+    bool fractional_part_;
+    uint16_t upper_exponent_;
 
     // Any symbolic lower or upper bound computed for this term.
     const SymbolicBound *symbolicLower_;
@@ -130,16 +146,21 @@ class Range : public TempObject {
           lower_infinite_(true),
           upper_(JSVAL_INT_MAX),
           upper_infinite_(true),
+          fractional_part_(true),
+          upper_exponent_(MaxExponent),
           symbolicLower_(NULL),
           symbolicUpper_(NULL)
     {}
 
-    Range(int64_t l, int64_t h)
-        : symbolicLower_(NULL),
+    Range(int64_t l, int64_t h, bool f = false, uint16_t e = MaxInt32Exponent)
+        : fractional_part_(f),
+          upper_exponent_(e),
+          symbolicLower_(NULL),
           symbolicUpper_(NULL)
     {
-        setLower(l);
-        setUpper(h);
+        setLowerInit(l);
+        setUpperInit(h);
+        rectifyExponent();
     }
 
     Range(const Range &other)
@@ -147,6 +168,8 @@ class Range : public TempObject {
           lower_infinite_(other.lower_infinite_),
           upper_(other.upper_),
           upper_infinite_(other.upper_infinite_),
+          fractional_part_(other.fractional_part_),
+          upper_exponent_(other.upper_exponent_),
           symbolicLower_(NULL),
           symbolicUpper_(NULL)
     {}
@@ -173,8 +196,6 @@ class Range : public TempObject {
     // nodes.
     void unionWith(const Range *other);
     static Range * intersect(const Range *lhs, const Range *rhs, bool *emptyRange);
-    static Range * addTruncate(const Range *lhs, const Range *rhs);
-    static Range * subTruncate(const Range *lhs, const Range *rhs);
     static Range * add(const Range *lhs, const Range *rhs);
     static Range * sub(const Range *lhs, const Range *rhs);
     static Range * mul(const Range *lhs, const Range *rhs);
@@ -182,20 +203,24 @@ class Range : public TempObject {
     static Range * shl(const Range *lhs, int32_t c);
     static Range * shr(const Range *lhs, int32_t c);
 
-    static bool precisionLossMul(const Range *lhs, const Range *rhs);
     static bool negativeZeroMul(const Range *lhs, const Range *rhs);
 
     inline void makeLowerInfinite() {
         lower_infinite_ = true;
         lower_ = JSVAL_INT_MIN;
+        if (upper_exponent_ < MaxInt32Exponent)
+            upper_exponent_ = MaxInt32Exponent;
     }
     inline void makeUpperInfinite() {
         upper_infinite_ = true;
         upper_ = JSVAL_INT_MAX;
+        if (upper_exponent_ < MaxInt32Exponent)
+            upper_exponent_ = MaxInt32Exponent;
     }
     inline void makeRangeInfinite() {
         makeLowerInfinite();
         makeUpperInfinite();
+        upper_exponent_ = MaxExponent;
     }
 
     inline bool isLowerInfinite() const {
@@ -205,8 +230,28 @@ class Range : public TempObject {
         return upper_infinite_;
     }
 
-    inline bool isFinite() const {
+    inline bool isInt32() const {
         return !isLowerInfinite() && !isUpperInfinite();
+    }
+
+    inline bool hasRoundingErrors() const {
+        return isFloat() && exponent() >= MaxIntExponent;
+    }
+
+    inline bool isInfinite() const {
+        return exponent() >= MaxExponent;
+    }
+
+    inline bool isFloat() const {
+        return fractional_part_;
+    }
+
+    inline uint16_t exponent() const {
+        return upper_exponent_;
+    }
+
+    inline uint16_t numBits() const {
+        return upper_exponent_ + 1; // 2^0 -> 1
     }
 
     inline int32_t lower() const {
@@ -217,7 +262,7 @@ class Range : public TempObject {
         return upper_;
     }
 
-    inline void setLower(int64_t x) {
+    inline void setLowerInit(int64_t x) {
         if (x > JSVAL_INT_MAX) { // c.c
             lower_ = JSVAL_INT_MAX;
         } else if (x < JSVAL_INT_MIN) {
@@ -227,7 +272,11 @@ class Range : public TempObject {
             lower_infinite_ = false;
         }
     }
-    inline void setUpper(int64_t x) {
+    inline void setLower(int64_t x) {
+        setLowerInit(x);
+        rectifyExponent();
+    }
+    inline void setUpperInit(int64_t x) {
         if (x > JSVAL_INT_MAX) {
             makeUpperInfinite();
         } else if (x < JSVAL_INT_MIN) { // c.c
@@ -237,9 +286,33 @@ class Range : public TempObject {
             upper_infinite_ = false;
         }
     }
-    void set(int64_t l, int64_t h) {
-        setLower(l);
-        setUpper(h);
+    inline void setUpper(int64_t x) {
+        setUpperInit(x);
+        rectifyExponent();
+    }
+
+    void set(int64_t l, int64_t h, bool f, uint16_t e) {
+        setLowerInit(l);
+        setUpperInit(h);
+        fractional_part_ = f;
+        upper_exponent_ = e;
+        rectifyExponent();
+    }
+
+    // Set the exponent by using the more precise range analysis on the full
+    // range of Int32 values. This might shrink the exponent after some
+    // operations.
+    void rectifyExponent() {
+        if (!isInt32()) {
+            JS_ASSERT(upper_exponent_ >= MaxInt32Exponent);
+            return;
+        }
+
+        uint32_t max = Max(abs64((int64_t) lower()), abs64((int64_t) upper()));
+        JS_ASSERT_IF(lower() == JSVAL_INT_MIN, max == (uint32_t) JSVAL_INT_MIN);
+        JS_ASSERT(max <= (uint32_t) JSVAL_INT_MIN);
+        // The number of bits needed to encode |max| is the power of 2 plus one.
+        upper_exponent_ = max ? js_FloorLog2wImpl(max) : max;
     }
 
     const SymbolicBound *symbolicLower() const {

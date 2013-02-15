@@ -865,7 +865,7 @@ MBinaryArithInstruction::foldsTo(bool useValueNumbers)
 bool
 MAbs::fallible() const
 {
-    return !range() || !range()->isFinite();
+    return !range() || !range()->isInt32();
 }
 
 MDefinition *
@@ -1033,7 +1033,7 @@ MAdd::fallible()
     // can be (about) 2^31. The smallest integer that cannot be exactly represented
     // as a double is 2^53 + 1  by doing something simple, like x = x + x, it takes
     // 23 additions toget from 2^31 to 2^53 + 1. 20 is simply a conservative estimate of that.
-    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isFinite());
+    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isInt32());
 }
 
 void
@@ -1059,7 +1059,7 @@ bool
 MSub::fallible()
 {
     // see comment in MAdd::fallible()
-    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isFinite());
+    return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isInt32());
 }
 
 MDefinition *
@@ -1135,7 +1135,7 @@ MMul::canOverflow()
 {
     if (implicitTruncate_)
         return false;
-    return !range() || !range()->isFinite();
+    return !range() || !range()->isInt32();
 }
 
 void
