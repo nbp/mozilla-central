@@ -184,6 +184,8 @@ RangeAnalysis::addBetaNobes()
 
 
         Range comp;
+        if (val->type() == MIRType_Int32)
+            comp.setInt32();
         switch (jsop) {
           case JSOP_LE:
             comp.setUpper(bound);
@@ -682,8 +684,6 @@ MMul::computeRange()
     if (canBeNegativeZero())
         canBeNegativeZero_ = Range::negativeZeroMul(left, right);
     setRange(Range::mul(left, right));
-    if (!implicitTruncate_ && isPossibleTruncated())
-        implicitTruncate_ = !range()->hasRoundingErrors();
 }
 
 void
@@ -1173,6 +1173,246 @@ RangeAnalysis::analyze()
 
         if (block->isLoopHeader())
             analyzeLoop(block);
+    }
+
+    return true;
+}
+
+///////////////////////////////////////////////////////////////////////////////
+// Range based Truncation
+///////////////////////////////////////////////////////////////////////////////
+
+void
+Range::truncate()
+{
+    if (isInt32())
+        return;
+    int64_t l = isLowerInfinite() ? JSVAL_INT_MIN : lower();
+    int64_t h = isUpperInfinite() ? JSVAL_INT_MAX : upper();
+    set(l, h, false, 32);
+}
+
+bool
+MDefinition::truncateOperation()
+{
+    // No procedure defined for truncating this instruction.
+    return false;
+}
+
+bool
+MConstant::truncateOperation()
+{
+    if (!value_.isDouble())
+        return false;
+    
+    // Truncate the double to int, since all uses truncates it.
+    value_.setInt32(ToInt32(value_.toDouble()));
+    setResultType(MIRType_Int32);
+    if (range())
+        range()->truncate();
+    return true;
+}
+
+bool
+MAdd::truncateOperation()
+{
+    if (type() != MIRType_Double)
+        return false;
+
+    // Super obvious optimization... If this operation is a double
+    // BUT it happens to look like a large precision int that eventually
+    // gets truncated, then just call it an int.
+    // This can arise if we have x+y | 0, and x and y are both INT_MAX,
+    // TI will observe an overflow, thus marking the addition as double-like
+    // but we'll have MTruncate(MAddD(toDouble(x), toDouble(y))), which we know
+    // we'll be able to convert to MAddI(x,y)
+    specialization_ = MIRType_Int32;
+    setResultType(MIRType_Int32);
+    if (range())
+        range()->truncate();
+    return true;
+}
+
+bool
+MSub::truncateOperation()
+{
+    if (type() != MIRType_Double)
+        return false;
+
+    specialization_ = MIRType_Int32;
+    setResultType(MIRType_Int32);
+    if (range())
+        range()->truncate();
+    return true;
+}
+
+bool
+MMul::truncateOperation()
+{
+    bool truncated = type() == MIRType_Int32;
+    if (type() == MIRType_Double) {
+        specialization_ = MIRType_Int32;
+        setResultType(MIRType_Int32);
+        truncated = true;
+        JS_ASSERT(range());
+    }
+
+    if (truncated && range()) {
+        range()->truncate();
+        implicitTruncate_ = true;
+        setCanBeNegativeZero(false);
+    }
+
+    return truncated;
+}
+
+bool
+MToDouble::truncateOperation()
+{
+    JS_ASSERT(type() == MIRType_Double);
+
+    // We use the return type to flag that this MToDouble sould be replaced by a
+    // MTruncateToInt32 when modifying the graph.
+    setResultType(MIRType_Int32);
+    if (range())
+        range()->truncate();
+
+    return true;
+}
+
+bool
+MDefinition::truncateOperand(size_t index) const
+{
+    return false;
+}
+
+bool
+MTruncateToInt32::truncateOperand(size_t index) const
+{
+    return true;
+}
+
+bool
+MBinaryBitwiseInstruction::truncateOperand(size_t index) const
+{
+    return true;
+}
+
+bool
+MBinaryArithInstruction::truncateOperand(size_t index) const
+{
+    return specialization() == MIRType_Int32;
+}
+
+bool
+MMul::truncateOperand(size_t index) const
+{
+    return implicitTruncate_;
+}
+
+bool
+MDiv::truncateOperand(size_t index) const
+{
+    return false;
+}
+
+bool
+MMod::truncateOperand(size_t index) const
+{
+    return false;
+}
+
+bool
+MToDouble::truncateOperand(size_t index) const
+{
+    // The return type is used to flag that we are replacing this Double by a
+    // Truncate of its operand if needed.
+    return type() == MIRType_Int32;
+}
+
+static bool
+AllUsesTruncate(MInstruction *candidate)
+{
+    for (MUseDefIterator use(candidate); use; use++) {
+        if (!use.def()->truncateOperand(use.index()))
+            return false;
+    }
+    return true;
+}
+
+static void
+RemoveTruncatesOnOutput(MInstruction *truncated)
+{
+    JS_ASSERT(truncated->type() == MIRType_Int32);
+    JS_ASSERT(!truncated->range() || truncated->range()->isInt32());
+
+    for (MUseDefIterator use(truncated); use; use++) {
+        MDefinition *def = use.def();
+        if (!def->isTruncateToInt32() || !def->isToInt32())
+            continue;
+
+        def->replaceAllUsesWith(truncated);
+    }
+}
+
+void
+AdjustTruncatedInputs(MInstruction *truncated)
+{
+    MBasicBlock *block = truncated->block();
+    for (size_t i = 0; i < truncated->numOperands(); i++) {
+        if (!truncated->truncateOperand(i))
+            continue;
+        if (truncated->getOperand(i)->type() == MIRType_Int32)
+            continue;
+
+        MTruncateToInt32 *op = MTruncateToInt32::New(truncated->getOperand(i));
+        block->insertBefore(truncated, op);
+        truncated->replaceOperand(i, op);
+    }
+
+    if (truncated->isToDouble()) {
+        truncated->replaceAllUsesWith(truncated->getOperand(0));
+        block->discard(truncated);
+    }
+}
+
+// This is similar to TypeAnalyzer::specializeTruncatedInstructions, except that
+// this version is based on the range analysis and not on an approximation of
+// the exponent (aka. isBigInt) which is limited to the number and kind of
+// consecutive instructions.
+bool
+RangeAnalysis::truncateBackward()
+{
+    IonSpew(IonSpew_Range, "Do range-base truncation (backward loop)");
+
+    Vector<MInstruction *, 16, SystemAllocPolicy> worklist;
+
+    for (PostorderIterator block(graph_.poBegin()); block != graph_.poEnd(); block++) {
+        for (MInstructionReverseIterator iter(block->rbegin()); iter != block->rend(); iter++) {
+
+            // Set truncated flag if range analysis ensure that it has no
+            // rounding errors and no freactional part.
+            const Range *r = iter->range();
+            if (!r || r->hasRoundingErrors())
+                continue;
+
+            if (AllUsesTruncate(*iter) && iter->truncateOperation()) {
+                // Delay updates of inputs/outputs to avoid creating node which
+                // would be removed by the truncation of the next operations.
+                iter->setInWorklist();
+                if (!worklist.append(*iter))
+                    return false;
+            }
+        }
+    }
+
+    // Update inputs/outputs of truncated instructions.
+    IonSpew(IonSpew_Range, "Do graph type fixup (dequeue)");
+    while (!worklist.empty()) {
+        MInstruction *ins = worklist.popCopy();
+        ins->setNotInWorklist();
+        RemoveTruncatesOnOutput(ins);
+        AdjustTruncatedInputs(ins);
     }
 
     return true;

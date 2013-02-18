@@ -175,18 +175,17 @@ MDefinition::foldsTo(bool useValueNumbers)
 void
 MDefinition::analyzeEdgeCasesForward()
 {
-    return;
 }
 
 void
 MDefinition::analyzeEdgeCasesBackward()
 {
-    return;
 }
-void
+
+bool
 MDefinition::analyzeTruncateBackward()
 {
-    return;
+    return false;
 }
 
 static bool
@@ -334,16 +333,10 @@ MConstant::MConstant(const js::Value &vp)
     setMovable();
 }
 
-void
+bool
 MConstant::analyzeTruncateBackward()
 {
-    if (js::ion::EdgeCaseAnalysis::AllUsesTruncate(this) &&
-        value_.isDouble() && isBigIntOutput())
-    {
-        // Truncate the double to int, since all uses truncates it.
-        value_.setInt32(ToInt32(value_.toDouble()));
-        setResultType(MIRType_Int32);
-    }
+    return isBigIntOutput() && js::ion::EdgeCaseAnalysis::AllUsesTruncate(this);
 }
 
 HashNumber
@@ -919,11 +912,12 @@ MDiv::analyzeEdgeCasesBackward()
         setCanBeNegativeZero(false);
 }
 
-void
+bool
 MDiv::analyzeTruncateBackward()
 {
     if (!isTruncated())
         setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
+    return isTruncated() && isBigIntOutput();
 }
 
 bool
@@ -966,11 +960,12 @@ MMod::foldsTo(bool useValueNumbers)
     return this;
 }
 
-void
+bool
 MMod::analyzeTruncateBackward()
 {
     if (!isTruncated())
         setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
+    return isTruncated() && isBigIntOutput();
 }
 
 bool
@@ -991,24 +986,12 @@ MMod::fallible()
     return !isTruncated();
 }
 
-void
+bool
 MAdd::analyzeTruncateBackward()
 {
     if (!isTruncated())
         setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
-    if (isTruncated() && isTruncated() < 20) {
-        // Super obvious optimization... If this operation is a double
-        // BUT it happens to look like a large precision int that eventually
-        // gets truncated, then just call it an int.
-        // This can arise if we have x+y | 0, and x and y are both INT_MAX,
-        // TI will observe an overflow, thus marking the addition as double-like
-        // but we'll have MTruncate(MAddD(toDouble(x), toDouble(y))), which we know
-        // we'll be able to convert to MAddI(x,y)
-        if (isBigInt_ && type() == MIRType_Double) {
-            specialization_ = MIRType_Int32;
-            setResultType(MIRType_Int32);
-        }
-    }
+    return isTruncated() && isTruncated() < 20 && isBigIntOutput();
 }
 
 bool
@@ -1036,11 +1019,12 @@ MAdd::fallible()
     return (!isTruncated() || isTruncated() > 20) && (!range() || !range()->isInt32());
 }
 
-void
+bool
 MSub::analyzeTruncateBackward()
 {
     if (!isTruncated())
         setTruncated(js::ion::EdgeCaseAnalysis::AllUsesTruncate(this));
+    return isTruncated() && isTruncated() < 20 && isBigIntOutput();
 }
 
 bool
@@ -1109,11 +1093,14 @@ MMul::analyzeEdgeCasesBackward()
         setCanBeNegativeZero(false);
 }
 
-void
+bool
 MMul::analyzeTruncateBackward()
 {
     if (!isPossibleTruncated() && js::ion::EdgeCaseAnalysis::AllUsesTruncate(this))
         setPossibleTruncated(true);
+    // The BigInt analysis is not able to determine that a multiplication output
+    // would be able to be computed without loss.  Range analysis will.
+    return false;
 }
 
 bool

@@ -338,7 +338,11 @@ class MDefinition : public MNode
     virtual MDefinition *foldsTo(bool useValueNumbers);
     virtual void analyzeEdgeCasesForward();
     virtual void analyzeEdgeCasesBackward();
-    virtual void analyzeTruncateBackward();
+
+    virtual bool analyzeTruncateBackward();
+    virtual bool truncateOperation();
+    virtual bool truncateOperand(size_t index) const;
+
     bool earlyAbortCheck();
 
     // Compute an absolute or symbolic range for the value of this node.
@@ -503,7 +507,9 @@ class MDefinition : public MNode
     // a) its result type is int32
     // b) it is an instruction that is very likely to produce an integer or integer-truncatable
     //    result (add, mul, sub), and both of its inputs are ints. (currently only implemented for add)
-    virtual bool isBigIntOutput() { return resultType_ == MIRType_Int32; }
+    virtual bool isBigIntOutput() {
+        return resultType_ == MIRType_Int32;
+    }
     virtual void recalculateBigInt() {}
 
 };
@@ -715,7 +721,8 @@ class MConstant : public MNullaryInstruction
         return AliasSet::None();
     }
 
-    void analyzeTruncateBackward();
+    bool analyzeTruncateBackward();
+    bool truncateOperation();
 
     // Returns true if constant is integer between -2^33 & 2^33,
     // Max cap could be 2^53, if not for the 20 additions hack.
@@ -2029,7 +2036,10 @@ class MToDouble
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+
     void computeRange();
+    bool truncateOperation();
+    bool truncateOperand(size_t index) const;
 };
 
 // Converts a primitive (either typed or untyped) to an int32. If the input is
@@ -2110,7 +2120,9 @@ class MTruncateToInt32 : public MUnaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+
     void computeRange();
+    bool truncateOperand(size_t index) const;
 };
 
 // Converts any type to a string
@@ -2271,6 +2283,8 @@ class MBinaryBitwiseInstruction
             return AliasSet::Store(AliasSet::Any);
         return AliasSet::None();
     }
+
+    bool truncateOperand(size_t index) const;
 };
 
 class MBitAnd : public MBinaryBitwiseInstruction
@@ -2477,6 +2491,8 @@ class MBinaryArithInstruction
             return AliasSet::Store(AliasSet::Any);
         return AliasSet::None();
     }
+
+    bool truncateOperand(size_t index) const;
 };
 
 class MMinMax
@@ -2748,7 +2764,8 @@ class MAdd : public MBinaryArithInstruction
     static MAdd *New(MDefinition *left, MDefinition *right) {
         return new MAdd(left, right);
     }
-    void analyzeTruncateBackward();
+    bool analyzeTruncateBackward();
+    bool truncateOperation();
 
     int isTruncated() const {
         return implicitTruncate_;
@@ -2791,7 +2808,8 @@ class MSub : public MBinaryArithInstruction
         return new MSub(left, right);
     }
 
-    void analyzeTruncateBackward();
+    bool analyzeTruncateBackward();
+    bool truncateOperation();
     int isTruncated() const {
         return implicitTruncate_;
     }
@@ -2864,7 +2882,8 @@ class MMul : public MBinaryArithInstruction
     MDefinition *foldsTo(bool useValueNumbers);
     void analyzeEdgeCasesForward();
     void analyzeEdgeCasesBackward();
-    void analyzeTruncateBackward();
+    bool analyzeTruncateBackward();
+    bool truncateOperation();
 
     double getIdentity() {
         return 1;
@@ -2903,6 +2922,7 @@ class MMul : public MBinaryArithInstruction
     }
 
     Mode mode() { return mode_; }
+    bool truncateOperand(size_t index) const;
 };
 
 class MDiv : public MBinaryArithInstruction
@@ -2936,7 +2956,8 @@ class MDiv : public MBinaryArithInstruction
     MDefinition *foldsTo(bool useValueNumbers);
     void analyzeEdgeCasesForward();
     void analyzeEdgeCasesBackward();
-    void analyzeTruncateBackward();
+
+    bool analyzeTruncateBackward();
 
     double getIdentity() {
         JS_NOT_REACHED("not used");
@@ -2967,6 +2988,8 @@ class MDiv : public MBinaryArithInstruction
 
     bool updateForReplacement(MDefinition *ins);
     bool fallible();
+
+    bool truncateOperand(size_t index) const;
 };
 
 class MMod : public MBinaryArithInstruction
@@ -2987,7 +3010,7 @@ class MMod : public MBinaryArithInstruction
     }
 
     MDefinition *foldsTo(bool useValueNumbers);
-    void analyzeTruncateBackward();
+    bool analyzeTruncateBackward();
 
     double getIdentity() {
         JS_NOT_REACHED("not used");
@@ -3002,8 +3025,10 @@ class MMod : public MBinaryArithInstruction
     }
 
     bool updateForReplacement(MDefinition *ins);
-    void computeRange();
     bool fallible();
+
+    void computeRange();
+    bool truncateOperand(size_t index) const;
 };
 
 class MConcat

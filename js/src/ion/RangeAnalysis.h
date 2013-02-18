@@ -80,6 +80,7 @@ class RangeAnalysis
     bool addBetaNobes();
     bool analyze();
     bool removeBetaNobes();
+    bool truncateBackward();
 
   private:
     void analyzeLoop(MBasicBlock *header);
@@ -291,7 +292,14 @@ class Range : public TempObject {
         rectifyExponent();
     }
 
-    void set(int64_t l, int64_t h, bool f, uint16_t e) {
+    inline void setInt32() {
+        lower_infinite_ = false;
+        upper_infinite_ = false;
+        fractional_part_ = false;
+        upper_exponent_ = MaxInt32Exponent;
+    }
+
+    inline void set(int64_t l, int64_t h, bool f, uint16_t e) {
         setLowerInit(l);
         setUpperInit(h);
         fractional_part_ = f;
@@ -299,10 +307,12 @@ class Range : public TempObject {
         rectifyExponent();
     }
 
+    void truncate();
+
     // Set the exponent by using the more precise range analysis on the full
     // range of Int32 values. This might shrink the exponent after some
     // operations.
-    void rectifyExponent() {
+    inline void rectifyExponent() {
         if (!isInt32()) {
             JS_ASSERT(upper_exponent_ >= MaxInt32Exponent);
             return;
@@ -322,10 +332,10 @@ class Range : public TempObject {
         return symbolicUpper_;
     }
 
-    void setSymbolicLower(SymbolicBound *bound) {
+    inline void setSymbolicLower(SymbolicBound *bound) {
         symbolicLower_ = bound;
     }
-    void setSymbolicUpper(SymbolicBound *bound) {
+    inline void setSymbolicUpper(SymbolicBound *bound) {
         symbolicUpper_ = bound;
     }
 };
