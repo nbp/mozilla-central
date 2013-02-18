@@ -564,21 +564,28 @@ MConstant::computeRange()
         setRange(new Range(value().toInt32(), value().toInt32()));
     else if (type() == MIRType_Double) {
         double d = value().toDouble();
-        // +2 to cause both lower & upper infinity.
-        int64_t i = (int64_t) JSVAL_INT_MAX + 2;
         int exp = 0;
-        bool fractional = false;
 
         // Extract the exponent from the double constant
         frexp(d, &exp);
         if (exp < 0) {
-            exp = 0;
-            fractional = true;
+            if (d >= 0)
+                setRange(new Range(0, 1, true, 0));
+            else
+                setRange(new Range(-1, 0, true, 0));
         } else if (exp < Range::MaxIntExponent) {
-            i = d;
-            fractional = (d - (double) i == (double) 0);
+            int64_t integral = d;
+            double rest = d - (double) integral;
+            // Safe double comparisons, because there is no precision loss.
+            int64_t l = integral - ((rest < 0) ? 1 : 0);
+            int64_t h = integral + ((rest > 0) ? 1 : 0);
+            setRange(new Range(l, h, (rest != 0), exp));
+        } else {
+            if (d >= 0)
+                setRange(new Range(RANGE_INF_MAX, RANGE_INF_MAX, true, exp));
+            else
+                setRange(new Range(RANGE_INF_MIN, RANGE_INF_MIN, true, exp));
         }
-        setRange(new Range(-i, i, fractional, exp));
     }
 }
 
