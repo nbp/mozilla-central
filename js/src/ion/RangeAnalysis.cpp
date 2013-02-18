@@ -350,17 +350,30 @@ Range::unionWith(const Range *other)
 }
 
 static const Range emptyRange;
-static const Range emptyInt32Range(JSVAL_INT_MIN, JSVAL_INT_MAX);
 
-static inline const Range *
-EnsureRange(const MDefinition *def)
+Range::Range(const MDefinition *def)
+  : symbolicLower_(NULL),
+    symbolicUpper_(NULL)
 {
-    if (def->range())
-        return def->range();
+    const Range *other = def->range();
+    if (!other)
+        other = &emptyRange;
 
-    if (def->type() == MIRType_Int32)
-        return &emptyInt32Range;
-    return &emptyRange;
+    lower_ = other->lower_;
+    lower_infinite_ = other->lower_infinite_;
+    upper_ = other->upper_;
+    upper_infinite_ = other->upper_infinite_;
+    fractional_part_ = other->fractional_part_;
+    upper_exponent_ = other->upper_exponent_;
+
+    if (def->type() == MIRType_Int32) {
+        JS_ASSERT_IF(lower_infinite_, lower_ == JSVAL_INT_MIN);
+        JS_ASSERT_IF(upper_infinite_, upper_ == JSVAL_INT_MAX);
+        fractional_part_ = false;
+        lower_infinite_ = false;
+        upper_infinite_ = false;
+        rectifyExponent();
+    }
 }
 
 // Made to be used with KeepInf, to determine which infinite should be checked
@@ -607,9 +620,9 @@ MClampToUint8::computeRange()
 void
 MBitAnd::computeRange()
 {
-    const Range *left = EnsureRange(getOperand(0));
-    const Range *right = EnsureRange(getOperand(1));
-    setRange(Range::and_(left, right));
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    setRange(Range::and_(&left, &right));
 }
 
 void
@@ -620,8 +633,8 @@ MLsh::computeRange()
         return;
 
     int32_t c = right->toConstant()->value().toInt32();
-    const Range *other = EnsureRange(getOperand(0));
-    setRange(Range::shl(other, c));
+    Range other(getOperand(0));
+    setRange(Range::shl(&other, c));
 }
 
 void
@@ -632,8 +645,8 @@ MRsh::computeRange()
         return;
 
     int32_t c = right->toConstant()->value().toInt32();
-    const Range *other = EnsureRange(getOperand(0));
-    setRange(Range::shr(other, c));
+    Range other(getOperand(0));
+    setRange(Range::shr(&other, c));
 }
 
 void
@@ -642,13 +655,13 @@ MAbs::computeRange()
     if (specialization_ != MIRType_Int32 && specialization_ != MIRType_Double)
         return;
 
-    const Range *other = EnsureRange(getOperand(0));
+    Range other(getOperand(0));
 
     Range *range = new Range(0,
-                             Max(Range::abs64((int64_t)other->lower()),
-                                 Range::abs64((int64_t)other->upper())),
-                             other->isFloat(),
-                             other->exponent());
+                             Max(Range::abs64((int64_t) other.lower()),
+                                 Range::abs64((int64_t) other.upper())),
+                             other.isFloat(),
+                             other.exponent());
     setRange(range);
 }
 
@@ -657,9 +670,9 @@ MAdd::computeRange()
 {
     if (specialization() != MIRType_Int32 && specialization() != MIRType_Double)
         return;
-    const Range *left = EnsureRange(getOperand(0));
-    const Range *right = EnsureRange(getOperand(1));
-    Range *next = Range::add(left, right);
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    Range *next = Range::add(&left, &right);
     setRange(next);
 }
 
@@ -668,9 +681,9 @@ MSub::computeRange()
 {
     if (specialization() != MIRType_Int32 && specialization() != MIRType_Double)
         return;
-    const Range *left = EnsureRange(getOperand(0));
-    const Range *right = EnsureRange(getOperand(1));
-    Range *next = Range::sub(left, right);
+    Range left(getOperand(0));
+    Range right(getOperand(1));
+    Range *next = Range::sub(&left, &right);
     setRange(next);
 }
 
@@ -679,11 +692,11 @@ MMul::computeRange()
 {
     if (specialization() != MIRType_Int32 && specialization() != MIRType_Double)
         return;
-    const Range *left = EnsureRange(getOperand(0));
-    const Range *right = EnsureRange(getOperand(1));
+    Range left(getOperand(0));
+    Range right(getOperand(1));
     if (canBeNegativeZero())
-        canBeNegativeZero_ = Range::negativeZeroMul(left, right);
-    setRange(Range::mul(left, right));
+        canBeNegativeZero_ = Range::negativeZeroMul(&left, &right);
+    setRange(Range::mul(&left, &right));
 }
 
 void
@@ -691,37 +704,34 @@ MMod::computeRange()
 {
     if (specialization() != MIRType_Int32 && specialization() != MIRType_Double)
         return;
-    const Range *lhs = EnsureRange(getOperand(0));
-    const Range *rhs = EnsureRange(getOperand(1));
-    int64_t a = Range::abs64((int64_t)rhs->lower());
-    int64_t b = Range::abs64((int64_t)rhs->upper());
+    Range lhs(getOperand(0));
+    Range rhs(getOperand(1));
+    int64_t a = Range::abs64((int64_t) rhs.lower());
+    int64_t b = Range::abs64((int64_t) rhs.upper());
     if (a == 0 && b == 0)
         return;
     int64_t bound = Max(1-a, b-1);
-    setRange(new Range(-bound, bound, lhs->isFloat() || rhs->isFloat()));
+    setRange(new Range(-bound, bound, lhs.isFloat() || rhs.isFloat()));
 }
 
 void
 MToDouble::computeRange()
 {
-    const Range *input = EnsureRange(getOperand(0));
-    setRange(new Range(*input));
+    setRange(new Range(getOperand(0)));
 }
 
 void
 MTruncateToInt32::computeRange()
 {
-    const Range *input = EnsureRange(getOperand(0));
-    setRange(new Range(input->lower(), input->upper()));
-    JS_ASSERT_IF(type() == MIRType_Int32, range()->isInt32());
+    Range input(getOperand(0));
+    setRange(new Range(input.lower(), input.upper()));
 }
 
 void
 MToInt32::computeRange()
 {
-    const Range *input = EnsureRange(getOperand(0));
-    setRange(new Range(input->lower(), input->upper()));
-    JS_ASSERT_IF(type() == MIRType_Int32, range()->isInt32());
+    Range input(getOperand(0));
+    setRange(new Range(input.lower(), input.upper()));
 }
 
 ///////////////////////////////////////////////////////////////////////////////

@@ -175,6 +175,8 @@ class Range : public TempObject {
           symbolicUpper_(NULL)
     {}
 
+    Range(const MDefinition *def);
+
     static Range *Truncate(int64_t l, int64_t h);
 
     static int64_t abs64(int64_t x) {
