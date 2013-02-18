@@ -366,14 +366,8 @@ Range::Range(const MDefinition *def)
     fractional_part_ = other->fractional_part_;
     upper_exponent_ = other->upper_exponent_;
 
-    if (def->type() == MIRType_Int32) {
-        JS_ASSERT_IF(lower_infinite_, lower_ == JSVAL_INT_MIN);
-        JS_ASSERT_IF(upper_infinite_, upper_ == JSVAL_INT_MAX);
-        fractional_part_ = false;
-        lower_infinite_ = false;
-        upper_infinite_ = false;
-        rectifyExponent();
-    }
+    if (def->type() == MIRType_Int32)
+        truncate();
 }
 
 // Made to be used with KeepInf, to determine which infinite should be checked
