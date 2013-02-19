@@ -217,9 +217,11 @@ BaseProxyHandler::set(JSContext *cx, JSObject *proxy_, JSObject *receiver_, jsid
 }
 
 bool
-BaseProxyHandler::keys(JSContext *cx, JSObject *proxy, AutoIdVector &props)
+BaseProxyHandler::keys(JSContext *cx, JSObject *proxyArg, AutoIdVector &props)
 {
     JS_ASSERT(props.length() == 0);
+
+    RootedObject proxy(cx, proxyArg);
 
     if (!getOwnPropertyNames(cx, proxy, props))
         return false;
@@ -347,12 +349,6 @@ BaseProxyHandler::hasInstance(JSContext *cx, HandleObject proxy, MutableHandleVa
     return false;
 }
 
-JSType
-BaseProxyHandler::typeOf(JSContext *cx, JSObject *proxy)
-{
-    return IsFunctionProxy(proxy) ? JSTYPE_FUNCTION : JSTYPE_OBJECT;
-}
-
 bool
 BaseProxyHandler::objectClassIs(JSObject *proxy, ESClassValue classValue, JSContext *cx)
 {
@@ -433,9 +429,9 @@ DirectProxyHandler::getOwnPropertyNames(JSContext *cx, JSObject *proxy,
 bool
 DirectProxyHandler::delete_(JSContext *cx, JSObject *proxy, jsid id, bool *bp)
 {
-    Value v;
+    RootedValue v(cx);
     RootedObject target(cx, GetProxyTargetObject(proxy));
-    if (!JS_DeletePropertyById2(cx, target, id, &v))
+    if (!JS_DeletePropertyById2(cx, target, id, v.address()))
         return false;
     JSBool b;
     if (!JS_ValueToBoolean(cx, v, &b))
@@ -477,17 +473,13 @@ DirectProxyHandler::hasInstance(JSContext *cx, HandleObject proxy, MutableHandle
     return true;
 }
 
-JSType
-DirectProxyHandler::typeOf(JSContext *cx, JSObject *proxy)
-{
-    return TypeOfValue(cx, ObjectValue(*GetProxyTargetObject(proxy)));
-}
 
 bool
 DirectProxyHandler::objectClassIs(JSObject *proxy, ESClassValue classValue,
                                   JSContext *cx)
 {
-    return ObjectClassIs(*GetProxyTargetObject(proxy), classValue, cx);
+    RootedObject obj(cx, GetProxyTargetObject(proxy));
+    return ObjectClassIs(obj, classValue, cx);
 }
 
 JSString *
@@ -748,7 +740,6 @@ class ScriptedIndirectProxyHandler : public BaseProxyHandler {
     /* Spidermonkey extensions. */
     virtual bool nativeCall(JSContext *cx, IsAcceptableThis test, NativeImpl impl,
                             CallArgs args) MOZ_OVERRIDE;
-    virtual JSType typeOf(JSContext *cx, JSObject *proxy);
     virtual bool defaultValue(JSContext *cx, JSObject *obj, JSType hint, Value *vp) MOZ_OVERRIDE;
 
     static ScriptedIndirectProxyHandler singleton;
@@ -766,7 +757,7 @@ ScriptedIndirectProxyHandler::~ScriptedIndirectProxyHandler()
 }
 
 static bool
-ReturnedValueMustNotBePrimitive(JSContext *cx, JSObject *proxy, JSAtom *atom, const Value &v)
+ReturnedValueMustNotBePrimitive(JSContext *cx, HandleObject proxy, JSAtom *atom, const Value &v)
 {
     if (v.isPrimitive()) {
         JSAutoByteString bytes;
@@ -965,18 +956,6 @@ ScriptedIndirectProxyHandler::nativeCall(JSContext *cx, IsAcceptableThis test, N
                                          CallArgs args)
 {
     return BaseProxyHandler::nativeCall(cx, test, impl, args);
-}
-
-
-JSType
-ScriptedIndirectProxyHandler::typeOf(JSContext *cx, JSObject *proxy)
-{
-    /*
-     * This function is only here to prevent a regression in
-     * js1_8_5/extensions/scripted-proxies.js. It will be removed when the
-     * direct proxy refactor is complete.
-     */
-    return BaseProxyHandler::typeOf(cx, proxy);
 }
 
 bool
@@ -2480,15 +2459,6 @@ Proxy::hasInstance(JSContext *cx, HandleObject proxy, MutableHandleValue v, bool
     return GetProxyHandler(proxy)->hasInstance(cx, proxy, v, bp);
 }
 
-JSType
-Proxy::typeOf(JSContext *cx, JSObject *proxy_)
-{
-    // FIXME: API doesn't allow us to report error (bug 618906).
-    JS_CHECK_RECURSION(cx, return JSTYPE_OBJECT);
-    RootedObject proxy(cx, proxy_);
-    return GetProxyHandler(proxy)->typeOf(cx, proxy);
-}
-
 bool
 Proxy::objectClassIs(JSObject *proxy_, ESClassValue classValue, JSContext *cx)
 {
@@ -2877,20 +2847,11 @@ proxy_HasInstance(JSContext *cx, HandleObject proxy, MutableHandleValue v, JSBoo
     return true;
 }
 
-static JSType
-proxy_TypeOf(JSContext *cx, HandleObject proxy)
-{
-    JS_ASSERT(proxy->isProxy());
-    return Proxy::typeOf(cx, proxy);
-}
-
 #define PROXY_CLASS_EXT                             \
     {                                               \
-        NULL,                /* equality */         \
         NULL,                /* outerObject */      \
         NULL,                /* innerObject */      \
         NULL,                /* iteratorObject */   \
-        NULL,                /* unused */           \
         false,               /* isWrappedNative */  \
         proxy_WeakmapKeyDelegate                    \
     }
@@ -2942,7 +2903,6 @@ JS_FRIEND_DATA(Class) js::ObjectProxyClass = {
         proxy_DeleteElement,
         proxy_DeleteSpecial,
         NULL,                /* enumerate       */
-        proxy_TypeOf,
         NULL,                /* thisObject      */
     }
 };
@@ -2964,11 +2924,9 @@ JS_FRIEND_DATA(Class) js::OuterWindowProxyClass = {
     NULL,                    /* construct   */
     proxy_TraceObject,       /* trace       */
     {
-        NULL,                /* equality    */
         NULL,                /* outerObject */
         proxy_innerObject,
         NULL,                /* iteratorObject */
-        NULL,                /* unused */
         false,               /* isWrappedNative */
         proxy_WeakmapKeyDelegate
     },
@@ -3002,7 +2960,6 @@ JS_FRIEND_DATA(Class) js::OuterWindowProxyClass = {
         proxy_DeleteElement,
         proxy_DeleteSpecial,
         NULL,                /* enumerate       */
-        NULL,                /* typeof          */
         NULL,                /* thisObject      */
     }
 };
@@ -3070,7 +3027,6 @@ JS_FRIEND_DATA(Class) js::FunctionProxyClass = {
         proxy_DeleteElement,
         proxy_DeleteSpecial,
         NULL,                /* enumerate       */
-        proxy_TypeOf,
         NULL,                /* thisObject      */
     }
 };
@@ -3140,7 +3096,10 @@ js::RenewProxyObject(JSContext *cx, JSObject *obj,
     JS_ASSERT(obj->getParent() == cx->global());
     JS_ASSERT(obj->getClass() == &ObjectProxyClass);
     JS_ASSERT(obj->getTaggedProto().isLazy());
+#ifdef DEBUG
+    AutoSuppressGC suppressGC(cx);
     JS_ASSERT(!handler->isOuterWindow());
+#endif
 
     obj->setSlot(JSSLOT_PROXY_HANDLER, PrivateValue(handler));
     obj->setCrossCompartmentSlot(JSSLOT_PROXY_PRIVATE, priv);

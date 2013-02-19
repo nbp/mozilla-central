@@ -378,6 +378,14 @@ Debugger::~Debugger()
     JS_ASSERT(object->compartment()->rt->isHeapBusy());
 
     /*
+     * These maps may contain finalized entries, so drop them before destructing to avoid calling
+     * ~EncapsulatedPtr.
+     */
+    scripts.clearWithoutCallingDestructors();
+    objects.clearWithoutCallingDestructors();
+    environments.clearWithoutCallingDestructors();
+
+    /*
      * Since the inactive state for this link is a singleton cycle, it's always
      * safe to apply JS_REMOVE_LINK to it, regardless of whether we're in the list or not.
      */
@@ -752,9 +760,9 @@ Debugger::handleUncaughtExceptionHelper(Maybe<AutoCompartment> &ac,
         if (callHook && uncaughtExceptionHook) {
             Value fval = ObjectValue(*uncaughtExceptionHook);
             Value exc = cx->getPendingException();
-            Value rv;
+            RootedValue rv(cx);
             cx->clearPendingException();
-            if (Invoke(cx, ObjectValue(*object), fval, 1, &exc, &rv))
+            if (Invoke(cx, ObjectValue(*object), fval, 1, &exc, rv.address()))
                 return vp ? parseResumptionValue(ac, true, rv, *vp, false) : JSTRAP_CONTINUE;
         }
 
@@ -939,8 +947,8 @@ Debugger::fireDebuggerStatement(JSContext *cx, MutableHandleValue vp)
     if (!getScriptFrame(cx, iter, &argv))
         return handleUncaughtException(ac, vp, false);
 
-    Value rv;
-    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv.address(), &rv);
+    RootedValue rv(cx);
+    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv.address(), rv.address());
     return parseResumptionValue(ac, ok, rv, vp);
 }
 
@@ -966,8 +974,8 @@ Debugger::fireExceptionUnwind(JSContext *cx, MutableHandleValue vp)
     if (!getScriptFrame(cx, iter, avr.handleAt(0)) || !wrapDebuggeeValue(cx, avr.handleAt(1)))
         return handleUncaughtException(ac, vp, false);
 
-    Value rv;
-    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 2, argv, &rv);
+    RootedValue rv(cx);
+    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 2, argv, rv.address());
     JSTrapStatus st = parseResumptionValue(ac, ok, rv, vp);
     if (st == JSTRAP_CONTINUE)
         cx->setPendingException(exc);
@@ -989,8 +997,8 @@ Debugger::fireEnterFrame(JSContext *cx, MutableHandleValue vp)
     if (!getScriptFrame(cx, iter, &argv))
         return handleUncaughtException(ac, vp, false);
 
-    Value rv;
-    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv.address(), &rv);
+    RootedValue rv(cx);
+    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv.address(), rv.address());
     return parseResumptionValue(ac, ok, rv, vp);
 }
 
@@ -1161,9 +1169,9 @@ Debugger::onTrap(JSContext *cx, MutableHandleValue vp)
             AutoValueArray ava(cx, argv, 1);
             if (!dbg->getScriptFrame(cx, iter, ava.handleAt(0)))
                 return dbg->handleUncaughtException(ac, vp, false);
-            Value rv;
+            RootedValue rv(cx);
             Rooted<JSObject*> handler(cx, bp->handler);
-            bool ok = CallMethodIfPresent(cx, handler, "hit", 1, argv, &rv);
+            bool ok = CallMethodIfPresent(cx, handler, "hit", 1, argv, rv.address());
             JSTrapStatus st = dbg->parseResumptionValue(ac, ok, rv, vp, true);
             if (st != JSTRAP_CONTINUE)
                 return st;
@@ -1276,8 +1284,8 @@ Debugger::onSingleStep(JSContext *cx, MutableHandleValue vp)
         ac.construct(cx, dbg->object);
 
         const Value &handler = frame->getReservedSlot(JSSLOT_DEBUGFRAME_ONSTEP_HANDLER);
-        Value rval;
-        bool ok = Invoke(cx, ObjectValue(*frame), handler, 0, NULL, &rval);
+        RootedValue rval(cx);
+        bool ok = Invoke(cx, ObjectValue(*frame), handler, 0, NULL, rval.address());
         JSTrapStatus st = dbg->parseResumptionValue(ac, ok, rval, vp);
         if (st != JSTRAP_CONTINUE)
             return st;
@@ -1305,8 +1313,8 @@ Debugger::fireNewGlobalObject(JSContext *cx, Handle<GlobalObject *> global, Muta
     if (!wrapDebuggeeValue(cx, argvRooter.handleAt(0)))
         return handleUncaughtException(ac, NULL, false);
 
-    Value rv;
-    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv, &rv);
+    RootedValue rv(cx);
+    bool ok = Invoke(cx, ObjectValue(*object), ObjectValue(*hook), 1, argv, rv.address());
     return parseResumptionValue(ac, ok, rv, vp);
 }
 
@@ -1790,7 +1798,7 @@ JSBool
 Debugger::setOnNewGlobalObject(JSContext *cx, unsigned argc, Value *vp)
 {
     THIS_DEBUGGER(cx, argc, vp, "setOnNewGlobalObject", args, dbg);
-    JSObject *oldHook = dbg->getHook(OnNewGlobalObject);
+    RootedObject oldHook(cx, dbg->getHook(OnNewGlobalObject));
 
     if (!setHookImpl(cx, argc, vp, OnNewGlobalObject))
         return false;
@@ -2889,7 +2897,7 @@ class BytecodeRangeWithLineNumbers : private BytecodeRange
     using BytecodeRange::frontOffset;
 
     BytecodeRangeWithLineNumbers(JSContext *cx, JSScript *script)
-      : BytecodeRange(script), lineno(script->lineno), sn(script->notes()), snpc(script->code), skip(cx, thisForCtor())
+      : BytecodeRange(cx, script), lineno(script->lineno), sn(script->notes()), snpc(script->code)
     {
         if (!SN_IS_TERMINATOR(sn))
             snpc += SN_DELTA(sn);
@@ -2907,8 +2915,6 @@ class BytecodeRangeWithLineNumbers : private BytecodeRange
     size_t frontLineNumber() const { return lineno; }
 
   private:
-    BytecodeRangeWithLineNumbers *thisForCtor() { return this; }
-
     void updateLine() {
         /*
          * Determine the current line number by reading all source notes up to
@@ -2929,8 +2935,6 @@ class BytecodeRangeWithLineNumbers : private BytecodeRange
     size_t lineno;
     jssrcnote *sn;
     jsbytecode *snpc;
-
-    SkipRoot skip;
 };
 
 static const size_t NoEdges = -1;
@@ -3691,7 +3695,7 @@ DebuggerFrame_setOnPop(JSContext *cx, unsigned argc, Value *vp)
 JSBool
 js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFramePtr frame,
                   StableCharPtr chars, unsigned length, const char *filename, unsigned lineno,
-                  Value *rval)
+                  MutableHandleValue rval)
 {
     assertSameCompartment(cx, env, frame);
     JS_ASSERT_IF(frame, thisv.get() == frame.thisValue());
@@ -3708,7 +3712,7 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFr
            .setCompileAndGo(true)
            .setNoScriptRval(false)
            .setFileAndLine(filename, lineno);
-    RootedScript script(cx, frontend::CompileScript(cx, env, frame, options, chars, length,
+    RootedScript script(cx, frontend::CompileScript(cx, env, frame, options, chars.get(), length,
                                                     /* source = */ NULL,
                                                     /* staticLevel = */ frame ? 1 : 0));
     if (!script)
@@ -3716,7 +3720,7 @@ js::EvaluateInEnv(JSContext *cx, Handle<Env*> env, HandleValue thisv, AbstractFr
 
     script->isActiveEval = true;
     ExecuteType type = !frame && env->isGlobal() ? EXECUTE_DEBUG_GLOBAL : EXECUTE_DEBUG;
-    return ExecuteKernel(cx, script, *env, thisv, type, frame, rval);
+    return ExecuteKernel(cx, script, *env, thisv, type, frame, rval.address());
 }
 
 static JSBool
@@ -3803,7 +3807,7 @@ DebuggerGenericEval(JSContext *cx, const char *fullMethodName,
     }
 
     /* Run the code and produce the completion value. */
-    Value rval;
+    RootedValue rval(cx);
     JS::Anchor<JSString *> anchor(stable);
     AbstractFramePtr frame = iter ? iter->abstractFramePtr() : NullFramePtr();
     bool ok = EvaluateInEnv(cx, env, thisv, frame, stable->chars(), stable->length(),
@@ -4111,7 +4115,8 @@ DebuggerObject_getEnvironment(JSContext *cx, unsigned argc, Value *vp)
     Rooted<Env*> env(cx);
     {
         AutoCompartment ac(cx, obj);
-        env = GetDebugScopeForFunction(cx, obj->toFunction());
+        RootedFunction fun(cx, obj->toFunction());
+        env = GetDebugScopeForFunction(cx, fun);
         if (!env)
             return false;
     }
@@ -4505,8 +4510,8 @@ ApplyOrCall(JSContext *cx, unsigned argc, Value *vp, ApplyOrCallMode mode)
      * Call the function. Use receiveCompletionValue to return to the debugger
      * compartment and populate args.rval().
      */
-    Value rval;
-    bool ok = Invoke(cx, thisv, calleev, callArgc, callArgv, &rval);
+    RootedValue rval(cx);
+    bool ok = Invoke(cx, thisv, calleev, callArgc, callArgv, rval.address());
     return dbg->receiveCompletionValue(ac, ok, rval, args.rval());
 }
 

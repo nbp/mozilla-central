@@ -383,6 +383,7 @@ load 603510-1.html
 load 604314-1.html
 load 604843.html
 load 605340.html
+load 606642.xhtml
 load 621424-1.html
 load 621841-1.html
 load 645072-1.html
@@ -422,8 +423,9 @@ test-pref(layout.css.flexbox.enabled,true) load 737313-2.html
 test-pref(layout.css.flexbox.enabled,true) load 737313-3.html
 load 762764-1.html
 load 786740-1.html
-asserts(8) test-pref(layout.css.flexbox.enabled,true) load 798020-1.html
+asserts(12) test-pref(layout.css.flexbox.enabled,true) load 798020-1.html
 test-pref(layout.css.flexbox.enabled,true) load 798235-1.html
 test-pref(layout.css.flexbox.enabled,true) load 799207-1.html
 asserts(12) test-pref(layout.css.flexbox.enabled,true) load 799207-2.html
 test-pref(layout.css.flexbox.enabled,true) load 804089-1.xhtml
+load 842132-1.html
