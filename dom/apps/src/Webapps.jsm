@@ -80,6 +80,7 @@ this.DOMApplicationRegistry = {
                      "Webapps:UnregisterForMessages",
                      "Webapps:CancelDownload", "Webapps:CheckForUpdate",
                      "Webapps:Download", "Webapps:ApplyDownload",
+                     "Webapps:Install:Return:Ack",
                      "child-process-shutdown"];
 
     this.frameMessages = ["Webapps:ClearBrowserData"];
@@ -511,29 +512,38 @@ this.DOMApplicationRegistry = {
     let manifest = new ManifestHelper(aManifest, aApp.origin);
     for (let activity in root.activities) {
       let description = root.activities[activity];
-      if (!description.href) {
-        description.href = manifest.launch_path;
+      let href = description.href;
+      if (!href) {
+        href = manifest.launch_path;
       }
 
       try {
-        description.href = manifest.resolveFromOrigin(description.href);
+        href = manifest.resolveFromOrigin(href);
       } catch (e) {
-        debug("Activity href (" + description.href + ") is invalid, skipping. " +
+        debug("Activity href (" + href + ") is invalid, skipping. " +
               "Error is: " + e);
         continue;
       }
 
+      // Make a copy of the description object since we don't want to modify
+      // the manifest itself, but need to register with a resolved URI.
+      let newDesc = {};
+      for (let prop in description) {
+        newDesc[prop] = description[prop];
+      }
+      newDesc.href = href;
+
       debug('_createActivitiesToRegister: ' + aApp.manifestURL + ', activity ' +
-          activity + ', description.href is ' + description.href);
+          activity + ', description.href is ' + newDesc.href);
 
       if (aRunUpdate) {
         activitiesToRegister.push({ "manifest": aApp.manifestURL,
                                     "name": activity,
                                     "icon": manifest.iconURLForSize(128),
-                                    "description": description });
+                                    "description": newDesc });
       }
 
-      let launchPath = Services.io.newURI(description.href, null, null);
+      let launchPath = Services.io.newURI(href, null, null);
       let manifestURL = Services.io.newURI(aApp.manifestURL, null, null);
 
       if (SystemMessagePermissionsChecker
@@ -843,6 +853,9 @@ this.DOMApplicationRegistry = {
         break;
       case "Activities:Register:OK":
         this.notifyAppsRegistryReady();
+        break;
+      case "Webapps:Install:Return:Ack":
+        this.onInstallSuccessAck(msg.manifestURL);
         break;
     }
   },
@@ -1176,6 +1189,9 @@ this.DOMApplicationRegistry = {
       ? updateSvc.scheduleCustomProfileUpdate(appcacheURI, docURI, aProfileDir)
       : updateSvc.scheduleAppUpdate(appcacheURI, docURI, aApp.localId, false);
 
+    // initialize the progress to 0 right now
+    aApp.progress = 0;
+
     // We save the download details for potential further usage like cancelling
     // it.
     let download = {
@@ -1466,20 +1482,8 @@ this.DOMApplicationRegistry = {
       return;
     }
 
-    // Try to download a new manifest.
-    let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
-                .createInstance(Ci.nsIXMLHttpRequest);
-    xhr.open("GET", aData.manifestURL, true);
-    xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_CACHING;
-    xhr.responseType = "json";
-    if (app.etag) {
-      debug("adding manifest etag:" + app.etag);
-      xhr.setRequestHeader("If-None-Match", app.etag);
-    }
-    xhr.channel.notificationCallbacks =
-      this.createLoadContext(app.installerAppId, app.installerIsBrowser);
-
-    xhr.addEventListener("load", (function() {
+    // On xhr load request event
+    function onload(xhr, oldManifest) {
       debug("Got http status=" + xhr.status + " for " + aData.manifestURL);
       let oldHash = app.manifestHash;
       let isPackage = app.origin.startsWith("app://");
@@ -1498,6 +1502,8 @@ this.DOMApplicationRegistry = {
           sendError("INSTALL_FROM_DENIED");
           return;
         } else {
+          AppsUtils.ensureSameAppName(oldManifest, manifest, app);
+
           let hash = this.computeManifestHash(manifest);
           debug("Manifest hash = " + hash);
           if (isPackage) {
@@ -1527,12 +1533,10 @@ this.DOMApplicationRegistry = {
               this._saveApps();
             }
           } else {
-            this._readManifests([{ id: id }], (function(aResult) {
-              // Update only the appcache if the manifest has not changed
-              // based on the hash value.
-              updateHostedApp.call(this, aResult[0].manifest,
-                                   oldHash == hash ? null : manifest);
-            }).bind(this));
+            // Update only the appcache if the manifest has not changed
+            // based on the hash value.
+            updateHostedApp.call(this, oldManifest,
+                                 oldHash == hash ? null : manifest);
           }
         }
       } else if (xhr.status == 304) {
@@ -1551,21 +1555,40 @@ this.DOMApplicationRegistry = {
         } else {
           // For hosted apps, even if the manifest has not changed, we check
           // for offline cache updates.
-          this._readManifests([{ id: id }], (function(aResult) {
-            updateHostedApp.call(this, aResult[0].manifest, null);
-          }).bind(this));
+          updateHostedApp.call(this, oldManifest, null);
         }
       } else {
         sendError("MANIFEST_URL_ERROR");
       }
-    }).bind(this), false);
+    }
 
-    xhr.addEventListener("error", (function() {
-      sendError("NETWORK_ERROR");
-    }).bind(this), false);
+    // Try to download a new manifest.
+    function doRequest(oldManifest) {
+      let xhr = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"]
+                  .createInstance(Ci.nsIXMLHttpRequest);
+      xhr.open("GET", aData.manifestURL, true);
+      xhr.channel.loadFlags |= Ci.nsIRequest.INHIBIT_CACHING;
+      xhr.responseType = "json";
+      if (app.etag) {
+        debug("adding manifest etag:" + app.etag);
+        xhr.setRequestHeader("If-None-Match", app.etag);
+      }
+      xhr.channel.notificationCallbacks =
+        this.createLoadContext(app.installerAppId, app.installerIsBrowser);
 
-    debug("Checking manifest at " + aData.manifestURL);
-    xhr.send(null);
+      xhr.addEventListener("load", onload.bind(this, xhr, oldManifest), false);
+      xhr.addEventListener("error", (function() {
+        sendError("NETWORK_ERROR");
+      }).bind(this), false);
+
+      debug("Checking manifest at " + aData.manifestURL);
+      xhr.send(null);
+    }
+
+    // Read the current app manifest file
+    this._readManifests([{ id: id }], (function(aResult) {
+      doRequest.call(this, aResult[0].manifest);
+    }).bind(this));
   },
 
   // Creates a nsILoadContext object with a given appId and isBrowser flag.
@@ -1607,7 +1630,7 @@ this.DOMApplicationRegistry = {
 
     // Disallow reinstalls from the same origin for now.
     // See https://bugzilla.mozilla.org/show_bug.cgi?id=821288
-    if (this._appId(app.origin) !== null) {
+    if (this._appId(app.origin) !== null && this._isLaunchable(app.origin)) {
       sendError("REINSTALL_FORBIDDEN");
       return;
     }
@@ -1752,6 +1775,23 @@ this.DOMApplicationRegistry = {
     aData.mm.sendAsyncMessage("Webapps:Install:Return:KO", aData);
   },
 
+  // This function is called after we called the onsuccess callback on the
+  // content side. This let the webpage the opportunity to set event handlers
+  // on the app before we start firing progress events.
+  queuedDownload: {},
+
+  onInstallSuccessAck: function onInstallSuccessAck(aManifestURL) {
+    let download = this.queuedDownload[aManifestURL];
+    if (!download) {
+      return;
+    }
+    this.startOfflineCacheDownload(download.manifest,
+                                   download.app,
+                                   download.profileDir,
+                                   download.offlineCacheObserver);
+    delete this.queuedDownload[aManifestURL];
+  },
+
   confirmInstall: function(aData, aFromSync, aProfileDir, aOfflineCacheObserver) {
     let isReinstall = false;
     let app = aData.app;
@@ -1854,6 +1894,13 @@ this.DOMApplicationRegistry = {
       aData.app[aProp] = appObject[aProp];
      });
 
+    this.queuedDownload[app.manifestURL] = {
+      manifest: manifest,
+      app: appObject,
+      profileDir: aProfileDir,
+      offlineCacheObserver: aOfflineCacheObserver
+    }
+
     if (!aFromSync)
       this._saveApps((function() {
         this.broadcastMessage("Webapps:Install:Return:OK", aData);
@@ -1872,7 +1919,6 @@ this.DOMApplicationRegistry = {
 #endif
     }
 
-    this.startOfflineCacheDownload(manifest, appObject, aProfileDir, aOfflineCacheObserver);
     if (manifest.package_path) {
       // origin for install apps is meaningless here, since it's app:// and this
       // can't be used to resolve package paths.
@@ -2049,6 +2095,13 @@ this.DOMApplicationRegistry = {
       AppDownloadManager.remove(aApp.manifestURL);
     }
 
+    function sendProgressEvent() {
+      self.broadcastMessage("Webapps:PackageEvent",
+                            { type: "progress",
+                              manifestURL: aApp.manifestURL,
+                              app: app });
+    }
+
     function download() {
       debug("About to download " + aManifest.fullPackagePath());
 
@@ -2069,6 +2122,7 @@ this.DOMApplicationRegistry = {
       );
 
       let lastProgressTime = 0;
+
       requestChannel.notificationCallbacks = {
         QueryInterface: function notifQI(aIID) {
           if (aIID.equals(Ci.nsISupports)          ||
@@ -2087,10 +2141,7 @@ this.DOMApplicationRegistry = {
           let now = Date.now();
           if (now - lastProgressTime > MIN_PROGRESS_EVENT_DELAY) {
             debug("onProgress: " + aProgress + "/" + aProgressMax);
-            self.broadcastMessage("Webapps:PackageEvent",
-                                  { type: "progress",
-                                    manifestURL: aApp.manifestURL,
-                                    app: app });
+            sendProgressEvent();
             lastProgressTime = now;
             self._saveApps();
           }
@@ -2115,6 +2166,9 @@ this.DOMApplicationRegistry = {
       // state. Cancelled download should remain as 'pending'. Successfully
       // installed apps should morph to 'updating'.
       app.installState = aIsUpdate ? "updating" : "pending";
+
+      // initialize the progress to 0 right now
+      app.progress = 0;
 
       // Staging the zip in TmpD until all the checks are done.
       let zipFile = FileUtils.getFile("TmpD",
@@ -2258,12 +2312,13 @@ this.DOMApplicationRegistry = {
                 let manifest = JSON.parse(converter.ConvertToUnicode(NetUtil.readInputStreamToString(istream,
                                                                      istream.available()) || ""));
 
-                // Call checkManifest before compareManifests, as checkManifest
-                // will normalize some attributes that has already been normalized
-                // for aManifest during checkForUpdate.
                 if (!AppsUtils.checkManifest(manifest, app)) {
                   throw "INVALID_MANIFEST";
                 }
+
+                // Call ensureSameAppName before compareManifests, as `manifest`,
+                // has been normalized to avoid app rename.
+                AppsUtils.ensureSameAppName(aManifest._manifest, manifest, app);
 
                 if (!AppsUtils.compareManifests(manifest,
                                                 aManifest._manifest)) {
@@ -2326,6 +2381,9 @@ this.DOMApplicationRegistry = {
       });
 
       requestChannel.asyncOpen(listener, null);
+
+      // send a first progress event to correctly set the DOM object's properties
+      sendProgressEvent();
     };
 
     let deviceStorage = Services.wm.getMostRecentWindow("navigator:browser")
@@ -2809,18 +2867,30 @@ let AppcacheObserver = function(aApp) {
   this.app = aApp;
   this.startStatus = aApp.installState;
   this.lastProgressTime = 0;
+  // send a first progress event to correctly set the DOM object's properties
+  this._sendProgressEvent();
 };
 
 AppcacheObserver.prototype = {
   // nsIOfflineCacheUpdateObserver implementation
+  _sendProgressEvent: function() {
+    let app = this.app;
+    DOMApplicationRegistry.broadcastMessage("Webapps:OfflineCache",
+                                            { manifest: app.manifestURL,
+                                              installState: app.installState,
+                                              progress: app.progress });
+  },
+
   updateStateChanged: function appObs_Update(aUpdate, aState) {
     let mustSave = false;
     let app = this.app;
 
     debug("Offline cache state change for " + app.origin + " : " + aState);
 
+    var self = this;
     let setStatus = function appObs_setStatus(aStatus, aProgress) {
-      debug("Offlinecache setStatus to " + aStatus + " for " + app.origin);
+      debug("Offlinecache setStatus to " + aStatus + " with progress " +
+          aProgress + " for " + app.origin);
       mustSave = (app.installState != aStatus);
       app.installState = aStatus;
       app.progress = aProgress;
@@ -2828,10 +2898,7 @@ AppcacheObserver.prototype = {
         app.downloading = false;
         app.downloadAvailable = false;
       }
-      DOMApplicationRegistry.broadcastMessage("Webapps:OfflineCache",
-                                              { manifest: app.manifestURL,
-                                                installState: app.installState,
-                                                progress: app.progress });
+      self._sendProgressEvent();
     }
 
     let setError = function appObs_setError(aError) {
