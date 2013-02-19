@@ -32,7 +32,7 @@ using namespace std;
 
 #include "mtransport_test_utils.h"
 MtransportTestUtils *test_utils;
-
+nsCOMPtr<nsIThread> gThread;
 
 
 static int kDefaultTimeout = 5000;
@@ -120,6 +120,18 @@ enum offerAnswerFlags
   ANSWER_AV = ANSWER_AUDIO | ANSWER_VIDEO
 };
 
+static bool SetupGlobalThread() {
+  if (!gThread) {
+    nsIThread *thread;
+
+    nsresult rv = NS_NewThread(&thread);
+    if (NS_FAILED(rv))
+      return false;
+
+    gThread = thread;
+  }
+  return true;
+}
 
 class TestObserver : public IPeerConnectionObserver,
                      public nsSupportsWeakReference
@@ -151,7 +163,7 @@ public:
 
   virtual ~TestObserver() {}
 
-  std::vector<nsDOMMediaStream *> GetStreams() { return streams; }
+  std::vector<DOMMediaStream *> GetStreams() { return streams; }
 
   NS_DECL_ISUPPORTS
   NS_DECL_IPEERCONNECTIONOBSERVER
@@ -165,7 +177,7 @@ public:
 
 private:
   sipcc::PeerConnectionImpl *pc;
-  std::vector<nsDOMMediaStream *> streams;
+  std::vector<DOMMediaStream *> streams;
 };
 
 NS_IMPL_THREADSAFE_ISUPPORTS2(TestObserver,
@@ -308,7 +320,7 @@ TestObserver::OnAddStream(nsIDOMMediaStream *stream, const char *type)
 {
   PR_ASSERT(stream);
 
-  nsDOMMediaStream *ms = static_cast<nsDOMMediaStream *>(stream);
+  DOMMediaStream *ms = static_cast<DOMMediaStream *>(stream);
 
   cout << "OnAddStream called hints=" << ms->GetHintContents() << " type=" << type << " thread=" <<
     PR_GetCurrentThread() << endl ;
@@ -516,16 +528,13 @@ class SignalingAgent {
 
   void Init_m(nsCOMPtr<nsIThread> thread)
   {
-    size_t found = 2;
-    ASSERT_TRUE(found > 0);
-
     pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
     ASSERT_TRUE(pc);
 
     pObserver = new TestObserver(pc);
     ASSERT_TRUE(pObserver);
 
-    sipcc::RTCConfiguration cfg;
+    sipcc::IceConfiguration cfg;
     cfg.addServer("23.21.150.121", 3478);
     ASSERT_EQ(pc->Initialize(pObserver, nullptr, cfg, thread), NS_OK);
 
@@ -541,6 +550,42 @@ class SignalingAgent {
                      kDefaultTimeout);
     ASSERT_TRUE_WAIT(ice_state() == sipcc::PeerConnectionImpl::kIceWaiting, 5000);
     cout << "Init Complete" << endl;
+  }
+
+  bool InitAllowFail_m(nsCOMPtr<nsIThread> thread)
+  {
+    pc = sipcc::PeerConnectionImpl::CreatePeerConnection();
+    if (!pc)
+      return false;
+
+    pObserver = new TestObserver(pc);
+    if (!pObserver)
+      return false;
+
+    sipcc::IceConfiguration cfg;
+    cfg.addServer("23.21.150.121", 3478);
+    if (NS_FAILED(pc->Initialize(pObserver, nullptr, cfg, thread)))
+      return false;
+
+    return true;
+  }
+
+  bool InitAllowFail(nsCOMPtr<nsIThread> thread)
+  {
+    bool rv;
+
+    thread->Dispatch(
+        WrapRunnableRet(this, &SignalingAgent::InitAllowFail_m, thread, &rv),
+        NS_DISPATCH_SYNC);
+    if (!rv)
+      return false;
+
+    EXPECT_TRUE_WAIT(sipcc_state() == sipcc::PeerConnectionImpl::kStarted,
+                     kDefaultTimeout);
+    EXPECT_TRUE_WAIT(ice_state() == sipcc::PeerConnectionImpl::kIceWaiting, 5000);
+    cout << "Init Complete" << endl;
+
+    return true;
   }
 
   uint32_t sipcc_state()
@@ -607,16 +652,16 @@ class SignalingAgent {
     ASSERT_TRUE(NS_SUCCEEDED(ret));
 
     // store in object to be used by RemoveStream
-    nsRefPtr<nsDOMMediaStream> domMediaStream = new nsDOMMediaStream(audio_stream);
+    nsRefPtr<DOMMediaStream> domMediaStream = new DOMMediaStream(audio_stream);
     domMediaStream_ = domMediaStream;
 
     uint32_t aHintContents = 0;
 
     if (offerFlags & OFFER_AUDIO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_AUDIO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_AUDIO;
     }
     if (offerFlags & OFFER_VIDEO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_VIDEO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_VIDEO;
     }
 
     domMediaStream->SetHintContents(aHintContents);
@@ -647,15 +692,15 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
                                         DONT_CHECK_VIDEO|
                                         DONT_CHECK_DATA) {
     // Create a media stream as if it came from GUM
-    nsRefPtr<nsDOMMediaStream> domMediaStream = new nsDOMMediaStream();
+    nsRefPtr<DOMMediaStream> domMediaStream = new DOMMediaStream();
 
     uint32_t aHintContents = 0;
 
     if (offerAnswerFlags & ANSWER_AUDIO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_AUDIO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_AUDIO;
     }
     if (offerAnswerFlags & ANSWER_VIDEO) {
-      aHintContents |= nsDOMMediaStream::HINT_CONTENTS_VIDEO;
+      aHintContents |= DOMMediaStream::HINT_CONTENTS_VIDEO;
     }
 
     domMediaStream->SetHintContents(aHintContents);
@@ -770,7 +815,7 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
   }
 
   int GetPacketsReceived(int stream) {
-    std::vector<nsDOMMediaStream *> streams = pObserver->GetStreams();
+    std::vector<DOMMediaStream *> streams = pObserver->GetStreams();
 
     if ((int) streams.size() <= stream) {
       return 0;
@@ -794,7 +839,7 @@ void CreateAnswer(sipcc::MediaConstraints& constraints, std::string offer,
   //Stops pulling audio data off the receivers.
   //Should be called before Cleanup of the peer connection.
   void CloseReceiveStreams() {
-    std::vector<nsDOMMediaStream *> streams =
+    std::vector<DOMMediaStream *> streams =
                             pObserver->GetStreams();
     for (size_t i = 0; i < streams.size(); i++) {
       streams[i]->GetStream()->AsSourceStream()->StopStream();
@@ -806,7 +851,7 @@ public:
   nsRefPtr<TestObserver> pObserver;
   char* offer_;
   char* answer_;
-  nsRefPtr<nsDOMMediaStream> domMediaStream_;
+  nsRefPtr<DOMMediaStream> domMediaStream_;
 
 private:
   void SDPSanityCheck(std::string sdp, uint32_t flags, bool offer)
@@ -928,15 +973,39 @@ class SignalingEnvironment : public ::testing::Environment {
   }
 };
 
+class SignalingAgentTest : public ::testing::Test {
+ public:
+  static void SetUpTestCase() {
+    ASSERT_TRUE(SetupGlobalThread());
+  }
+
+  void TearDown() {
+    // Delete all the agents.
+    for (size_t i=0; i < agents_.size(); i++) {
+      delete agents_[i];
+    }
+  }
+
+  bool CreateAgent() {
+    ScopedDeletePtr<SignalingAgent> agent(new SignalingAgent());
+
+    if (!agent->InitAllowFail(gThread))
+      return false;
+
+    agents_.push_back(agent.forget());
+
+    return true;
+  }
+
+ private:
+  std::vector<SignalingAgent *> agents_;
+};
+
+
 class SignalingTest : public ::testing::Test {
 public:
   static void SetUpTestCase() {
-    nsIThread *thread;
-
-    nsresult rv = NS_NewThread(&thread);
-    ASSERT_TRUE(NS_SUCCEEDED(rv));
-
-    gThread = thread;
+    ASSERT_TRUE(SetupGlobalThread());
   }
 
   void SetUp() {
@@ -1061,12 +1130,9 @@ public:
   }
 
  protected:
-  static nsCOMPtr<nsIThread> gThread;
   SignalingAgent a1_;  // Canonically "caller"
   SignalingAgent a2_;  // Canonically "callee"
 };
-
-nsCOMPtr<nsIThread> SignalingTest::gThread;
 
 
 TEST_F(SignalingTest, JustInit)
@@ -1149,30 +1215,33 @@ TEST_F(SignalingTest, CreateOfferDontReceiveVideo)
               SHOULD_SENDRECV_AUDIO | SHOULD_SEND_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferRemoveAudioStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferRemoveAudioStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_AUDIO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_AUDIO,
               SHOULD_RECV_AUDIO | SHOULD_SENDRECV_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferDontReceiveAudioRemoveAudioStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferDontReceiveAudioRemoveAudioStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", false, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", true, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_AUDIO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_AUDIO,
               SHOULD_SENDRECV_VIDEO);
 }
 
-TEST_F(SignalingTest, CreateOfferDontReceiveVideoRemoveVideoStream)
+// XXX Disabled pending resolution of Bug 840728
+TEST_F(SignalingTest, DISABLED_CreateOfferDontReceiveVideoRemoveVideoStream)
 {
   sipcc::MediaConstraints constraints;
   constraints.setBooleanConstraint("OfferToReceiveAudio", true, false);
   constraints.setBooleanConstraint("OfferToReceiveVideo", false, false);
-  CreateOfferRemoveStream(constraints, nsDOMMediaStream::HINT_CONTENTS_VIDEO,
+  CreateOfferRemoveStream(constraints, DOMMediaStream::HINT_CONTENTS_VIDEO,
               SHOULD_SENDRECV_AUDIO);
 }
 
@@ -1851,6 +1920,18 @@ TEST_F(SignalingTest, ipAddrAnyOffer)
     ASSERT_TRUE(a2_.pObserver->state == TestObserver::stateSuccess);
     std::string answer = a2_.answer();
     ASSERT_NE(answer.find("a=sendrecv"), std::string::npos);
+}
+
+TEST_F(SignalingAgentTest, CreateUntilFailThenWait) {
+  int i;
+
+  for (i=0; ; i++) {
+    if (!CreateAgent())
+      break;
+    std::cerr << "Created agent " << i << std::endl;
+  }
+  std::cerr << "Failed after creating " << i << " PCs " << std::endl;
+  PR_Sleep(10000);  // Wait to see if we crash
 }
 
 } // End namespace test.
