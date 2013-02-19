@@ -273,36 +273,40 @@ GetViewList(ArrayBufferObject *obj)
 #endif
 }
 
+void
+ArrayBufferObject::changeContents(ObjectElements *newHeader)
+{
+   // Grab out data before invalidating it.
+   uint32_t byteLengthCopy = byteLength();
+   uintptr_t oldDataPointer = uintptr_t(dataPointer());
+   JSObject *viewListHead = *GetViewList(this);
+
+   // Update all views.
+   uintptr_t newDataPointer = uintptr_t(newHeader->elements());
+   for (JSObject *view = viewListHead; view; view = NextView(view)) {
+       uintptr_t newDataPtr = uintptr_t(view->getPrivate()) - oldDataPointer + newDataPointer;
+       view->setPrivate(reinterpret_cast<uint8_t*>(newDataPtr));
+   }
+
+   // Change to the new header (now, so we can use GetViewList).
+   elements = newHeader->elements();
+
+   // Initialize 'newHeader'.
+   ArrayBufferObject::setElementsHeader(newHeader, byteLengthCopy);
+   *GetViewList(this) = viewListHead;
+}
+
 bool
 ArrayBufferObject::uninlineData(JSContext *maybecx)
 {
    if (hasDynamicElements())
        return true;
 
-   // Grab out data before invalidating it
-   uint32_t bytes = byteLength();
-   uintptr_t oldPointer = uintptr_t(dataPointer());
-   JSObject *view = *GetViewList(this);
-   JSObject *viewListHead = view;
-
-   ObjectElements *header = AllocateArrayBufferContents(maybecx, bytes,
-                                                        reinterpret_cast<uint8_t*>(oldPointer));
-   if (!header)
+   ObjectElements *newHeader = AllocateArrayBufferContents(maybecx, byteLength(), dataPointer());
+   if (!newHeader)
        return false;
-   elements = header->elements();
-   setElementsHeader(getElementsHeader(), bytes);
 
-   // Update all views
-   uintptr_t newPointer = uintptr_t(dataPointer());
-   while (view) {
-       uintptr_t newDataPtr = uintptr_t(view->getPrivate()) - oldPointer + newPointer;
-       view->setPrivate(reinterpret_cast<uint8_t*>(newDataPtr));
-       view = NextView(view);
-   }
-
-   // Restore the list of views
-   *GetViewList(this) = viewListHead;
-
+   changeContents(newHeader);
    return true;
 }
 
@@ -1542,7 +1546,7 @@ class TypedArrayTemplate
     {
         JS_ASSERT(proto);
 
-        JSObject *obj = NewBuiltinClassInstance(cx, fastClass());
+        RootedObject obj(cx, NewBuiltinClassInstance(cx, fastClass()));
         if (!obj)
             return NULL;
 
@@ -1949,7 +1953,7 @@ class TypedArrayTemplate
     fromBuffer(JSContext *cx, HandleObject bufobj, int32_t byteOffsetInt, int32_t lengthInt,
                HandleObject proto)
     {
-        if (!ObjectClassIs(*bufobj, ESClass_ArrayBuffer, cx)) {
+        if (!ObjectClassIs(bufobj, ESClass_ArrayBuffer, cx)) {
             JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_TYPED_ARRAY_BAD_ARGS);
             return NULL; // must be arrayBuffer
         }
@@ -3184,7 +3188,6 @@ Class js::ArrayBufferClass = {
         ArrayBufferObject::obj_deleteElement,
         ArrayBufferObject::obj_deleteSpecial,
         ArrayBufferObject::obj_enumerate,
-        NULL,       /* typeOf          */
         NULL,       /* thisObject      */
     }
 };
@@ -3319,11 +3322,9 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
     NULL,                    /* hasInstance */                                 \
     _typedArray::obj_trace,  /* trace       */                                 \
     {                                                                          \
-        NULL,       /* equality    */                                          \
         NULL,       /* outerObject */                                          \
         NULL,       /* innerObject */                                          \
         NULL,       /* iteratorObject  */                                      \
-        NULL,       /* unused      */                                          \
         false,      /* isWrappedNative */                                      \
     },                                                                         \
     {                                                                          \
@@ -3356,7 +3357,6 @@ IMPL_TYPED_ARRAY_COMBINED_UNWRAPPERS(Float64, double, double)
         _typedArray::obj_deleteElement,                                        \
         _typedArray::obj_deleteSpecial,                                        \
         _typedArray::obj_enumerate,                                            \
-        NULL,                /* typeOf      */                                 \
         NULL,                /* thisObject  */                                 \
     }                                                                          \
 }

@@ -608,7 +608,7 @@ endif # LIBXUL_SDK
 
 prepare-package: stage-package
 
-make-package-internal: prepare-package make-sourcestamp-file
+make-package-internal: prepare-package make-sourcestamp-file make-buildinfo-file
 	@echo "Compressing..."
 	cd $(DIST) && $(MAKE_PACKAGE)
 
@@ -622,6 +622,15 @@ make-sourcestamp-file::
 	$(NSINSTALL) -D $(DIST)/$(PKG_PATH)
 	@echo "$(BUILDID)" > $(MOZ_SOURCESTAMP_FILE)
 	@echo "$(MOZ_SOURCE_REPO)/rev/$(MOZ_SOURCE_STAMP)" >> $(MOZ_SOURCESTAMP_FILE)
+
+.PHONY: make-buildinfo-file
+make-buildinfo-file:
+	$(PYTHON) $(MOZILLA_DIR)/toolkit/mozapps/installer/informulate.py \
+		$(MOZ_BUILDINFO_FILE) \
+		BUILDID=$(BUILDID) \
+		MOZ_SOURCE_REPO=$(MOZ_SOURCE_REPO) \
+		MOZ_SOURCE_STAMP=$(MOZ_SOURCE_STAMP) \
+		MOZ_PKG_PLATFORM=$(MOZ_PKG_PLATFORM)
 
 # The install target will install the application to prefix/lib/appname-version
 # In addition if INSTALL_SDK is set, it will install the development headers,
@@ -714,6 +723,14 @@ CHECKSUM_ALGORITHM_PARAM = -d sha512 -d md5 -d sha1
 CHECKSUM_FILE = "$(DIST)/$(PKG_PATH)/$(CHECKSUMS_FILE_BASENAME).checksums"
 CHECKSUM_FILES = $(CHECKSUM_FILE)
 
+ifeq (WINNT,$(OS_TARGET))
+UPLOAD_EXTRA_FILES += host/bin/mar.exe
+UPLOAD_EXTRA_FILES += host/bin/mbsdiff.exe
+else
+UPLOAD_EXTRA_FILES += host/bin/mar
+UPLOAD_EXTRA_FILES += host/bin/mbsdiff
+endif
+
 UPLOAD_FILES= \
   $(call QUOTED_WILDCARD,$(DIST)/$(PACKAGE)) \
   $(call QUOTED_WILDCARD,$(INSTALLER_PACKAGE)) \
@@ -724,6 +741,7 @@ UPLOAD_FILES= \
   $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(SYMBOL_ARCHIVE_BASENAME).zip) \
   $(call QUOTED_WILDCARD,$(DIST)/$(SDK)) \
   $(call QUOTED_WILDCARD,$(MOZ_SOURCESTAMP_FILE)) \
+  $(call QUOTED_WILDCARD,$(MOZ_BUILDINFO_FILE)) \
   $(call QUOTED_WILDCARD,$(PKG_JSSHELL)) \
   $(if $(UPLOAD_EXTRA_FILES), $(foreach f, $(UPLOAD_EXTRA_FILES), $(wildcard $(DIST)/$(f))))
 

@@ -358,8 +358,8 @@ public:
    * in aIsFocusable.
    */
   virtual bool IsHTMLFocusable(bool aWithMouse,
-                                 bool *aIsFocusable,
-                                 int32_t *aTabIndex);
+                               bool *aIsFocusable,
+                               int32_t *aTabIndex);
   virtual void PerformAccesskey(bool aKeyCausesActivation,
                                 bool aIsTrustedEvent);
 
@@ -1058,6 +1058,8 @@ public:
   virtual ~nsGenericHTMLFormElement();
 
   NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr);
+
+  nsINode* GetParentObject() const;
 
   virtual bool IsNodeOfType(uint32_t aFlags) const;
   virtual void SaveSubtreeState();
