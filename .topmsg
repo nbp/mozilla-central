@@ -1,3 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 841666 part 1 - Provide Double exponent range analysis. r=
-
+Subject: Bug 841666 - Use exponent over-estimation to truncate operations. r=
