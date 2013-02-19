@@ -1208,7 +1208,7 @@ MConstant::truncateOperation()
 {
     if (!value_.isDouble())
         return false;
-    
+
     // Truncate the double to int, since all uses truncates it.
     value_.setInt32(ToInt32(value_.toDouble()));
     setResultType(MIRType_Int32);
