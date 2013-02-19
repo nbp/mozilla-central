@@ -62,8 +62,8 @@ JSCompartment::JSCompartment(JSRuntime *rt)
     hold(false),
     isSystem(false),
     lastCodeRelease(0),
-    analysisLifoAlloc(LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
-    typeLifoAlloc(LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    analysisLifoAlloc(ANALYSIS_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
+    typeLifoAlloc(TYPE_LIFO_ALLOC_PRIMARY_CHUNK_SIZE),
     data(NULL),
     active(false),
     scheduledForDestruction(false),
@@ -122,7 +122,7 @@ JSCompartment::init(JSContext *cx)
     activeAnalysis = false;
     types.init(cx);
 
-    if (!crossCompartmentWrappers.init())
+    if (!crossCompartmentWrappers.init(0))
         return false;
 
     if (!regExps.init(cx))
@@ -135,7 +135,7 @@ JSCompartment::init(JSContext *cx)
     if (!enumerators)
         return false;
 
-    return debuggees.init();
+    return debuggees.init(0);
 }
 
 void
@@ -266,7 +266,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
         return true;
 
     if (vp.isString()) {
-        RootedString str(cx, vp.toString());
+        RawString str = vp.toString();
 
         /* If the string is already in this compartment, we are done. */
         if (str->zone() == zone())
@@ -329,7 +329,7 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
     if (WrapperMap::Ptr p = crossCompartmentWrappers.lookup(key)) {
         vp.set(p->value);
         if (vp.isObject()) {
-            RootedObject obj(cx, &vp.toObject());
+            RawObject obj = &vp.toObject();
             JS_ASSERT(obj->isCrossCompartmentWrapper());
             JS_ASSERT(obj->getParent() == global);
         }
@@ -337,11 +337,11 @@ JSCompartment::wrap(JSContext *cx, MutableHandleValue vp, HandleObject existingA
     }
 
     if (vp.isString()) {
-        Rooted<JSStableString *> str(cx, vp.toString()->ensureStable(cx));
+        Rooted<JSLinearString *> str(cx, vp.toString()->ensureLinear(cx));
         if (!str)
             return false;
 
-        RootedString wrapped(cx, js_NewStringCopyN<CanGC>(cx, str->chars().get(), str->length()));
+        UnrootedString wrapped = js_NewStringCopyN<CanGC>(cx, str->chars(), str->length());
         if (!wrapped)
             return false;
 

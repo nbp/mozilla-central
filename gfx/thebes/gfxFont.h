@@ -56,6 +56,7 @@ typedef struct hb_blob_t hb_blob_t;
 #define NO_FONT_LANGUAGE_OVERRIDE      0
 
 struct FontListSizes;
+struct gfxTextRunDrawCallbacks;
 
 struct THEBES_API gfxFontStyle {
     gfxFontStyle();
@@ -231,6 +232,9 @@ public:
     // "real" or user-friendly name, may be an internal identifier
     const nsString& Name() const { return mName; }
 
+    // family name
+    const nsString& FamilyName() const { return mFamilyName; }
+
     // The following two methods may be relatively expensive, as they
     // will (usually, except on Linux) load and parse the 'name' table;
     // they are intended only for the font-inspection API, not for
@@ -239,10 +243,6 @@ public:
     // The "real" name of the face, if available from the font resource;
     // returns Name() if nothing better is available.
     virtual nsString RealFaceName();
-
-    // The family name (if available) that would be used in css font-family
-    // properties; returns Name() if nothing better available.
-    virtual nsString FamilyName();
 
     uint16_t Weight() const { return mWeight; }
     int16_t Stretch() const { return mStretch; }
@@ -334,6 +334,7 @@ public:
                                      FontListSizes*    aSizes) const;
 
     nsString         mName;
+    nsString         mFamilyName;
 
     bool             mItalic      : 1;
     bool             mFixedPitch  : 1;
@@ -560,6 +561,7 @@ public:
         {
             aFontEntry->mIgnoreGDEF = true;
         }
+        aFontEntry->mFamilyName = Name();
         mAvailableFonts.AppendElement(aFontEntry);
     }
 
@@ -1432,7 +1434,8 @@ public:
      */
     virtual void Draw(gfxTextRun *aTextRun, uint32_t aStart, uint32_t aEnd,
                       gfxContext *aContext, DrawMode aDrawMode, gfxPoint *aBaselineOrigin,
-                      Spacing *aSpacing, gfxTextObjectPaint *aObjectPaint);
+                      Spacing *aSpacing, gfxTextObjectPaint *aObjectPaint,
+                      gfxTextRunDrawCallbacks *aCallbacks);
 
     /**
      * Measure a run of characters. See gfxTextRun::Metrics.
@@ -1768,6 +1771,10 @@ protected:
 
     bool RenderSVGGlyph(gfxContext *aContext, gfxPoint aPoint, DrawMode aDrawMode,
                         uint32_t aGlyphId, gfxTextObjectPaint *aObjectPaint);
+    bool RenderSVGGlyph(gfxContext *aContext, gfxPoint aPoint, DrawMode aDrawMode,
+                        uint32_t aGlyphId, gfxTextObjectPaint *aObjectPaint,
+                        gfxTextRunDrawCallbacks *aCallbacks,
+                        bool& aEmittedGlyphs);
 
     // Bug 674909. When synthetic bolding text by drawing twice, need to
     // render using a pixel offset in device pixels, otherwise text
@@ -2403,6 +2410,45 @@ private:
 };
 
 /**
+ * Callback for Draw() to use when drawing text with mode
+ * gfxFont::GLYPH_PATH.
+ */
+struct gfxTextRunDrawCallbacks {
+
+    /**
+     * Constructs a new DrawCallbacks object.
+     *
+     * @param aShouldPaintSVGGlyphs If true, SVG glyphs will be
+     *   painted and the NotifyBeforeSVGGlyphPainted/NotifyAfterSVGGlyphPainted
+     *   callbacks will be invoked for each SVG glyph.  If false, SVG glyphs
+     *   will not be painted; fallback plain glyphs are not emitted either.
+     */
+    gfxTextRunDrawCallbacks(bool aShouldPaintSVGGlyphs = false)
+      : mShouldPaintSVGGlyphs(aShouldPaintSVGGlyphs)
+    {
+    }
+
+    /**
+     * Called when a path has been emitted to the gfxContext when
+     * painting a text run.  This can be called any number of times,
+     * due to partial ligatures and intervening SVG glyphs.
+     */
+    virtual void NotifyGlyphPathEmitted() = 0;
+
+    /**
+     * Called just before an SVG glyph has been painted to the gfxContext.
+     */
+    virtual void NotifyBeforeSVGGlyphPainted() { }
+
+    /**
+     * Called just after an SVG glyph has been painted to the gfxContext.
+     */
+    virtual void NotifyAfterSVGGlyphPainted() { }
+
+    bool mShouldPaintSVGGlyphs;
+};
+
+/**
  * gfxTextRun is an abstraction for drawing and measuring substrings of a run
  * of text. It stores runs of positioned glyph data, each run having a single
  * gfxFont. The glyphs are associated with a string of source text, and the
@@ -2556,22 +2602,6 @@ public:
     };
 
     /**
-     * Callback for Draw() to use when drawing text with mode
-     * gfxFont::GLYPH_PATH.
-     */
-    struct DrawCallbacks {
-
-        /**
-         * Called when a path has been emitted to the gfxContext when
-         * painting a text run.  This can be called up to three times:
-         * once for any partial ligature at the beginning of the text run,
-         * once for the main run of glyphs, and once for any partial ligature
-         * at the end of the text run.
-         */
-        virtual void NotifyGlyphPathEmitted() = 0;
-    };
-
-    /**
      * Draws a substring. Uses only GetSpacing from aBreakProvider.
      * The provided point is the baseline origin on the left of the string
      * for LTR, on the right of the string for RTL.
@@ -2597,7 +2627,7 @@ public:
               uint32_t aStart, uint32_t aLength,
               PropertyProvider *aProvider,
               gfxFloat *aAdvanceWidth, gfxTextObjectPaint *aObjectPaint,
-              DrawCallbacks *aCallbacks = nullptr);
+              gfxTextRunDrawCallbacks *aCallbacks = nullptr);
 
     /**
      * Computes the ReflowMetrics for a substring.
@@ -2991,7 +3021,7 @@ private:
     void DrawPartialLigature(gfxFont *aFont, gfxContext *aCtx,
                              uint32_t aStart, uint32_t aEnd, gfxPoint *aPt,
                              PropertyProvider *aProvider,
-                             DrawCallbacks *aCallbacks);
+                             gfxTextRunDrawCallbacks *aCallbacks);
     // Advance aStart to the start of the nearest ligature; back up aEnd
     // to the nearest ligature end; may result in *aStart == *aEnd
     void ShrinkToLigatureBoundaries(uint32_t *aStart, uint32_t *aEnd);
@@ -3017,7 +3047,8 @@ private:
                     gfxFont::DrawMode aDrawMode, gfxPoint *aPt,
                     gfxTextObjectPaint *aObjectPaint, uint32_t aStart,
                     uint32_t aEnd, PropertyProvider *aProvider,
-                    uint32_t aSpacingStart, uint32_t aSpacingEnd);
+                    uint32_t aSpacingStart, uint32_t aSpacingEnd,
+                    gfxTextRunDrawCallbacks *aCallbacks);
 
     // XXX this should be changed to a GlyphRun plus a maybe-null GlyphRun*,
     // for smaller size especially in the super-common one-glyphrun case
@@ -3074,19 +3105,6 @@ public:
                      "Requesting a font index that doesn't exist");
 
         return mFonts[i].Font();
-    }
-
-    // Return the family name of the primary font in the group.
-    // Note that gfxPangoFontGroup (for the Linux/Fontconfig backend),
-    // which does not have gfxFontFamily objects, must override this.
-    virtual nsString GetFamilyNameAt(int32_t i) {
-        NS_ASSERTION(!mUserFontSet || mCurrGeneration == GetGeneration(),
-                     "Whoever was caching this font group should have "
-                     "called UpdateFontList on it");
-        NS_ASSERTION(mFonts.Length() > uint32_t(i) && mFonts[i].Family(),
-                     "No fonts in the group!");
-
-        return mFonts[i].Family()->Name();
     }
 
     uint32_t FontListLength() const {

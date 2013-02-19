@@ -460,6 +460,7 @@ nsSVGOuterSVGFrame::Reflow(nsPresContext*           aPresContext,
 
     // Update the mRects and visual overflow rects of all our descendants,
     // including our anonymous wrapper kid:
+    anonKid->AddStateBits(mState & NS_FRAME_IS_DIRTY);
     anonKid->ReflowSVG();
     NS_ABORT_IF_FALSE(!anonKid->GetNextSibling(),
       "We should have one anonymous child frame wrapping our real children");
@@ -626,7 +627,7 @@ nsDisplayOuterSVG::ComputeInvalidationRegion(nsDisplayListBuilder* aBuilder,
 static inline bool
 DependsOnIntrinsicSize(const nsIFrame* aEmbeddingFrame)
 {
-  const nsStylePosition *pos = aEmbeddingFrame->GetStylePosition();
+  const nsStylePosition *pos = aEmbeddingFrame->StylePosition();
   const nsStyleCoord &width = pos->mWidth;
   const nsStyleCoord &height = pos->mHeight;
 
@@ -687,17 +688,16 @@ nsSVGOuterSVGFrame::AttributeChanged(int32_t  aNameSpaceID,
 //----------------------------------------------------------------------
 // painting
 
-NS_IMETHODIMP
+void
 nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
                                      const nsRect&           aDirtyRect,
                                      const nsDisplayListSet& aLists)
 {
   if (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) {
-    return NS_OK;
+    return;
   }
 
-  nsresult rv = DisplayBorderBackgroundOutline(aBuilder, aLists);
-  NS_ENSURE_SUCCESS(rv, rv);
+  DisplayBorderBackgroundOutline(aBuilder, aLists);
 
   nsDisplayList childItems;
 
@@ -707,13 +707,10 @@ nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     nsDisplayList *nonContentList = &childItems;
     nsDisplayListSet set(nonContentList, nonContentList, nonContentList,
                          &childItems, nonContentList, nonContentList);
-    nsresult rv =
-      BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, set);
-    NS_ENSURE_SUCCESS(rv, rv);
+    BuildDisplayListForNonBlockChildren(aBuilder, aDirtyRect, set);
   } else {
-    rv = childItems.AppendNewToTop(
-           new (aBuilder) nsDisplayOuterSVG(aBuilder, this));
-    NS_ENSURE_SUCCESS(rv, rv);
+    childItems.AppendNewToTop(
+      new (aBuilder) nsDisplayOuterSVG(aBuilder, this));
   }
 
   // Clip to our _content_ box:
@@ -721,12 +718,9 @@ nsSVGOuterSVGFrame::BuildDisplayList(nsDisplayListBuilder*   aBuilder,
     GetContentRectRelativeToSelf() + aBuilder->ToReferenceFrame(this);
   nsDisplayClip* item =
     new (aBuilder) nsDisplayClip(aBuilder, this, &childItems, clipRect);
-  rv = childItems.AppendNewToTop(item);
-  NS_ENSURE_SUCCESS(rv, rv);
+  childItems.AppendNewToTop(item);
 
   WrapReplacedContentForBorderRadius(aBuilder, &childItems, aLists);
-
-  return NS_OK;
 }
 
 nsSplittableType
