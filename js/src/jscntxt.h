@@ -593,6 +593,12 @@ struct JSRuntime : js::RuntimeFriendFields,
     /* List of compartments (protected by the GC lock). */
     js::CompartmentVector compartments;
 
+    /* Locale-specific callbacks for string conversion. */
+    JSLocaleCallbacks *localeCallbacks;
+
+    /* Default locale for Internationalization API */
+    char *defaultLocale;
+
     /* See comment for JS_AbortIfWrongThread in jsapi.h. */
 #ifdef JS_THREADSAFE
   public:
@@ -676,6 +682,10 @@ struct JSRuntime : js::RuntimeFriendFields,
         return ionRuntime_ ? ionRuntime_ : createIonRuntime(cx);
     }
 
+    //-------------------------------------------------------------------------
+    // Self-hosting support
+    //-------------------------------------------------------------------------
+
     bool initSelfHosting(JSContext *cx);
     void markSelfHostingGlobal(JSTracer *trc);
     bool isSelfHostingGlobal(js::HandleObject global) {
@@ -685,6 +695,25 @@ struct JSRuntime : js::RuntimeFriendFields,
                                        js::Handle<JSFunction*> targetFun);
     bool cloneSelfHostedValue(JSContext *cx, js::Handle<js::PropertyName*> name,
                               js::MutableHandleValue vp);
+
+    //-------------------------------------------------------------------------
+    // Locale information
+    //-------------------------------------------------------------------------
+
+    /*
+     * Set the default locale for the ECMAScript Internationalization API
+     * (Intl.Collator, Intl.NumberFormat, Intl.DateTimeFormat).
+     * Note that the Internationalization API encourages clients to
+     * specify their own locales.
+     * The locale string remains owned by the caller.
+     */
+    bool setDefaultLocale(const char *locale);
+
+    /* Reset the default locale to OS defaults. */
+    void resetDefaultLocale();
+
+    /* Gets current default locale. String remains owned by context. */
+    const char *getDefaultLocale();
 
     /* Base address of the native stack for the current thread. */
     uintptr_t           nativeStackBase;
@@ -1137,6 +1166,7 @@ struct JSRuntime : js::RuntimeFriendFields,
     js::PreserveWrapperCallback            preserveWrapperCallback;
 
     js::ScriptFilenameTable scriptFilenameTable;
+    js::ScriptDataTable scriptDataTable;
 
 #ifdef DEBUG
     size_t              noGCOrAllocationCheck;
@@ -1369,29 +1399,8 @@ struct JSContext : js::ContextFriendFields,
     /* Per-context options. */
     unsigned            options_;            /* see jsapi.h for JSOPTION_* */
 
-    /* Default locale for Internationalization API */
-    char                *defaultLocale;
-
   public:
     int32_t             reportGranularity;  /* see jsprobes.h */
-
-    /*
-     * Set the default locale for the ECMAScript Internationalization API
-     * (Intl.Collator, Intl.NumberFormat, Intl.DateTimeFormat).
-     * Note that the Internationalization API encourages clients to
-     * specify their own locales.
-     * The locale string remains owned by the caller.
-     */
-    bool setDefaultLocale(const char *locale);
-
-    /* Reset the default locale to OS defaults. */
-    void resetDefaultLocale();
-
-    /* Gets current default locale. String remains owned by context. */
-    const char *getDefaultLocale();
-
-    /* Locale specific callbacks for string conversion. */
-    JSLocaleCallbacks   *localeCallbacks;
 
     js::AutoResolving   *resolvingList;
 
@@ -2233,16 +2242,16 @@ class RuntimeAllocPolicy
  */
 class ContextAllocPolicy
 {
-    JSContext *const cx;
+    JSContext *const cx_;
 
   public:
-    ContextAllocPolicy(JSContext *cx) : cx(cx) {}
-    JSContext *context() const { return cx; }
-    void *malloc_(size_t bytes) { return cx->malloc_(bytes); }
-    void *calloc_(size_t bytes) { return cx->calloc_(bytes); }
-    void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx->realloc_(p, oldBytes, bytes); }
+    ContextAllocPolicy(JSContext *cx) : cx_(cx) {}
+    JSContext *context() const { return cx_; }
+    void *malloc_(size_t bytes) { return cx_->malloc_(bytes); }
+    void *calloc_(size_t bytes) { return cx_->calloc_(bytes); }
+    void *realloc_(void *p, size_t oldBytes, size_t bytes) { return cx_->realloc_(p, oldBytes, bytes); }
     void free_(void *p) { js_free(p); }
-    void reportAllocOverflow() const { js_ReportAllocationOverflow(cx); }
+    void reportAllocOverflow() const { js_ReportAllocationOverflow(cx_); }
 };
 
 JSBool intrinsic_ThrowError(JSContext *cx, unsigned argc, Value *vp);

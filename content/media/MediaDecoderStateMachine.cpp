@@ -987,28 +987,42 @@ void MediaDecoderStateMachine::AudioLoop()
   bool preservesPitch;
   bool setPreservesPitch;
   int32_t minWriteFrames = -1;
+  AudioChannelType audioChannelType;
+
   {
     ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
     mAudioCompleted = false;
     audioStartTime = mAudioStartTime;
+    NS_ASSERTION(audioStartTime != -1, "Should have audio start time by now");
     channels = mInfo.mAudioChannels;
     rate = mInfo.mAudioRate;
-    NS_ASSERTION(audioStartTime != -1, "Should have audio start time by now");
 
-    mAudioStream = AudioStream::AllocateStream();
-    mAudioStream->Init(channels, rate, mDecoder->GetAudioChannelType());
-
+    audioChannelType = mDecoder->GetAudioChannelType();
     volume = mVolume;
-    mAudioStream->SetVolume(volume);
     preservesPitch = mPreservesPitch;
-    mAudioStream->SetPreservesPitch(preservesPitch);
     playbackRate = mPlaybackRate;
+  }
+
+  {
+    // AudioStream initialization can block for extended periods in unusual
+    // circumstances, so we take care to drop the decoder monitor while
+    // initializing.
+    nsAutoPtr<AudioStream> audioStream(AudioStream::AllocateStream());
+    audioStream->Init(channels, rate, audioChannelType);
+    audioStream->SetVolume(volume);
+    audioStream->SetPreservesPitch(preservesPitch);
     if (playbackRate != 1.0) {
       NS_ASSERTION(playbackRate != 0,
-          "Don't set the playbackRate to 0 on an AudioStream.");
-      mAudioStream->SetPlaybackRate(playbackRate);
+                   "Don't set the playbackRate to 0 on an AudioStream.");
+      audioStream->SetPlaybackRate(playbackRate);
+    }
+
+    {
+      ReentrantMonitorAutoEnter mon(mDecoder->GetReentrantMonitor());
+      mAudioStream = audioStream;
     }
   }
+
   while (1) {
     // Wait while we're not playing, and we're not shutting down, or we're
     // playing and we've got no audio to play.
@@ -2291,11 +2305,8 @@ int64_t MediaDecoderStateMachine::GetVideoStreamPosition()
 
   int64_t pos = DurationToUsecs(TimeStamp::Now() - mPlayStartTime) + mPlayDuration;
   pos -= mBasePosition;
-  if (pos >= 0) {
-    int64_t final = mBasePosition + pos * mPlaybackRate + mStartTime;
-    return final;
-  }
-  return mPlayDuration + mStartTime;
+  NS_ASSERTION(pos >= 0, "Video stream position should be positive.");
+  return mBasePosition + pos * mPlaybackRate + mStartTime;
 }
 
 int64_t MediaDecoderStateMachine::GetClock() {
@@ -2754,12 +2765,14 @@ void MediaDecoderStateMachine::SetPlaybackRate(double aPlaybackRate)
   // Get position of the last time we changed the rate.
   if (!HasAudio()) {
     // mBasePosition is a position in the video stream, not an absolute time.
-    mBasePosition = GetVideoStreamPosition();
-    if (IsPlaying()) {
-      mPlayDuration = mBasePosition - mStartTime;
-      mResetPlayStartTime = true;
-      mPlayStartTime = TimeStamp::Now();
+    if (mState == DECODER_STATE_SEEKING) {
+      mBasePosition = mSeekTime;
+    } else {
+      mBasePosition = GetVideoStreamPosition();
     }
+    mPlayDuration = mBasePosition - mStartTime;
+    mResetPlayStartTime = true;
+    mPlayStartTime = TimeStamp::Now();
   }
 
   mPlaybackRate = aPlaybackRate;

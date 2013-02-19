@@ -125,7 +125,16 @@ nsStyleSet::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
     if (mRuleProcessors[i]) {
       n += mRuleProcessors[i]->SizeOfIncludingThis(aMallocSizeOf);
     }
+    n += mSheets[i].SizeOfExcludingThis(nullptr, aMallocSizeOf);
   }
+
+  for (uint32_t i = 0; i < mScopedDocSheetRuleProcessors.Length(); i++) {
+    n += mScopedDocSheetRuleProcessors[i]->SizeOfIncludingThis(aMallocSizeOf);
+  }
+  n += mScopedDocSheetRuleProcessors.SizeOfExcludingThis(aMallocSizeOf);
+
+  n += mRoots.SizeOfExcludingThis(aMallocSizeOf);
+  n += mOldRuleTrees.SizeOfExcludingThis(aMallocSizeOf);
 
   return n;
 }
@@ -153,7 +162,7 @@ nsStyleSet::BeginReconstruct()
 
   // Create a new rule tree root
   nsRuleNode* newTree =
-    nsRuleNode::CreateRootNode(mRuleTree->GetPresContext());
+    nsRuleNode::CreateRootNode(mRuleTree->PresContext());
   if (!newTree)
     return NS_ERROR_OUT_OF_MEMORY;
 
@@ -180,7 +189,7 @@ nsStyleSet::EndReconstruct()
   mInReconstruct = false;
 #ifdef DEBUG
   for (int32_t i = mRoots.Length() - 1; i >= 0; --i) {
-    nsRuleNode *n = mRoots[i]->GetRuleNode();
+    nsRuleNode *n = mRoots[i]->RuleNode();
     while (n->GetParent()) {
       n = n->GetParent();
     }
@@ -799,12 +808,12 @@ nsStyleSet::GetContext(nsStyleContext* aParentContext,
     nsIStyleRule *oldAnimRule = GetAnimationRule(aRuleNode);
     nsIStyleRule *animRule = PresContext()->AnimationManager()->
       CheckAnimationRule(result, aElementForAnimation);
-    NS_ABORT_IF_FALSE(result->GetRuleNode() == aRuleNode,
+    NS_ABORT_IF_FALSE(result->RuleNode() == aRuleNode,
                       "unexpected rule node");
     NS_ABORT_IF_FALSE(!result->GetStyleIfVisited() == !aVisitedRuleNode,
                       "unexpected visited rule node");
     NS_ABORT_IF_FALSE(!aVisitedRuleNode ||
-                      result->GetStyleIfVisited()->GetRuleNode() ==
+                      result->GetStyleIfVisited()->RuleNode() ==
                         aVisitedRuleNode,
                       "unexpected visited rule node");
     if (oldAnimRule != animRule) {
@@ -825,7 +834,7 @@ nsStyleSet::GetContext(nsStyleContext* aParentContext,
     nsIDocument* doc = aElementForAnimation->GetCurrentDoc();
     if (doc && doc->GetBodyElement() == aElementForAnimation) {
       // Update the prescontext's body color
-      PresContext()->SetBodyTextColor(result->GetStyleColor()->mColor);
+      PresContext()->SetBodyTextColor(result->StyleColor()->mColor);
     }
   }
 
@@ -1221,7 +1230,7 @@ nsStyleSet::ResolveStyleByAddingRules(nsStyleContext* aBaseContext,
   NS_ENSURE_FALSE(mInShutdown, nullptr);
 
   nsRuleWalker ruleWalker(mRuleTree);
-  ruleWalker.SetCurrentNode(aBaseContext->GetRuleNode());
+  ruleWalker.SetCurrentNode(aBaseContext->RuleNode());
   // FIXME: Perhaps this should be passed in, but it probably doesn't
   // matter.
   ruleWalker.SetLevel(eDocSheet, false, false);
@@ -1233,7 +1242,7 @@ nsStyleSet::ResolveStyleByAddingRules(nsStyleContext* aBaseContext,
   nsRuleNode *visitedRuleNode = nullptr;
 
   if (aBaseContext->GetStyleIfVisited()) {
-    ruleWalker.SetCurrentNode(aBaseContext->GetStyleIfVisited()->GetRuleNode());
+    ruleWalker.SetCurrentNode(aBaseContext->GetStyleIfVisited()->RuleNode());
     for (int32_t i = 0; i < aRules.Count(); i++) {
       ruleWalker.ForwardOnPossiblyCSSRule(aRules.ObjectAt(i));
     }
@@ -1390,8 +1399,8 @@ nsStyleSet::ProbePseudoElementStyle(Element* aParentElement,
   if (result &&
       (pseudoTag == nsCSSPseudoElements::before ||
        pseudoTag == nsCSSPseudoElements::after)) {
-    const nsStyleDisplay *display = result->GetStyleDisplay();
-    const nsStyleContent *content = result->GetStyleContent();
+    const nsStyleDisplay *display = result->StyleDisplay();
+    const nsStyleContent *content = result->StyleContent();
     // XXXldb What is contentCount for |content: ""|?
     if (display->mDisplay == NS_STYLE_DISPLAY_NONE ||
         content->ContentCount() == 0) {
@@ -1629,8 +1638,7 @@ SkipAnimationRules(nsRuleNode* aRuleNode, Element* aElement, bool isPseudo)
     // nsTransitionManager::WalkTransitionRule and
     // nsAnimationManager::GetAnimationRule would.
     nsRestyleHint hint = isPseudo ? eRestyle_Subtree : eRestyle_Self;
-    aRuleNode->GetPresContext()->PresShell()->RestyleForAnimation(aElement,
-                                                                  hint);
+    aRuleNode->PresContext()->PresShell()->RestyleForAnimation(aElement, hint);
   }
   return ruleNode;
 }
@@ -1654,7 +1662,7 @@ nsStyleSet::ReparentStyleContext(nsStyleContext* aStyleContext,
 
   nsIAtom* pseudoTag = aStyleContext->GetPseudo();
   nsCSSPseudoElements::Type pseudoType = aStyleContext->GetPseudoType();
-  nsRuleNode* ruleNode = aStyleContext->GetRuleNode();
+  nsRuleNode* ruleNode = aStyleContext->RuleNode();
 
   // Skip transition rules as needed just like
   // nsTransitionManager::WalkTransitionRule would.
@@ -1677,7 +1685,7 @@ nsStyleSet::ReparentStyleContext(nsStyleContext* aStyleContext,
   // particular, it doesn't change whether this is a style context for
   // a link.
   if (visitedContext) {
-     visitedRuleNode = visitedContext->GetRuleNode();
+     visitedRuleNode = visitedContext->RuleNode();
      // Again, skip transition rules as needed
      if (skipAnimationRules) {
       // FIXME do something here for animations?
@@ -1821,6 +1829,11 @@ nsStyleSet::MediumFeaturesChanged(nsPresContext* aPresContext)
     if (!processor) {
       continue;
     }
+    bool thisChanged = processor->MediumFeaturesChanged(aPresContext);
+    stylesChanged = stylesChanged || thisChanged;
+  }
+  for (uint32_t i = 0; i < mScopedDocSheetRuleProcessors.Length(); ++i) {
+    nsIStyleRuleProcessor *processor = mScopedDocSheetRuleProcessors[i];
     bool thisChanged = processor->MediumFeaturesChanged(aPresContext);
     stylesChanged = stylesChanged || thisChanged;
   }

@@ -167,6 +167,12 @@ var BrowserApp = {
   _tabs: [],
   _selectedTab: null,
 
+  get isTablet() {
+    let sysInfo = Cc["@mozilla.org/system-info;1"].getService(Ci.nsIPropertyBag2);
+    delete this.isTablet;
+    return this.isTablet = sysInfo.get("tablet");
+  },
+
   deck: null,
 
   startup: function startup() {
@@ -279,15 +285,7 @@ var BrowserApp = {
     let status = this.startupStatus();
     if (pinned) {
       WebAppRT.init(status, url, function(aUrl) {
-        if (aUrl) {
-          BrowserApp.addTab(aUrl);
-        } else {
-          let uri = Services.io.newURI(url, null, null);
-          if (!uri)
-            return;
-          Cc["@mozilla.org/uriloader/external-protocol-service;1"].getService(Ci.nsIExternalProtocolService).getProtocolHandlerInfo(uri.scheme).launchWithURI(uri);
-          BrowserApp.quit();
-        }
+        BrowserApp.addTab(aUrl);
       });
     } else {
       SearchEngines.init();
@@ -1081,9 +1079,11 @@ var BrowserApp = {
 
   scrollToFocusedInput: function(aBrowser, aAllowZoom = true) {
     let focused = this.getFocusedInput(aBrowser);
+
     if (focused) {
-      // _zoomToElement will handle not sending any message if this input is already mostly filling the screen
-      BrowserEventHandler._zoomToElement(focused, -1, false, aAllowZoom);
+       // _zoomToElement will handle not sending any message if this input is already mostly filling the screen
+      BrowserEventHandler._zoomToElement(focused, -1, false,
+          aAllowZoom && !this.isTablet && !ViewportHandler.getViewportMetadata(aBrowser.contentWindow).isSpecified);
     }
   },
 
@@ -1318,6 +1318,13 @@ var NativeWindow = {
       type: "Dex:Load",
       zipfile: zipFile,
       impl: implClass || "Main"
+    });
+  },
+
+  unloadDex: function(zipFile) {
+    sendMessageToJava({
+      type: "Dex:Unload",
+      zipfile: zipFile
     });
   },
 
@@ -2831,9 +2838,16 @@ Tab.prototype = {
       uri = Services.io.newURI(aURL, null, null).spec;
     } catch (e) {}
 
+    // When the tab is stubbed from Java, there's a window between the stub
+    // creation and the tab creation in Gecko where the stub could be removed
+    // (which is easiest to hit during startup).  We need to differentiate
+    // between tab stubs from Java and new tabs from Gecko to prevent breakage.
+    let stub = false;
+
     if (!aParams.zombifying) {
       if ("tabID" in aParams) {
         this.id = aParams.tabID;
+        stub = true;
       } else {
         let jni = new JNI();
         let cls = jni.findClass("org/mozilla/gecko/Tabs");
@@ -2854,7 +2868,8 @@ Tab.prototype = {
         title: title,
         delayLoad: aParams.delayLoad || false,
         desktopMode: this.desktopMode,
-        isPrivate: isPrivate
+        isPrivate: isPrivate,
+        stub: stub
       };
       sendMessageToJava(message);
 
@@ -3003,6 +3018,7 @@ Tab.prototype = {
     BrowserApp.deck.selectedPanel = selectedPanel;
 
     this.browser = null;
+    this.savedArticle = null;
   },
 
   // This should be called to update the browser when the tab gets selected/unselected
@@ -3761,13 +3777,13 @@ Tab.prototype = {
       aMetadata.minZoom = aMetadata.maxZoom = NaN;
     }
 
-    let scaleRatio = aMetadata.scaleRatio = ViewportHandler.getScaleRatio();
+    let scaleRatio = aMetadata.scaleRatio;
 
-    if ("defaultZoom" in aMetadata && aMetadata.defaultZoom > 0)
+    if (aMetadata.defaultZoom > 0)
       aMetadata.defaultZoom *= scaleRatio;
-    if ("minZoom" in aMetadata && aMetadata.minZoom > 0)
+    if (aMetadata.minZoom > 0)
       aMetadata.minZoom *= scaleRatio;
-    if ("maxZoom" in aMetadata && aMetadata.maxZoom > 0)
+    if (aMetadata.maxZoom > 0)
       aMetadata.maxZoom *= scaleRatio;
 
     ViewportHandler.setMetadataForDocument(this.browser.contentDocument, aMetadata);
@@ -3793,13 +3809,8 @@ Tab.prototype = {
 
     let metadata = this.metadata;
     if (metadata.autoSize) {
-      if ("scaleRatio" in metadata) {
-        viewportW = screenW / metadata.scaleRatio;
-        viewportH = screenH / metadata.scaleRatio;
-      } else {
-        viewportW = screenW;
-        viewportH = screenH;
-      }
+      viewportW = screenW / metadata.scaleRatio;
+      viewportH = screenH / metadata.scaleRatio;
     } else {
       viewportW = metadata.width;
       viewportH = metadata.height;
@@ -3875,12 +3886,13 @@ Tab.prototype = {
   },
 
   sendViewportMetadata: function sendViewportMetadata() {
+    let metadata = this.metadata;
     sendMessageToJava({
       type: "Tab:ViewportMetadata",
-      allowZoom: this.metadata.allowZoom,
-      defaultZoom: this.metadata.defaultZoom || 0,
-      minZoom: this.metadata.minZoom || 0,
-      maxZoom: this.metadata.maxZoom || 0,
+      allowZoom: metadata.allowZoom,
+      defaultZoom: metadata.defaultZoom || metadata.scaleRatio,
+      minZoom: metadata.minZoom,
+      maxZoom: metadata.maxZoom,
       tabID: this.id
     });
   },
@@ -4266,14 +4278,14 @@ var BrowserEventHandler = {
   /* Zoom to an element, optionally keeping a particular part of it
    * in view if it is really tall.
    */
-  _zoomToElement: function(aElement, aClickY = -1, aCanZoomOut = true, aCanZoomIn = true) {
+  _zoomToElement: function(aElement, aClickY = -1, aCanZoomOut = true, aCanScrollHorizontally = true) {
     const margin = 15;
     let rect = ElementTouchHelper.getBoundingContentRect(aElement);
 
     let viewport = BrowserApp.selectedTab.getViewport();
-    let bRect = new Rect(aCanZoomIn ? Math.max(viewport.cssPageLeft, rect.x - margin) : viewport.cssPageLeft,
+    let bRect = new Rect(aCanScrollHorizontally ? Math.max(viewport.cssPageLeft, rect.x - margin) : viewport.cssX,
                          rect.y,
-                         aCanZoomIn ? rect.w + 2 * margin : viewport.cssWidth,
+                         aCanScrollHorizontally ? rect.w + 2 * margin : viewport.cssWidth,
                          rect.h);
     // constrict the rect to the screen's right edge
     bRect.width = Math.min(bRect.width, viewport.cssPageRight - bRect.x);
@@ -5447,14 +5459,7 @@ var ViewportHandler = {
   },
 
   /**
-   * Returns an object with the page's preferred viewport properties:
-   *   defaultZoom (optional float): The initial scale when the page is loaded.
-   *   minZoom (optional float): The minimum zoom level.
-   *   maxZoom (optional float): The maximum zoom level.
-   *   width (optional int): The CSS viewport width in px.
-   *   height (optional int): The CSS viewport height in px.
-   *   autoSize (boolean): Resize the CSS viewport when the window resizes.
-   *   allowZoom (boolean): Let the user zoom in or out.
+   * Returns the ViewportMetadata object.
    */
   getViewportMetadata: function getViewportMetadata(aWindow) {
     let windowUtils = aWindow.QueryInterface(Ci.nsIInterfaceRequestor).getInterface(Ci.nsIDOMWindowUtils);
@@ -5465,6 +5470,7 @@ var ViewportHandler = {
 
     // Note: These values will be NaN if parseFloat or parseInt doesn't find a number.
     // Remember that NaN is contagious: Math.max(1, NaN) == Math.min(1, NaN) == NaN.
+    let hasMetaViewport = true;
     let scale = parseFloat(windowUtils.getDocumentMetadata("viewport-initial-scale"));
     let minScale = parseFloat(windowUtils.getDocumentMetadata("viewport-minimum-scale"));
     let maxScale = parseFloat(windowUtils.getDocumentMetadata("viewport-maximum-scale"));
@@ -5485,13 +5491,24 @@ var ViewportHandler = {
     if (isNaN(scale) && isNaN(minScale) && isNaN(maxScale) && allowZoomStr == "" && widthStr == "" && heightStr == "") {
       // Only check for HandheldFriendly if we don't have a viewport meta tag
       let handheldFriendly = windowUtils.getDocumentMetadata("HandheldFriendly");
-      if (handheldFriendly == "true")
-        return { defaultZoom: 1, autoSize: true, allowZoom: true };
+      if (handheldFriendly == "true") {
+        return new ViewportMetadata({
+          defaultZoom: 1,
+          autoSize: true,
+          allowZoom: true
+        });
+      }
 
       let doctype = aWindow.document.doctype;
-      if (doctype && /(WAP|WML|Mobile)/.test(doctype.publicId))
-        return { defaultZoom: 1, autoSize: true, allowZoom: true };
+      if (doctype && /(WAP|WML|Mobile)/.test(doctype.publicId)) {
+        return new ViewportMetadata({
+          defaultZoom: 1,
+          autoSize: true,
+          allowZoom: true
+        });
+      }
 
+      hasMetaViewport = false;
       let defaultZoom = Services.prefs.getIntPref("browser.viewport.defaultZoom");
       if (defaultZoom >= 0) {
         scale = defaultZoom / 1000;
@@ -5509,15 +5526,16 @@ var ViewportHandler = {
                   (!widthStr && (heightStr == "device-height" || scale == 1.0)));
     }
 
-    return {
+    return new ViewportMetadata({
       defaultZoom: scale,
       minZoom: minScale,
       maxZoom: maxScale,
       width: width,
       height: height,
       autoSize: autoSize,
-      allowZoom: allowZoom
-    };
+      allowZoom: allowZoom,
+      isSpecified: hasMetaViewport
+    });
   },
 
   clamp: function(num, min, max) {
@@ -5552,7 +5570,7 @@ var ViewportHandler = {
    * metadata is available for that document.
    */
   getMetadataForDocument: function getMetadataForDocument(aDocument) {
-    let metadata = this._metadata.get(aDocument, this.getDefaultMetadata());
+    let metadata = this._metadata.get(aDocument, new ViewportMetadata());
     return metadata;
   },
 
@@ -5562,17 +5580,47 @@ var ViewportHandler = {
       this._metadata.delete(aDocument);
     else
       this._metadata.set(aDocument, aMetadata);
-  },
-
-  /** Returns the default viewport metadata for a document. */
-  getDefaultMetadata: function getDefaultMetadata() {
-    return {
-      autoSize: false,
-      allowZoom: true,
-      scaleRatio: ViewportHandler.getScaleRatio()
-    };
   }
+
 };
+
+/**
+ * An object which represents the page's preferred viewport properties:
+ *   width (int): The CSS viewport width in px.
+ *   height (int): The CSS viewport height in px.
+ *   defaultZoom (float): The initial scale when the page is loaded.
+ *   minZoom (float): The minimum zoom level.
+ *   maxZoom (float): The maximum zoom level.
+ *   autoSize (boolean): Resize the CSS viewport when the window resizes.
+ *   allowZoom (boolean): Let the user zoom in or out.
+ *   isSpecified (boolean): Whether the page viewport is specified or not.
+ *   scaleRatio (float): The device-pixel-to-CSS-px ratio.
+ */
+function ViewportMetadata(aMetadata = {}) {
+  this.width = ("width" in aMetadata) ? aMetadata.width : 0;
+  this.height = ("height" in aMetadata) ? aMetadata.height : 0;
+  this.defaultZoom = ("defaultZoom" in aMetadata) ? aMetadata.defaultZoom : 0;
+  this.minZoom = ("minZoom" in aMetadata) ? aMetadata.minZoom : 0;
+  this.maxZoom = ("maxZoom" in aMetadata) ? aMetadata.maxZoom : 0;
+  this.autoSize = ("autoSize" in aMetadata) ? aMetadata.autoSize : false;
+  this.allowZoom = ("allowZoom" in aMetadata) ? aMetadata.allowZoom : true;
+  this.isSpecified = ("isSpecified" in aMetadata) ? aMetadata.isSpecified : false;
+  this.scaleRatio = ViewportHandler.getScaleRatio();
+  Object.seal(this);
+}
+
+ViewportMetadata.prototype = {
+  width: null,
+  height: null,
+  defaultZoom: null,
+  minZoom: null,
+  maxZoom: null,
+  autoSize: null,
+  allowZoom: null,
+  isSpecified: null,
+  scaleRatio: null,
+};
+
 
 /**
  * Handler for blocked popups, triggered by DOMUpdatePageReport events in browser.xml
@@ -6154,6 +6202,19 @@ var PluginHelper = {
     NativeWindow.doorhanger.show(message, "ask-to-play-plugins", buttons, aTab.id, options);
   },
 
+  delayAndShowDoorHanger: function(aTab) {
+    // To avoid showing the doorhanger if there are also visible plugin
+    // overlays on the page, delay showing the doorhanger to check if
+    // visible plugins get added in the near future.
+    if (!aTab.pluginDoorhangerTimeout) {
+      aTab.pluginDoorhangerTimeout = setTimeout(function() {
+        if (this.shouldShowPluginDoorhanger) {
+          PluginHelper.showDoorHanger(this);
+        }
+      }.bind(aTab), 500);
+    }
+  },
+
   playAllPlugins: function(aContentWindow) {
     let cwu = aContentWindow.QueryInterface(Ci.nsIInterfaceRequestor)
                             .getInterface(Ci.nsIDOMWindowUtils);
@@ -6167,8 +6228,7 @@ var PluginHelper = {
 
   playPlugin: function(plugin) {
     let objLoadingContent = plugin.QueryInterface(Ci.nsIObjectLoadingContent);
-    if (!objLoadingContent.activated &&
-        objLoadingContent.pluginFallbackType !== Ci.nsIObjectLoadingContent.PLUGIN_PLAY_PREVIEW)
+    if (!objLoadingContent.activated)
       objLoadingContent.playPlugin();
   },
 
@@ -6266,17 +6326,7 @@ var PluginHelper = {
         // If the plugin is hidden, or if the overlay is too small, show a 
         // doorhanger notification
         if (PluginHelper.isTooSmall(plugin, overlay)) {
-          // To avoid showing the doorhanger if there are also visible plugin
-          // overlays on the page, delay showing the doorhanger to check if
-          // visible plugins get added in the near future.
-          if (!aTab.pluginDoorhangerTimeout) {
-            aTab.pluginDoorhangerTimeout = setTimeout(function() {
-              if (this.shouldShowPluginDoorhanger) {
-                PluginHelper.showDoorHanger(this);
-              }
-            }.bind(aTab), 500);
-          }
-
+          PluginHelper.delayAndShowDoorHanger(aTab);
         } else {
           // There's a large enough visible overlay that we don't need to show
           // the doorhanger.
@@ -6300,6 +6350,24 @@ var PluginHelper = {
 
       case "PluginPlayPreview": {
         let previewContent = doc.getAnonymousElementByAttribute(plugin, "class", "previewPluginContent");
+        let pluginHost = Cc["@mozilla.org/plugin/host;1"].getService(Ci.nsIPluginHost);
+        let mimeType = PluginHelper.getPluginMimeType(plugin);
+        let playPreviewInfo = pluginHost.getPlayPreviewInfo(mimeType);
+
+        if (!playPreviewInfo.ignoreCTP) {
+          // Check if plugins have already been activated for this page, or if
+          // the user has set a permission to always play plugins on the site
+          if (aTab.clickToPlayPluginsActivated ||
+              Services.perms.testPermission(aTab.browser.currentURI, "plugins") ==
+              Services.perms.ALLOW_ACTION) {
+            PluginHelper.playPlugin(plugin);
+            return;
+          }
+
+          // Always show door hanger for play preview plugins
+          PluginHelper.delayAndShowDoorHanger(aTab);
+        }
+
         let iframe = previewContent.getElementsByClassName("previewPluginContentFrame")[0];
         if (!iframe) {
           // lazy initialization of the iframe
@@ -6307,9 +6375,7 @@ var PluginHelper = {
           iframe.className = "previewPluginContentFrame";
           previewContent.appendChild(iframe);
         }
-        let mimeType = PluginHelper.getPluginMimeType(plugin);
-        let playPreviewUri = "data:application/x-moz-playpreview;," + mimeType;
-        iframe.src = playPreviewUri;
+        iframe.src = playPreviewInfo.redirectURL;
 
         // MozPlayPlugin event can be dispatched from the extension chrome
         // code to replace the preview content with the native plugin
@@ -7045,11 +7111,13 @@ var ActivityObserver = {
   },
 
   observe: function ao_observe(aSubject, aTopic, aData) {
-    let isForeground = false
+    let isForeground = false;
+    let tab = BrowserApp.selectedTab;
+
     switch (aTopic) {
       case "application-background" :
-        let doc = BrowserApp.selectedTab.browser.contentDocument;
-        if (doc.mozFullScreen) {
+        let doc = (tab ? tab.browser.contentDocument : null);
+        if (doc && doc.mozFullScreen) {
           doc.mozCancelFullScreen();
         }
         isForeground = false;
@@ -7059,7 +7127,6 @@ var ActivityObserver = {
         break;
     }
 
-    let tab = BrowserApp.selectedTab;
     if (tab && tab.getActive() != isForeground) {
       tab.setActive(isForeground);
     }

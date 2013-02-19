@@ -43,8 +43,6 @@
 #include "nsIDocShell.h"
 #include "nsIDOMWindow.h"
 #include "nsPIDOMWindow.h"
-#include "nsIDocShellTreeItem.h"
-#include "nsIDocShellTreeNode.h"
 #include "nsIXPConnect.h"
 #include "nsDisplayList.h"
 
@@ -2061,11 +2059,11 @@ CanvasRenderingContext2D::SetFont(const nsAString& font,
     return;
   }
 
-  const nsStyleFont* fontStyle = sc->GetStyleFont();
+  const nsStyleFont* fontStyle = sc->StyleFont();
 
   NS_ASSERTION(fontStyle, "Could not obtain font style");
 
-  nsIAtom* language = sc->GetStyleFont()->mLanguage;
+  nsIAtom* language = sc->StyleFont()->mLanguage;
   if (!language) {
     language = presShell->GetPresContext()->GetLanguageFromCharset();
   }
@@ -2486,7 +2484,7 @@ CanvasRenderingContext2D::DrawOrMeasureText(const nsAString& aRawText,
       return NS_ERROR_FAILURE;
     }
 
-    isRTL = canvasStyle->GetStyleVisibility()->mDirection ==
+    isRTL = canvasStyle->StyleVisibility()->mDirection ==
       NS_STYLE_DIRECTION_RTL;
   } else {
     isRTL = GET_BIDI_OPTION_DIRECTION(document->GetBidiOptions()) == IBMBIDI_TEXTDIRECTION_RTL;
@@ -3377,6 +3375,20 @@ CanvasRenderingContext2D::GetImageDataArray(JSContext* aCx,
     return NS_ERROR_DOM_SYNTAX_ERR;
   }
 
+  IntRect srcRect(0, 0, mWidth, mHeight);
+  IntRect destRect(aX, aY, aWidth, aHeight);
+  IntRect srcReadRect = srcRect.Intersect(destRect);
+  RefPtr<DataSourceSurface> readback;
+  if (!srcReadRect.IsEmpty() && !mZero) {
+    RefPtr<SourceSurface> snapshot = mTarget->Snapshot();
+    if (snapshot) {
+      readback = snapshot->GetDataSurface();
+    }
+    if (!readback || !readback->GetData()) {
+      return NS_ERROR_OUT_OF_MEMORY;
+    }
+  }
+
   JSObject* darray = JS_NewUint8ClampedArray(aCx, len.value());
   if (!darray) {
     return NS_ERROR_OUT_OF_MEMORY;
@@ -3389,25 +3401,14 @@ CanvasRenderingContext2D::GetImageDataArray(JSContext* aCx,
 
   uint8_t* data = JS_GetUint8ClampedArrayData(darray);
 
-  IntRect srcRect(0, 0, mWidth, mHeight);
-  IntRect destRect(aX, aY, aWidth, aHeight);
-
-  IntRect srcReadRect = srcRect.Intersect(destRect);
   IntRect dstWriteRect = srcReadRect;
   dstWriteRect.MoveBy(-aX, -aY);
 
   uint8_t* src = data;
   uint32_t srcStride = aWidth * 4;
-
-  RefPtr<DataSourceSurface> readback;
-  if (!srcReadRect.IsEmpty()) {
-    RefPtr<SourceSurface> snapshot = mTarget->Snapshot();
-    if (snapshot) {
-      readback = snapshot->GetDataSurface();
-
-      srcStride = readback->Stride();
-      src = readback->GetData() + srcReadRect.y * srcStride + srcReadRect.x * 4;
-    }
+  if (readback) {
+    srcStride = readback->Stride();
+    src = readback->GetData() + srcReadRect.y * srcStride + srcReadRect.x * 4;
   }
 
   // NOTE! dst is the same as src, and this relies on reading
