@@ -123,7 +123,7 @@ XPCOMUtils.defineLazyModuleGetter(this, "Social",
   "resource:///modules/Social.jsm");
 
 XPCOMUtils.defineLazyModuleGetter(this, "PageThumbs",
-  "resource:///modules/PageThumbs.jsm");
+  "resource://gre/modules/PageThumbs.jsm");
 
 #ifdef MOZ_SAFE_BROWSING
 XPCOMUtils.defineLazyModuleGetter(this, "SafeBrowsing",
@@ -994,6 +994,9 @@ let gGestureSupport = {
     let contentElement = content.document.body.firstElementChild;
     if (!contentElement)
       return;
+    // If we're currently snapping, cancel that snap
+    if (contentElement.classList.contains("completeRotation"))
+      this._clearCompleteRotation();
 
     this.rotation = Math.round(this.rotation + aEvent.delta);
     contentElement.style.transform = "rotate(" + this.rotation + "deg)";
@@ -1036,8 +1039,11 @@ let gGestureSupport = {
              this.rotation < transitionRotation)
       transitionRotation -= 90;
 
-    contentElement.classList.add("completeRotation");
-    contentElement.addEventListener("transitionend", this._clearCompleteRotation);
+    // Only add the completeRotation class if it is is necessary
+    if (transitionRotation != this.rotation) {
+      contentElement.classList.add("completeRotation");
+      contentElement.addEventListener("transitionend", this._clearCompleteRotation);
+    }
 
     contentElement.style.transform = "rotate(" + transitionRotation + "deg)";
     this.rotation = transitionRotation;
@@ -1094,8 +1100,14 @@ let gGestureSupport = {
    * Removes the transition rule by removing the completeRotation class
    */
   _clearCompleteRotation: function() {
-    this.classList.remove("completeRotation");
-    this.removeEventListener("transitionend", this._clearCompleteRotation);
+    let contentElement = content.document &&
+                         content.document instanceof ImageDocument &&
+                         content.document.body &&
+                         content.document.body.firstElementChild;
+    if (!contentElement)
+      return;
+    contentElement.classList.remove("completeRotation");
+    contentElement.removeEventListener("transitionend", this._clearCompleteRotation);
   },
 };
 
@@ -1297,7 +1309,6 @@ var gBrowserInit = {
 
     // Misc. inits.
     CombinedStopReload.init();
-    allTabs.readPref();
     TabsOnTop.init();
     BookmarksMenuButton.init();
     gPrivateBrowsingUI.init();
@@ -1459,7 +1470,6 @@ var gBrowserInit = {
 
     ctrlTab.readPref();
     gPrefService.addObserver(ctrlTab.prefName, ctrlTab, false);
-    gPrefService.addObserver(allTabs.prefName, allTabs, false);
 
     // Initialize the download manager some time after the app starts so that
     // auto-resume downloads begin (such as after crashing or quitting with
@@ -1650,7 +1660,6 @@ var gBrowserInit = {
 
     // First clean up services initialized in gBrowserInit.onLoad (or those whose
     // uninit methods don't depend on the services having been initialized).
-    allTabs.uninit();
 
     CombinedStopReload.uninit();
 
@@ -1690,7 +1699,6 @@ var gBrowserInit = {
         Win7Features.onCloseWindow();
 
       gPrefService.removeObserver(ctrlTab.prefName, ctrlTab);
-      gPrefService.removeObserver(allTabs.prefName, allTabs);
       ctrlTab.uninit();
       TabView.uninit();
       gBrowserThumbnails.uninit();
@@ -2610,26 +2618,32 @@ function PageProxyClickHandler(aEvent)
  *  Handle load of some pages (about:*) so that we can make modifications
  *  to the DOM for unprivileged pages.
  */
-function BrowserOnAboutPageLoad(document) {
-  if (document.documentURI.toLowerCase() == "about:home") {
+function BrowserOnAboutPageLoad(doc) {
+  if (doc.documentURI.toLowerCase() == "about:home") {
     // XXX bug 738646 - when Marketplace is launched, remove this statement and
     // the hidden attribute set on the apps button in aboutHome.xhtml
     if (getBoolPref("browser.aboutHome.apps", false))
-      document.getElementById("apps").removeAttribute("hidden");
+      doc.getElementById("apps").removeAttribute("hidden");
 
     let ss = Components.classes["@mozilla.org/browser/sessionstore;1"].
              getService(Components.interfaces.nsISessionStore);
     if (ss.canRestoreLastSession &&
         !PrivateBrowsingUtils.isWindowPrivate(window))
-      document.getElementById("launcher").setAttribute("session", "true");
+      doc.getElementById("launcher").setAttribute("session", "true");
 
     // Inject search engine and snippets URL.
-    let docElt = document.documentElement;
+    let docElt = doc.documentElement;
     docElt.setAttribute("snippetsURL", AboutHomeUtils.snippetsURL);
     docElt.setAttribute("searchEngineName",
                         AboutHomeUtils.defaultSearchEngine.name);
     docElt.setAttribute("searchEngineURL",
                         AboutHomeUtils.defaultSearchEngine.searchURL);
+
+#ifdef MOZ_SERVICES_HEALTHREPORT
+    doc.addEventListener("AboutHomeSearchEvent", function onSearch(e) {
+      BrowserSearch.recordSearchInHealthReport(e.detail, "abouthome");
+    }, true, true);
+#endif
   }
 }
 
@@ -3465,12 +3479,15 @@ const BrowserSearch = {
    *        Boolean indicating whether or not the search should load in a new
    *        tab.
    *
-   * @param responseType [optional]
-   *        The MIME type that we'd like to receive in response
-   *        to this submission.  If null or the the response type is not supported
-   *        for the search engine, will fallback to "text/html".
+   * @param purpose [optional]
+   *        A string meant to indicate the context of the search request. This
+   *        allows the search service to provide a different nsISearchSubmission
+   *        depending on e.g. where the search is triggered in the UI.
+   *
+   * @return string Name of the search engine used to perform a search or null
+   *         if a search was not performed.
    */
-  loadSearch: function BrowserSearch_search(searchText, useNewTab, responseType) {
+  loadSearch: function BrowserSearch_search(searchText, useNewTab, purpose) {
     var engine;
 
     // If the search bar is visible, use the current engine, otherwise, fall
@@ -3480,19 +3497,15 @@ const BrowserSearch = {
     else
       engine = Services.search.defaultEngine;
 
-    var submission = engine.getSubmission(searchText, responseType);
-
-    // If a response type was specified and getSubmission returned null,
-    // fallback to the default response type.
-    if (!submission && responseType)
-      submission = engine.getSubmission(searchText);
+    var submission = engine.getSubmission(searchText, null, purpose); // HTML response
 
     // getSubmission can return null if the engine doesn't have a URL
     // with a text/html response type.  This is unlikely (since
     // SearchService._addEngineToStore() should fail for such an engine),
     // but let's be on the safe side.
-    if (!submission)
-      return;
+    if (!submission) {
+      return null;
+    }
 
     let inBackground = Services.prefs.getBoolPref("browser.search.context.loadInBackground");
     openLinkIn(submission.uri.spec,
@@ -3500,6 +3513,21 @@ const BrowserSearch = {
                { postData: submission.postData,
                  inBackground: inBackground,
                  relatedToCurrent: true });
+
+    return engine.name;
+  },
+
+  /**
+   * Perform a search initiated from the context menu.
+   *
+   * This should only be called from the context menu. See
+   * BrowserSearch.loadSearch for the preferred API.
+   */
+  loadSearchFromContext: function (terms) {
+    let engine = BrowserSearch.loadSearch(terms, true, "contextmenu");
+    if (engine) {
+      BrowserSearch.recordSearchInHealthReport(engine, "contextmenu");
+    }
   },
 
   /**
@@ -3514,8 +3542,43 @@ const BrowserSearch = {
     var where = newWindowPref == 3 ? "tab" : "window";
     var searchEnginesURL = formatURL("browser.search.searchEnginesURL", true);
     openUILinkIn(searchEnginesURL, where);
-  }
-}
+  },
+
+  /**
+   * Helper to record a search with Firefox Health Report.
+   *
+   * FHR records only search counts and nothing pertaining to the search itself.
+   *
+   * @param engine
+   *        (string) The name of the engine used to perform the search. This
+   *        is typically nsISearchEngine.name.
+   * @param source
+   *        (string) Where the search originated from. See the FHR
+   *        SearchesProvider for allowed values.
+   */
+  recordSearchInHealthReport: function (engine, source) {
+#ifdef MOZ_SERVICES_HEALTHREPORT
+    let reporter = Cc["@mozilla.org/datareporting/service;1"]
+                     .getService()
+                     .wrappedJSObject
+                     .healthReporter;
+
+    // This can happen if the FHR component of the data reporting service is
+    // disabled. This is controlled by a pref that most will never use.
+    if (!reporter) {
+      return;
+    }
+
+    reporter.onInit().then(function record() {
+      try {
+        reporter.getProvider("org.mozilla.searches").recordSearch(engine, source);
+      } catch (ex) {
+        Cu.reportError(ex);
+      }
+    });
+#endif
+  },
+};
 
 function FillHistoryMenu(aParent) {
   // Lazily add the hover listeners on first showing and never remove them
@@ -3799,7 +3862,6 @@ function BrowserToolboxCustomizeChange(aType) {
     default:
       gHomeButton.updatePersonalToolbarStyle();
       BookmarksMenuButton.customizeChange();
-      allTabs.readPref();
   }
 }
 
@@ -6827,7 +6889,8 @@ var gIdentityHandler = {
     } else if (state & nsIWebProgressListener.STATE_IS_SECURE) {
       this.setMode(this.IDENTITY_MODE_DOMAIN_VERIFIED);
     } else if (state & nsIWebProgressListener.STATE_IS_BROKEN) {
-      if (state & nsIWebProgressListener.STATE_LOADED_MIXED_ACTIVE_CONTENT) {
+      if ((state & nsIWebProgressListener.STATE_LOADED_MIXED_ACTIVE_CONTENT) &&
+          gPrefService.getBoolPref("security.mixed_content.block_active_content")) {
         this.setMode(this.IDENTITY_MODE_MIXED_ACTIVE_CONTENT);
       } else {
         this.setMode(this.IDENTITY_MODE_MIXED_CONTENT);
@@ -7460,3 +7523,4 @@ function focusNextFrame(event) {
   if (element.ownerDocument == document)
     focusAndSelectUrlBar();
 }
+

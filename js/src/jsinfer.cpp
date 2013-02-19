@@ -3324,7 +3324,7 @@ TypeCompartment::fixObjectType(JSContext *cx, HandleObject obj)
         return;
 
     ObjectTypeTable::AddPtr p = objectTypeTable->lookupForAdd(obj.get());
-    Shape *baseShape = obj->lastProperty();
+    RootedShape baseShape(cx, obj->lastProperty());
 
     if (p) {
         /* The lookup ensures the shape matches, now check that the types match. */
@@ -3365,6 +3365,9 @@ TypeCompartment::fixObjectType(JSContext *cx, HandleObject obj)
             cx->compartment->types.setPendingNukeTypes(cx);
             return;
         }
+
+        if (obj->isIndexed())
+            objType->setFlags(cx, OBJECT_FLAG_SPARSE_INDEXES);
 
         jsid *ids = cx->pod_calloc<jsid>(obj->slotSpan());
         if (!ids) {
@@ -3488,7 +3491,7 @@ TypeObject::addProperty(JSContext *cx, RawId id, Property **pprop)
         RootedObject rSingleton(cx, singleton);
         if (JSID_IS_VOID(id)) {
             /* Go through all shapes on the object to get integer-valued properties. */
-            UnrootedShape shape = singleton->lastProperty();
+            RootedShape shape(cx, singleton->lastProperty());
             while (!shape->isEmptyShape()) {
                 if (JSID_IS_VOID(IdToTypeId(shape->propid())))
                     UpdatePropertyType(cx, &base->types, rSingleton, shape, true);
@@ -3855,8 +3858,6 @@ TypeObject::print()
             printf(" noLengthOverflow");
         if (hasAnyFlags(OBJECT_FLAG_UNINLINEABLE))
             printf(" uninlineable");
-        if (hasAnyFlags(OBJECT_FLAG_SPECIAL_EQUALITY))
-            printf(" specialEquality");
         if (hasAnyFlags(OBJECT_FLAG_EMULATES_UNDEFINED))
             printf(" emulatesUndefined");
         if (hasAnyFlags(OBJECT_FLAG_ITERATED))
@@ -4869,7 +4870,7 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
                   TypeObject *type, JSFunction *fun, NewScriptPropertiesState &state);
 
 static bool
-AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, JSFunction *fun,
+AnalyzeNewScriptProperties(JSContext *cx, TypeObject *type, HandleFunction fun,
                            NewScriptPropertiesState &state)
 {
     /*
@@ -5156,7 +5157,7 @@ AnalyzePoppedThis(JSContext *cx, Vector<SSAUseChain *> *pendingPoppedThis,
             StackTypeSet *scriptTypes = analysis->poppedTypes(pc, GET_ARGC(pc));
 
             /* Need to definitely be calling Function.call/apply on a specific script. */
-            JSFunction *function;
+            RootedFunction function(cx);
             {
                 RawObject funcallObj = funcallTypes->getSingleton();
                 RawObject scriptObj = scriptTypes->getSingleton();
@@ -5983,31 +5984,30 @@ JSObject::splicePrototype(JSContext *cx, Class *clasp, Handle<TaggedProto> proto
     return true;
 }
 
-TypeObject *
-JSObject::makeLazyType(JSContext *cx)
+/* static */ TypeObject *
+JSObject::makeLazyType(JSContext *cx, HandleObject obj)
 {
-    JS_ASSERT(hasLazyType());
-    JS_ASSERT(cx->compartment == compartment());
+    JS_ASSERT(obj->hasLazyType());
+    JS_ASSERT(cx->compartment == obj->compartment());
 
-    RootedObject self(cx, this);
     /* De-lazification of functions can GC, so we need to do it up here. */
-    if (self->isFunction() && self->toFunction()->isInterpretedLazy()) {
-        RootedFunction fun(cx, self->toFunction());
+    if (obj->isFunction() && obj->toFunction()->isInterpretedLazy()) {
+        RootedFunction fun(cx, obj->toFunction());
         if (!fun->getOrCreateScript(cx))
             return NULL;
     }
-    Rooted<TaggedProto> proto(cx, getTaggedProto());
-    TypeObject *type = cx->compartment->types.newTypeObject(cx, getClass(), proto);
+    Rooted<TaggedProto> proto(cx, obj->getTaggedProto());
+    TypeObject *type = cx->compartment->types.newTypeObject(cx, obj->getClass(), proto);
     AutoAssertNoGC nogc;
     if (!type) {
         if (cx->typeInferenceEnabled())
             cx->compartment->types.setPendingNukeTypes(cx);
-        return self->type_;
+        return obj->type_;
     }
 
     if (!cx->typeInferenceEnabled()) {
         /* This can only happen if types were previously nuked. */
-        self->type_ = type;
+        obj->type_ = type;
         return type;
     }
 
@@ -6015,20 +6015,18 @@ JSObject::makeLazyType(JSContext *cx)
 
     /* Fill in the type according to the state of this object. */
 
-    type->singleton = self;
+    type->singleton = obj;
 
-    if (self->isFunction() && self->toFunction()->isInterpreted()) {
-        type->interpretedFunction = self->toFunction();
+    if (obj->isFunction() && obj->toFunction()->isInterpreted()) {
+        type->interpretedFunction = obj->toFunction();
         if (type->interpretedFunction->nonLazyScript()->uninlineable)
             type->flags |= OBJECT_FLAG_UNINLINEABLE;
     }
 
-    if (self->lastProperty()->hasObjectFlag(BaseShape::ITERATED_SINGLETON))
+    if (obj->lastProperty()->hasObjectFlag(BaseShape::ITERATED_SINGLETON))
         type->flags |= OBJECT_FLAG_ITERATED;
 
-    if (self->getClass()->ext.equality)
-        type->flags |= OBJECT_FLAG_SPECIAL_EQUALITY;
-    if (self->getClass()->emulatesUndefined())
+    if (obj->getClass()->emulatesUndefined())
         type->flags |= OBJECT_FLAG_EMULATES_UNDEFINED;
 
     /*
@@ -6039,13 +6037,13 @@ JSObject::makeLazyType(JSContext *cx)
     /* Don't track whether singletons are packed. */
     type->flags |= OBJECT_FLAG_NON_PACKED;
 
-    if (self->isIndexed())
+    if (obj->isIndexed())
         type->flags |= OBJECT_FLAG_SPARSE_INDEXES;
 
-    if (self->isArray() && self->getArrayLength() > INT32_MAX)
+    if (obj->isArray() && obj->getArrayLength() > INT32_MAX)
         type->flags |= OBJECT_FLAG_LENGTH_OVERFLOW;
 
-    self->type_ = type;
+    obj->type_ = type;
 
     return type;
 }
@@ -6160,9 +6158,6 @@ JSCompartment::getNewType(JSContext *cx, Class *clasp, TaggedProto proto_, JSFun
     if (proto.isObject()) {
         RootedObject obj(cx, proto.toObject());
 
-        if (obj->hasSpecialEquality())
-            type->flags |= OBJECT_FLAG_SPECIAL_EQUALITY;
-
         if (fun)
             CheckNewScriptProperties(cx, type, fun);
 
@@ -6225,7 +6220,7 @@ JSCompartment::getLazyType(JSContext *cx, Class *clasp, TaggedProto proto)
     if (!type)
         return NULL;
 
-    if (!table.relookupOrAdd(p, TypeObjectSet::Lookup(clasp, proto), type))
+    if (!table.relookupOrAdd(p, TypeObjectSet::Lookup(clasp, protoRoot), type))
         return NULL;
 
     type->singleton = (JSObject *) TypeObject::LAZY_SINGLETON;

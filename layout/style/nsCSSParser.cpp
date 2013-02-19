@@ -147,7 +147,7 @@ namespace {
 
 // Rule processing function
 typedef void (* RuleAppendFunc) (css::Rule* aRule, void* aData);
-static void AppendRuleToArray(css::Rule* aRule, void* aArray);
+static void AssignRuleToPointer(css::Rule* aRule, void* aPointer);
 static void AppendRuleToSheet(css::Rule* aRule, void* aParser);
 
 // Your basic top-down recursive descent style parser
@@ -191,7 +191,7 @@ public:
                      nsIURI*                 aSheetURL,
                      nsIURI*                 aBaseURL,
                      nsIPrincipal*           aSheetPrincipal,
-                     nsCOMArray<css::Rule>&  aResult);
+                     css::Rule**             aResult);
 
   nsresult ParseProperty(const nsCSSProperty aPropID,
                          const nsAString& aPropValue,
@@ -339,15 +339,6 @@ protected:
 
   bool GetToken(bool aSkipWS);
   void UngetToken();
-
-  // get the part in paretheses of the url() function, which is really a
-  // part of a token in the CSS grammar, but we're using a combination
-  // of the parser and the scanner to do it to handle the backtracking
-  // required by the error handling of the tokenization (since if we
-  // fail to scan the full token, we should fall back to tokenizing as
-  // FUNCTION ... ')').
-  // Note that this function WILL WRITE TO aURL IN SOME FAILURE CASES.
-  bool GetURLInParens(nsString& aURL);
 
   bool ExpectSymbol(PRUnichar aSymbol, bool aSkipWS);
   bool ExpectEndProperty();
@@ -792,9 +783,10 @@ public:
   CSSParserImpl* mNextFree;
 };
 
-static void AppendRuleToArray(css::Rule* aRule, void* aArray)
+static void AssignRuleToPointer(css::Rule* aRule, void* aPointer)
 {
-  static_cast<nsCOMArray<css::Rule>*>(aArray)->AppendObject(aRule);
+  css::Rule **pointer = static_cast<css::Rule**>(aPointer);
+  NS_ADDREF(*pointer = aRule);
 }
 
 static void AppendRuleToSheet(css::Rule* aRule, void* aParser)
@@ -1113,10 +1105,12 @@ CSSParserImpl::ParseRule(const nsAString&        aRule,
                          nsIURI*                 aSheetURI,
                          nsIURI*                 aBaseURI,
                          nsIPrincipal*           aSheetPrincipal,
-                         nsCOMArray<css::Rule>&  aResult)
+                         css::Rule**             aResult)
 {
   NS_PRECONDITION(aSheetPrincipal, "Must have principal here!");
   NS_PRECONDITION(aBaseURI, "need base URI");
+
+  *aResult = nullptr;
 
   nsCSSScanner scanner(aRule, 0);
   css::ErrorReporter reporter(scanner, mSheet, mChildLoader, aSheetURI);
@@ -1126,20 +1120,34 @@ CSSParserImpl::ParseRule(const nsAString&        aRule,
 
   nsCSSToken* tk = &mToken;
   // Get first non-whitespace token
+  nsresult rv = NS_OK;
   if (!GetToken(true)) {
     REPORT_UNEXPECTED(PEParseRuleWSOnly);
     OUTPUT_ERROR();
-  } else if (eCSSToken_AtKeyword == tk->mType) {
-    ParseAtRule(AppendRuleToArray, &aResult, false);
+    rv = NS_ERROR_DOM_SYNTAX_ERR;
+  } else {
+    if (eCSSToken_AtKeyword == tk->mType) {
+      // FIXME: perhaps aInsideBlock should be true when we are?
+      ParseAtRule(AssignRuleToPointer, aResult, false);
+    } else {
+      UngetToken();
+      ParseRuleSet(AssignRuleToPointer, aResult);
+    }
+
+    if (*aResult && GetToken(true)) {
+      // garbage after rule
+      REPORT_UNEXPECTED_TOKEN(PERuleTrailing);
+      NS_RELEASE(*aResult);
+    }
+
+    if (!*aResult) {
+      rv = NS_ERROR_DOM_SYNTAX_ERR;
+      OUTPUT_ERROR();
+    }
   }
-  else {
-    UngetToken();
-    ParseRuleSet(AppendRuleToArray, &aResult);
-  }
-  OUTPUT_ERROR();
+
   ReleaseScanner();
-  // XXX check for low-level errors
-  return NS_OK;
+  return rv;
 }
 
 // See Bug 723197
@@ -1420,44 +1428,13 @@ CSSParserImpl::EvaluateSupportsCondition(const nsAString& aDeclaration,
 bool
 CSSParserImpl::GetToken(bool aSkipWS)
 {
-  for (;;) {
-    if (!mHavePushBack) {
-      if (!mScanner->Next(mToken)) {
-        break;
-      }
-    }
+  if (mHavePushBack) {
     mHavePushBack = false;
-    if (aSkipWS && (eCSSToken_WhiteSpace == mToken.mType)) {
-      continue;
+    if (!aSkipWS || mToken.mType != eCSSToken_Whitespace) {
+      return true;
     }
-    return true;
   }
-  return false;
-}
-
-bool
-CSSParserImpl::GetURLInParens(nsString& aURL)
-{
-  NS_ASSERTION(!mHavePushBack, "mustn't have pushback at this point");
-  if (! mScanner->NextURL(mToken)) {
-    // EOF
-    return false;
-  }
-
-  aURL = mToken.mIdent;
-
-  if (eCSSToken_URL != mToken.mType) {
-    // In the failure case (which gives a token of type
-    // eCSSToken_Bad_URL), we do not have to match parentheses *inside*
-    // the Bad_URL token, since this is now an invalid URL token.  But
-    // we do need to match the closing parenthesis to match the 'url('.
-    NS_ABORT_IF_FALSE(mToken.mType == eCSSToken_Bad_URL,
-                      "unexpected token type");
-    SkipUntil(')');
-    return false;
-  }
-
-  return true;
+  return mScanner->Next(mToken, aSkipWS);
 }
 
 void
@@ -2190,9 +2167,10 @@ CSSParserImpl::ParseMozDocumentRule(RuleAppendFunc aAppendFunc, void* aData)
         cur->func = css::DocumentRule::eDomain;
       }
 
-      nsAutoString url;
-      if (!GetURLInParens(url)) {
+      NS_ASSERTION(!mHavePushBack, "mustn't have pushback at this point");
+      if (!mScanner->NextURL(mToken) || mToken.mType != eCSSToken_URL) {
         REPORT_UNEXPECTED_TOKEN(PEMozDocRuleNotURI);
+        SkipUntil(')');
         delete urls;
         return false;
       }
@@ -2200,7 +2178,7 @@ CSSParserImpl::ParseMozDocumentRule(RuleAppendFunc aAppendFunc, void* aData)
       // We could try to make the URL (as long as it's not domain())
       // canonical and absolute with NS_NewURI and GetSpec, but I'm
       // inclined to think we shouldn't.
-      CopyUTF16toUTF8(url, cur->url);
+      CopyUTF16toUTF8(mToken.mIdent, cur->url);
     }
   } while (ExpectSymbol(',', true));
 
@@ -2559,7 +2537,7 @@ CSSParserImpl::ParseSupportsCondition(bool& aConditionMet)
 }
 
 // supports_condition_negation
-//   : 'not' S* supports_condition_in_parens
+//   : 'not' S+ supports_condition_in_parens
 //   ;
 bool
 CSSParserImpl::ParseSupportsConditionNegation(bool& aConditionMet)
@@ -2572,6 +2550,11 @@ CSSParserImpl::ParseSupportsConditionNegation(bool& aConditionMet)
   if (mToken.mType != eCSSToken_Ident ||
       !mToken.mIdent.LowerCaseEqualsLiteral("not")) {
     REPORT_UNEXPECTED_TOKEN(PESupportsConditionExpectedNot);
+    return false;
+  }
+
+  if (!RequireWhitespace()) {
+    REPORT_UNEXPECTED(PESupportsWhitespaceRequired);
     return false;
   }
 
@@ -2687,14 +2670,14 @@ CSSParserImpl::ParseSupportsConditionInParensInsideParens(bool& aConditionMet)
 }
 
 // supports_condition_terms
-//   : 'and' S* supports_condition_terms_after_operator('and')
-//   | 'or' S* supports_condition_terms_after_operator('or')
+//   : S+ 'and' supports_condition_terms_after_operator('and')
+//   | S+ 'or' supports_condition_terms_after_operator('or')
 //   |
 //   ;
 bool
 CSSParserImpl::ParseSupportsConditionTerms(bool& aConditionMet)
 {
-  if (!GetToken(true)) {
+  if (!RequireWhitespace() || !GetToken(false)) {
     return true;
   }
 
@@ -2716,13 +2699,18 @@ CSSParserImpl::ParseSupportsConditionTerms(bool& aConditionMet)
 }
 
 // supports_condition_terms_after_operator(operator)
-//   : supports_condition_in_parens ( <operator> supports_condition_in_parens )*
+//   : S+ supports_condition_in_parens ( <operator> supports_condition_in_parens )*
 //   ;
 bool
 CSSParserImpl::ParseSupportsConditionTermsAfterOperator(
                          bool& aConditionMet,
                          CSSParserImpl::SupportsConditionTermOperator aOperator)
 {
+  if (!RequireWhitespace()) {
+    REPORT_UNEXPECTED(PESupportsWhitespaceRequired);
+    return false;
+  }
+
   const char* token = aOperator == eAnd ? "and" : "or";
   for (;;) {
     bool termConditionMet = false;
@@ -3022,7 +3010,7 @@ CSSParserImpl::ParseSelectorGroup(nsCSSSelectorList*& aList)
     }
 
     combinator = PRUnichar(0);
-    if (mToken.mType == eCSSToken_WhiteSpace) {
+    if (mToken.mType == eCSSToken_Whitespace) {
       if (!GetToken(true)) {
         break; // EOF ok here
       }
@@ -3823,9 +3811,7 @@ CSSParserImpl::ParsePseudoClassWithNthPairArg(nsCSSSelector& aSelector,
       truncAt = 2;
     }
     if (truncAt != 0) {
-      for (uint32_t i = mToken.mIdent.Length() - 1; i >= truncAt; --i) {
-        mScanner->Pushback(mToken.mIdent[i]);
-      }
+      mScanner->Backup(mToken.mIdent.Length() - truncAt);
       mToken.mIdent.Truncate(truncAt);
     }
   }
@@ -4104,7 +4090,7 @@ CSSParserImpl::ParseColor(nsCSSValue& aValue)
   nscolor rgba;
   switch (tk->mType) {
     case eCSSToken_ID:
-    case eCSSToken_Ref:
+    case eCSSToken_Hash:
       // #xxyyzz
       if (NS_HexToRGB(tk->mIdent, &rgba)) {
         aValue.SetColorValue(rgba);
@@ -5014,7 +5000,7 @@ CSSParserImpl::ParseVariant(nsCSSValue& aValue,
   if ((aVariantMask & VARIANT_COLOR) != 0) {
     if (mHashlessColorQuirk || // NONSTANDARD: Nav interprets 'xxyyzz' values even without '#' prefix
         (eCSSToken_ID == tk->mType) ||
-        (eCSSToken_Ref == tk->mType) ||
+        (eCSSToken_Hash == tk->mType) ||
         (eCSSToken_Ident == tk->mType) ||
         ((eCSSToken_Function == tk->mType) &&
          (tk->mIdent.LowerCaseEqualsLiteral("rgb") ||
@@ -5731,7 +5717,7 @@ CSSParserImpl::IsLegacyGradientLine(const nsCSSTokenType& aType,
     }
     // fall through
   case eCSSToken_ID:
-  case eCSSToken_Ref:
+  case eCSSToken_Hash:
     // this is a color
     break;
 
@@ -8004,7 +7990,7 @@ CSSParserImpl::RequireWhitespace()
 {
   if (!GetToken(false))
     return false;
-  if (mToken.mType != eCSSToken_WhiteSpace) {
+  if (mToken.mType != eCSSToken_Whitespace) {
     UngetToken();
     return false;
   }
@@ -8410,7 +8396,7 @@ CSSParserImpl::ParseOneFamily(nsAString& aFamily, bool& aOneKeyword)
       if (eCSSToken_Ident == tk->mType) {
         aOneKeyword = false;
         aFamily.Append(tk->mIdent);
-      } else if (eCSSToken_WhiteSpace == tk->mType) {
+      } else if (eCSSToken_Whitespace == tk->mType) {
         // Lookahead one token and drop whitespace if we are ending the
         // font name.
         if (!GetToken(true))
@@ -9563,9 +9549,8 @@ bool
 CSSParserImpl::ParseTransitionProperty()
 {
   nsCSSValue value;
-  if (ParseVariant(value, VARIANT_INHERIT | VARIANT_NONE | VARIANT_ALL,
-                   nullptr)) {
-    // 'inherit', 'initial', 'none', and 'all' must be alone
+  if (ParseVariant(value, VARIANT_INHERIT | VARIANT_NONE, nullptr)) {
+    // 'inherit', 'initial', and 'none' must be alone
     if (!ExpectEndProperty()) {
       return false;
     }
@@ -9576,19 +9561,18 @@ CSSParserImpl::ParseTransitionProperty()
     // transition-property: invalid-property, left, opacity;
     nsCSSValueList* cur = value.SetListValue();
     for (;;) {
-      if (!ParseVariant(cur->mValue, VARIANT_IDENTIFIER, nullptr)) {
+      if (!ParseVariant(cur->mValue, VARIANT_IDENTIFIER | VARIANT_ALL, nullptr)) {
         return false;
       }
-      nsDependentString str(cur->mValue.GetStringBufferValue());
-      // Exclude 'none' and 'all' and 'inherit' and 'initial'
-      // according to the same rules as for 'counter-reset' in CSS 2.1
-      // (except 'counter-reset' doesn't exclude 'all' since it
-      // doesn't support 'all' as a special value).
-      if (str.LowerCaseEqualsLiteral("none") ||
-          str.LowerCaseEqualsLiteral("all") ||
-          str.LowerCaseEqualsLiteral("inherit") ||
-          str.LowerCaseEqualsLiteral("initial")) {
-        return false;
+      if (cur->mValue.GetUnit() == eCSSUnit_Ident) {
+        nsDependentString str(cur->mValue.GetStringBufferValue());
+        // Exclude 'none' and 'inherit' and 'initial' according to the
+        // same rules as for 'counter-reset' in CSS 2.1.
+        if (str.LowerCaseEqualsLiteral("none") ||
+            str.LowerCaseEqualsLiteral("inherit") ||
+            str.LowerCaseEqualsLiteral("initial")) {
+          return false;
+        }
       }
       if (CheckEndProperty()) {
         break;
@@ -9850,25 +9834,21 @@ CSSParserImpl::ParseTransition()
     bool multipleItems = !!l->mNext;
     do {
       const nsCSSValue& val = l->mValue;
-      if (val.GetUnit() != eCSSUnit_Ident) {
-        NS_ABORT_IF_FALSE(val.GetUnit() == eCSSUnit_None ||
-                          val.GetUnit() == eCSSUnit_All, "unexpected unit");
+      if (val.GetUnit() == eCSSUnit_None) {
         if (multipleItems) {
           // This is a syntax error.
           return false;
         }
 
-        // Unbox a solitary 'none' or 'all'.
-        if (val.GetUnit() == eCSSUnit_None) {
-          values[3].SetNoneValue();
-        } else {
-          values[3].SetAllValue();
-        }
+        // Unbox a solitary 'none'.
+        values[3].SetNoneValue();
         break;
       }
-      nsDependentString str(val.GetStringBufferValue());
-      if (str.EqualsLiteral("inherit") || str.EqualsLiteral("initial")) {
-        return false;
+      if (val.GetUnit() == eCSSUnit_Ident) {
+        nsDependentString str(val.GetStringBufferValue());
+        if (str.EqualsLiteral("inherit") || str.EqualsLiteral("initial")) {
+          return false;
+        }
       }
     } while ((l = l->mNext));
   }
@@ -10354,7 +10334,7 @@ nsCSSParser::ParseRule(const nsAString&        aRule,
                        nsIURI*                 aSheetURI,
                        nsIURI*                 aBaseURI,
                        nsIPrincipal*           aSheetPrincipal,
-                       nsCOMArray<css::Rule>&  aResult)
+                       css::Rule**             aResult)
 {
   return static_cast<CSSParserImpl*>(mImpl)->
     ParseRule(aRule, aSheetURI, aBaseURI, aSheetPrincipal, aResult);

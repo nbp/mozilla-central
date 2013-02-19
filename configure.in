@@ -3856,7 +3856,7 @@ MOZ_ARG_WITH_BOOL(system-nspr,
     _USE_SYSTEM_NSPR=1 )
 
 if test -n "$_USE_SYSTEM_NSPR"; then
-    AM_PATH_NSPR(4.9.4, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
+    AM_PATH_NSPR(4.9.6, [MOZ_NATIVE_NSPR=1], [AC_MSG_ERROR([your don't have NSPR installed or your version is too old])])
 fi
 
 if test -n "$MOZ_NATIVE_NSPR"; then
@@ -4232,7 +4232,6 @@ MOZ_SAFE_BROWSING=
 MOZ_HELP_VIEWER=
 MOZ_SPELLCHECK=1
 MOZ_ANDROID_OMTC=
-MOZ_ANDROID_ANR_REPORTER=
 MOZ_ONLY_TOUCH_EVENTS=
 MOZ_TOOLKIT_SEARCH=1
 MOZ_UI_LOCALE=en-US
@@ -4242,7 +4241,7 @@ MOZ_XUL=1
 MOZ_ZIPWRITER=1
 NS_PRINTING=1
 MOZ_PDF_PRINTING=
-MOZ_DISABLE_DOMCRYPTO=
+MOZ_DISABLE_CRYPTOLEGACY=
 NSS_DISABLE_DBM=
 NECKO_WIFI=1
 NECKO_COOKIES=1
@@ -5088,13 +5087,6 @@ if test -n "$MOZ_ANDROID_OMTC"; then
 fi
 
 dnl ========================================================
-dnl = Android App Not Responding (ANR) reporter
-dnl ========================================================
-if test -n "$MOZ_ANDROID_ANR_REPORTER"; then
-    AC_DEFINE(MOZ_ANDROID_ANR_REPORTER)
-fi
-
-dnl ========================================================
 dnl = Disable WebSMS backend
 dnl ========================================================
 MOZ_ARG_DISABLE_BOOL(websms-backend,
@@ -5728,9 +5720,7 @@ if test "$MOZ_GSTREAMER"; then
     # API version, eg 0.10, 1.0 etc
     GST_API_VERSION=0.10
     # core/base release number
-    # depend on >= 0.10.33 as that's when the playbin2 source-setup signal was
-    # introduced
-    GST_VERSION=0.10.33
+    GST_VERSION=0.10.25
     PKG_CHECK_MODULES(GSTREAMER,
                       gstreamer-$GST_API_VERSION >= $GST_VERSION
                       gstreamer-app-$GST_API_VERSION
@@ -6350,9 +6340,10 @@ AC_SUBST(MOZ_DISABLE_PARENTAL_CONTROLS)
 dnl ========================================================
 dnl = Disable DOMCrypto
 dnl ========================================================
-if test -n "$MOZ_DISABLE_DOMCRYPTO"; then
-    AC_DEFINE(MOZ_DISABLE_DOMCRYPTO)
+if test -n "$MOZ_DISABLE_CRYPTOLEGACY"; then
+    AC_DEFINE(MOZ_DISABLE_CRYPTOLEGACY)
 fi
+AC_SUBST(MOZ_DISABLE_CRYPTOLEGACY)
 
 dnl ========================================================
 dnl =
@@ -8389,9 +8380,9 @@ if test -n "$MOZ_SERVICES_SYNC"; then
 fi
 
 dnl Build Captive Portal Detector if required
-AC_SUBST(MOZ_SERVICES_CAPTIVEDETECT)
-if test -n "$MOZ_SERVICES_CAPTIVEDETECT"; then
-  AC_DEFINE(MOZ_SERVICES_CAPTIVEDETECT)
+AC_SUBST(MOZ_CAPTIVEDETECT)
+if test -n "$MOZ_CAPTIVEDETECT"; then
+  AC_DEFINE(MOZ_CAPTIVEDETECT)
 fi
 
 dnl ========================================================
@@ -9001,7 +8992,7 @@ if test -n "$MOZ_WEBRTC"; then
 
 dnl Any --include files must also appear in -D FORCED_INCLUDE_FILE= entries
 dnl so that regeneration via dependencies works correctly
-   WEBRTC_CONFIG="-D build_with_mozilla=1 --include ${srcdir}/media/webrtc/webrtc_config.gypi -D FORCED_INCLUDE_FILE=${srcdir}/media/webrtc/webrtc_config.gypi"
+   WEBRTC_CONFIG="-D build_with_mozilla=1 -D build_with_chromium=0 --include ${srcdir}/media/webrtc/webrtc_config.gypi -D FORCED_INCLUDE_FILE=${srcdir}/media/webrtc/webrtc_config.gypi"
 
    GYP_WEBRTC_OPTIONS="--format=mozmake ${WEBRTC_CONFIG} -D target_arch=${WEBRTC_TARGET_ARCH} ${EXTRA_GYP_DEFINES} --depth=${srcdir}/media/webrtc/trunk --toplevel-dir=${srcdir} -G OBJDIR=${_objdir}"
 

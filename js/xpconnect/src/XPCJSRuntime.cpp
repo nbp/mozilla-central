@@ -1224,6 +1224,8 @@ XPCJSRuntime::~XPCJSRuntime()
 
     js::SetGCSliceCallback(mJSRuntime, mPrevGCSliceCallback);
 
+    xpc_DelocalizeRuntime(mJSRuntime);
+
     if (mWatchdogWakeup) {
         // If the watchdog thread is running, tell it to terminate waking it
         // up if necessary and wait until it signals that it finished. As we
@@ -1716,8 +1718,7 @@ ReportCompartmentStats(const JS::CompartmentStats &cStats,
 
     CREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("script-data"),
                   cStats.scriptData,
-                  "Memory allocated for JSScript bytecode and various "
-                  "variable-length tables.");
+                  "Memory allocated for various variable-length tables in JSScript.");
 
     CREPORT_BYTES(cJSPathPrefix + NS_LITERAL_CSTRING("jaeger-data"),
                   cStats.jaegerData,
@@ -1936,6 +1937,11 @@ ReportJSRuntimeExplicitTreeStats(const JS::RuntimeStats &rtStats,
     RREPORT_BYTES(rtPath + NS_LITERAL_CSTRING("runtime/script-filenames"),
                   nsIMemoryReporter::KIND_HEAP, rtStats.runtime.scriptFilenames,
                   "Memory used for the table holding script filenames.");
+
+    RREPORT_BYTES(rtPath + NS_LITERAL_CSTRING("runtime/script-data"),
+                  nsIMemoryReporter::KIND_HEAP, rtStats.runtime.scriptData,
+                  "Memory used for the table holding script data shared in "
+                  "the runtime.");
 
     RREPORT_BYTES(rtPath + NS_LITERAL_CSTRING("runtime/script-sources"),
                   nsIMemoryReporter::KIND_HEAP, rtStats.runtime.scriptSources,
@@ -2597,6 +2603,12 @@ XPCJSRuntime::XPCJSRuntime(nsXPConnect* aXPConnect)
     // JS_CompileFunction*). In practice, this means content scripts and event
     // handlers.
     JS_SetSourceHook(mJSRuntime, SourceHook);
+
+    // Set up locale information and callbacks for the newly-created runtime so
+    // that the various toLocaleString() methods, localeCompare(), and other
+    // internationalization APIs work as desired.
+    if (!xpc_LocalizeRuntime(mJSRuntime))
+        NS_RUNTIMEABORT("xpc_LocalizeRuntime failed.");
 
     NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(XPConnectJSGCHeap));
     NS_RegisterMemoryReporter(new NS_MEMORY_REPORTER_NAME(XPConnectJSSystemCompartmentCount));
