@@ -1,3 +1,0 @@
-From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 814177 - Use a callVM for generic InstanceOf cases. r=dvander
-
