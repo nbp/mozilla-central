@@ -72,9 +72,9 @@ class MUse : public TempObject, public InlineListNode<MUse>
 {
     friend class MDefinition;
 
-    MOperand *producer_; // MDefinition that is being used.
-    MNode *consumer_; // The node that is using this operand.
-    uint32_t index_;  // The index of this operand in its consumer.
+    MOperand *producer_;    // MDefinition that is being used.
+    MNode *consumer_;       // The node that is using this operand.
+    uint32_t index_;        // The index of this operand in its consumer.
 
     MUse(MOperand *producer, MNode *consumer, uint32_t index)
       : producer_(producer),
@@ -284,15 +284,6 @@ class MOperand : public MNode
         uses_.pushFront(use);
     }
     void replaceAllUsesWith(MDefinition *dom);
-
-  public:
-    inline bool isDefinition() const {
-        return kind() == MNode::Definition;
-    }
-    inline MDefinition *toDefinition() {
-        JS_ASSERT(isDefinition());
-        return (MDefinition *)this;
-    }
 };
 
 // An MDefinition is an SSA name.
