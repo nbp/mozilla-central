@@ -374,7 +374,7 @@ IonBuilder::build()
     // analysis explicitly checks (this is the same mechanism used for
     // effectful operations).
     for (uint32_t i = 0; i < CountArgSlots(info().fun()); i++) {
-        MInstruction *ins = current->getEntrySlot(i)->toInstruction();
+        MInstruction *ins = current->getEntrySlot(i)->toDefinition()->toInstruction();
         if (ins->type() == MIRType_Value)
             ins->setResumePoint(current->entryResumePoint());
     }

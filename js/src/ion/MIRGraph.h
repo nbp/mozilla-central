@@ -371,7 +371,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     size_t numEntrySlots() const {
         return entryResumePoint()->numOperands();
     }
-    MDefinition *getEntrySlot(size_t i) const {
+    MOperand *getEntrySlot(size_t i) const {
         JS_ASSERT(i < numEntrySlots());
         return entryResumePoint()->getOperand(i);
     }

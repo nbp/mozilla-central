@@ -1809,7 +1809,7 @@ CodeGenerator::generateArgumentsChecks()
     Label miss;
     for (uint32_t i = START_SLOT; i < CountArgSlots(info.fun()); i++) {
         // All initial parameters are guaranteed to be MParameters.
-        MParameter *param = rp->getOperand(i)->toParameter();
+        MParameter *param = rp->getOperand(i)->toDefinition()->toParameter();
         const types::TypeSet *types = param->typeSet();
         if (!types || types->unknown())
             continue;

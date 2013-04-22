@@ -226,7 +226,7 @@ MDefinition::printOpcode(FILE *fp)
 }
 
 size_t
-MDefinition::useCount() const
+MOperand::useCount() const
 {
     size_t count = 0;
     for (MUseIterator i(uses_.begin()); i != uses_.end(); i++)
@@ -235,17 +235,17 @@ MDefinition::useCount() const
 }
 
 MUseIterator
-MDefinition::removeUse(MUseIterator use)
+MOperand::removeUse(MUseIterator use)
 {
     return uses_.removeAt(use);
 }
 
 MUseIterator
-MNode::replaceOperand(MUseIterator use, MDefinition *def)
+MNode::replaceOperand(MUseIterator use, MOperand *def)
 {
     JS_ASSERT(def != NULL);
     uint32_t index = use->index();
-    MDefinition *prev = use->producer();
+    MOperand *prev = use->producer();
 
     JS_ASSERT(use->index() < numOperands());
     JS_ASSERT(use->producer() == getOperand(index));
@@ -260,11 +260,11 @@ MNode::replaceOperand(MUseIterator use, MDefinition *def)
 }
 
 void
-MNode::replaceOperand(size_t index, MDefinition *def)
+MNode::replaceOperand(size_t index, MOperand *def)
 {
     JS_ASSERT(def != NULL);
     MUse *use = getUseFor(index);
-    MDefinition *prev = use->producer();
+    MOperand *prev = use->producer();
 
     JS_ASSERT(use->index() == index);
     JS_ASSERT(use->index() < numOperands());
@@ -296,7 +296,7 @@ MNode::discardOperand(size_t index)
 }
 
 void
-MDefinition::replaceAllUsesWith(MDefinition *dom)
+MOperand::replaceAllUsesWith(MDefinition *dom)
 {
     JS_ASSERT(dom != NULL);
     if (dom == this)

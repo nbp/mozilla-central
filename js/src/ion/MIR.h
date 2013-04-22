@@ -56,6 +56,7 @@ MIRType MIRTypeFromValue(const js::Value &vp)
     _(Unused)                                                                   \
     _(DOMFunction)   /* Contains or uses a common DOM method function */
 
+class MOperand;
 class MDefinition;
 class MInstruction;
 class MBasicBlock;
@@ -71,11 +72,11 @@ class MUse : public TempObject, public InlineListNode<MUse>
 {
     friend class MDefinition;
 
-    MDefinition *producer_; // MDefinition that is being used.
-    MNode *consumer_;       // The node that is using this operand.
-    uint32_t index_;        // The index of this operand in its consumer.
+    MOperand *producer_; // MDefinition that is being used.
+    MNode *consumer_; // The node that is using this operand.
+    uint32_t index_;  // The index of this operand in its consumer.
 
-    MUse(MDefinition *producer, MNode *consumer, uint32_t index)
+    MUse(MOperand *producer, MNode *consumer, uint32_t index)
       : producer_(producer),
         consumer_(consumer),
         index_(index)
@@ -87,19 +88,18 @@ class MUse : public TempObject, public InlineListNode<MUse>
       : producer_(NULL), consumer_(NULL), index_(0)
     { }
 
-    static inline MUse *New(MDefinition *producer, MNode *consumer, uint32_t index) {
+    static inline MUse *New(MOperand *producer, MNode *consumer, uint32_t index) {
         return new MUse(producer, consumer, index);
     }
 
     // Set data inside the MUse.
-    void set(MDefinition *producer, MNode *consumer, uint32_t index) {
+    void set(MOperand *producer, MNode *consumer, uint32_t index) {
         producer_ = producer;
         consumer_ = consumer;
         index_ = index;
     }
 
-    MDefinition *producer() const {
-        JS_ASSERT(producer_ != NULL);
+    MOperand *producer() const {
         return producer_;
     }
     MNode *consumer() const {
@@ -144,7 +144,7 @@ class MNode : public TempObject
     virtual Kind kind() const = 0;
 
     // Returns the definition at a given operand.
-    virtual MDefinition *getOperand(size_t index) const = 0;
+    virtual MOperand *getOperand(size_t index) const = 0;
     virtual size_t numOperands() const = 0;
 
     bool isDefinition() const {
@@ -164,10 +164,10 @@ class MNode : public TempObject
     }
 
     // Replaces an already-set operand during iteration over a use chain.
-    MUseIterator replaceOperand(MUseIterator use, MDefinition *ins);
+    MUseIterator replaceOperand(MUseIterator use, MOperand *ins);
 
     // Replaces an already-set operand, updating use information.
-    void replaceOperand(size_t index, MDefinition *ins);
+    void replaceOperand(size_t index, MOperand *ins);
 
     // Resets the operand to an uninitialized state, breaking the link
     // with the previous operand's producer.
@@ -178,7 +178,7 @@ class MNode : public TempObject
 
   protected:
     // Sets an unset operand, updating use information.
-    virtual void setOperand(size_t index, MDefinition *operand) = 0;
+    virtual void setOperand(size_t index, MOperand *operand) = 0;
 
     // Gets the MUse corresponding to given operand.
     virtual MUse *getUseFor(size_t index) = 0;
@@ -243,8 +243,60 @@ class AliasSet {
     }
 };
 
+class MOperand : public MNode
+{
+  private:
+    InlineList<MUse> uses_;        // Use chain.
+
+  public:
+    MOperand()
+      : MNode()
+    { }
+
+    MOperand(MBasicBlock *block)
+      : MNode(block)
+    { }
+
+    // Returns the beginning of this definition's use chain.
+    MUseIterator usesBegin() const {
+        return uses_.begin();
+    }
+
+    // Returns the end of this definition's use chain.
+    MUseIterator usesEnd() const {
+        return uses_.end();
+    }
+
+    // Removes a use at the given position
+    MUseIterator removeUse(MUseIterator use);
+    void removeUse(MUse *use) {
+        uses_.remove(use);
+    }
+
+    // Number of uses of this instruction.
+    size_t useCount() const;
+
+    bool hasUses() const {
+        return !uses_.empty();
+    }
+
+    void addUse(MUse *use) {
+        uses_.pushFront(use);
+    }
+    void replaceAllUsesWith(MDefinition *dom);
+
+  public:
+    inline bool isDefinition() const {
+        return kind() == MNode::Definition;
+    }
+    inline MDefinition *toDefinition() {
+        JS_ASSERT(isDefinition());
+        return (MDefinition *)this;
+    }
+};
+
 // An MDefinition is an SSA name.
-class MDefinition : public MNode
+class MDefinition : public MOperand
 {
     friend class MBasicBlock;
     friend class Loop;
@@ -308,6 +360,10 @@ class MDefinition : public MNode
         dependency_(NULL),
         trackedPc_(NULL)
     { }
+
+    // Use abstract covariance to specialize the return type of this function
+    // when used with a MDefinition. All definition operands are definitions.
+    virtual MDefinition *getOperand(size_t index) const = 0;
 
     virtual Opcode op() const = 0;
     virtual const char *opName() const = 0;
@@ -393,41 +449,13 @@ class MDefinition : public MNode
         return resultType_;
     }
 
-    // Returns the beginning of this definition's use chain.
-    MUseIterator usesBegin() const {
-        return uses_.begin();
-    }
-
-    // Returns the end of this definition's use chain.
-    MUseIterator usesEnd() const {
-        return uses_.end();
-    }
-
     bool canEmitAtUses() const {
         return !isEmittedAtUses();
-    }
-
-    // Removes a use at the given position
-    MUseIterator removeUse(MUseIterator use);
-    void removeUse(MUse *use) {
-        uses_.remove(use);
-    }
-
-    // Number of uses of this instruction.
-    size_t useCount() const;
-
-    bool hasUses() const {
-        return !uses_.empty();
     }
 
     virtual bool isControlInstruction() const {
         return false;
     }
-
-    void addUse(MUse *use) {
-        uses_.pushFront(use);
-    }
-    void replaceAllUsesWith(MDefinition *dom);
 
     // Mark this instruction as having replaced all uses of ins, as during GVN,
     // returning false if the replacement should not be performed. For use when
@@ -588,7 +616,7 @@ class MAryInstruction : public MInstruction
   protected:
     FixedArityList<MUse, Arity> operands_;
 
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         operands_[index].set(operand, this, index);
         operand->addUse(&operands_[index]);
     }
@@ -599,7 +627,7 @@ class MAryInstruction : public MInstruction
 
   public:
     MDefinition *getOperand(size_t index) const {
-        return operands_[index].producer();
+        return operands_[index].producer()->toDefinition();
     }
     size_t numOperands() const {
         return Arity;
@@ -810,7 +838,7 @@ class MTableSwitch
     }
 
   protected:
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         JS_ASSERT(index == 0);
         operand_.set(operand, this, index);
         operand->addUse(&operand_);
@@ -889,7 +917,7 @@ class MTableSwitch
 
     MDefinition *getOperand(size_t index) const {
         JS_ASSERT(index == 0);
-        return operand_.producer();
+        return operand_.producer()->toDefinition();
     }
 
     size_t numOperands() const {
@@ -904,7 +932,7 @@ class MAryControlInstruction : public MControlInstruction
     FixedArityList<MBasicBlock *, Successors> successors_;
 
   protected:
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         operands_[index].set(operand, this, index);
         operand->addUse(&operands_[index]);
     }
@@ -918,7 +946,7 @@ class MAryControlInstruction : public MControlInstruction
 
   public:
     MDefinition *getOperand(size_t index) const {
-        return operands_[index].producer();
+        return operands_[index].producer()->toDefinition();
     }
     size_t numOperands() const {
         return Arity;
@@ -1275,12 +1303,12 @@ class MVariadicInstruction : public MInstruction
   public:
     // Will assert if called before initialization.
     MDefinition *getOperand(size_t index) const {
-        return operands_[index].producer();
+        return operands_[index].producer()->toDefinition();
     }
     size_t numOperands() const {
         return operands_.length();
     }
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         operands_[index].set(operand, this, index);
         operand->addUse(&operands_[index]);
     }
@@ -3263,7 +3291,7 @@ class MPhi : public MDefinition, public InlineForwardListNode<MPhi>
     INSTRUCTION_HEADER(Phi)
     static MPhi *New(uint32_t slot);
 
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         JS_ASSERT(index < numOperands());
         inputs_[index].set(operand, this, index);
         operand->addUse(&inputs_[index]);
@@ -3272,7 +3300,7 @@ class MPhi : public MDefinition, public InlineForwardListNode<MPhi>
     void removeOperand(size_t index);
 
     MDefinition *getOperand(size_t index) const {
-        return inputs_[index].producer();
+        return inputs_[index].producer()->toDefinition();
     }
     size_t numOperands() const {
         return inputs_.length();
@@ -5040,7 +5068,7 @@ class MDispatchInstruction
     }
 
   protected:
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         JS_ASSERT(index == 0);
         operand_.set(operand, this, 0);
         operand->addUse(&operand_);
@@ -5051,7 +5079,7 @@ class MDispatchInstruction
     }
     MDefinition *getOperand(size_t index) const {
         JS_ASSERT(index == 0);
-        return operand_.producer();
+        return operand_.producer()->toDefinition();
     }
     size_t numOperands() const {
         return 1;
@@ -5193,7 +5221,7 @@ class MPolyInlineDispatch : public MControlInstruction, public SingleObjectPolic
     }
 
   protected:
-    virtual void setOperand(size_t index, MDefinition *operand) {
+    virtual void setOperand(size_t index, MOperand *operand) {
         JS_ASSERT(index == 0);
         operand_.set(operand, this, index);
         operand->addUse(&operand_);
@@ -5217,7 +5245,7 @@ class MPolyInlineDispatch : public MControlInstruction, public SingleObjectPolic
 
     virtual MDefinition *getOperand(size_t index) const {
         JS_ASSERT(index == 0);
-        return operand_.producer();
+        return operand_.producer()->toDefinition();
     }
 
     virtual size_t numOperands() const {
@@ -6869,7 +6897,7 @@ class MResumePoint : public MNode
     }
 
     // Overwrites an operand without updating its Uses.
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         JS_ASSERT(index < stackDepth_);
         operands_[index].set(operand, this, index);
         operand->addUse(&operands_[index]);
@@ -6888,7 +6916,7 @@ class MResumePoint : public MNode
     size_t numOperands() const {
         return stackDepth_;
     }
-    MDefinition *getOperand(size_t index) const {
+    MOperand *getOperand(size_t index) const {
         JS_ASSERT(index < stackDepth_);
         return operands_[index].producer();
     }
@@ -7241,7 +7269,7 @@ class MAsmJSCall : public MInstruction
     size_t spIncrement_;
 
   protected:
-    void setOperand(size_t index, MDefinition *operand) {
+    void setOperand(size_t index, MOperand *operand) {
         operands_[index].set(operand, this, index);
         operand->addUse(&operands_[index]);
     }
@@ -7266,7 +7294,7 @@ class MAsmJSCall : public MInstruction
     }
     MDefinition *getOperand(size_t index) const {
         JS_ASSERT(index < numOperands_);
-        return operands_[index].producer();
+        return operands_[index].producer()->toDefinition();
     }
     size_t numArgs() const {
         return numArgs_;

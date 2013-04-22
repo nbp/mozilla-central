@@ -2578,7 +2578,7 @@ SpewResumePoint(MBasicBlock *block, MInstruction *ins, MResumePoint *resumePoint
             int(resumePoint->pc() - resumePoint->block()->info().script()->code));
 
     for (size_t i = 0; i < resumePoint->numOperands(); i++) {
-        MDefinition *in = resumePoint->getOperand(i);
+        MDefinition *in = resumePoint->toDefinition()->getOperand(i);
         fprintf(IonSpewFile, "    slot%u: ", (unsigned)i);
         in->printName(IonSpewFile);
         fprintf(IonSpewFile, "\n");

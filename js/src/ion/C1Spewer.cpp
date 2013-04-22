@@ -181,13 +181,17 @@ C1Spewer::spewPass(FILE *fp, MBasicBlock *block)
     fprintf(fp, "        size %d\n", (int)block->numEntrySlots());
     fprintf(fp, "        method \"None\"\n");
     for (uint32_t i = 0; i < block->numEntrySlots(); i++) {
-        MDefinition *ins = block->getEntrySlot(i);
+        MOperand *ins = block->getEntrySlot(i);
         fprintf(fp, "        ");
         fprintf(fp, "%d ", i);
-        if (ins->isUnused())
-            fprintf(fp, "unused");
-        else
-            ins->printName(fp);
+        if (ins->isDefinition()) {
+            if (ins->toDefinition()->isUnused())
+                fprintf(fp, "unused");
+            else
+                ins->toDefinition()->printName(fp);
+        } else {
+            fprintf(fp, "resume instruction");
+        }
         fprintf(fp, "\n");
     }
     fprintf(fp, "      end_locals\n");
