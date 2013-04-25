@@ -9,7 +9,6 @@
 #include "IDBObjectStore.h"
 
 #include "mozilla/dom/ipc/nsIRemoteBlob.h"
-#include "nsIJSContextStack.h"
 #include "nsIOutputStream.h"
 
 #include "jsfriendapi.h"
@@ -472,8 +471,7 @@ private:
   uint64_t mCount;
 };
 
-NS_STACK_CLASS
-class AutoRemoveIndex
+class MOZ_STACK_CLASS AutoRemoveIndex
 {
 public:
   AutoRemoveIndex(ObjectStoreInfo* aObjectStoreInfo,
@@ -571,7 +569,7 @@ class ThreadLocalJSRuntime
 JSClass ThreadLocalJSRuntime::sGlobalClass = {
   "IndexedDBTransactionThreadGlobal",
   JSCLASS_GLOBAL_FLAGS,
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
@@ -836,7 +834,7 @@ public:
 
 JSClass IDBObjectStore::sDummyPropJSClass = {
   "dummy", 0,
-  JS_PropertyStub,  JS_PropertyStub,
+  JS_PropertyStub,  JS_DeletePropertyStub,
   JS_PropertyStub,  JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub,
   JS_ConvertStub

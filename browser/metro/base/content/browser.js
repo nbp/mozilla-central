@@ -253,12 +253,12 @@ var Browser = {
 
     var os = Services.obs;
     os.removeObserver(SessionHistoryObserver, "browser:purge-session-history");
-    os.removeObserver(ActivityObserver, "application-background", false);
-    os.removeObserver(ActivityObserver, "application-foreground", false);
-    os.removeObserver(ActivityObserver, "system-active", false);
-    os.removeObserver(ActivityObserver, "system-idle", false);
-    os.removeObserver(ActivityObserver, "system-display-on", false);
-    os.removeObserver(ActivityObserver, "system-display-off", false);
+    os.removeObserver(ActivityObserver, "application-background");
+    os.removeObserver(ActivityObserver, "application-foreground");
+    os.removeObserver(ActivityObserver, "system-active");
+    os.removeObserver(ActivityObserver, "system-idle");
+    os.removeObserver(ActivityObserver, "system-display-on");
+    os.removeObserver(ActivityObserver, "system-display-off");
 
     window.controllers.removeController(this);
     window.controllers.removeController(BrowserUI);
@@ -442,22 +442,18 @@ var Browser = {
     if (aBringFront)
       this.selectedTab = newTab;
 
-    let getAttention = ("getAttention" in params ? params.getAttention : !aBringFront);
-    let event = document.createEvent("UIEvents");
-    event.initUIEvent("TabOpen", true, false, window, getAttention);
-    newTab.chromeTab.dispatchEvent(event);
-    newTab.browser.messageManager.sendAsyncMessage("Browser:TabOpen");
-
+    this._announceNewTab(newTab, params, aBringFront);
     return newTab;
   },
 
   closeTab: function closeTab(aTab, aOptions) {
     let tab = aTab instanceof XULElement ? this.getTabFromChrome(aTab) : aTab;
-    if (!tab || !this._getNextTab(tab))
+    if (!tab) {
       return;
+    }
 
     if (aOptions && "forceClose" in aOptions && aOptions.forceClose) {
-      this._doCloseTab(aTab);
+      this._doCloseTab(tab);
       return;
     }
 
@@ -468,10 +464,24 @@ var Browser = {
     ContentAreaUtils.saveDocument(this.selectedBrowser.contentWindow.document);
   },
 
+  /*
+   * helper for addTab related methods. Fires events related to
+   * new tab creation.
+   */
+  _announceNewTab: function _announceNewTab(aTab, aParams, aBringFront) {
+    let getAttention = ("getAttention" in aParams ? aParams.getAttention : !aBringFront);
+    let event = document.createEvent("UIEvents");
+    event.initUIEvent("TabOpen", true, false, window, getAttention);
+    aTab.chromeTab.dispatchEvent(event);
+    aTab.browser.messageManager.sendAsyncMessage("Browser:TabOpen");
+  },
+
   _doCloseTab: function _doCloseTab(aTab) {
-    let nextTab = this._getNextTab(aTab);
-    if (!nextTab)
-       return;
+    if (this._tabs.length === 1) {
+      Browser.addTab(this.getHomePage());
+    }
+
+    let nextTab = this.getNextTab(aTab);
 
     // Tabs owned by the closed tab are now orphaned.
     this._tabs.forEach(function(item, index, array) {
@@ -495,14 +505,28 @@ var Browser = {
     container.dispatchEvent(event);
   },
 
-  _getNextTab: function _getNextTab(aTab) {
+  getNextTab: function getNextTab(aTab) {
     let tabIndex = this._tabs.indexOf(aTab);
     if (tabIndex == -1)
       return null;
 
-    let nextTab = this._selectedTab;
-    if (nextTab == aTab) {
-      nextTab = this.getTabAtIndex(tabIndex + 1) || this.getTabAtIndex(tabIndex - 1);
+    if (this._selectedTab == aTab || this._selectedTab.chromeTab.hasAttribute("closing")) {
+      let nextTabIndex = tabIndex + 1;
+      let nextTab = null;
+
+      while (nextTabIndex < this._tabs.length && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex++;
+      }
+
+      nextTabIndex = tabIndex - 1;
+      while (nextTabIndex >= 0 && (!nextTab || nextTab.chromeTab.hasAttribute("closing"))) {
+        nextTab = this.getTabAtIndex(nextTabIndex);
+        nextTabIndex--;
+      }
+
+      if (!nextTab || nextTab.chromeTab.hasAttribute("closing"))
+        return null;
 
       // If the next tab is not a sibling, switch back to the parent.
       if (aTab.owner && nextTab.owner != aTab.owner)
@@ -510,9 +534,11 @@ var Browser = {
 
       if (!nextTab)
         return null;
+
+      return nextTab;
     }
 
-    return nextTab;
+    return this._selectedTab;
   },
 
   get selectedTab() {
@@ -535,7 +561,6 @@ var Browser = {
 
     let isFirstTab = this._selectedTab == null;
     let lastTab = this._selectedTab;
-    let oldBrowser = lastTab ? lastTab._browser : null;
     let browser = tab.browser;
 
     this._selectedTab = tab;
@@ -903,16 +928,11 @@ var Browser = {
         break;
 
       case "Browser:CanUnload:Return": {
-        if (!json.permit)
-          return;
-
-        // Allow a little delay to not close the target tab while processing
-        // a message for this particular tab
-        setTimeout(function(self) {
-          let tab = self.getTabForBrowser(browser);
-          self._doCloseTab(tab);
-        }, 0, this);
-        break;
+	if (json.permit) {
+	  let tab = this.getTabForBrowser(browser);
+	  BrowserUI.animateClosingTab(tab);
+	}
+	break;
       }
       case "Browser:ZoomToPoint:Return":
         if (json.zoomTo) {
@@ -1386,6 +1406,7 @@ function Tab(aURI, aParams) {
   this._loading = false;
   this._chromeTab = null;
   this._metadata = null;
+  this._eventDeferred = null;
 
   this.owner = null;
 
@@ -1419,6 +1440,10 @@ Tab.prototype = {
 
   get metadata() {
     return this._metadata || kDefaultMetadata;
+  },
+
+  get pageShowPromise() {
+    return this._eventDeferred ? this._eventDeferred.promise : null;
   },
 
   /** Update browser styles when the viewport metadata changes. */
@@ -1519,23 +1544,23 @@ Tab.prototype = {
   },
 
   create: function create(aURI, aParams) {
+    this._eventDeferred = Promise.defer();
+
     this._chromeTab = Elements.tabList.addTab();
     this._id = Browser.createTabId();
     let browser = this._createBrowser(aURI, null);
 
-    // Should we fully load the new browser, or wait until later
-    if ("delayLoad" in aParams && aParams.delayLoad)
-      return;
-
-    try {
-      let flags = aParams.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
-      let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
-      let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
-      let charset = "charset" in aParams ? aParams.charset : null;
-      browser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
-    } catch(e) {
-      dump("Error: " + e + "\n");
+    let self = this;
+    function onPageShowEvent(aEvent) {
+      browser.removeEventListener("pageshow", onPageShowEvent);
+      if (self._eventDeferred) {
+        self._eventDeferred.resolve(self);
+      }
+      self._eventDeferred = null;
     }
+    browser.addEventListener("pageshow", onPageShowEvent, true);
+
+    this._loadUsingParams(browser, aURI, aParams);
   },
 
   destroy: function destroy() {
@@ -1566,6 +1591,14 @@ Tab.prototype = {
     browser.__SS_data = session.data;
     browser.__SS_extdata = session.extra;
     browser.__SS_restore = true;
+  },
+
+  _loadUsingParams: function _loadUsingParams(aBrowser, aURI, aParams) {
+    let flags = aParams.flags || Ci.nsIWebNavigation.LOAD_FLAGS_NONE;
+    let postData = ("postData" in aParams && aParams.postData) ? aParams.postData.value : null;
+    let referrerURI = "referrerURI" in aParams ? aParams.referrerURI : null;
+    let charset = "charset" in aParams ? aParams.charset : null;
+    aBrowser.loadURIWithFlags(aURI, flags, referrerURI, charset, postData);
   },
 
   _createBrowser: function _createBrowser(aURI, aInsertBefore) {

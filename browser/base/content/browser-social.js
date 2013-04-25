@@ -317,26 +317,6 @@ SocialUI = {
     }
   },
 
-  disableWithConfirmation: function SocialUI_disableWithConfirmation() {
-    let brandShortName = document.getElementById("bundle_brand").getString("brandShortName");
-    let dialogTitle = gNavigatorBundle.getFormattedString("social.remove.confirmationOK",
-                                                          [Social.provider.name]);
-    let text = gNavigatorBundle.getFormattedString("social.remove.confirmationLabel",
-                                                   [Social.provider.name, brandShortName]);
-    let okButtonText = dialogTitle;
-
-    let ps = Services.prompt;
-    let flags = ps.BUTTON_TITLE_IS_STRING * ps.BUTTON_POS_0 +
-                ps.BUTTON_TITLE_CANCEL * ps.BUTTON_POS_1 +
-                ps.BUTTON_POS_0_DEFAULT;
-
-    let confirmationIndex = ps.confirmEx(null, dialogTitle, text, flags,
-                                         okButtonText, null, null, null, {});
-    if (confirmationIndex == 0) {
-      Social.deactivateFromOrigin(Social.provider.origin);
-    }
-  },
-
   get _chromeless() {
     // Is this a popup window that doesn't want chrome shown?
     let docElem = document.documentElement;
@@ -933,19 +913,11 @@ SocialToolbar = {
         SharedFrame.updateURL(notificationFrameId, icon.contentPanel);
       }
 
-      let toolbarButtonContainerId = "social-notification-container-" + icon.name;
       let toolbarButtonId = "social-notification-icon-" + icon.name;
-      let toolbarButtonContainer = document.getElementById(toolbarButtonContainerId);
       let toolbarButton = document.getElementById(toolbarButtonId);
-      if (!toolbarButtonContainer) {
-        // The container is used to fix an issue with position:absolute on
-        // generated content not being constrained to the bounding box of a
-        // parent toolbarbutton that has position:relative.
-        toolbarButtonContainer = document.createElement("toolbaritem");
-        toolbarButtonContainer.classList.add("social-notification-container");
-        toolbarButtonContainer.setAttribute("id", toolbarButtonContainerId);
-
+      if (!toolbarButton) {
         toolbarButton = document.createElement("toolbarbutton");
+        toolbarButton.setAttribute("type", "badged");
         toolbarButton.classList.add("toolbarbutton-1");
         toolbarButton.setAttribute("id", toolbarButtonId);
         toolbarButton.setAttribute("notificationFrameId", notificationFrameId);
@@ -954,8 +926,7 @@ SocialToolbar = {
             SocialToolbar.showAmbientPopup(toolbarButton);
         });
 
-        toolbarButtonContainer.appendChild(toolbarButton);
-        toolbarButtons.appendChild(toolbarButtonContainer);
+        toolbarButtons.appendChild(toolbarButton);
       }
 
       toolbarButton.style.listStyleImage = "url(" + icon.iconURL + ")";
@@ -1049,7 +1020,7 @@ SocialToolbar = {
     let navBar = document.getElementById("nav-bar");
     let anchor = navBar.getAttribute("mode") == "text" ?
                    document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-text") :
-                   document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-icon");
+                   document.getAnonymousElementByAttribute(aToolbarButton, "class", "toolbarbutton-badge-container");
     // Bug 849216 - open the popup in a setTimeout so we avoid the auto-rollup
     // handling from preventing it being opened in some cases.
     setTimeout(function() {

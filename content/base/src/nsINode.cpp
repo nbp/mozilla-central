@@ -28,7 +28,7 @@
 #include "nsCycleCollectionParticipant.h"
 #include "nsCycleCollector.h"
 #include "nsDocument.h"
-#include "nsDOMAttribute.h"
+#include "mozilla/dom/Attr.h"
 #include "nsDOMAttributeMap.h"
 #include "nsDOMCID.h"
 #include "nsDOMCSSAttrDeclaration.h"
@@ -1044,6 +1044,29 @@ nsINode::AddEventListener(const nsAString& aType,
   return NS_OK;
 }
 
+void
+nsINode::AddEventListener(const nsAString& aType,
+                          nsIDOMEventListener* aListener,
+                          bool aUseCapture,
+                          const Nullable<bool>& aWantsUntrusted,
+                          ErrorResult& aRv)
+{
+  bool wantsUntrusted;
+  if (aWantsUntrusted.IsNull()) {
+    wantsUntrusted = !nsContentUtils::IsChromeDoc(OwnerDoc());
+  } else {
+    wantsUntrusted = aWantsUntrusted.Value();
+  }
+
+  nsEventListenerManager* listener_manager = GetListenerManager(true);
+  if (!listener_manager) {
+    aRv.Throw(NS_ERROR_UNEXPECTED);
+    return;
+  }
+  listener_manager->AddEventListener(aType, aListener, aUseCapture,
+                                     wantsUntrusted);
+}
+
 NS_IMETHODIMP
 nsINode::AddSystemEventListener(const nsAString& aType,
                                 nsIDOMEventListener *aListener,
@@ -1368,6 +1391,21 @@ nsINode::doInsertChildAt(nsIContent* aKid, uint32_t aIndex,
   }
 
   return NS_OK;
+}
+
+void
+nsINode::Remove()
+{
+  nsINode* parent = GetParentNode();
+  if (!parent) {
+    return;
+  }
+  int32_t index = parent->IndexOf(this);
+  if (index < 0) {
+    NS_WARNING("Ignoring call to nsINode::Remove on anonymous child.");
+    return;
+  }
+  parent->RemoveChildAt(uint32_t(index), true);
 }
 
 void

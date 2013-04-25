@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -115,6 +114,12 @@ struct IonOptions
     // Default: .125
     double usesBeforeInliningFactor;
 
+    // How many times we will try to enter a script via OSR before
+    // invalidating the script.
+    //
+    // Default: 6,000
+    uint32_t osrPcMismatchesBeforeRecompile;
+
     // How many actual arguments are accepted on the C stack.
     //
     // Default: 4,096
@@ -165,18 +170,6 @@ struct IonOptions
     // Default: false
     bool eagerCompilation;
 
-    // If a function has attempted to make this many calls to
-    // functions that are marked "uncompileable", then
-    // stop running this function in IonMonkey. (default 512)
-    uint32_t slowCallLimit;
-
-    // When caller runs in IM, but callee not, we take a slow path to the interpreter.
-    // This has a significant overhead. In order to decrease the number of times this happens,
-    // the useCount gets incremented faster to compile this function in IM and use the fastpath.
-    //
-    // Default: 5
-    uint32_t slowCallIncUseCount;
-
     // How many uses of a parallel kernel before we attempt compilation.
     //
     // Default: 1
@@ -207,6 +200,7 @@ struct IonOptions
         usesBeforeCompile(1000),
         usesBeforeCompileNoJaeger(40),
         usesBeforeInliningFactor(.125),
+        osrPcMismatchesBeforeRecompile(6000),
         maxStackArgs(4096),
         maxInlineDepth(3),
         smallFunctionMaxInlineDepth(10),
@@ -215,8 +209,6 @@ struct IonOptions
         inlineMaxTotalBytecodeLength(1000),
         inlineUseCountRatio(128),
         eagerCompilation(false),
-        slowCallLimit(512),
-        slowCallIncUseCount(5),
         usesBeforeCompileParallel(1)
     {
     }
@@ -276,7 +268,7 @@ IonContext *GetIonContext();
 
 bool SetIonContext(IonContext *ctx);
 
-bool CanIonCompileScript(JSContext *cx, HandleScript script);
+bool CanIonCompileScript(JSContext *cx, HandleScript script, bool osr);
 
 MethodStatus CanEnterAtBranch(JSContext *cx, JSScript *script,
                               AbstractFramePtr fp, jsbytecode *pc, bool isConstructing);

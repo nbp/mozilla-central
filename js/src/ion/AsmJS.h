@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,10 +12,7 @@
 # include <mach/mach.h>
 #endif
 
-// asm.js compilation is only available on desktop x86/x64 at the moment.
-// Don't panic, mobile support is coming soon.
-#if defined(JS_ION) && \
-    (defined(JS_CPU_X86) || defined(JS_CPU_X64))
+#if defined(JS_ION)
 # define JS_ASMJS
 #endif
 

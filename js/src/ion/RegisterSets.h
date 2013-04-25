@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -9,7 +8,6 @@
 #define jsion_cpu_registersets_h__
 
 #include "Registers.h"
-#include "TypeOracle.h"
 #include "ion/IonAllocPolicy.h"
 
 namespace js {
@@ -801,6 +799,20 @@ class AsmJSHeapAccess
 };
 
 typedef Vector<AsmJSHeapAccess, 0, IonAllocPolicy> AsmJSHeapAccessVector;
+
+#ifdef JS_CPU_ARM
+struct AsmJSBoundsCheck
+{
+    unsigned offset_;
+    AsmJSBoundsCheck(unsigned offset)
+    : offset_(offset)
+    {}
+    void setOffset(uint32_t offset) { offset_ = offset; }
+    unsigned offset() {return offset_;}
+};
+
+typedef Vector<AsmJSBoundsCheck, 0, IonAllocPolicy> AsmJSBoundsCheckVector;
+#endif
 
 } // namespace ion
 } // namespace js

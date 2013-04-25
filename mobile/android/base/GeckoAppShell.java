@@ -55,6 +55,7 @@ import android.os.MessageQueue;
 import android.os.SystemClock;
 import android.os.Vibrator;
 import android.provider.Settings;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.util.DisplayMetrics;
 import android.util.Log;
@@ -65,7 +66,6 @@ import android.view.View;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.MimeTypeMap;
 import android.widget.Toast;
-import android.text.TextUtils;
 
 import java.io.BufferedReader;
 import java.io.Closeable;
@@ -78,6 +78,9 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintWriter;
 import java.io.StringWriter;
+import java.net.Proxy;
+import java.net.ProxySelector;
+import java.net.URI;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -90,9 +93,6 @@ import java.util.NoSuchElementException;
 import java.util.StringTokenizer;
 import java.util.TreeMap;
 import java.util.concurrent.SynchronousQueue;
-import java.net.ProxySelector;
-import java.net.Proxy;
-import java.net.URI;
 
 public class GeckoAppShell
 {
@@ -174,9 +174,6 @@ public class GeckoAppShell
         Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler() {
             @Override
             public void uncaughtException(Thread thread, Throwable e) {
-                Log.e(LOGTAG, ">>> REPORTING UNCAUGHT EXCEPTION FROM THREAD "
-                              + thread.getId() + " (\"" + thread.getName() + "\")", e);
-
                 // If the uncaught exception was rethrown, walk the exception `cause` chain to find
                 // the original exception so Socorro can correctly collate related crash reports.
                 Throwable cause;
@@ -184,15 +181,20 @@ public class GeckoAppShell
                     e = cause;
                 }
 
-                if (e instanceof java.lang.OutOfMemoryError) {
-                    SharedPreferences prefs =
-                        GeckoApp.mAppContext.getSharedPreferences(GeckoApp.PREFS_NAME, 0);
-                    SharedPreferences.Editor editor = prefs.edit();
-                    editor.putBoolean(GeckoApp.PREFS_OOM_EXCEPTION, true);
-                    editor.commit();
-                }
+                try {
+                    Log.e(LOGTAG, ">>> REPORTING UNCAUGHT EXCEPTION FROM THREAD "
+                                  + thread.getId() + " (\"" + thread.getName() + "\")", e);
 
-                reportJavaCrash(getStackTraceString(e));
+                    if (e instanceof OutOfMemoryError) {
+                        SharedPreferences prefs =
+                            GeckoApp.mAppContext.getSharedPreferences(GeckoApp.PREFS_NAME, 0);
+                        SharedPreferences.Editor editor = prefs.edit();
+                        editor.putBoolean(GeckoApp.PREFS_OOM_EXCEPTION, true);
+                        editor.commit();
+                    }
+                } finally {
+                    reportJavaCrash(getStackTraceString(e));
+                }
             }
         });
     }
@@ -581,7 +583,8 @@ public class GeckoAppShell
         Intent intent = new Intent();
         intent.setAction(GeckoApp.ACTION_WEBAPP_PREFIX + aIndex);
         intent.setData(Uri.parse(aURI));
-        intent.setClassName(GeckoApp.mAppContext, GeckoApp.mAppContext.getPackageName() + ".WebApps$WebApp" + aIndex);
+        intent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
+                            AppConstants.ANDROID_PACKAGE_NAME + ".WebApps$WebApp" + aIndex);
         return intent;
     }
 
@@ -619,8 +622,8 @@ public class GeckoAppShell
                     shortcutIntent = new Intent();
                     shortcutIntent.setAction(GeckoApp.ACTION_BOOKMARK);
                     shortcutIntent.setData(Uri.parse(aURI));
-                    shortcutIntent.setClassName(GeckoApp.mAppContext,
-                                                GeckoApp.mAppContext.getPackageName() + ".App");
+                    shortcutIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
+                                                AppConstants.BROWSER_INTENT_CLASS);
                 }
         
                 Intent intent = new Intent();
@@ -658,8 +661,8 @@ public class GeckoAppShell
                 } else {
                     shortcutIntent = new Intent();
                     shortcutIntent.setAction(GeckoApp.ACTION_BOOKMARK);
-                    shortcutIntent.setClassName(GeckoApp.mAppContext,
-                                                GeckoApp.mAppContext.getPackageName() + ".App");
+                    shortcutIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
+                                                AppConstants.BROWSER_INTENT_CLASS);
                     shortcutIntent.setData(Uri.parse(aURI));
                 }
         
@@ -1067,7 +1070,7 @@ public class GeckoAppShell
         if ("vnd.youtube".equals(scheme) && getHandlersForURL(targetURI, action).length == 0) {
             // Special case youtube to fallback to our own player
             intent = new Intent(VideoPlayer.VIDEO_ACTION);
-            intent.setClassName(GeckoApp.mAppContext.getPackageName(),
+            intent.setClassName(AppConstants.ANDROID_PACKAGE_NAME,
                                 "org.mozilla.gecko.VideoPlayer");
         } else {
             intent = getIntentForActionString(action);
@@ -1208,7 +1211,7 @@ public class GeckoAppShell
         // The intent to launch when the user clicks the expanded notification
         String app = GeckoApp.mAppContext.getClass().getName();
         Intent notificationIntent = new Intent(GeckoApp.ACTION_ALERT_CALLBACK);
-        notificationIntent.setClassName(GeckoApp.mAppContext, app);
+        notificationIntent.setClassName(AppConstants.ANDROID_PACKAGE_NAME, app);
         notificationIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
         int notificationID = aAlertName.hashCode();

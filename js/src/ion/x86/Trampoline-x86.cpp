@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -315,6 +314,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Load the number of |undefined|s to push into %ecx.
     masm.movl(Operand(esp, IonRectifierFrameLayout::offsetOfCalleeToken()), eax);
+    masm.clearCalleeTag(eax, mode);
     masm.movzwl(Operand(eax, offsetof(JSFunction, nargs)), ecx);
     masm.subl(esi, ecx);
 
@@ -380,13 +380,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     // Call the target function.
     // Note that this assumes the function is JITted.
     masm.movl(Operand(eax, offsetof(JSFunction, u.i.script_)), eax);
-    if (mode == SequentialExecution) {
-        masm.loadBaselineOrIonCode(eax, ebx, NULL);
-    } else {
-        masm.movl(Operand(eax, OffsetOfIonInJSScript(mode)), eax);
-        masm.movl(Operand(eax, IonScript::offsetOfMethod()), eax);
-    }
-    masm.movl(Operand(eax, IonCode::offsetOfCode()), eax);
+    masm.loadBaselineOrIonRaw(eax, eax, mode, NULL);
     masm.call(eax);
     uint32_t returnOffset = masm.currentOffset();
 
@@ -521,6 +515,9 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Wrapper register set is a superset of Volatile register set.
     JS_STATIC_ASSERT((Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0);
 
+    // The context is the first argument.
+    Register cxreg = regs.takeAny();
+
     // Stack is:
     //    ... frame ...
     //  +8  [args]
@@ -528,7 +525,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     //  +0  returnAddress
     //
     // We're aligned to an exit frame, so link it up.
-    masm.enterExitFrame(&f);
+    masm.enterExitFrameAndLoadContext(&f, cxreg, regs.getAny(), f.executionMode);
 
     // Save the current stack pointer as the base for copying arguments.
     Register argsBase = InvalidReg;
@@ -563,12 +560,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    Register temp = regs.getAny();
-    masm.setupUnalignedABICall(f.argc(), temp);
-
-    // Initialize the context parameter.
-    Register cxreg = regs.takeAny();
-    masm.loadJSContext(cxreg);
+    masm.setupUnalignedABICall(f.argc(), regs.getAny());
     masm.passABIArg(cxreg);
 
     size_t argDisp = 0;
@@ -607,15 +599,17 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     masm.callWithABI(f.wrapped);
 
     // Test for failure.
-    Label exception;
+    Label failure;
     switch (f.failType()) {
       case Type_Object:
-        masm.testl(eax, eax);
-        masm.j(Assembler::Zero, &exception);
+        masm.branchTestPtr(Assembler::Zero, eax, eax, &failure);
         break;
       case Type_Bool:
         masm.testb(eax, eax);
-        masm.j(Assembler::Zero, &exception);
+        masm.j(Assembler::Zero, &failure);
+        break;
+      case Type_ParallelResult:
+        masm.branchPtr(Assembler::NotEqual, eax, Imm32(TP_SUCCESS), &failure);
         break;
       default:
         JS_NOT_REACHED("unknown failure kind");
@@ -644,8 +638,8 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
                     f.explicitStackSlots() * sizeof(void *) +
                     f.extraValuesToPop * sizeof(Value)));
 
-    masm.bind(&exception);
-    masm.handleException();
+    masm.bind(&failure);
+    masm.handleFailure(f.executionMode);
 
     Linker linker(masm);
     IonCode *wrapper = linker.newCode(cx, JSC::OTHER_CODE);
@@ -665,8 +659,14 @@ IonRuntime::generatePreBarrier(JSContext *cx, MIRType type)
 {
     MacroAssembler masm;
 
-    RegisterSet save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
-                                   FloatRegisterSet(FloatRegisters::VolatileMask));
+    RegisterSet save;
+    if (cx->runtime->jitSupportsFloatingPoint) {
+        save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
+                           FloatRegisterSet(FloatRegisters::VolatileMask));
+    } else {
+        save = RegisterSet(GeneralRegisterSet(Registers::VolatileMask),
+                           FloatRegisterSet());
+    }
     masm.PushRegsInMask(save);
 
     JS_ASSERT(PreBarrierReg == edx);

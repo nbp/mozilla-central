@@ -25,14 +25,44 @@ NS_IMPL_RELEASE_INHERITED(DelayNode, AudioNode)
 
 class DelayNodeEngine : public AudioNodeEngine
 {
+  class PlayingRefChanged : public nsRunnable
+  {
+  public:
+    enum ChangeType { ADDREF, RELEASE };
+    PlayingRefChanged(AudioNodeStream* aStream, ChangeType aChange)
+      : mStream(aStream)
+      , mChange(aChange)
+    {
+    }
+
+    NS_IMETHOD Run()
+    {
+      nsRefPtr<DelayNode> node = static_cast<DelayNode*>(mStream->Engine()->Node());
+      if (node) {
+        if (mChange == ADDREF) {
+          node->mPlayingRef.Take(node);
+        } else if (mChange == RELEASE) {
+          node->mPlayingRef.Drop(node);
+        }
+      }
+      return NS_OK;
+    }
+
+  private:
+    nsRefPtr<AudioNodeStream> mStream;
+    ChangeType mChange;
+  };
+
 public:
-  explicit DelayNodeEngine(AudioDestinationNode* aDestination)
-    : mSource(nullptr)
+  DelayNodeEngine(AudioNode* aNode, AudioDestinationNode* aDestination)
+    : AudioNodeEngine(aNode)
+    , mSource(nullptr)
     , mDestination(static_cast<AudioNodeStream*> (aDestination->Stream()))
     // Keep the default value in sync with the default value in DelayNode::DelayNode.
     , mDelay(0.f)
     , mMaxDelay(0.)
     , mWriteIndex(0)
+    , mLeftOverData(INT32_MIN)
     , mCurrentDelayTime(0.)
   {
   }
@@ -98,7 +128,30 @@ public:
     MOZ_ASSERT(mSource == aStream, "Invalid source stream");
 
     const bool firstTime = !!!mBuffer.Length();
-    const uint32_t numChannels = aInput.mChannelData.Length();
+    const uint32_t numChannels = aInput.IsNull() ?
+                                 mBuffer.Length() :
+                                 aInput.mChannelData.Length();
+
+    bool playedBackAllLeftOvers = false;
+    if (!mBuffer.IsEmpty() &&
+        mLeftOverData == INT32_MIN &&
+        aStream->AllInputsFinished()) {
+      mLeftOverData = static_cast<int32_t>(mCurrentDelayTime * IdealAudioRate());
+
+      nsRefPtr<PlayingRefChanged> refchanged =
+        new PlayingRefChanged(aStream, PlayingRefChanged::ADDREF);
+      NS_DispatchToMainThread(refchanged);
+    } else if (mLeftOverData != INT32_MIN) {
+      mLeftOverData -= WEBAUDIO_BLOCK_SIZE;
+      if (mLeftOverData <= 0) {
+        mLeftOverData = INT32_MIN;
+        playedBackAllLeftOvers = true;
+
+        nsRefPtr<PlayingRefChanged> refchanged =
+          new PlayingRefChanged(aStream, PlayingRefChanged::RELEASE);
+        NS_DispatchToMainThread(refchanged);
+      }
+    }
 
     if (!EnsureBuffer(numChannels)) {
       aOutput->SetNull(0);
@@ -134,7 +187,7 @@ public:
 
       float* buffer = mBuffer[channel].Elements();
       const uint32_t bufferLength = mBuffer[channel].Length();
-      const float* input = static_cast<const float*>(aInput.mChannelData[channel]);
+      const float* input = static_cast<const float*>(aInput.mChannelData.SafeElementAt(channel));
       float* output = static_cast<float*>(const_cast<void*>(aOutput->mChannelData[channel]));
 
       for (uint32_t i = 0; i < WEBAUDIO_BLOCK_SIZE; ++i) {
@@ -146,7 +199,9 @@ public:
         }
 
         // Write the input sample to the correct location in our buffer
-        buffer[writeIndex] = input[i];
+        if (input) {
+          buffer[writeIndex] = input[i] * aInput.mVolume;
+        }
 
         // Now, determine the correct read position.  We adjust the read position to be
         // from currentDelayTime seconds in the past.  We also interpolate the two input
@@ -183,6 +238,11 @@ public:
         mWriteIndex = writeIndex;
       }
     }
+
+    if (playedBackAllLeftOvers) {
+      // Delete our buffered data once we no longer need it
+      mBuffer.Clear();
+    }
   }
 
   AudioNodeStream* mSource;
@@ -195,15 +255,18 @@ public:
   // Write index for the buffer, to write the frames to the correct index of the buffer
   // given the current delay.
   uint32_t mWriteIndex;
+  // How much data we have in our buffer which needs to be flushed out when our inputs
+  // finish.
+  int32_t mLeftOverData;
   // Current delay time, in seconds
   double mCurrentDelayTime;
 };
 
 DelayNode::DelayNode(AudioContext* aContext, double aMaxDelay)
   : AudioNode(aContext)
-  , mDelay(new AudioParam(this, SendDelayToStream, 0.0f, 0.0f, float(aMaxDelay)))
+  , mDelay(new AudioParam(this, SendDelayToStream, 0.0f))
 {
-  DelayNodeEngine* engine = new DelayNodeEngine(aContext->Destination());
+  DelayNodeEngine* engine = new DelayNodeEngine(this, aContext->Destination());
   mStream = aContext->Graph()->CreateAudioNodeStream(engine, MediaStreamGraph::INTERNAL_STREAM);
   engine->SetSourceStream(static_cast<AudioNodeStream*> (mStream.get()));
   AudioNodeStream* ns = static_cast<AudioNodeStream*>(mStream.get());

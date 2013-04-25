@@ -116,7 +116,7 @@ public:
     RecvAudioChannelNotify();
 
     virtual bool
-    RecvDumpMemoryReportsToFile(const nsString& aIdentifier,
+    RecvDumpMemoryInfoToTempDir(const nsString& aIdentifier,
                                 const bool& aMinimizeMemoryUsage,
                                 const bool& aDumpChildProcesses);
     virtual bool
@@ -142,7 +142,7 @@ public:
     virtual PSmsChild* AllocPSms();
     virtual bool DeallocPSms(PSmsChild*);
 
-    virtual PStorageChild* AllocPStorage(const StorageConstructData& aData);
+    virtual PStorageChild* AllocPStorage();
     virtual bool DeallocPStorage(PStorageChild* aActor);
 
     virtual PBluetoothChild* AllocPBluetooth();

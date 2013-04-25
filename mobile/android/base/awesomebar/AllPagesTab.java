@@ -25,16 +25,13 @@ import android.content.Context;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Handler;
 import android.os.Message;
 import android.os.SystemClock;
 import android.text.TextUtils;
 import android.util.Log;
-import android.view.animation.AccelerateInterpolator;
-import android.view.animation.AlphaAnimation;
-import android.view.animation.Animation;
-import android.view.animation.TranslateAnimation;
 import android.view.ContextMenu;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.LayoutInflater;
@@ -44,6 +41,10 @@ import android.view.View.OnClickListener;
 import android.view.View.OnLongClickListener;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
+import android.view.animation.AccelerateInterpolator;
+import android.view.animation.AlphaAnimation;
+import android.view.animation.Animation;
+import android.view.animation.TranslateAnimation;
 import android.widget.AdapterView;
 import android.widget.FilterQueryProvider;
 import android.widget.ImageView;
@@ -63,6 +64,8 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
     private static final int SUGGESTION_TIMEOUT = 3000;
     private static final int SUGGESTION_MAX = 3;
     private static final int ANIMATION_DURATION = 250;
+    // The maximum number of rows deep in a search we'll dig for an autocomplete result
+    private static final int MAX_AUTOCOMPLETE_SEARCH = 20;
 
     private String mSearchTerm;
     private ArrayList<SearchEngine> mSearchEngines;
@@ -76,6 +79,7 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
     private View mSuggestionsOptInPrompt;
     private Handler mHandler;
     private ListView mListView;
+    private volatile AutocompleteHandler mAutocompleteHandler = null;
 
     private static final int MESSAGE_LOAD_FAVICONS = 1;
     private static final int MESSAGE_UPDATE_FAVICONS = 2;
@@ -147,22 +151,31 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
 
     @Override
     public void destroy() {
-        AwesomeBarCursorAdapter adapter = getCursorAdapter();
         unregisterEventListener("SearchEngines:Data");
-        if (adapter == null) {
-            return;
-        }
-
-        Cursor cursor = adapter.getCursor();
-        if (cursor != null)
-            cursor.close();
 
         mHandler.removeMessages(MESSAGE_UPDATE_FAVICONS);
         mHandler.removeMessages(MESSAGE_LOAD_FAVICONS);
         mHandler = null;
+
+        // Can't use getters for adapter or listview. They will create them if null.
+        if (mCursorAdapter != null && mListView != null) {
+            mListView.setAdapter(null);
+            final Cursor cursor = mCursorAdapter.getCursor();
+            // Gingerbread locks the DB when closing a cursor, so do it in the
+            // background.
+            ThreadUtils.postToBackgroundThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (cursor != null && !cursor.isClosed())
+                        cursor.close();
+                }
+            });
+        }
     }
 
-    public void filter(String searchTerm) {
+    public void filter(String searchTerm, AutocompleteHandler handler) {
+        mAutocompleteHandler = handler;
+
         AwesomeBarCursorAdapter adapter = getCursorAdapter();
         adapter.filter(searchTerm);
 
@@ -173,6 +186,61 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                 mSuggestionsOptInPrompt.setVisibility(visibility);
             }
         }
+    }
+
+    private void findAutocompleteFor(String searchTerm, Cursor cursor) {
+        if (TextUtils.isEmpty(searchTerm) || cursor == null || mAutocompleteHandler == null)
+            return;
+
+        // avoid searching the path if we don't have to. Currently just decided by if there is
+        // a '/' character in the string
+        final String res = searchHosts(searchTerm, cursor, searchTerm.indexOf("/") > 0);
+
+        if (res != null) {
+            ThreadUtils.postToUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    // Its possible that mAutocompleteHandler has been destroyed
+                    if (mAutocompleteHandler != null) {
+                        mAutocompleteHandler.onAutocomplete(res);
+                        mAutocompleteHandler = null;
+                    }
+                }
+            });
+        }
+    }
+
+    private String searchHosts(String searchTerm, Cursor cursor, boolean searchPath) {
+        int i = 0;
+        if (cursor.moveToFirst()) {
+            int urlIndex = cursor.getColumnIndexOrThrow(URLColumns.URL);
+            do {
+                final Uri url = Uri.parse(cursor.getString(urlIndex));
+                String host = StringUtils.stripCommonSubdomains(url.getHost());
+                // host may be null for about pages
+                if (host == null)
+                    continue;
+
+                StringBuilder hostBuilder = new StringBuilder(host);
+               if (hostBuilder.indexOf(searchTerm) == 0) {
+                    return hostBuilder.append("/").toString();
+                }
+
+                if (searchPath) {
+                    List<String> path = url.getPathSegments();
+
+                    for (String seg : path) {
+                        hostBuilder.append("/").append(seg);
+                        if (hostBuilder.indexOf(searchTerm) == 0) {
+                            return hostBuilder.append("/").toString();
+                        }
+                    }
+                }
+
+                i++;
+            } while (i < MAX_AUTOCOMPLETE_SEARCH && cursor.moveToNext());
+        }
+        return null;
     }
 
     /**
@@ -230,6 +298,8 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
                         Telemetry.HistogramAdd("FENNEC_AWESOMEBAR_ALLPAGES_EMPTY_TIME", time);
                         mTelemetrySent = true;
                     }
+
+                    findAutocompleteFor(constraint.toString(), c);
                     return c;
                 }
             });
@@ -846,15 +916,16 @@ public class AllPagesTab extends AwesomeBarTab implements GeckoEventListener {
         if (urls.size() == 0)
             return;
 
-        (new UiAsyncTask<Void, Void, Cursor>(ThreadUtils.getBackgroundHandler()) {
+        (new UiAsyncTask<Void, Void, Void>(ThreadUtils.getBackgroundHandler()) {
             @Override
-            public Cursor doInBackground(Void... params) {
-                return BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+            public Void doInBackground(Void... params) {
+                Cursor cursor = BrowserDB.getFaviconsForUrls(getContentResolver(), urls);
+                storeFaviconsInMemCache(cursor);
+                return null;
             }
 
             @Override
-            public void onPostExecute(Cursor c) {
-                storeFaviconsInMemCache(c);
+            public void onPostExecute(Void result) {
                 postUpdateFavicons();
             }
         }).execute();

@@ -132,14 +132,7 @@ inDOMUtils::GetChildrenForNode(nsIDOMNode* aNode,
   if (aShowingAnonymousContent) {
     nsCOMPtr<nsIContent> content = do_QueryInterface(aNode);
     if (content) {
-      nsRefPtr<nsBindingManager> bindingManager =
-        inLayoutUtils::GetBindingManagerFor(aNode);
-      if (bindingManager) {
-        bindingManager->GetAnonymousNodesFor(content, getter_AddRefs(kids));
-        if (!kids) {
-          bindingManager->GetContentListFor(content, getter_AddRefs(kids));
-        }
-      }
+      kids = content->GetChildren(nsIContent::eAllChildren);
     }
   }
 
@@ -227,6 +220,18 @@ inDOMUtils::GetRuleLine(nsIDOMCSSStyleRule *aRule, uint32_t *_retval)
   }
 
   *_retval = rule->GetLineNumber();
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+inDOMUtils::GetRuleColumn(nsIDOMCSSStyleRule *aRule, uint32_t *_retval)
+{
+  ErrorResult rv;
+  nsRefPtr<StyleRule> rule = GetRuleFromDOMRule(aRule, rv);
+  if (rv.Failed()) {
+    return rv.ErrorCode();
+  }
+  *_retval = rule->GetColumnNumber();
   return NS_OK;
 }
 

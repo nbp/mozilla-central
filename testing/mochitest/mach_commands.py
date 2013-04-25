@@ -26,8 +26,8 @@ from mach.logging import StructuredHumanFormatter
 
 class UnexpectedFilter(logging.Filter):
     def filter(self, record):
-        return 'TEST-UNEXPECTED-' in record.message
-
+        msg = getattr(record, 'params', {}).get('msg', '')
+        return 'TEST-UNEXPECTED-' in msg
 
 
 class MochitestRunner(MozbuildObject):
@@ -96,6 +96,14 @@ class MochitestRunner(MozbuildObject):
         os.chdir(self.topobjdir)
 
         automation = Automation()
+
+        # Automation installs its own stream handler to stdout. Since we want
+        # all logging to go through us, we just remove their handler.
+        remove_handlers = [l for l in logging.getLogger().handlers
+            if isinstance(l, logging.StreamHandler)]
+        for handler in remove_handlers:
+            logging.getLogger().removeHandler(handler)
+
         runner = mochitest.Mochitest(automation)
 
         opts = mochitest.MochitestOptions(automation, tests_dir)
@@ -172,8 +180,14 @@ class MochitestRunner(MozbuildObject):
 
         result = runner.runTests(options)
 
+        # Need to remove our buffering handler before we echo failures or else
+        # it will catch them again!
+        logging.getLogger().removeHandler(handler)
+        self.log_manager.disable_unstructured()
+
         if test_output.getvalue():
-            print(test_output.getvalue())
+            for line in test_output.getvalue().splitlines():
+                self.log(logging.INFO, 'unexpected', {'msg': line}, '{msg}')
 
         return result
 

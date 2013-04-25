@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -197,17 +196,20 @@ IsPhiObservable(MPhi *phi, Observability observe)
 
     // If the Phi is of the |this| value, it must always be observable.
     uint32_t slot = phi->slot();
-    if (slot == 1)
+    CompileInfo &info = phi->block()->info();
+    if (info.fun() && slot == info.thisSlot())
         return true;
 
     // If the Phi is one of the formal argument, and we are using an argument
     // object in the function. The phi might be observable after a bailout.
     // For inlined frames this is not needed, as they are captured in the inlineResumePoint.
-    CompileInfo &info = phi->block()->info();
     if (info.fun() && info.hasArguments()) {
-        uint32_t first = info.firstArgSlot();
-        if (first <= slot && slot - first < info.nargs())
+        uint32_t first = info.firstActualArgSlot();
+        if (first <= slot && slot - first < info.nargs()) {
+            // If arguments obj aliases formals, then no arguments slots should ever be phis.
+            JS_ASSERT(!info.argsObjAliasesFormals());
             return true;
+        }
     }
     return false;
 }
@@ -529,7 +531,7 @@ TypeAnalyzer::adjustPhiInputs(MPhi *phi)
         if (in->type() == MIRType_Value)
             continue;
 
-        if (in->isUnbox()) {
+        if (in->isUnbox() && phi->typeIncludes(in->toUnbox()->input())) {
             // The input is being explicitly unboxed, so sneak past and grab
             // the original box.
             phi->replaceOperand(i, in->toUnbox()->input());
@@ -619,210 +621,6 @@ ion::ApplyTypeInformation(MIRGenerator *mir, MIRGraph &graph)
 
     if (!analyzer.analyze())
         return false;
-
-    return true;
-}
-
-static bool
-SetLoopDepth(MBasicBlock *header)
-{
-    size_t depth = header->loopDepth() + 1;
-
-    Vector<MBasicBlock *, 1, IonAllocPolicy> worklist;
-    worklist.append(header->backedge());
-
-    // Iterate over all blocks that are in a path from backedge to the loopheader.
-    while (!worklist.empty()) {
-        MBasicBlock *block = worklist.popCopy();
-        block->setLoopDepth(depth);
-        if (block == header)
-            continue;
-
-        for (size_t i = 0; i < block->numPredecessors(); i++) {
-            MBasicBlock *pred = block->getPredecessor(i);
-            if (pred->loopDepth() == depth)
-                continue;
-
-            if (!worklist.append(pred))
-                return false;
-        }
-    }
-
-    return true;
-}
-
-bool
-ion::RecalculateLoopDepth(MIRGraph &graph)
-{
-    // Recalculate the loop depth information.
-    //
-    // The definition of a loop (important to correctly reorder blocks and for LICM) is:
-    // all blocks reached when creating a path from the loop backedge to the loopheader.
-    // This information differs from the loopdepth information gathered in IonBuilder.
-    // In IonBuilder blocks that are placed inside the loop are considered to be part of the loop.
-    // E.g.:
-    // for (...) {
-    //
-    //   if (...) {
-    //      return;
-    //   }
-    // }
-    // IonBuilder will consider the content of the conditional to be part of the loop.
-    // As of this pass/call this block won't be part of the loop anymore.
-
-
-    // Reset all loopdepth information
-    for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++)
-        (*block)->setLoopDepth(0);
-
-    // Iterate through graph for loopheaders
-    // The graph isn't in RPO order yet. Therefore we need to iterate differently.
-    // In order to iterate correctly we only need to make sure we see the loopheader
-    // of outer loops, before the loopheader of an innerloop.
-    // This is guarenteed if we walk just by following the successors,
-    // since we can't enter a loopbody before seeing the loopheader.
-    // Here we do DFS.
-    Vector<MBasicBlock *, 1, IonAllocPolicy> worklist;
-    if (!worklist.append(graph.entryBlock()))
-        return false;
-
-    JS_ASSERT(!graph.entryBlock()->isLoopHeader());
-    while (!worklist.empty()) {
-        MBasicBlock *block = worklist.back();
-
-        // Add not yet visited successors to the worklist.
-        for (size_t i = 0; i < block->numSuccessors(); i++) {
-            MBasicBlock *succ = block->getSuccessor(i);
-            if (!succ->isMarked()) {
-                if (!worklist.append(succ))
-                    return false;
-                succ->mark();
-
-                // Set the loopdepth correctly.
-                if (succ->isLoopHeader()) {
-                    if (!SetLoopDepth(succ))
-                        return false;
-                }
-            }
-        }
-
-        // If any blocks were added, process them first.
-        if (block != worklist.back())
-            continue;
-
-        // All successors of this block are visited.
-        worklist.popBack();
-    }
-
-    graph.unmarkBlocks();
-
-    return true;
-}
-
-static void
-SortByLoopDepth(InlineList<MBasicBlock> &pending, MBasicBlockIterator from)
-{
-    // Sort the blocks between "from" and the end of the pending list.
-    // In almost all cases this list will contain at max 2 items (except for tableswitch).
-    // Therefore no need for a fancy algorithm.
-
-    MBasicBlockIterator end = pending.end();
-    while (from != end) {
-        MBasicBlockIterator current(from);
-        MBasicBlock *max = *current;
-        while (current != end) {
-            if (current->loopDepth() > max->loopDepth())
-                max = *current;
-            current++;
-        }
-        if (max != *from) {
-            pending.remove(max);
-            pending.insertBefore(*from, max);
-        }
-        from++;
-    }
-}
-
-bool
-ion::ReorderBlocks(MIRGraph &graph)
-{
-    // The blocks get reordered to be in RPO (they are already).
-    // The order will be improved by adding an extra constrain:
-    // when deciding which successor to visit, always start with the one with lowest loopdepth.
-    // Consequences:
-    // => blocks with the same loopdepth are closer (=> tighter loops)
-    // => loop backedges and loop headers aren't interleaved when visiting
-    //    the graph in RPO (important for Alias Analysis)
-
-    // The RPO algorithm works as following.
-    // It has a stack (pending) and we put the successors on there.
-    // The last item on the stack is the one we are looking too.
-    // If it still has unmarked successsors those get added and there is a new last item.
-    // If there are no unmarked successors anymore, all successors are processed
-    // and this block can get popped from the stack and added to the graph.
-
-    mozilla::DebugOnly<size_t> numBlocks = graph.numBlocks();
-
-    InlineList<MBasicBlock> pending;
-    MBasicBlock *entry = graph.entryBlock();
-    MBasicBlock *osr = graph.osrBlock();
-    graph.clearBlockList();
-
-    // Start with entry block
-    pending.pushBack(entry);
-    entry->mark();
-
-    // Iterate all blocks to put the blocks in PostOrder to the graph,
-    // reversing happens by using moveBlockToBegin.
-    while (!pending.empty()) {
-        MBasicBlock *block = pending.peekBack();
-        bool sortSuccessors = false;
-
-        // Add not yet visited successors to the pending list.
-        for (size_t i = 0; i < block->numSuccessors(); i++) {
-            MBasicBlock *succ = block->getSuccessor(i);
-            if (!succ->isMarked()) {
-                pending.pushBack(succ);
-                succ->mark();
-
-                // Only request sorting, when there are different loopDepths.
-                if (succ->loopDepth() != block->loopDepth())
-                    sortSuccessors = true;
-            }
-        }
-
-        // Test if there was a new block added
-        if (block != pending.peekBack()) {
-            // Sort the blocks if needed
-            if (sortSuccessors) {
-                MBasicBlockIterator start = pending.begin(block);
-                start++;
-                SortByLoopDepth(pending, start);
-            }
-            continue;
-        }
-
-        // Here we are sure all successors of this block have been added to the graph.
-        // Now this block can get added to the graph.
-        pending.popBack();
-        graph.addBlock(block);
-        graph.moveBlockToBegin(block);
-    }
-
-    // Put the osr block in the second place
-    if (osr) {
-        graph.addBlock(osr);
-        graph.moveBlockToBegin(osr);
-        graph.moveBlockToBegin(entry);
-    }
-
-    graph.unmarkBlocks();
-
-    JS_ASSERT(graph.numBlocks() == numBlocks);
-
-#ifdef DEBUG
-    graph.setInRPO();
-#endif
 
     return true;
 }
@@ -1476,8 +1274,8 @@ TryEliminateTypeBarrier(MTypeBarrier *barrier, bool *eliminated)
 {
     JS_ASSERT(!*eliminated);
 
-    const types::StackTypeSet *barrierTypes = barrier->typeSet();
-    const types::StackTypeSet *inputTypes = barrier->input()->typeSet();
+    const types::StackTypeSet *barrierTypes = barrier->resultTypeSet();
+    const types::StackTypeSet *inputTypes = barrier->input()->resultTypeSet();
 
     if (!barrierTypes || !inputTypes)
         return true;

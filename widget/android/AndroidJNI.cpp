@@ -38,6 +38,7 @@
 #include "nsIMobileMessageDatabaseService.h"
 #include "nsPluginInstanceOwner.h"
 #include "nsSurfaceTexture.h"
+#include "GeckoProfiler.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -61,7 +62,7 @@ Java_org_mozilla_gecko_GeckoAppShell_notifyGeckoOfEvent(JNIEnv *jenv, jclass jc,
 {
     // poke the appshell
     if (nsAppShell::gAppShell)
-        nsAppShell::gAppShell->PostEvent(new AndroidGeckoEvent(jenv, event));
+        nsAppShell::gAppShell->PostEvent(AndroidGeckoEvent::MakeFromJavaObject(jenv, event));
 }
 
 NS_EXPORT void JNICALL
@@ -206,7 +207,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifySmsReceived(JNIEnv* jenv, jclass,
       SmsMessageData mMessageData;
     };
 
-    SmsMessageData message(0, eDeliveryState_Received, eDeliveryStatus_Success,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(0, 0, eDeliveryState_Received, eDeliveryStatus_Success,
                            nsJNIString(aSender, jenv), EmptyString(),
                            nsJNIString(aBody, jenv),
                            static_cast<MessageClass>(aMessageClass),
@@ -259,7 +261,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifySmsSent(JNIEnv* jenv, jclass,
     };
 
     // TODO Need to add the message `messageClass` parameter value. Bug 804476
-    SmsMessageData message(aId, eDeliveryState_Sent, eDeliveryStatus_Pending,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(aId, 0, eDeliveryState_Sent, eDeliveryStatus_Pending,
                            EmptyString(), nsJNIString(aReceiver, jenv),
                            nsJNIString(aBody, jenv), eMessageClass_Normal,
                            aTimestamp, true);
@@ -302,7 +305,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifySmsDelivery(JNIEnv* jenv, jclass,
     };
 
     // TODO Need to add the message `messageClass` parameter value. Bug 804476
-    SmsMessageData message(aId, eDeliveryState_Sent,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(aId, 0, eDeliveryState_Sent,
                            static_cast<DeliveryStatus>(aDeliveryStatus),
                            EmptyString(), nsJNIString(aReceiver, jenv),
                            nsJNIString(aBody, jenv), eMessageClass_Normal,
@@ -384,7 +388,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifyGetSms(JNIEnv* jenv, jclass,
 
     // TODO Need to add the message `read` parameter value. Bug 748391
     // TODO Need to add the message `messageClass` parameter value. Bug 804476
-    SmsMessageData message(aId, state,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(aId, 0, state,
                            static_cast<DeliveryStatus>(aDeliveryStatus),
                            nsJNIString(aSender, jenv), receiver,
                            nsJNIString(aBody, jenv), eMessageClass_Normal,
@@ -565,7 +570,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifyListCreated(JNIEnv* jenv, jclass,
 
     // TODO Need to add the message `read` parameter value. Bug 748391
     // TODO Need to add the message `messageClass` parameter value. Bug 804476
-    SmsMessageData message(aMessageId, state,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(aMessageId, 0, state,
                            static_cast<DeliveryStatus>(aDeliveryStatus),
                            nsJNIString(aSender, jenv), receiver,
                            nsJNIString(aBody, jenv), eMessageClass_Normal,
@@ -616,7 +622,8 @@ Java_org_mozilla_gecko_GeckoSmsManager_notifyGotNextMessage(JNIEnv* jenv, jclass
 
     // TODO Need to add the message `read` parameter value. Bug 748391
     // TODO Need to add the message `messageClass` parameter value. Bug 804476
-    SmsMessageData message(aMessageId, state,
+    // TODO Need to correct the message `threadId` parameter value. Bug 859098
+    SmsMessageData message(aMessageId, 0, state,
                            static_cast<DeliveryStatus>(aDeliveryStatus),
                            nsJNIString(aSender, jenv), receiver,
                            nsJNIString(aBody, jenv), eMessageClass_Normal,
@@ -868,6 +875,12 @@ Java_org_mozilla_gecko_GeckoAppShell_onSurfaceTextureFrameAvailable(JNIEnv* jenv
   }
 
   st->NotifyFrameAvailable();
+}
+
+NS_EXPORT jdouble JNICALL
+Java_org_mozilla_gecko_GeckoJavaSampler_getProfilerTime(JNIEnv *jenv, jclass jc)
+{
+  return profiler_time();
 }
 
 }

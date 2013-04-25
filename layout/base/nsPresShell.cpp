@@ -115,9 +115,7 @@
 #include "nsStyleSheetService.h"
 #include "gfxImageSurface.h"
 #include "gfxContext.h"
-#ifdef MOZ_MEDIA
 #include "mozilla/dom/HTMLMediaElement.h"
-#endif
 #include "nsSMILAnimationController.h"
 #include "SVGContentUtils.h"
 #include "nsSVGUtils.h"
@@ -453,7 +451,7 @@ public:
   PresShell* mShell;
 };
 
-class NS_STACK_CLASS nsPresShellEventCB : public nsDispatchingCallback
+class MOZ_STACK_CLASS nsPresShellEventCB : public nsDispatchingCallback
 {
 public:
   nsPresShellEventCB(PresShell* aPresShell) : mPresShell(aPresShell) {}
@@ -686,20 +684,6 @@ nsIPresShell::FrameSelection()
 
 //----------------------------------------------------------------------
 
-nsresult
-NS_NewPresShell(nsIPresShell** aInstancePtrResult)
-{
-  NS_PRECONDITION(nullptr != aInstancePtrResult, "null ptr");
-
-  if (!aInstancePtrResult)
-    return NS_ERROR_NULL_POINTER;
-
-  *aInstancePtrResult = new PresShell();
-
-  NS_ADDREF(*aInstancePtrResult);
-  return NS_OK;
-}
-
 static bool sSynthMouseMove = true;
 
 PresShell::PresShell()
@@ -795,7 +779,6 @@ PresShell::Init(nsIDocument* aDocument,
   NS_PRECONDITION(nullptr != aDocument, "null ptr");
   NS_PRECONDITION(nullptr != aPresContext, "null ptr");
   NS_PRECONDITION(nullptr != aViewManager, "null ptr");
-  nsresult result;
 
   if ((nullptr == aDocument) || (nullptr == aPresContext) ||
       (nullptr == aViewManager)) {
@@ -813,7 +796,7 @@ PresShell::Init(nsIDocument* aDocument,
   mViewManager = aViewManager;
 
   // Create our frame constructor.
-  mFrameConstructor = new nsCSSFrameConstructor(mDocument, this);
+  mFrameConstructor = new nsCSSFrameConstructor(mDocument, this, aStyleSet);
 
   mFrameManager = mFrameConstructor;
 
@@ -826,8 +809,7 @@ PresShell::Init(nsIDocument* aDocument,
   aPresContext->SetShell(this);
 
   // Now we can initialize the style set.
-  result = aStyleSet->Init(aPresContext);
-  NS_ENSURE_SUCCESS(result, result);
+  aStyleSet->Init(aPresContext);
 
   // From this point on, any time we return an error we need to make
   // sure to null out mStyleSet first, since an error return from this
@@ -845,17 +827,6 @@ PresShell::Init(nsIDocument* aDocument,
   SetPreferenceStyleRules(false);
 
   NS_ADDREF(mSelection = new nsFrameSelection());
-
-  // Create and initialize the frame manager
-  // XXXjwatt it would be better if we did this right after creating
-  // mFrameConstructor, since the frame constructor and frame manager
-  // are now the same object.
-  result =  mFrameConstructor->Init(mStyleSet);
-  if (NS_FAILED(result)) {
-    NS_WARNING("Frame manager initialization failed");
-    mStyleSet = nullptr;
-    return result;
-  }
 
   mSelection->Init(this, nullptr);
 
@@ -4521,57 +4492,55 @@ PresShell::ClipListToRange(nsDisplayListBuilder *aBuilder,
     // itemToInsert indiciates the item that should be inserted into the
     // temporary list. If null, no item should be inserted.
     nsDisplayItem* itemToInsert = nullptr;
-    nsIFrame* frame = i->GetUnderlyingFrame();
-    if (frame) {
-      nsIContent* content = frame->GetContent();
-      if (content) {
-        bool atStart = (content == aRange->GetStartParent());
-        bool atEnd = (content == aRange->GetEndParent());
-        if ((atStart || atEnd) && frame->GetType() == nsGkAtoms::textFrame) {
-          int32_t frameStartOffset, frameEndOffset;
-          frame->GetOffsets(frameStartOffset, frameEndOffset);
+    nsIFrame* frame = i->Frame();
+    nsIContent* content = frame->GetContent();
+    if (content) {
+      bool atStart = (content == aRange->GetStartParent());
+      bool atEnd = (content == aRange->GetEndParent());
+      if ((atStart || atEnd) && frame->GetType() == nsGkAtoms::textFrame) {
+        int32_t frameStartOffset, frameEndOffset;
+        frame->GetOffsets(frameStartOffset, frameEndOffset);
 
-          int32_t hilightStart =
-            atStart ? std::max(aRange->StartOffset(), frameStartOffset) : frameStartOffset;
-          int32_t hilightEnd =
-            atEnd ? std::min(aRange->EndOffset(), frameEndOffset) : frameEndOffset;
-          if (hilightStart < hilightEnd) {
-            // determine the location of the start and end edges of the range.
-            nsPoint startPoint, endPoint;
-            frame->GetPointFromOffset(hilightStart, &startPoint);
-            frame->GetPointFromOffset(hilightEnd, &endPoint);
+        int32_t hilightStart =
+          atStart ? std::max(aRange->StartOffset(), frameStartOffset) : frameStartOffset;
+        int32_t hilightEnd =
+          atEnd ? std::min(aRange->EndOffset(), frameEndOffset) : frameEndOffset;
+        if (hilightStart < hilightEnd) {
+          // determine the location of the start and end edges of the range.
+          nsPoint startPoint, endPoint;
+          frame->GetPointFromOffset(hilightStart, &startPoint);
+          frame->GetPointFromOffset(hilightEnd, &endPoint);
 
-            // the clip rectangle is determined by taking the the start and
-            // end points of the range, offset from the reference frame.
-            // Because of rtl, the end point may be to the left of the
-            // start point, so x is set to the lowest value
-            nsRect textRect(aBuilder->ToReferenceFrame(frame), frame->GetSize());
-            nscoord x = std::min(startPoint.x, endPoint.x);
-            textRect.x += x;
-            textRect.width = std::max(startPoint.x, endPoint.x) - x;
-            surfaceRect.UnionRect(surfaceRect, textRect);
+          // the clip rectangle is determined by taking the the start and
+          // end points of the range, offset from the reference frame.
+          // Because of rtl, the end point may be to the left of the
+          // start point, so x is set to the lowest value
+          nsRect textRect(aBuilder->ToReferenceFrame(frame), frame->GetSize());
+          nscoord x = std::min(startPoint.x, endPoint.x);
+          textRect.x += x;
+          textRect.width = std::max(startPoint.x, endPoint.x) - x;
+          surfaceRect.UnionRect(surfaceRect, textRect);
 
-            DisplayItemClip newClip;
-            newClip.SetTo(textRect);
-            newClip.IntersectWith(i->GetClip());
-            i->SetClip(aBuilder, newClip);
-            itemToInsert = i;
-          }
+          DisplayItemClip newClip;
+          newClip.SetTo(textRect);
+          newClip.IntersectWith(i->GetClip());
+          i->SetClip(aBuilder, newClip);
+          itemToInsert = i;
         }
-        // Don't try to descend into subdocuments.
-        // If this ever changes we'd need to add handling for subdocuments with
-        // different zoom levels.
-        else if (content->GetCurrentDoc() ==
-                   aRange->GetStartParent()->GetCurrentDoc()) {
-          // if the node is within the range, append it to the temporary list
-          bool before, after;
-          nsresult rv =
-            nsRange::CompareNodeToRange(content, aRange, &before, &after);
-          if (NS_SUCCEEDED(rv) && !before && !after) {
-            itemToInsert = i;
-            bool snap;
-            surfaceRect.UnionRect(surfaceRect, i->GetBounds(aBuilder, &snap));
-          }
+      }
+      // Don't try to descend into subdocuments.
+      // If this ever changes we'd need to add handling for subdocuments with
+      // different zoom levels.
+      else if (content->GetCurrentDoc() ==
+                 aRange->GetStartParent()->GetCurrentDoc()) {
+        // if the node is within the range, append it to the temporary list
+        bool before, after;
+        nsresult rv =
+          nsRange::CompareNodeToRange(content, aRange, &before, &after);
+        if (NS_SUCCEEDED(rv) && !before && !after) {
+          itemToInsert = i;
+          bool snap;
+          surfaceRect.UnionRect(surfaceRect, i->GetBounds(aBuilder, &snap));
         }
       }
     }
@@ -4903,7 +4872,7 @@ AddCanvasBackgroundColor(const nsDisplayList& aList, nsIFrame* aCanvasFrame,
                          nscolor aColor)
 {
   for (nsDisplayItem* i = aList.GetBottom(); i; i = i->GetAbove()) {
-    if (i->GetUnderlyingFrame() == aCanvasFrame &&
+    if (i->Frame() == aCanvasFrame &&
         i->GetType() == nsDisplayItem::TYPE_CANVAS_BACKGROUND_COLOR) {
       nsDisplayCanvasBackgroundColor* bg = static_cast<nsDisplayCanvasBackgroundColor*>(i);
       bg->SetExtraBackgroundColor(aColor);
@@ -5308,19 +5277,17 @@ PresShell::MarkImagesInListVisible(const nsDisplayList& aList)
       MarkImagesInListVisible(*sublist);
       continue;
     }
-    nsIFrame* f = item->GetUnderlyingFrame();
+    nsIFrame* f = item->Frame();
     // We could check the type of the display item, only a handful can hold an
     // image loading content.
-    if (f) {
-      // dont bother nscomptr here, it is wasteful
-      nsCOMPtr<nsIImageLoadingContent> content(do_QueryInterface(f->GetContent()));
-      if (content) {
-        // use the presshell containing the image
-        PresShell* presShell = static_cast<PresShell*>(f->PresContext()->PresShell());
-        if (presShell) {
-          content->IncrementVisibleCount();
-          presShell->mVisibleImages.AppendElement(content);
-        }
+    // dont bother nscomptr here, it is wasteful
+    nsCOMPtr<nsIImageLoadingContent> content(do_QueryInterface(f->GetContent()));
+    if (content) {
+      // use the presshell containing the image
+      PresShell* presShell = static_cast<PresShell*>(f->PresContext()->PresShell());
+      if (presShell) {
+        content->IncrementVisibleCount();
+        presShell->mVisibleImages.AppendElement(content);
       }
     }
   }
@@ -6013,7 +5980,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
         return NS_OK;
       }
 
-      retargetEventDoc = do_QueryInterface(window->GetExtantDocument());
+      retargetEventDoc = window->GetExtantDoc();
       if (!retargetEventDoc)
         return NS_OK;
     } else if (capturingContent) {
@@ -6255,9 +6222,7 @@ PresShell::HandleEvent(nsIFrame        *aFrame,
             nsCOMPtr<nsIDOMTouch> oldTouch;
             gCaptureTouchList.Get(id, getter_AddRefs(oldTouch));
             if (oldTouch) {
-              nsCOMPtr<nsIDOMEventTarget> targetPtr;
-              oldTouch->GetTarget(getter_AddRefs(targetPtr));
-              domtouch->SetTarget(targetPtr);
+              domtouch->SetTarget(oldTouch->GetTarget());
               gCaptureTouchList.Put(id, touch);
             }
           }
@@ -6732,8 +6697,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
           if (!oldTouch) {
             continue;
           }
-          nsCOMPtr<nsIDOMEventTarget> targetPtr;
-          oldTouch->GetTarget(getter_AddRefs(targetPtr));
+          nsCOMPtr<EventTarget> targetPtr = oldTouch->GetTarget();
 
           mCurrentEventContent = do_QueryInterface(targetPtr);
           domtouch->SetTarget(targetPtr);
@@ -6770,8 +6734,7 @@ PresShell::HandleEventInternal(nsEvent* aEvent, nsEventStatus* aStatus)
             haveChanged = true;
           }
 
-          nsCOMPtr<nsIDOMEventTarget> targetPtr;
-          oldTouch->GetTarget(getter_AddRefs(targetPtr));
+          nsCOMPtr<EventTarget> targetPtr = oldTouch->GetTarget();
           if (!targetPtr) {
             touches.RemoveElementAt(i);
             continue;
@@ -6923,8 +6886,7 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
       continue;
     }
 
-    nsCOMPtr<nsIDOMEventTarget> targetPtr;
-    touch->GetTarget(getter_AddRefs(targetPtr));
+    nsCOMPtr<EventTarget> targetPtr = touch->GetTarget();
     nsCOMPtr<nsIContent> content = do_QueryInterface(targetPtr);
     if (!content) {
       continue;
@@ -6964,7 +6926,8 @@ PresShell::DispatchTouchEvent(nsEvent *aEvent,
     tmpStatus = nsEventStatus_eIgnore;
     nsEventDispatcher::Dispatch(targetPtr, context,
                                 &newEvent, nullptr, &tmpStatus, aEventCB);
-    if (nsEventStatus_eConsumeNoDefault == tmpStatus) {
+    if (nsEventStatus_eConsumeNoDefault == tmpStatus ||
+        newEvent.mFlags.mMultipleActionsPrevented) {
       preventDefault = true;
     }
 
@@ -9539,7 +9502,8 @@ nsIPresShell::SetMaxLineBoxWidth(nscoord aMaxLineBoxWidth)
 {
   NS_ASSERTION(aMaxLineBoxWidth >= 0, "attempting to set max line box width to a negative value");
 
-  mMaxLineBoxWidth = aMaxLineBoxWidth;
-
-  FrameNeedsReflow(GetRootFrame(), eResize, NS_FRAME_IS_DIRTY);
+  if (mMaxLineBoxWidth != aMaxLineBoxWidth) {
+    mMaxLineBoxWidth = aMaxLineBoxWidth;
+    FrameNeedsReflow(GetRootFrame(), eResize, NS_FRAME_IS_DIRTY);
+  }
 }

@@ -32,6 +32,9 @@ XPCOMUtils.defineLazyModuleGetter(this, "PlacesUtils",
 XPCOMUtils.defineLazyModuleGetter(this, "BookmarkHTMLUtils",
                                   "resource://gre/modules/BookmarkHTMLUtils.jsm");
 
+XPCOMUtils.defineLazyModuleGetter(this, "BookmarkJSONUtils",
+                                  "resource://gre/modules/BookmarkJSONUtils.jsm");
+
 XPCOMUtils.defineLazyModuleGetter(this, "webappsUI",
                                   "resource:///modules/webappsUI.jsm");
 
@@ -53,11 +56,15 @@ XPCOMUtils.defineLazyModuleGetter(this, "webrtcUI",
 XPCOMUtils.defineLazyModuleGetter(this, "PrivateBrowsingUtils",
                                   "resource://gre/modules/PrivateBrowsingUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "KeywordURLResetPrompter",
-                                  "resource:///modules/KeywordURLResetPrompter.jsm");
-
 XPCOMUtils.defineLazyModuleGetter(this, "RecentWindow",
                                   "resource:///modules/RecentWindow.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "Task",
+                                  "resource://gre/modules/Task.jsm");
+
+XPCOMUtils.defineLazyModuleGetter(this, "PlacesBackups",
+                                  "resource://gre/modules/PlacesBackups.jsm");
+
 
 const PREF_PLUGINS_NOTIFYUSER = "plugins.update.notifyUser";
 const PREF_PLUGINS_UPDATEURL  = "plugins.update.url";
@@ -239,7 +246,8 @@ BrowserGlue.prototype = {
         this._onPlacesShutdown();
         break;
       case "idle":
-        if (this._idleService.idleTime > BOOKMARKS_BACKUP_IDLE_TIME * 1000)
+        if ((this._idleService.idleTime > BOOKMARKS_BACKUP_IDLE_TIME * 1000) &&
+             this._shouldBackupBookmarks())
           this._backupBookmarks();
         break;
       case "distribution-customization-complete":
@@ -262,13 +270,6 @@ BrowserGlue.prototype = {
         }
         else if (data == "force-places-init") {
           this._initPlaces(false);
-        }
-        break;
-      case "defaultURIFixup-using-keyword-pref":
-        if (KeywordURLResetPrompter.shouldPrompt) {
-          let keywordURI = subject.QueryInterface(Ci.nsIURI);
-          KeywordURLResetPrompter.prompt(this.getMostRecentBrowserWindow(),
-                                         keywordURI);
         }
         break;
       case "initial-migration-will-import-default-bookmarks":
@@ -307,7 +308,8 @@ BrowserGlue.prototype = {
 
         reporter.onInit().then(function record() {
           try {
-            reporter.getProvider("org.mozilla.searches").recordSearch(data,
+            let name = subject.QueryInterface(Ci.nsISearchEngine).name;
+            reporter.getProvider("org.mozilla.searches").recordSearch(name,
                                                                       "urlbar");
           } catch (ex) {
             Cu.reportError(ex);
@@ -344,7 +346,6 @@ BrowserGlue.prototype = {
     os.addObserver(this, "distribution-customization-complete", false);
     os.addObserver(this, "places-shutdown", false);
     this._isPlacesShutdownObserver = true;
-    os.addObserver(this, "defaultURIFixup-using-keyword-pref", false);
     os.addObserver(this, "handle-xul-text-link", false);
     os.addObserver(this, "profile-before-change", false);
 #ifdef MOZ_SERVICES_HEALTHREPORT
@@ -366,8 +367,8 @@ BrowserGlue.prototype = {
     os.removeObserver(this, "browser-lastwindow-close-granted");
 #endif
 #ifdef MOZ_SERVICES_SYNC
-    os.removeObserver(this, "weave:service:ready", false);
-    os.removeObserver(this, "weave:engine:clients:display-uri", false);
+    os.removeObserver(this, "weave:service:ready");
+    os.removeObserver(this, "weave:engine:clients:display-uri");
 #endif
     os.removeObserver(this, "session-save");
     if (this._isIdleObserver)
@@ -378,7 +379,6 @@ BrowserGlue.prototype = {
       os.removeObserver(this, "places-database-locked");
     if (this._isPlacesShutdownObserver)
       os.removeObserver(this, "places-shutdown");
-    os.removeObserver(this, "defaultURIFixup-using-keyword-pref");
     os.removeObserver(this, "handle-xul-text-link");
     os.removeObserver(this, "profile-before-change");
 #ifdef MOZ_SERVICES_HEALTHREPORT
@@ -528,11 +528,6 @@ BrowserGlue.prototype = {
 
   // All initial windows have opened.
   _onWindowsRestored: function BG__onWindowsRestored() {
-    // Show about:rights notification, if needed.
-    if (this._shouldShowRights()) {
-      this._showRightsNotification();
-    }
-
     // Show update notification, if needed.
     if (Services.prefs.prefHasUserValue("app.update.postupdate"))
       this._showUpdateNotification();
@@ -563,9 +558,6 @@ BrowserGlue.prototype = {
         })
       });
     }
-
-    let keywordURLUserSet = Services.prefs.prefHasUserValue("keyword.URL");
-    Services.telemetry.getHistogramById("FX_KEYWORD_URL_USERSET").add(keywordURLUserSet);
 
     // Perform default browser checking.
     var shell;
@@ -761,78 +753,6 @@ BrowserGlue.prototype = {
     }
   },
 
-  /*
-   * _shouldShowRights - Determines if the user should be shown the
-   * about:rights notification. The notification should *not* be shown if
-   * we've already shown the current version, or if the override pref says to
-   * never show it. The notification *should* be shown if it's never been seen
-   * before, if a newer version is available, or if the override pref says to
-   * always show it.
-   */
-  _shouldShowRights: function BG__shouldShowRights() {
-    // Look for an unconditional override pref. If set, do what it says.
-    // (true --> never show, false --> always show)
-    try {
-      return !Services.prefs.getBoolPref("browser.rights.override");
-    } catch (e) { }
-    // Ditto, for the legacy EULA pref.
-    try {
-      return !Services.prefs.getBoolPref("browser.EULA.override");
-    } catch (e) { }
-
-#ifndef OFFICIAL_BUILD
-    // Non-official builds shouldn't shouldn't show the notification.
-    return false;
-#endif
-
-    // Look to see if the user has seen the current version or not.
-    var currentVersion = Services.prefs.getIntPref("browser.rights.version");
-    try {
-      return !Services.prefs.getBoolPref("browser.rights." + currentVersion + ".shown");
-    } catch (e) { }
-
-    // Legacy: If the user accepted a EULA, we won't annoy them with the
-    // equivalent about:rights page until the version changes.
-    try {
-      return !Services.prefs.getBoolPref("browser.EULA." + currentVersion + ".accepted");
-    } catch (e) { }
-
-    // We haven't shown the notification before, so do so now.
-    return true;
-  },
-
-  _showRightsNotification: function BG__showRightsNotification() {
-    // Stick the notification onto the selected tab of the active browser window.
-    var win = this.getMostRecentBrowserWindow();
-    var notifyBox = win.gBrowser.getNotificationBox();
-
-    var brandBundle  = Services.strings.createBundle("chrome://branding/locale/brand.properties");
-    var rightsBundle = Services.strings.createBundle("chrome://global/locale/aboutRights.properties");
-
-    var buttonLabel      = rightsBundle.GetStringFromName("buttonLabel");
-    var buttonAccessKey  = rightsBundle.GetStringFromName("buttonAccessKey");
-    var productName      = brandBundle.GetStringFromName("brandFullName");
-    var notifyRightsText = rightsBundle.formatStringFromName("notifyRightsText", [productName], 1);
-
-    var buttons = [
-                    {
-                      label:     buttonLabel,
-                      accessKey: buttonAccessKey,
-                      popup:     null,
-                      callback: function(aNotificationBar, aButton) {
-                        win.openUILinkIn("about:rights", "tab");
-                      }
-                    }
-                  ];
-
-    // Set pref to indicate we've shown the notification.
-    var currentVersion = Services.prefs.getIntPref("browser.rights.version");
-    Services.prefs.setBoolPref("browser.rights." + currentVersion + ".shown", true);
-
-    var notification = notifyBox.appendNotification(notifyRightsText, "about-rights", null, notifyBox.PRIORITY_INFO_LOW, buttons);
-    notification.persistence = -1; // Until user closes it
-  },
-
   _showUpdateNotification: function BG__showUpdateNotification() {
     Services.prefs.clearUserPref("app.update.postupdate");
 
@@ -996,126 +916,131 @@ BrowserGlue.prototype = {
         importBookmarks = true;
     } catch(ex) {}
 
-    // Check if Safe Mode or the user has required to restore bookmarks from
-    // default profile's bookmarks.html
-    var restoreDefaultBookmarks = false;
-    try {
-      restoreDefaultBookmarks =
-        Services.prefs.getBoolPref("browser.bookmarks.restore_default_bookmarks");
-      if (restoreDefaultBookmarks) {
-        // Ensure that we already have a bookmarks backup for today.
-        this._backupBookmarks();
-        importBookmarks = true;
-      }
-    } catch(ex) {}
+    Task.spawn(function() {
+      // Check if Safe Mode or the user has required to restore bookmarks from
+      // default profile's bookmarks.html
+      var restoreDefaultBookmarks = false;
+      try {
+        restoreDefaultBookmarks =
+          Services.prefs.getBoolPref("browser.bookmarks.restore_default_bookmarks");
+        if (restoreDefaultBookmarks) {
+          // Ensure that we already have a bookmarks backup for today.
+          if (this._shouldBackupBookmarks())
+            yield this._backupBookmarks();
+          importBookmarks = true;
+        }
+      } catch(ex) {}
 
-    // If the user did not require to restore default bookmarks, or import
-    // from bookmarks.html, we will try to restore from JSON
-    if (importBookmarks && !restoreDefaultBookmarks && !importBookmarksHTML) {
-      // get latest JSON backup
-      var bookmarksBackupFile = PlacesUtils.backups.getMostRecent("json");
-      if (bookmarksBackupFile) {
-        // restore from JSON backup
-        PlacesUtils.restoreBookmarksFromJSONFile(bookmarksBackupFile);
-        importBookmarks = false;
-      }
-      else {
-        // We have created a new database but we don't have any backup available
-        importBookmarks = true;
-        var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                         getService(Ci.nsIProperties);
-        var bookmarksHTMLFile = dirService.get("BMarks", Ci.nsILocalFile);
-        if (bookmarksHTMLFile.exists()) {
-          // If bookmarks.html is available in current profile import it...
-          importBookmarksHTML = true;
+      // If the user did not require to restore default bookmarks, or import
+      // from bookmarks.html, we will try to restore from JSON
+      if (importBookmarks && !restoreDefaultBookmarks && !importBookmarksHTML) {
+        // get latest JSON backup
+        var bookmarksBackupFile = PlacesBackups.getMostRecent("json");
+        if (bookmarksBackupFile) {
+          // restore from JSON backup
+          yield BookmarkJSONUtils.importFromFile(bookmarksBackupFile, true);
+          importBookmarks = false;
         }
         else {
-          // ...otherwise we will restore defaults
-          restoreDefaultBookmarks = true;
+          // We have created a new database but we don't have any backup available
+          importBookmarks = true;
+          var dirService = Cc["@mozilla.org/file/directory_service;1"].
+                           getService(Ci.nsIProperties);
+          var bookmarksHTMLFile = dirService.get("BMarks", Ci.nsILocalFile);
+          if (bookmarksHTMLFile.exists()) {
+            // If bookmarks.html is available in current profile import it...
+            importBookmarksHTML = true;
+          }
+          else {
+            // ...otherwise we will restore defaults
+            restoreDefaultBookmarks = true;
+          }
         }
       }
-    }
 
-    // If bookmarks are not imported, then initialize smart bookmarks.  This
-    // happens during a common startup.
-    // Otherwise, if any kind of import runs, smart bookmarks creation should be
-    // delayed till the import operations has finished.  Not doing so would
-    // cause them to be overwritten by the newly imported bookmarks.
-    if (!importBookmarks) {
-      // Now apply distribution customized bookmarks.
-      // This should always run after Places initialization.
-      this._distributionCustomizer.applyBookmarks();
-      this.ensurePlacesDefaultQueriesInitialized();
-    }
-    else {
-      // An import operation is about to run.
-      // Don't try to recreate smart bookmarks if autoExportHTML is true or
-      // smart bookmarks are disabled.
-      var autoExportHTML = false;
-      try {
-        autoExportHTML = Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML");
-      } catch(ex) {}
-      var smartBookmarksVersion = 0;
-      try {
-        smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion");
-      } catch(ex) {}
-      if (!autoExportHTML && smartBookmarksVersion != -1)
-        Services.prefs.setIntPref("browser.places.smartBookmarksVersion", 0);
-
-      // Get bookmarks.html file location
-      var dirService = Cc["@mozilla.org/file/directory_service;1"].
-                       getService(Ci.nsIProperties);
-
-      var bookmarksURI = null;
-      if (restoreDefaultBookmarks) {
-        // User wants to restore bookmarks.html file from default profile folder
-        bookmarksURI = NetUtil.newURI("resource:///defaults/profile/bookmarks.html");
+      // If bookmarks are not imported, then initialize smart bookmarks.  This
+      // happens during a common startup.
+      // Otherwise, if any kind of import runs, smart bookmarks creation should be
+      // delayed till the import operations has finished.  Not doing so would
+      // cause them to be overwritten by the newly imported bookmarks.
+      if (!importBookmarks) {
+        // Now apply distribution customized bookmarks.
+        // This should always run after Places initialization.
+        this._distributionCustomizer.applyBookmarks();
+        this.ensurePlacesDefaultQueriesInitialized();
       }
       else {
-        var bookmarksFile = dirService.get("BMarks", Ci.nsILocalFile);
-        if (bookmarksFile.exists())
-          bookmarksURI = NetUtil.newURI(bookmarksFile);
-      }
-
-      if (bookmarksURI) {
-        // Import from bookmarks.html file.
+        // An import operation is about to run.
+        // Don't try to recreate smart bookmarks if autoExportHTML is true or
+        // smart bookmarks are disabled.
+        var autoExportHTML = false;
         try {
-          BookmarkHTMLUtils.importFromURL(bookmarksURI.spec, true).then(null,
-            function onFailure() {
-              Cu.reportError("Bookmarks.html file could be corrupt.");
-            }
-          ).then(
-            function onComplete() {
-              // Now apply distribution customized bookmarks.
-              // This should always run after Places initialization.
-              this._distributionCustomizer.applyBookmarks();
-              // Ensure that smart bookmarks are created once the operation is
-              // complete.
-              this.ensurePlacesDefaultQueriesInitialized();
-            }.bind(this)
-          );
-        } catch (err) {
-          Cu.reportError("Bookmarks.html file could be corrupt. " + err);
+          autoExportHTML = Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML");
+        } catch(ex) {}
+        var smartBookmarksVersion = 0;
+        try {
+          smartBookmarksVersion = Services.prefs.getIntPref("browser.places.smartBookmarksVersion");
+        } catch(ex) {}
+        if (!autoExportHTML && smartBookmarksVersion != -1)
+          Services.prefs.setIntPref("browser.places.smartBookmarksVersion", 0);
+
+        // Get bookmarks.html file location
+        var dirService = Cc["@mozilla.org/file/directory_service;1"].
+                         getService(Ci.nsIProperties);
+
+        var bookmarksURI = null;
+        if (restoreDefaultBookmarks) {
+          // User wants to restore bookmarks.html file from default profile folder
+          bookmarksURI = NetUtil.newURI("resource:///defaults/profile/bookmarks.html");
         }
-      }
-      else {
-        Cu.reportError("Unable to find bookmarks.html file.");
+        else {
+          var bookmarksFile = dirService.get("BMarks", Ci.nsILocalFile);
+          if (bookmarksFile.exists())
+            bookmarksURI = NetUtil.newURI(bookmarksFile);
+        }
+
+        if (bookmarksURI) {
+          // Import from bookmarks.html file.
+          try {
+            BookmarkHTMLUtils.importFromURL(bookmarksURI.spec, true).then(null,
+              function onFailure() {
+                Cu.reportError("Bookmarks.html file could be corrupt.");
+              }
+            ).then(
+              function onComplete() {
+                // Now apply distribution customized bookmarks.
+                // This should always run after Places initialization.
+                this._distributionCustomizer.applyBookmarks();
+                // Ensure that smart bookmarks are created once the operation is
+                // complete.
+                this.ensurePlacesDefaultQueriesInitialized();
+              }.bind(this)
+            );
+          } catch (err) {
+            Cu.reportError("Bookmarks.html file could be corrupt. " + err);
+          }
+        }
+        else {
+          Cu.reportError("Unable to find bookmarks.html file.");
+        }
+
+        // Reset preferences, so we won't try to import again at next run
+        if (importBookmarksHTML)
+          Services.prefs.setBoolPref("browser.places.importBookmarksHTML", false);
+        if (restoreDefaultBookmarks)
+          Services.prefs.setBoolPref("browser.bookmarks.restore_default_bookmarks",
+                                     false);
       }
 
-      // Reset preferences, so we won't try to import again at next run
-      if (importBookmarksHTML)
-        Services.prefs.setBoolPref("browser.places.importBookmarksHTML", false);
-      if (restoreDefaultBookmarks)
-        Services.prefs.setBoolPref("browser.bookmarks.restore_default_bookmarks",
-                                   false);
-    }
+      // Initialize bookmark archiving on idle.
+      // Once a day, either on idle or shutdown, bookmarks are backed up.
+      if (!this._isIdleObserver) {
+        this._idleService.addIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
+        this._isIdleObserver = true;
+      }
 
-    // Initialize bookmark archiving on idle.
-    // Once a day, either on idle or shutdown, bookmarks are backed up.
-    if (!this._isIdleObserver) {
-      this._idleService.addIdleObserver(this, BOOKMARKS_BACKUP_IDLE_TIME);
-      this._isIdleObserver = true;
-    }
+      Services.obs.notifyObservers(null, "places-browser-init-complete", "");
+    }.bind(this));
   },
 
   /**
@@ -1133,55 +1058,77 @@ BrowserGlue.prototype = {
       this._isIdleObserver = false;
     }
 
-    this._backupBookmarks();
+    let waitingForBackupToComplete = true;
+    if (this._shouldBackupBookmarks()) {
+      waitingForBackupToComplete = false;
+      this._backupBookmarks().then(
+        function onSuccess() {
+          waitingForBackupToComplete = true;
+        },
+        function onFailure() {
+          Cu.reportError("Unable to backup bookmarks.");
+          waitingForBackupToComplete = true;
+        }
+      );
+    }
 
     // Backup bookmarks to bookmarks.html to support apps that depend
     // on the legacy format.
-    try {
-      // If this fails to get the preference value, we don't export.
-      if (Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML")) {
-        // Exceptionally, since this is a non-default setting and HTML format is
-        // discouraged in favor of the JSON backups, we spin the event loop on
-        // shutdown, to wait for the export to finish.  We cannot safely spin
-        // the event loop on shutdown until we include a watchdog to prevent
-        // potential hangs (bug 518683).  The asynchronous shutdown operations
-        // will then be handled by a shutdown service (bug 435058).
-        let shutdownComplete = false;
-        BookmarkHTMLUtils.exportToFile(FileUtils.getFile("BMarks", [])).then(
-          function onSuccess() {
-            shutdownComplete = true;
-          },
-          function onFailure() {
-            // There is no point in reporting errors since we are shutting down.
-            shutdownComplete = true;
-          }
-        );
-        let thread = Services.tm.currentThread;
-        while (!shutdownComplete) {
-          thread.processNextEvent(true);
+    let waitingForHTMLExportToComplete = true;
+    // If this fails to get the preference value, we don't export.
+    if (Services.prefs.getBoolPref("browser.bookmarks.autoExportHTML")) {
+      // Exceptionally, since this is a non-default setting and HTML format is
+      // discouraged in favor of the JSON backups, we spin the event loop on
+      // shutdown, to wait for the export to finish.  We cannot safely spin
+      // the event loop on shutdown until we include a watchdog to prevent
+      // potential hangs (bug 518683).  The asynchronous shutdown operations
+      // will then be handled by a shutdown service (bug 435058).
+      waitingForHTMLExportToComplete = false;
+      BookmarkHTMLUtils.exportToFile(FileUtils.getFile("BMarks", [])).then(
+        function onSuccess() {
+          waitingForHTMLExportToComplete = true;
+        },
+        function onFailure() {
+          Cu.reportError("Unable to auto export html.");
+          waitingForHTMLExportToComplete = true;
         }
-      }
-    } catch(ex) { /* Don't export */ }
+      );
+    }
+
+    let thread = Services.tm.currentThread;
+    while (!waitingForBackupToComplete || !waitingForHTMLExportToComplete) {
+      thread.processNextEvent(true);
+    }
   },
 
   /**
-   * Backup bookmarks if needed.
+   * Determine whether to backup bookmarks or not.
+   * @return true if bookmarks should be backed up, false if not.
+   */
+  _shouldBackupBookmarks: function BG__shouldBackupBookmarks() {
+    let lastBackupFile = PlacesBackups.getMostRecent();
+
+    // Should backup bookmarks if there are no backups or the maximum interval between
+    // backups elapsed.
+    return (!lastBackupFile ||
+            new Date() - PlacesBackups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL);
+  },
+
+  /**
+   * Backup bookmarks.
    */
   _backupBookmarks: function BG__backupBookmarks() {
-    let lastBackupFile = PlacesUtils.backups.getMostRecent();
-
-    // Backup bookmarks if there are no backups or the maximum interval between
-    // backups elapsed.
-    if (!lastBackupFile ||
-        new Date() - PlacesUtils.backups.getDateForFile(lastBackupFile) > BOOKMARKS_BACKUP_INTERVAL) {
+    return Task.spawn(function() {
+      // Backup bookmarks if there are no backups or the maximum interval between
+      // backups elapsed.
       let maxBackups = BOOKMARKS_BACKUP_MAX_BACKUPS;
       try {
         maxBackups = Services.prefs.getIntPref("browser.bookmarks.max_backups");
       }
       catch(ex) { /* Use default. */ }
 
-      PlacesUtils.backups.create(maxBackups); // Don't force creation.
-    }
+      yield PlacesBackups.create(maxBackups); // Don't force creation.
+    });
   },
 
   /**
@@ -1223,7 +1170,7 @@ BrowserGlue.prototype = {
   },
 
   _migrateUI: function BG__migrateUI() {
-    const UI_VERSION = 9;
+    const UI_VERSION = 12;
     const BROWSER_DOCURL = "chrome://browser/content/browser.xul#";
     let currentUIVersion = 0;
     try {
@@ -1364,6 +1311,56 @@ BrowserGlue.prototype = {
 
       Services.prefs.clearUserPref("browser.download.useToolkitUI");
       Services.prefs.clearUserPref("browser.library.useNewDownloadsView");
+    }
+
+#ifdef XP_WIN
+    if (currentUIVersion < 10) {
+      // For Windows systems with display set to > 96dpi (i.e. systemDefaultScale
+      // will return a value > 1.0), we want to discard any saved full-zoom settings,
+      // as we'll now be scaling the content according to the system resolution
+      // scale factor (Windows "logical DPI" setting)
+      let sm = Cc["@mozilla.org/gfx/screenmanager;1"].getService(Ci.nsIScreenManager);
+      if (sm.systemDefaultScale > 1.0) {
+        let cps2 = Cc["@mozilla.org/content-pref/service;1"].
+                   getService(Ci.nsIContentPrefService2);
+        cps2.removeByName("browser.content.full-zoom", null);
+      }
+    }
+#endif
+
+    if (currentUIVersion < 11) {
+      Services.prefs.clearUserPref("dom.disable_window_move_resize");
+      Services.prefs.clearUserPref("dom.disable_window_flip");
+      Services.prefs.clearUserPref("dom.event.contextmenu.enabled");
+      Services.prefs.clearUserPref("javascript.enabled");
+      Services.prefs.clearUserPref("permissions.default.image");
+    }
+
+    if (currentUIVersion < 12) {
+      // Remove bookmarks-menu-button-container, then place
+      // bookmarks-menu-button into its position.
+      let currentsetResource = this._rdf.GetResource("currentset");
+      let toolbarResource = this._rdf.GetResource(BROWSER_DOCURL + "nav-bar");
+      let currentset = this._getPersist(toolbarResource, currentsetResource);
+      // Need to migrate only if toolbar is customized.
+      if (currentset) {
+        if (currentset.contains("bookmarks-menu-button-container"))
+          currentset = currentset.replace(/(^|,)bookmarks-menu-button-container($|,)/,"$2");
+
+        // Now insert the new button.
+        if (currentset.contains("downloads-button")) {
+          currentset = currentset.replace(/(^|,)downloads-button($|,)/,
+                                          "$1bookmarks-menu-button,downloads-button$2");
+        } else if (currentset.contains("home-button")) {
+          currentset = currentset.replace(/(^|,)home-button($|,)/,
+                                          "$1bookmarks-menu-button,home-button$2");
+        } else {
+          // Just append.
+          currentset = currentset.replace(/(^|,)window-controls($|,)/,
+                                          "$1bookmarks-menu-button,window-controls$2")
+        }
+        this._setPersist(toolbarResource, currentsetResource, currentset);
+      }
     }
 
     if (this._dirty)

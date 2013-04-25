@@ -52,11 +52,8 @@
               this.clearSelection();
             }
             this._selectedItem = wasSelected ? null : anItem;
-            if(anItem.selected) {
-              anItem.removeAttribute("selected");
-            } else {
-              anItem.setAttribute("selected", true);
-            }
+            anItem.selected = !wasSelected;
+
             this._fireOnSelectionChange();
           ]]>
         </body>
@@ -114,21 +111,11 @@
               return new Set();
             }
 
-            function cloneSet(aSet) {
-              let clone = new Set();
-              if (aSet) {
-                for (let item of aSet) {
-                  clone.add(item);
-                }
-              }
-              return clone;
-            }
-
             // given one or more sets of values,
             // return a set with only those values present in each
             let initialItem = tileNodes[0];
 
-            let verbSet = cloneSet(initialItem.contextActions);
+            let verbSet = new Set(initialItem.contextActions);
             for (let i=1; i<tileNodes.length; i++){
               let set = tileNodes[i].contextActions;
               for (let item of verbSet) {
@@ -136,6 +123,10 @@
                   verbSet.delete(item);
                 }
               }
+            }
+            // add the clear-selection button if more than one tiles are selected
+            if (tileNodes.length > 1) {
+              verbSet.add('clear');
             }
             // returns Set
             return verbSet;
@@ -331,15 +322,15 @@
       <field name="_itemHeightRenderThreshold">10</field>
 
       <method name="arrangeItems">
-        <parameter name="aNumRows"/>
-        <parameter name="aNumColumns"/>
         <body>
           <![CDATA[
-            if (this.itemCount <= 0)
+            if (this.itemCount <= 0) {
               return;
+            }
             let item = this.getItemAtIndex(0);
-            if (item == null)
+            if (item == null) {
               return;
+            }
             let gridItemRect = item.getBoundingClientRect();
 
             // cap the number of times we reschedule calling arrangeItems
@@ -382,24 +373,25 @@
               container = this.parentNode.getBoundingClientRect();
 
             // If we don't have valid dimensions we can't arrange yet
-            if (!container.height || !gridItemRect.height)
+            if (!container.height || !gridItemRect.height) {
               return;
+            }
 
             // We favor overflowing horizontally, not vertically
             let maxRowCount = Math.floor(container.height / gridItemRect.height) - 1;
 
-            if (aNumRows) {
-              this._rowCount = aNumRows;
-            } else {
+            this._rowCount = this.getAttribute("rows");
+            this._columnCount = this.getAttribute("columns");
+
+            if (!this._rowCount) {
               this._rowCount = Math.min(this.itemCount, maxRowCount);
             }
-            if (aNumColumns) {
-              this._columnCount = aNumColumns;
-            } else {
+            if (!this._columnCount){
               this._columnCount = Math.ceil(this.itemCount / this._rowCount);
             }
 
             this._grid.style.width = (this._columnCount * gridItemRect.width) + "px";
+
           ]]>
         </body>
       </method>
@@ -410,22 +402,41 @@
       <property name="suppressOnSelect"
                   onget="return this.getAttribute('suppressonselect') == 'true';"
                   onset="this.setAttribute('suppressonselect', val);"/>
+      <property name="crossSlideBoundary"
+          onget="return this.hasAttribute('crossslideboundary')? this.getAttribute('crossslideboundary') : Infinity;"/>
 
     <!-- Internal methods -->
-
+      <field name="_xslideHandler"/>
       <constructor>
         <![CDATA[
           if (this.controller && this.controller.gridBoundCallback != undefined)
             this.controller.gridBoundCallback();
-
+          // set up cross-slide gesture handling for multiple-selection grids
+          if ("undefined" !== typeof CrossSlide && "multiple" == this.getAttribute("seltype")) {
+            this._xslideHandler = new CrossSlide.Handler(this, {
+                  REARRANGESTART: this.crossSlideBoundary
+            });
+            this.addEventListener("touchstart", this._xslideHandler, false);
+            this.addEventListener("touchmove", this._xslideHandler, false);
+            this.addEventListener("touchend", this._xslideHandler, false);
+          }
           // XXX This event was never actually implemented (bug 223411).
           var event = document.createEvent("Events");
           event.initEvent("contentgenerated", true, true);
           this.dispatchEvent(event);
         ]]>
       </constructor>
-
-        <method name="_isIndexInBounds">
+      <destructor>
+        <![CDATA[
+          if (this._xslideHandler) {
+            this.removeEventListener("touchstart", this._xslideHandler);
+            this.removeEventListener("touchmove", this._xslideHandler);
+            this.removeEventListener("touchend", this._xslideHandler);
+            this._xslideHandler = null;
+          }
+        ]]>
+      </destructor>
+      <method name="_isIndexInBounds">
         <parameter name="anIndex"/>
         <body>
           <![CDATA[
@@ -475,10 +486,75 @@
           ]]>
         </body>
       </method>
-
     </implementation>
+    <handlers>
+      <handler event="context-action">
+        <![CDATA[
+          // context-action is an event fired by the appbar typically
+          // which directs us to do something to the selected tiles
+          switch (event.action) {
+            case "clear":
+              this.clearSelection();
+              break;
+            default:
+              if (this.controller && this.controller.doActionOnSelectedTiles) {
+                this.controller.doActionOnSelectedTiles(event.action, event);
+              }
+          }
+        ]]>
+      </handler>
+      <handler event="MozCrossSliding">
+        <![CDATA[
+          // MozCrossSliding is swipe gesture across a tile
+          // The tile should follow the drag to reinforce the gesture
+          // (with inertia/speedbump behavior)
+          let state = event.crossSlidingState;
+          let thresholds = this._xslideHandler.thresholds;
+          let transformValue;
+          switch(state) {
+            case "cancelled":
+              // hopefully nothing else is transform-ing the tile
+              event.target.removeAttribute('crosssliding');
+              event.target.style.removeProperty('transform');
+              break;
+            case "dragging":
+            case "selecting":
+              event.target.setAttribute("crosssliding", true);
+              // just track the mouse in the initial phases of the drag gesture
+              transformValue = (event.direction=='x') ?
+                                      'translateX('+event.delta+'px)' :
+                                      'translateY('+event.delta+'px)';
+              event.target.style.transform = transformValue;
+              break;
+            case "selectSpeedBumping":
+            case "speedBumping":
+              event.target.setAttribute('crosssliding', true);
+              // in speed-bump phase, we add inertia to the drag
+              let offset = CrossSlide.speedbump(
+                event.delta,
+                thresholds.SPEEDBUMPSTART,
+                thresholds.SPEEDBUMPEND
+              );
+              transformValue = (event.direction=='x') ?
+                                      'translateX('+offset+'px)' :
+                                      'translateY('+offset+'px)';
+              event.target.style.transform = transformValue;
+              break;
+            // "rearranging" case not used or implemented here
+            case "completed":
+              event.target.removeAttribute('crosssliding');
+              event.target.style.removeProperty('transform');
+              break;
+          }
+        ]]>
+      </handler>
+      <handler event="MozCrossSlideSelect">
+        <![CDATA[
+          this.toggleItemSelection(event.target);
+        ]]>
+      </handler>
+    </handlers>
   </binding>
-
   <binding id="richgrid-item">
     <content>
       <xul:vbox anonid="anon-richgrid-item" class="richgrid-item-content" xbl:inherits="customImage">
@@ -499,7 +575,9 @@
                 onset="this._icon.src = val; this.setAttribute('iconURI', val);"
                 onget="return this._icon.src;" />
 
-      <property name="selected" onget="return this.hasAttribute('selected');" />
+      <property name="selected"
+                onget="return this.hasAttribute('selected');"
+                onset="if (val) this.setAttribute('selected', val); else this.removeAttribute('selected');" />
       <property name="url"
                 onget="return this.getAttribute('value')"
                 onset="this.setAttribute('value', val);"/>
@@ -518,6 +596,10 @@
       <method name="refresh">
         <body>
           <![CDATA[
+            // Prevent an exception in case binding is not done yet.
+            if (!this._icon)
+              return;
+
             // Seed the binding properties from bound-node attribute values
             // Usage: node.refresh()
             //        - reinitializes all binding properties from their associated attributes

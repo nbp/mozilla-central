@@ -30,6 +30,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/dom/DocumentFragment.h"
 #include "mozilla/dom/Element.h"
+#include "mozilla/dom/HTMLMediaElement.h"
 #include "mozilla/dom/HTMLTemplateElement.h"
 #include "mozilla/dom/TextDecoderBase.h"
 #include "mozilla/Likely.h"
@@ -86,7 +87,6 @@
 #include "nsIDOMDocument.h"
 #include "nsIDOMDocumentType.h"
 #include "nsIDOMEvent.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMHTMLElement.h"
 #include "nsIDOMHTMLFormElement.h"
 #include "nsIDOMHTMLInputElement.h"
@@ -100,6 +100,7 @@
 #include "nsIFormControl.h"
 #include "nsIForm.h"
 #include "nsIFragmentContentSink.h"
+#include "nsIFrame.h"
 #include "nsIHTMLDocument.h"
 #include "nsIIdleService.h"
 #include "nsIImageLoadingContent.h"
@@ -156,6 +157,7 @@
 #include "nsSVGFeatures.h"
 #include "nsTextEditorState.h"
 #include "nsTextFragment.h"
+#include "nsTextNode.h"
 #include "nsThreadUtils.h"
 #include "nsUnicharUtilCIID.h"
 #include "nsUnicodeProperties.h"
@@ -167,9 +169,6 @@
 
 #ifdef IBMBIDI
 #include "nsIBidiKeyboard.h"
-#endif
-#ifdef MOZ_MEDIA
-#include "mozilla/dom/HTMLMediaElement.h"
 #endif
 
 extern "C" int MOZ_XMLTranslateEntity(const char* ptr, const char* end,
@@ -1268,9 +1267,7 @@ nsContentUtils::IsHTMLVoid(nsIAtom* aLocalName)
     (aLocalName == nsGkAtoms::link) ||
     (aLocalName == nsGkAtoms::meta) ||
     (aLocalName == nsGkAtoms::param) ||
-#ifdef MOZ_MEDIA
     (aLocalName == nsGkAtoms::source) ||
-#endif
     (aLocalName == nsGkAtoms::track) ||
     (aLocalName == nsGkAtoms::wbr);
 }
@@ -1712,7 +1709,7 @@ nsContentUtils::GetWindowFromCaller()
   return nullptr;
 }
 
-nsIDOMDocument *
+nsIDocument*
 nsContentUtils::GetDocumentFromCaller()
 {
   JSContext *cx = nullptr;
@@ -1728,10 +1725,10 @@ nsContentUtils::GetDocumentFromCaller()
     return nullptr;
   }
 
-  return win->GetExtantDocument();
+  return win->GetExtantDoc();
 }
 
-nsIDOMDocument *
+nsIDocument*
 nsContentUtils::GetDocumentFromContext()
 {
   JSContext *cx = nullptr;
@@ -1743,7 +1740,7 @@ nsContentUtils::GetDocumentFromContext()
     if (sgo) {
       nsCOMPtr<nsPIDOMWindow> pwin = do_QueryInterface(sgo);
       if (pwin) {
-        return pwin->GetExtantDocument();
+        return pwin->GetExtantDoc();
       }
     }
   }
@@ -2933,7 +2930,7 @@ nsContentUtils::NameChanged(nsINodeInfo* aNodeInfo, nsIAtom* aName,
                                 aNodeInfo->NamespaceID(),
                                 aNodeInfo->NodeType(),
                                 aNodeInfo->GetExtraName()).get();
-  return *aResult ? NS_OK : NS_ERROR_OUT_OF_MEMORY;
+  return NS_OK;
 }
 
 
@@ -3061,7 +3058,7 @@ IsContextOnStack(nsIJSContextStack *aStack, JSContext *aContext)
 }
 
 bool
-nsCxPusher::Push(nsIDOMEventTarget *aCurrentTarget)
+nsCxPusher::Push(EventTarget *aCurrentTarget)
 {
   if (mPushedSomething) {
     NS_ERROR("Whaaa! No double pushing with nsCxPusher::Push()!");
@@ -3073,7 +3070,13 @@ nsCxPusher::Push(nsIDOMEventTarget *aCurrentTarget)
   nsresult rv;
   nsIScriptContext* scx =
     aCurrentTarget->GetContextForEventHandlers(&rv);
+#ifdef DEBUG_smaug
   NS_ENSURE_SUCCESS(rv, false);
+#else
+  if(NS_FAILED(rv)) {
+    return false;
+  }
+#endif
 
   if (!scx) {
     // The target may have a special JS context for event handlers.
@@ -3098,7 +3101,7 @@ nsCxPusher::Push(nsIDOMEventTarget *aCurrentTarget)
 }
 
 bool
-nsCxPusher::RePush(nsIDOMEventTarget *aCurrentTarget)
+nsCxPusher::RePush(EventTarget *aCurrentTarget)
 {
   if (!mPushedSomething) {
     return Push(aCurrentTarget);
@@ -3192,11 +3195,9 @@ nsCxPusher::Pop()
   // pop is the same as it was right after we pushed.
   MOZ_ASSERT_IF(mPushedContext, mCompartmentDepthOnEntry ==
                                 js::GetEnterCompartmentDepth(mPushedContext));
-
-  JSContext *unused;
-  stack->Pop(&unused);
-
-  NS_ASSERTION(unused == mPushedContext, "Unexpected context popped");
+  DebugOnly<JSContext*> stackTop;
+  MOZ_ASSERT(NS_SUCCEEDED(stack->Peek(&stackTop)) && mPushedContext == stackTop);
+  stack->Pop(nullptr);
 
   if (!mScriptIsRunning && mScx) {
     // No JS is running in the context, but executing the event handler might have
@@ -3223,7 +3224,8 @@ static const char gPropertiesFiles[nsContentUtils::PropertiesFile_COUNT][56] = {
   "chrome://global/locale/svg/svg.properties",
   "chrome://branding/locale/brand.properties",
   "chrome://global/locale/commonDialogs.properties",
-  "chrome://global/locale/mathml/mathml.properties"
+  "chrome://global/locale/mathml/mathml.properties",
+  "chrome://global/locale/security/security.properties"
 };
 
 /* static */ nsresult
@@ -3554,10 +3556,10 @@ nsresult GetEventAndTarget(nsIDocument* aDoc, nsISupports* aTarget,
                            const nsAString& aEventName,
                            bool aCanBubble, bool aCancelable,
                            bool aTrusted, nsIDOMEvent** aEvent,
-                           nsIDOMEventTarget** aTargetOut)
+                           EventTarget** aTargetOut)
 {
   nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(aDoc);
-  nsCOMPtr<nsIDOMEventTarget> target(do_QueryInterface(aTarget));
+  nsCOMPtr<EventTarget> target(do_QueryInterface(aTarget));
   NS_ENSURE_TRUE(domDoc && target, NS_ERROR_INVALID_ARG);
 
   nsCOMPtr<nsIDOMEvent> event;
@@ -3608,7 +3610,7 @@ nsContentUtils::DispatchEvent(nsIDocument* aDoc, nsISupports* aTarget,
                               bool aTrusted, bool *aDefaultAction)
 {
   nsCOMPtr<nsIDOMEvent> event;
-  nsCOMPtr<nsIDOMEventTarget> target;
+  nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
                                   aCancelable, aTrusted, getter_AddRefs(event),
                                   getter_AddRefs(target));
@@ -3627,7 +3629,7 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
 {
 
   nsCOMPtr<nsIDOMEvent> event;
-  nsCOMPtr<nsIDOMEventTarget> target;
+  nsCOMPtr<EventTarget> target;
   nsresult rv = GetEventAndTarget(aDoc, aTarget, aEventName, aCanBubble,
                                   aCancelable, true, getter_AddRefs(event),
                                   getter_AddRefs(target));
@@ -3637,7 +3639,7 @@ nsContentUtils::DispatchChromeEvent(nsIDocument *aDoc,
   if (!aDoc->GetWindow())
     return NS_ERROR_INVALID_ARG;
 
-  nsIDOMEventTarget* piTarget = aDoc->GetWindow()->GetParentTarget();
+  EventTarget* piTarget = aDoc->GetWindow()->GetParentTarget();
   if (!piTarget)
     return NS_ERROR_INVALID_ARG;
 
@@ -3709,7 +3711,7 @@ nsContentUtils::ConvertStringFromCharset(const nsACString& aCharset,
 /* static */
 bool
 nsContentUtils::CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
-                            nsACString& aCharset, bool *bigEndian)
+                            nsACString& aCharset)
 {
   bool found = true;
   aCharset.Truncate();
@@ -3721,15 +3723,11 @@ nsContentUtils::CheckForBOM(const unsigned char* aBuffer, uint32_t aLength,
   }
   else if (aLength >= 2 &&
            aBuffer[0] == 0xFE && aBuffer[1] == 0xFF) {
-    aCharset = "UTF-16";
-    if (bigEndian)
-      *bigEndian = true;
+    aCharset = "UTF-16BE";
   }
   else if (aLength >= 2 &&
            aBuffer[0] == 0xFF && aBuffer[1] == 0xFE) {
-    aCharset = "UTF-16";
-    if (bigEndian)
-      *bigEndian = false;
+    aCharset = "UTF-16LE";
   } else {
     found = false;
   }
@@ -3787,16 +3785,7 @@ nsContentUtils::GuessCharset(const char *aData, uint32_t aDataLen,
       (aDataLen >= sizeof(sniffBuf) ? sizeof(sniffBuf) : aDataLen);
     memcpy(sniffBuf, aData, numRead);
 
-    bool bigEndian;
-    if (CheckForBOM(sniffBuf, numRead, aCharset, &bigEndian) &&
-        aCharset.EqualsLiteral("UTF-16")) {
-      if (bigEndian) {
-        aCharset.AppendLiteral("BE");
-      }
-      else {
-        aCharset.AppendLiteral("LE");
-      }
-    }
+    CheckForBOM(sniffBuf, numRead, aCharset);
   }
 
   if (aCharset.IsEmpty()) {
@@ -3879,7 +3868,7 @@ nsContentUtils::HasMutationListeners(nsINode* aNode,
 
   // If we have a window, we can check it for mutation listeners now.
   if (aNode->IsInDoc()) {
-    nsCOMPtr<nsIDOMEventTarget> piTarget(do_QueryInterface(window));
+    nsCOMPtr<EventTarget> piTarget(do_QueryInterface(window));
     if (piTarget) {
       nsEventListenerManager* manager = piTarget->GetListenerManager(false);
       if (manager && manager->HasMutationListeners()) {
@@ -4150,7 +4139,7 @@ nsContentUtils::CreateContextualFragment(nsINode* aContextNode,
 
   if (isHTML) {
     nsRefPtr<DocumentFragment> frag =
-      NS_NewDocumentFragment(document->NodeInfoManager(), aRv);
+      new DocumentFragment(document->NodeInfoManager());
     
     nsCOMPtr<nsIContent> contextAsContent = do_QueryInterface(aContextNode);
     if (contextAsContent && !contextAsContent->IsElement()) {
@@ -4476,14 +4465,12 @@ nsContentUtils::SetNodeTextContent(nsIContent* aContent,
     return NS_OK;
   }
 
-  nsCOMPtr<nsIContent> textContent;
-  nsresult rv = NS_NewTextNode(getter_AddRefs(textContent),
-                               aContent->NodeInfo()->NodeInfoManager());
-  NS_ENSURE_SUCCESS(rv, rv);
+  nsRefPtr<nsTextNode> textContent =
+    new nsTextNode(aContent->NodeInfo()->NodeInfoManager());
 
   textContent->SetText(aValue, true);
 
-  rv = aContent->AppendChildTo(textContent, true);
+  nsresult rv = aContent->AppendChildTo(textContent, true);
   mb.NodesAdded();
   return rv;
 }
@@ -5926,7 +5913,7 @@ nsContentUtils::DispatchXULCommand(nsIContent* aTarget,
     return aShell->HandleDOMEventWithTarget(aTarget, event, &status);
   }
 
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aTarget);
+  nsCOMPtr<EventTarget> target = do_QueryInterface(aTarget);
   NS_ENSURE_STATE(target);
   bool dummy;
   return target->DispatchEvent(event, &dummy);
@@ -6447,7 +6434,6 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
     return docFactory.forget();
   }
 
-#ifdef MOZ_MEDIA
   if (DecoderTraits::IsSupportedInVideoDocument(nsDependentCString(aType))) {
     docFactory = do_GetService("@mozilla.org/content/document-loader-factory;1");
     if (docFactory && aLoaderType) {
@@ -6455,7 +6441,6 @@ nsContentUtils::FindInternalContentViewer(const char* aType,
     }
     return docFactory.forget();
   }
-#endif // MOZ_MEDIA
 
   return nullptr;
 }
@@ -6749,6 +6734,40 @@ nsContentUtils::TraceWrapper(nsWrapperCache* aCache, TraceCallback aCallback,
       aCallback(wrapper, "Preserved wrapper", aClosure);
     }
   }
+}
+
+// static
+int32_t
+nsContentUtils::GetAdjustedOffsetInTextControl(nsIFrame* aOffsetFrame,
+                                               int32_t aOffset)
+{
+  // The structure of the anonymous frames within a text control frame is
+  // an optional block frame, followed by an optional br frame.
+
+  // If the offset frame has a child, then this frame is the block which
+  // has the text frames (containing the content) as its children. This will
+  // be the case if we click to the right of any of the text frames, or at the
+  // bottom of the text area.
+  nsIFrame* firstChild = aOffsetFrame->GetFirstPrincipalChild();
+  if (firstChild) {
+    // In this case, the passed-in offset is incorrect, and we want the length
+    // of the entire content in the text control frame.
+    return firstChild->GetContent()->Length();
+  }
+
+  if (aOffsetFrame->GetPrevSibling() &&
+      !aOffsetFrame->GetNextSibling()) {
+    // In this case, we're actually within the last frame, which is a br
+    // frame. Our offset should therefore be the length of the first child of
+    // our parent.
+    int32_t aOutOffset =
+      aOffsetFrame->GetParent()->GetFirstPrincipalChild()->GetContent()->Length();
+    return aOutOffset;
+  }
+
+  // Otherwise, we're within one of the text frames, in which case our offset
+  // has already been correctly calculated.
+  return aOffset;
 }
 
 // static

@@ -414,7 +414,7 @@ gsmsdp_alloc_media (void)
     if (media == NULL) {
         /* no free element from cache, allocate it from the pool */
         media = cpr_malloc(sizeof(fsmdef_media_t));
-        GSM_DEBUG(DEB_F_PREFIX"get from dynamic pool, media %x\n",
+        GSM_DEBUG(DEB_F_PREFIX"get from dynamic pool, media %p",
                                DEB_F_PREFIX_ARGS(GSM, fname), media);
     }
     return (media);
@@ -463,7 +463,7 @@ gsmsdp_free_media (fsmdef_media_t *media)
     } else {
         /* this element is from the dynamic pool, free it back */
         cpr_free(media);
-        GSM_DEBUG(DEB_F_PREFIX"free media 0x%x to dynamic pool\n",
+        GSM_DEBUG(DEB_F_PREFIX"free media %p to dynamic pool",
                   DEB_F_PREFIX_ARGS(GSM, fname), media);
     }
 }
@@ -3247,15 +3247,15 @@ gsmsdp_negotiate_codec (fsmdef_dcb_t *dcb_p, cc_sdp_t *sdp_p,
 
 
                 found_codec = TRUE;
-                if(media->num_payloads >= payload_types_count) {
-                    /* We maxed our allocated memory -- processing is done. */
-                    return codec;
-                }
 
                 /* Incrementing this number serves as a "commit" for the
                    payload_info. If we bail out of the loop before this
                    happens, then the collected information is abandoned. */
                 media->num_payloads++;
+                if(media->num_payloads >= payload_types_count) {
+                    /* We maxed our allocated memory -- processing is done. */
+                    return codec;
+                }
 
                 if(offer) {
                     /* If we are creating an answer, return after the first match.
@@ -4305,6 +4305,7 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
     tinybool        rtcp_mux = FALSE;
     sdp_result_e    sdp_res;
     boolean         created_media_stream = FALSE;
+    int             lsm_rc;
 
     config_get_value(CFGID_SDPMODE, &sdpmode, sizeof(sdpmode));
 
@@ -4620,27 +4621,33 @@ gsmsdp_negotiate_media_lines (fsm_fcb_t *fcb_p, cc_sdp_t *sdp_p, boolean initial
                              TODO(ekr@rtfm.com): revisit when we have media
                              assigned to streams in the SDP */
                           if (!created_media_stream){
-                              lsm_add_remote_stream (dcb_p->line,
-                                                     dcb_p->call_id,
-                                                     media,
-                                                     &pc_stream_id);
-                              MOZ_ASSERT(pc_stream_id == 0);
-                              /* Use index 0 because we only have one stream */
-                              result = gsmsdp_add_remote_stream(0,
-                                                                pc_stream_id,
-                                                                dcb_p);
-                              MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com)
-                                                      add real error checking,
-                                                      but this "can't fail" */
-                              created_media_stream = TRUE;
+                              lsm_rc = lsm_add_remote_stream (dcb_p->line,
+                                                              dcb_p->call_id,
+                                                              media,
+                                                              &pc_stream_id);
+                              if (lsm_rc) {
+                                return (CC_CAUSE_NO_MEDIA);
+                              } else {
+                                MOZ_ASSERT(pc_stream_id == 0);
+                                /* Use index 0 because we only have one stream */
+                                result = gsmsdp_add_remote_stream(0,
+                                                                  pc_stream_id,
+                                                                  dcb_p);
+                                MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com)
+                                                        add real error checking,
+                                                        but this "can't fail" */
+                                created_media_stream = TRUE;
+                              }
                           }
 
-                          /* Now add the track to the single media stream.
-                             use index 0 because we only have one stream */
-                          result = gsmsdp_add_remote_track(0, i, dcb_p, media);
-                          MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com) add real
-                                                 error checking, but this
-                                                 "can't fail" */
+                          if (created_media_stream) {
+                                /* Now add the track to the single media stream.
+                                   use index 0 because we only have one stream */
+                                result = gsmsdp_add_remote_track(0, i, dcb_p, media);
+                                MOZ_ASSERT(result);  /* TODO(ekr@rtfm.com) add real
+                                                       error checking, but this
+                                                       "can't fail" */
+                          }
                       }
                   }
               }

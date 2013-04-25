@@ -297,7 +297,7 @@ endif
 STATIC_LIBS += thebes gl ycbcr
 
 ifdef MOZ_ENABLE_GTEST
-COMPONENT_LIBS += gtest
+COMPONENT_LIBS += gtest xpcom_glue_gtest
 endif
 
 ifdef MOZ_ENABLE_PROFILER_SPS
@@ -677,11 +677,6 @@ DEFINES += \
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
 OS_LIBS += $(call EXPAND_LIBNAME,usp10 oleaut32)
-endif
-
-ifeq ($(OS_ARCH),OpenBSD)
-# Needed by nsAuthGSSAPI
-EXTRA_DSO_LDOPTS += -lkrb5 -lcrypto
 endif
 
 ifdef MOZ_DEBUG

@@ -21,7 +21,6 @@
 #include "nsGUIEvent.h"
 #include "nsIComboboxControlFrame.h"
 #include "nsIDocument.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMHTMLOptGroupElement.h"
 #include "nsIFormControlFrame.h"
 #include "nsIForm.h"
@@ -95,23 +94,7 @@ HTMLOptionsCollection::GetOptionIndex(Element* aOption,
 }
 
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(HTMLOptionsCollection)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mElements)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(HTMLOptionsCollection)
-  {
-    uint32_t i;
-    for (i = 0; i < tmp->mElements.Length(); ++i) {
-      NS_CYCLE_COLLECTION_NOTE_EDGE_NAME(cb, "mElements[i]");
-      cb.NoteXPCOMChild(static_cast<Element*>(tmp->mElements[i]));
-    }
-  }
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_SCRIPT_OBJECTS
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(HTMLOptionsCollection)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_1(HTMLOptionsCollection, mElements)
 
 // nsISupports
 
@@ -374,18 +357,7 @@ HTMLOptionsCollection::Add(const HTMLOptionOrOptGroupElement& aElement,
                            const Nullable<HTMLElementOrLong>& aBefore,
                            ErrorResult& aError)
 {
-  nsGenericHTMLElement& element =
-    aElement.IsHTMLOptionElement() ?
-    static_cast<nsGenericHTMLElement&>(aElement.GetAsHTMLOptionElement()) :
-    static_cast<nsGenericHTMLElement&>(aElement.GetAsHTMLOptGroupElement());
-
-  if (aBefore.IsNull()) {
-    mSelect->Add(element, (nsGenericHTMLElement*)nullptr, aError);
-  } else if (aBefore.Value().IsHTMLElement()) {
-    mSelect->Add(element, &aBefore.Value().GetAsHTMLElement(), aError);
-  } else {
-    mSelect->Add(element, aBefore.Value().GetAsLong(), aError);
-  }
+  mSelect->Add(aElement, aBefore, aError);
 }
 
 void

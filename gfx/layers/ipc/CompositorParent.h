@@ -16,11 +16,12 @@
 //#define COMPOSITOR_PERFORMANCE_WARNING
 
 #include "mozilla/layers/PCompositorParent.h"
-#include "mozilla/layers/PLayersParent.h"
+#include "mozilla/layers/PLayerTransactionParent.h"
 #include "base/thread.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/TimeStamp.h"
 #include "ShadowLayersManager.h"
+#include "LayerManagerComposite.h"
 class nsIWidget;
 
 namespace base {
@@ -33,6 +34,7 @@ namespace layers {
 class AsyncPanZoomController;
 class Layer;
 class LayerManager;
+struct TextureFactoryIdentifier;
 
 // Represents (affine) transforms that are calculated from a content view.
 struct ViewTransform {
@@ -72,7 +74,9 @@ public:
   virtual bool RecvMakeSnapshot(const SurfaceDescriptor& aInSnapshot,
                                 SurfaceDescriptor* aOutSnapshot);
 
-  virtual void ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
+  virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
+
+  virtual void ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                    const TargetConfig& aTargetConfig,
                                    bool isFirstPaint) MOZ_OVERRIDE;
   /**
@@ -85,7 +89,7 @@ public:
   void ForceIsFirstPaint() { mIsFirstPaint = true; }
   void Destroy();
 
-  LayerManager* GetLayerManager() { return mLayerManager; }
+  LayerManagerComposite* GetLayerManager() { return mLayerManager; }
 
   void SetTransformation(float aScale, nsIntPoint aScrollOffset);
   void AsyncRender();
@@ -103,7 +107,7 @@ public:
   void NotifyShadowTreeTransaction();
 
   /**
-   * Returns a pointer to the compositor corresponding to the given ID. 
+   * Returns a pointer to the compositor corresponding to the given ID.
    */
   static CompositorParent* GetCompositor(uint64_t id);
 
@@ -163,18 +167,12 @@ public:
   static void StartUpWithExistingThread(MessageLoop* aMsgLoop,
                                         PlatformThreadId aThreadID);
 
-  /**
-   * Release disposable memory. This will clear the tile store (stale tiles).
-   */
-  bool
-  RecvMemoryPressure();
-
 protected:
-  virtual PLayersParent* AllocPLayers(const LayersBackend& aBackendHint,
-                                      const uint64_t& aId,
-                                      LayersBackend* aBackend,
-                                      int32_t* aMaxTextureSize);
-  virtual bool DeallocPLayers(PLayersParent* aLayers);
+  virtual PLayerTransactionParent*
+    AllocPLayerTransaction(const LayersBackend& aBackendHint,
+                           const uint64_t& aId,
+                           TextureFactoryIdentifier* aTextureFactoryIdentifier);
+  virtual bool DeallocPLayerTransaction(PLayerTransactionParent* aLayers);
   virtual void ScheduleTask(CancelableTask*, int);
   virtual void Composite();
   virtual void ComposeToTarget(gfxContext* aTarget);
@@ -184,10 +182,6 @@ protected:
                                 nsIntPoint& aScrollOffset, float& aScaleX, float& aScaleY,
                                 gfx::Margin& aFixedLayerMargins);
   void SetEGLSurfaceSize(int width, int height);
-  // If SetPanZoomControllerForLayerTree is not set, Compositor will use
-  // derived class AsyncPanZoomController transformations.
-  // Compositor will not own AsyncPanZoomController here.
-  virtual AsyncPanZoomController* GetDefaultPanZoomController() { return nullptr; }
 
 private:
   void PauseComposition();
@@ -211,7 +205,7 @@ private:
    * Creates a global map referencing each compositor by ID.
    *
    * This map is used by the ImageBridge protocol to trigger
-   * compositions without having to keep references to the 
+   * compositions without having to keep references to the
    * compositor
    */
   static void CreateCompositorMap();
@@ -221,9 +215,9 @@ private:
    * Creates the compositor thread.
    *
    * All compositors live on the same thread.
-   * The thread is not lazily created on first access to avoid dealing with 
+   * The thread is not lazily created on first access to avoid dealing with
    * thread safety. Therefore it's best to create and destroy the thread when
-   * we know we areb't using it (So creating/destroying along with gfxPlatform 
+   * we know we areb't using it (So creating/destroying along with gfxPlatform
    * looks like a good place).
    */
   static bool CreateThread();
@@ -265,14 +259,7 @@ private:
                             const gfxSize& aScaleDiff,
                             const gfx::Margin& aFixedLayerMargins);
 
-  virtual PGrallocBufferParent* AllocPGrallocBuffer(
-    const gfxIntSize&, const uint32_t&, const uint32_t&,
-    MaybeMagicGrallocBufferHandle*) MOZ_OVERRIDE
-  { return nullptr; }
-  virtual bool DeallocPGrallocBuffer(PGrallocBufferParent*)
-  { return false; }
-
-  nsRefPtr<LayerManager> mLayerManager;
+  nsRefPtr<LayerManagerComposite> mLayerManager;
   nsIWidget* mWidget;
   TargetConfig mTargetConfig;
   CancelableTask *mCurrentCompositeTask;

@@ -9,6 +9,7 @@
 #include "nsContentUtils.h"
 #include "nsDOMClassInfoID.h"
 #include "DocumentType.h"
+#include "nsTextNode.h"
 
 namespace mozilla {
 namespace dom {
@@ -211,20 +212,20 @@ DOMImplementation::CreateHTMLDocument(const nsAString& aTitle,
   rv = root->AppendChildTo(head, false);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIContent> title;
-  rv = doc->CreateElem(NS_LITERAL_STRING("title"), nullptr, kNameSpaceID_XHTML,
-                       getter_AddRefs(title));
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = head->AppendChildTo(title, false);
-  NS_ENSURE_SUCCESS(rv, rv);
+  if (!DOMStringIsNull(aTitle)) {
+    nsCOMPtr<nsIContent> title;
+    rv = doc->CreateElem(NS_LITERAL_STRING("title"), nullptr,
+                         kNameSpaceID_XHTML, getter_AddRefs(title));
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = head->AppendChildTo(title, false);
+    NS_ENSURE_SUCCESS(rv, rv);
 
-  nsCOMPtr<nsIContent> titleText;
-  rv = NS_NewTextNode(getter_AddRefs(titleText), doc->NodeInfoManager());
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = titleText->SetText(aTitle, false);
-  NS_ENSURE_SUCCESS(rv, rv);
-  rv = title->AppendChildTo(titleText, false);
-  NS_ENSURE_SUCCESS(rv, rv);
+    nsRefPtr<nsTextNode> titleText = new nsTextNode(doc->NodeInfoManager());
+    rv = titleText->SetText(aTitle, false);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = title->AppendChildTo(titleText, false);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
 
   nsCOMPtr<nsIContent> body;
   rv = doc->CreateElem(NS_LITERAL_STRING("body"), nullptr, kNameSpaceID_XHTML,
@@ -241,12 +242,14 @@ DOMImplementation::CreateHTMLDocument(const nsAString& aTitle,
 }
 
 already_AddRefed<nsIDocument>
-DOMImplementation::CreateHTMLDocument(const nsAString& aTitle,
+DOMImplementation::CreateHTMLDocument(const Optional<nsAString>& aTitle,
                                       ErrorResult& aRv)
 {
   nsCOMPtr<nsIDocument> document;
   nsCOMPtr<nsIDOMDocument> domDocument;
-  aRv = CreateHTMLDocument(aTitle, getter_AddRefs(document),
+  aRv = CreateHTMLDocument(aTitle.WasPassed() ? aTitle.Value()
+                                              : NullString(),
+                           getter_AddRefs(document),
                            getter_AddRefs(domDocument));
   return document.forget();
 }

@@ -19,10 +19,11 @@
 // Duplicated in fsm.def
 #define WEBRTC_DATACHANNEL_STREAMS_DEFAULT 16
 
-#define DATA_CHANNEL_PPID_CONTROL   50
-#define DATA_CHANNEL_PPID_DOMSTRING 51
-#define DATA_CHANNEL_PPID_BINARY    52
-#define DATA_CHANNEL_PPID_BINARY_LAST 53
+#define DATA_CHANNEL_PPID_CONTROL        50
+#define DATA_CHANNEL_PPID_BINARY         52
+#define DATA_CHANNEL_PPID_BINARY_LAST    53
+#define DATA_CHANNEL_PPID_DOMSTRING      54
+#define DATA_CHANNEL_PPID_DOMSTRING_LAST 51
 
 #define DATA_CHANNEL_MAX_BINARY_FRAGMENT 0x4000
 
@@ -42,8 +43,8 @@
 struct rtcweb_datachannel_open_request {
   uint8_t  msg_type; // DATA_CHANNEL_OPEN
   uint8_t  channel_type;  
-  uint16_t reliability_params;
   int16_t  priority;
+  uint32_t reliability_param;
   uint16_t label_length;
   uint16_t protocol_length;
   char     label[1]; // (and protocol) keep VC++ happy...

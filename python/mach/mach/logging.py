@@ -34,7 +34,7 @@ class ConvertToStructuredFilter(logging.Filter):
             return True
 
         record.action = 'unstructured'
-        record.params = {'msg': record.msg}
+        record.params = {'msg': record.getMessage()}
         record.msg = '{msg}'
 
         return True

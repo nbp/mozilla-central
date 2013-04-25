@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -913,6 +912,7 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
     unsigned lineNumber = 1;
     RootedObject global(cx, NULL);
     bool catchTermination = false;
+    RootedObject callerGlobal(cx, cx->global());
 
     global = JS_GetGlobalForObject(cx, &args.callee());
     if (!global)
@@ -1044,7 +1044,11 @@ Evaluate(JSContext *cx, unsigned argc, jsval *vp)
         }
         if (!JS_ExecuteScript(cx, global, script, vp)) {
             if (catchTermination && !JS_IsExceptionPending(cx)) {
-                args.rval().setString(JS_NewStringCopyZ(cx, "terminated"));
+                JSAutoCompartment ac1(cx, callerGlobal);
+                JSString *str = JS_NewStringCopyZ(cx, "terminated");
+                if (!str)
+                    return false;
+                args.rval().setString(str);
                 return true;
             }
             return false;
@@ -2284,7 +2288,7 @@ Clone(JSContext *cx, unsigned argc, jsval *vp)
         RootedObject obj(cx, JSVAL_IS_PRIMITIVE(args[0]) ? NULL : &args[0].toObject());
 
         if (obj && IsCrossCompartmentWrapper(obj)) {
-            obj = UnwrapObject(obj);
+            obj = UncheckedUnwrap(obj);
             ac.construct(cx, obj);
             args[0] = ObjectValue(*obj);
         }
@@ -2450,7 +2454,7 @@ sandbox_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
 static JSClass sandbox_class = {
     "sandbox",
     JSCLASS_NEW_RESOLVE | JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,   JS_PropertyStub,
+    JS_PropertyStub,   JS_DeletePropertyStub,
     JS_PropertyStub,   JS_StrictPropertyStub,
     sandbox_enumerate, (JSResolveOp)sandbox_resolve,
     JS_ConvertStub
@@ -2520,7 +2524,7 @@ EvalInContext(JSContext *cx, unsigned argc, jsval *vp)
     {
         Maybe<JSAutoCompartment> ac;
         unsigned flags;
-        JSObject *unwrapped = UnwrapObject(sobj, true, &flags);
+        JSObject *unwrapped = UncheckedUnwrap(sobj, true, &flags);
         if (flags & Wrapper::CROSS_COMPARTMENT) {
             sobj = unwrapped;
             ac.construct(cx, sobj);
@@ -2713,7 +2717,7 @@ resolver_enumerate(JSContext *cx, HandleObject obj)
 static JSClass resolver_class = {
     "resolver",
     JSCLASS_NEW_RESOLVE | JSCLASS_HAS_RESERVED_SLOTS(1),
-    JS_PropertyStub,   JS_PropertyStub,
+    JS_PropertyStub,   JS_DeletePropertyStub,
     JS_PropertyStub,   JS_StrictPropertyStub,
     resolver_enumerate, (JSResolveOp)resolver_resolve,
     JS_ConvertStub
@@ -3460,7 +3464,7 @@ NewGlobal(JSContext *cx, unsigned argc, jsval *vp)
 {
     JSObject *sameZoneAs = NULL;
     if (argc == 1 && JS_ARGV(cx, vp)[0].isObject())
-        sameZoneAs = UnwrapObject(&JS_ARGV(cx, vp)[0].toObject());
+        sameZoneAs = UncheckedUnwrap(&JS_ARGV(cx, vp)[0].toObject());
 
     RootedObject global(cx, NewGlobalObject(cx, sameZoneAs));
     if (!global)
@@ -3526,7 +3530,7 @@ ObjectEmulatingUndefined(JSContext *cx, unsigned argc, jsval *vp)
         "ObjectEmulatingUndefined",
         JSCLASS_EMULATES_UNDEFINED,
         JS_PropertyStub,
-        JS_PropertyStub,
+        JS_DeletePropertyStub,
         JS_PropertyStub,
         JS_StrictPropertyStub,
         JS_EnumerateStub,
@@ -4005,7 +4009,7 @@ its_get_customNative(JSContext *cx, unsigned argc, jsval *vp);
 static JSBool
 its_set_customNative(JSContext *cx, unsigned argc, jsval *vp);
 
-static JSPropertySpec its_props[] = {
+static const JSPropertySpec its_props[] = {
     {"color",           ITS_COLOR,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
     {"height",          ITS_HEIGHT,     JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
     {"width",           ITS_WIDTH,      JSPROP_ENUMERATE,       JSOP_NULLWRAPPER, JSOP_NULLWRAPPER},
@@ -4040,15 +4044,20 @@ its_addProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue
 }
 
 static JSBool
-its_delProperty(JSContext *cx, HandleObject obj, HandleId id, MutableHandleValue vp)
+its_delProperty(JSContext *cx, HandleObject obj, HandleId id, JSBool *succeeded)
 {
-    if (!its_noisy)
+    if (!its_noisy) {
+        *succeeded = true;
         return true;
+    }
 
     ToStringHelper idString(cx, id);
+    if (idString.threw())
+        return false;
+
     fprintf(gOutFile, "deleting its property %s,", idString.getBytes());
-    ToStringHelper valueString(cx, vp);
-    fprintf(gOutFile, " initial value %s\n", valueString.getBytes());
+
+    *succeeded = true;
     return true;
 }
 
@@ -4397,7 +4406,7 @@ global_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
 
 JSClass global_class = {
     "global", JSCLASS_NEW_RESOLVE | JSCLASS_GLOBAL_FLAGS,
-    JS_PropertyStub,  JS_PropertyStub,
+    JS_PropertyStub,  JS_DeletePropertyStub,
     JS_PropertyStub,  JS_StrictPropertyStub,
     global_enumerate, (JSResolveOp) global_resolve,
     JS_ConvertStub,   NULL
@@ -4503,7 +4512,7 @@ env_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
 
 static JSClass env_class = {
     "environment", JSCLASS_HAS_PRIVATE | JSCLASS_NEW_RESOLVE,
-    JS_PropertyStub,  JS_PropertyStub,
+    JS_PropertyStub,  JS_DeletePropertyStub,
     JS_PropertyStub,  env_setProperty,
     env_enumerate, (JSResolveOp) env_resolve,
     JS_ConvertStub
@@ -4585,7 +4594,7 @@ const JSJitInfo doFoo_methodinfo = {
     false     /* isConstant. Only relevant for getters. */
 };
 
-static JSPropertySpec dom_props[] = {
+static const JSPropertySpec dom_props[] = {
     {"x", 0,
      JSPROP_SHARED | JSPROP_ENUMERATE | JSPROP_NATIVE_ACCESSORS,
      { (JSPropertyOp)dom_genericGetter, &dom_x_getterinfo },
@@ -4594,7 +4603,7 @@ static JSPropertySpec dom_props[] = {
     {NULL,0,0,JSOP_NULLWRAPPER, JSOP_NULLWRAPPER}
 };
 
-static JSFunctionSpec dom_methods[] = {
+static const JSFunctionSpec dom_methods[] = {
     JS_FNINFO("doFoo", dom_genericMethod, &doFoo_methodinfo, 3, JSPROP_ENUMERATE),
     JS_FS_END
 };
@@ -4602,7 +4611,7 @@ static JSFunctionSpec dom_methods[] = {
 static JSClass dom_class = {
     "FakeDOMObject", JSCLASS_IS_DOMJSCLASS | JSCLASS_HAS_RESERVED_SLOTS(2),
     JS_PropertyStub,       /* addProperty */
-    JS_PropertyStub,       /* delProperty */
+    JS_DeletePropertyStub, /* delProperty */
     JS_PropertyStub,       /* getProperty */
     JS_StrictPropertyStub, /* setProperty */
     JS_EnumerateStub,
@@ -5295,8 +5304,10 @@ main(int argc, char **argv, char **envp)
         || !op.addIntOption('\0', "baseline-uses-before-compile", "COUNT",
                             "Wait for COUNT calls or iterations before baseline-compiling "
                             "(default: 10)", -1)
+        || !op.addBoolOption('\0', "no-fpu", "Pretend CPU does not support floating-point operations "
+                             "to test JIT codegen (no-op on platforms other than x86).")
 #ifdef JSGC_GENERATIONAL
-        || !op.addBoolOption('\0', "ggc", "Enable Generational GC")
+        || !op.addBoolOption('\0', "no-ggc", "Disable Generational GC")
 #endif
     )
     {
@@ -5329,6 +5340,11 @@ main(int argc, char **argv, char **envp)
         OOM_maxAllocations = op.getIntOption('A');
     if (op.getBoolOption('O'))
         OOM_printAllocationCount = true;
+
+#if defined(JS_CPU_X86)
+    if (op.getBoolOption("no-fpu"))
+        JSC::MacroAssembler::SetFloatingPointDisabled();
+#endif
 #endif
 
     /* Use the same parameters as the browser in xpcjsruntime.cpp. */
@@ -5341,7 +5357,7 @@ main(int argc, char **argv, char **envp)
 
     JS_SetGCParameter(rt, JSGC_MAX_BYTES, 0xffffffff);
 #ifdef JSGC_GENERATIONAL
-    if (!op.getBoolOption("ggc"))
+    if (op.getBoolOption("no-ggc"))
         JS::DisableGenerationalGC(rt);
 #endif
 

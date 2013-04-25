@@ -15,7 +15,7 @@
 #include "mozilla/dom/TabChild.h"
 #include "mozilla/Hal.h"
 #include "mozilla/layers/CompositorChild.h"
-#include "mozilla/layers/PLayersChild.h"
+#include "mozilla/layers/PLayerTransactionChild.h"
 #include "PuppetWidget.h"
 #include "nsIWidgetListener.h"
 
@@ -304,7 +304,7 @@ PuppetWidget::DispatchEvent(nsGUIEvent* event, nsEventStatus& aStatus)
 }
 
 LayerManager*
-PuppetWidget::GetLayerManager(PLayersChild* aShadowManager,
+PuppetWidget::GetLayerManager(PLayerTransactionChild* aShadowManager,
                               LayersBackend aBackendHint,
                               LayerManagerPersistence aPersistence,
                               bool* aAllowRetaining)
@@ -759,6 +759,13 @@ NS_IMETHODIMP
 PuppetScreenManager::GetNumberOfScreens(uint32_t* aNumberOfScreens)
 {
   *aNumberOfScreens = 1;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+PuppetScreenManager::GetSystemDefaultScale(float *aDefaultScale)
+{
+  *aDefaultScale = 1.0f;
   return NS_OK;
 }
 

@@ -11,7 +11,7 @@
 #include "nsIXULAppInfo.h"
 #include "nsPluginArray.h"
 #include "nsMimeTypeArray.h"
-#include "nsDesktopNotification.h"
+#include "mozilla/dom/DesktopNotification.h"
 #include "nsGeolocation.h"
 #include "nsIHttpProtocolHandler.h"
 #include "nsICachingChannel.h"
@@ -38,7 +38,6 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/StaticPtr.h"
 #include "Connection.h"
-#include "nsIObserverService.h"
 #ifdef MOZ_B2G_RIL
 #include "MobileConnection.h"
 #include "mozilla/dom/CellBroadcast.h"
@@ -104,10 +103,6 @@ Navigator::Navigator(nsPIDOMWindow* aWindow)
 {
   NS_ASSERTION(aWindow->IsInnerWindow(),
                "Navigator must get an inner window!");
-  nsCOMPtr<nsIObserverService> obsService =
-    mozilla::services::GetObserverService();
-  if (obsService)
-    obsService->AddObserver(this, "plugin-info-updated", false);
 }
 
 Navigator::~Navigator()
@@ -125,7 +120,6 @@ NS_INTERFACE_MAP_BEGIN(Navigator)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorDesktopNotification)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorSms)
   NS_INTERFACE_MAP_ENTRY(nsIDOMMozNavigatorMobileMessage)
-  NS_INTERFACE_MAP_ENTRY(nsIObserver)
 #ifdef MOZ_MEDIA_NAVIGATOR
   NS_INTERFACE_MAP_ENTRY(nsINavigatorUserMedia)
   NS_INTERFACE_MAP_ENTRY(nsIDOMNavigatorUserMedia)
@@ -160,12 +154,6 @@ void
 Navigator::Invalidate()
 {
   mWindow = nullptr;
-
-  nsCOMPtr<nsIObserverService> obsService =
-    mozilla::services::GetObserverService();
-  if (obsService) {
-    obsService->RemoveObserver(this, "plugin-info-updated");
-  }
 
   if (mPlugins) {
     mPlugins->Invalidate();
@@ -266,20 +254,6 @@ Navigator::GetWindow()
   nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
 
   return win;
-}
-
-//*****************************************************************************
-//    Navigator::nsIObserver
-//*****************************************************************************
-
-NS_IMETHODIMP
-Navigator::Observe(nsISupports *aSubject, const char *aTopic,
-                   const PRUnichar *aData) {
-  if (!nsCRT::strcmp(aTopic, "plugin-info-updated") && mPlugins) {
-    mPlugins->Refresh(false);
-  }
-
-  return NS_OK;
 }
 
 //*****************************************************************************
@@ -479,6 +453,7 @@ Navigator::GetPlugins(nsIDOMPluginArray** aPlugins)
     nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
 
     mPlugins = new nsPluginArray(this, win ? win->GetDocShell() : nullptr);
+    mPlugins->Init();
   }
 
   NS_ADDREF(*aPlugins = mPlugins);
@@ -506,7 +481,7 @@ Navigator::GetCookieEnabled(bool* aCookieEnabled)
     return NS_OK;
   }
 
-  nsCOMPtr<nsIDocument> doc = do_QueryInterface(win->GetExtantDocument());
+  nsCOMPtr<nsIDocument> doc = win->GetExtantDoc();
   if (!doc) {
     return NS_OK;
   }
@@ -651,17 +626,16 @@ namespace {
 class VibrateWindowListener : public nsIDOMEventListener
 {
 public:
-  VibrateWindowListener(nsIDOMWindow *aWindow, nsIDOMDocument *aDocument)
+  VibrateWindowListener(nsIDOMWindow* aWindow, nsIDocument* aDocument)
   {
     mWindow = do_GetWeakReference(aWindow);
     mDocument = do_GetWeakReference(aDocument);
 
-    nsCOMPtr<nsIDOMEventTarget> target = do_QueryInterface(aDocument);
     NS_NAMED_LITERAL_STRING(visibilitychange, "visibilitychange");
-    target->AddSystemEventListener(visibilitychange,
-                                   this, /* listener */
-                                   true, /* use capture */
-                                   false /* wants untrusted */);
+    aDocument->AddSystemEventListener(visibilitychange,
+                                      this, /* listener */
+                                      true, /* use capture */
+                                      false /* wants untrusted */);
   }
 
   virtual ~VibrateWindowListener()
@@ -685,16 +659,10 @@ StaticRefPtr<VibrateWindowListener> gVibrateWindowListener;
 NS_IMETHODIMP
 VibrateWindowListener::HandleEvent(nsIDOMEvent* aEvent)
 {
-  nsCOMPtr<nsIDOMEventTarget> target;
-  aEvent->GetTarget(getter_AddRefs(target));
-  nsCOMPtr<nsIDOMDocument> doc = do_QueryInterface(target);
+  nsCOMPtr<nsIDocument> doc =
+    do_QueryInterface(aEvent->InternalDOMEvent()->GetTarget());
 
-  bool hidden = true;
-  if (doc) {
-    doc->GetHidden(&hidden);
-  }
-
-  if (hidden) {
+  if (!doc || doc->Hidden()) {
     // It's important that we call CancelVibrate(), not Vibrate() with an
     // empty list, because Vibrate() will fail if we're no longer focused, but
     // CancelVibrate() will succeed, so long as nobody else has started a new
@@ -712,7 +680,7 @@ VibrateWindowListener::HandleEvent(nsIDOMEvent* aEvent)
 void
 VibrateWindowListener::RemoveListener()
 {
-  nsCOMPtr<nsIDOMEventTarget> target = do_QueryReferent(mDocument);
+  nsCOMPtr<EventTarget> target = do_QueryReferent(mDocument);
   if (!target) {
     return;
   }
@@ -722,13 +690,13 @@ VibrateWindowListener::RemoveListener()
 }
 
 /**
- * Converts a jsval into a vibration duration, checking that the duration is in
+ * Converts a JS::Value into a vibration duration, checking that the duration is in
  * bounds (non-negative and not larger than sMaxVibrateMS).
  *
  * Returns true on success, false on failure.
  */
 bool
-GetVibrationDurationFromJsval(const jsval& aJSVal, JSContext* cx,
+GetVibrationDurationFromJsval(const JS::Value& aJSVal, JSContext* cx,
                               int32_t* aOut)
 {
   return JS_ValueToInt32(cx, aJSVal, aOut) &&
@@ -780,17 +748,14 @@ Navigator::RemoveIdleObserver(nsIIdleObserver* aIdleObserver)
 }
 
 NS_IMETHODIMP
-Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
+Navigator::Vibrate(const JS::Value& aPattern, JSContext* cx)
 {
   nsCOMPtr<nsPIDOMWindow> win = do_QueryReferent(mWindow);
   NS_ENSURE_TRUE(win, NS_OK);
 
-  nsCOMPtr<nsIDOMDocument> domDoc = win->GetExtantDocument();
-  NS_ENSURE_TRUE(domDoc, NS_ERROR_FAILURE);
-
-  bool hidden = true;
-  domDoc->GetHidden(&hidden);
-  if (hidden) {
+  nsCOMPtr<nsIDocument> doc = win->GetExtantDoc();
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+  if (doc->Hidden()) {
     // Hidden documents cannot start or stop a vibration.
     return NS_OK;
   }
@@ -820,7 +785,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
     pattern.SetLength(length);
 
     for (uint32_t i = 0; i < length; ++i) {
-      jsval v;
+      JS::Value v;
       int32_t pv;
       if (JS_GetElement(cx, obj, i, &v) &&
           GetVibrationDurationFromJsval(v, cx, &pv)) {
@@ -850,7 +815,7 @@ Navigator::Vibrate(const jsval& aPattern, JSContext* cx)
   else {
     gVibrateWindowListener->RemoveListener();
   }
-  gVibrateWindowListener = new VibrateWindowListener(win, domDoc);
+  gVibrateWindowListener = new VibrateWindowListener(win, doc);
 
   nsCOMPtr<nsIDOMWindow> domWindow =
     do_QueryInterface(static_cast<nsIDOMWindow*>(win));
@@ -1093,7 +1058,7 @@ NS_IMETHODIMP Navigator::GetGeolocation(nsIDOMGeoGeolocation** _retval)
     return NS_ERROR_FAILURE;
   }
 
-  mGeolocation = new nsGeolocation();
+  mGeolocation = new Geolocation();
   if (!mGeolocation) {
     return NS_ERROR_FAILURE;
   }
@@ -1161,7 +1126,7 @@ Navigator::MozGetUserMediaDevices(nsIGetUserMediaDevicesSuccessCallback* aOnSucc
 //    Navigator::nsIDOMNavigatorDesktopNotification
 //*****************************************************************************
 
-NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aRetVal)
+NS_IMETHODIMP Navigator::GetMozNotification(nsISupports** aRetVal)
 {
   NS_ENSURE_ARG_POINTER(aRetVal);
   *aRetVal = nullptr;
@@ -1174,7 +1139,7 @@ NS_IMETHODIMP Navigator::GetMozNotification(nsIDOMDesktopNotificationCenter** aR
   nsCOMPtr<nsPIDOMWindow> win(do_QueryReferent(mWindow));
   NS_ENSURE_TRUE(win && win->GetDocShell(), NS_ERROR_FAILURE);
 
-  mNotification = new nsDesktopNotificationCenter(win);
+  mNotification = new DesktopNotificationCenter(win);
 
   NS_ADDREF(*aRetVal = mNotification);
   return NS_OK;
@@ -1466,7 +1431,7 @@ Navigator::EnsureMessagesManager()
   NS_ENSURE_TRUE(gpi, NS_ERROR_FAILURE);
 
   // We don't do anything with the return value.
-  jsval prop_val = JSVAL_VOID;
+  JS::Value prop_val = JSVAL_VOID;
   rv = gpi->Init(window, &prop_val);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1558,8 +1523,8 @@ Navigator::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
 
   // TODO: add SizeOfIncludingThis() to nsMimeTypeArray, bug 674113.
   // TODO: add SizeOfIncludingThis() to nsPluginArray, bug 674114.
-  // TODO: add SizeOfIncludingThis() to nsGeolocation, bug 674115.
-  // TODO: add SizeOfIncludingThis() to nsDesktopNotificationCenter, bug 674116.
+  // TODO: add SizeOfIncludingThis() to Geolocation, bug 674115.
+  // TODO: add SizeOfIncludingThis() to DesktopNotificationCenter, bug 674116.
 
   return n;
 }

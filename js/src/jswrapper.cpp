@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -71,7 +70,7 @@ Wrapper::wrappedObject(RawObject wrapper)
 }
 
 JS_FRIEND_API(JSObject *)
-js::UnwrapObject(JSObject *wrapped, bool stopAtOuter, unsigned *flagsp)
+js::UncheckedUnwrap(JSObject *wrapped, bool stopAtOuter, unsigned *flagsp)
 {
     unsigned flags = 0;
     while (wrapped->isWrapper() &&
@@ -85,7 +84,7 @@ js::UnwrapObject(JSObject *wrapped, bool stopAtOuter, unsigned *flagsp)
 }
 
 JS_FRIEND_API(JSObject *)
-js::UnwrapObjectChecked(RawObject obj, bool stopAtOuter)
+js::CheckedUnwrap(RawObject obj, bool stopAtOuter)
 {
     while (true) {
         JSObject *wrapper = obj;
@@ -126,48 +125,16 @@ Wrapper::~Wrapper()
 {
 }
 
-/*
- * Ordinarily, the convert trap would require unwrapping. However, the default
- * implementation of convert, JS_ConvertStub, obtains a default value by calling
- * the toString/valueOf method on the wrapper, if any. Throwing if we can't unwrap
- * in this case would be overly conservative. To make matters worse, XPConnect sometimes
- * installs a custom convert trap that obtains a default value by calling the
- * toString method on the wrapper. Doing a puncture in this case would be overly
- * conservative as well. We deal with these anomalies by falling back to the DefaultValue
- * algorithm whenever unwrapping is forbidden.
- */
-bool
-Wrapper::defaultValue(JSContext *cx, HandleObject wrapper, JSType hint, MutableHandleValue vp)
-{
-    if (!wrapperHandler(wrapper)->isSafeToUnwrap())
-        return DefaultValue(cx, wrapper, hint, vp);
-
-    /*
-     * We enter the compartment of the wrappee here, even if we're not a cross
-     * compartment wrapper. Moreover, cross compartment wrappers do not enter
-     * the compartment of the wrappee before calling this function. This is
-     * necessary because the DefaultValue algorithm above operates on the
-     * wrapper, not the wrappee, so we want to delay the decision to switch
-     * compartments until this point.
-     */
-    AutoCompartment call(cx, wrappedObject(wrapper));
-    return DirectProxyHandler::defaultValue(cx, wrapper, hint, vp);
-}
-
 Wrapper Wrapper::singleton((unsigned)0);
 Wrapper Wrapper::singletonWithPrototype((unsigned)0, true);
 
 /* Compartments. */
 
 extern JSObject *
-js::TransparentObjectWrapper(JSContext *cx, JSObject *existing, JSObject *objArg,
-                             JSObject *wrappedProtoArg, JSObject *parentArg,
+js::TransparentObjectWrapper(JSContext *cx, HandleObject existing, HandleObject obj,
+                             HandleObject wrappedProto, HandleObject parent,
                              unsigned flags)
 {
-    RootedObject obj(cx, objArg);
-    RootedObject wrappedProto(cx, wrappedProtoArg);
-    RootedObject parent(cx, parentArg);
-
     // Allow wrapping outer window proxies.
     JS_ASSERT(!obj->isWrapper() || obj->getClass()->ext.innerObject);
     return Wrapper::New(cx, obj, wrappedProto, parent, &CrossCompartmentWrapper::singleton);
@@ -513,7 +480,7 @@ CrossCompartmentWrapper::nativeCall(JSContext *cx, IsAcceptableThis test, Native
 {
     RootedObject wrapper(cx, &srcArgs.thisv().toObject());
     JS_ASSERT(srcArgs.thisv().isMagic(JS_IS_CONSTRUCTING) ||
-              !UnwrapObject(wrapper)->isCrossCompartmentWrapper());
+              !UncheckedUnwrap(wrapper)->isCrossCompartmentWrapper());
 
     RootedObject wrapped(cx, wrappedObject(wrapper));
     {
@@ -608,9 +575,10 @@ bool
 CrossCompartmentWrapper::defaultValue(JSContext *cx, HandleObject wrapper, JSType hint,
                                       MutableHandleValue vp)
 {
-    if (!Wrapper::defaultValue(cx, wrapper, hint, vp))
-        return false;
-    return cx->compartment->wrap(cx, vp);
+    PIERCE(cx, wrapper,
+           NOTHING,
+           Wrapper::defaultValue(cx, wrapper, hint, vp),
+           cx->compartment->wrap(cx, vp));
 }
 
 bool
@@ -682,6 +650,17 @@ SecurityWrapper<Base>::nativeCall(JSContext *cx, IsAcceptableThis test, NativeIm
 {
     JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_UNWRAP_DENIED);
     return false;
+}
+
+// For security wrappers, we run the DefaultValue algorithm on the wrapper
+// itself, which means that the existing security policy on operations like
+// toString() will take effect and do the right thing here.
+template <class Base>
+bool
+SecurityWrapper<Base>::defaultValue(JSContext *cx, HandleObject wrapper,
+                                    JSType hint, MutableHandleValue vp)
+{
+    return DefaultValue(cx, wrapper, hint, vp);
 }
 
 template <class Base>
@@ -942,7 +921,7 @@ js::NukeCrossCompartmentWrappers(JSContext* cx,
                 continue;
 
             AutoWrapperRooter wobj(cx, WrapperValue(e));
-            JSObject *wrapped = UnwrapObject(wobj);
+            JSObject *wrapped = UncheckedUnwrap(wobj);
 
             if (nukeReferencesToWindow == DontNukeWindowReferences &&
                 wrapped->getClass()->ext.innerObject)
@@ -973,6 +952,8 @@ js::RemapWrapper(JSContext *cx, JSObject *wobjArg, JSObject *newTargetArg)
     JS_ASSERT(origTarget);
     Value origv = ObjectValue(*origTarget);
     JSCompartment *wcompartment = wobj->compartment();
+
+    AutoDisableProxyCheck adpc(cx->runtime);
 
     // If we're mapping to a different target (as opposed to just recomputing
     // for the same target), we must not have an existing wrapper for the new

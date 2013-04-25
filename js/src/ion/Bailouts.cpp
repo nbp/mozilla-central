@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -96,18 +95,32 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
     if (iter.bailoutKind() == Bailout_ArgumentCheck) {
         // Temporary hack -- skip the (unused) scopeChain, because it could be
         // bogus (we can fail before the scope chain slot is set). Strip the
-        // hasScopeChain flag and we'll check this later to run prologue().
+        // hasScopeChain flag.  If a call object is needed, it will get handled later
+        // by |ThunkToInterpreter| which call |EnsureHasScopeObjects|.
         iter.skip();
         flags_ &= ~StackFrame::HAS_SCOPECHAIN;
+
+        // If the script binds arguments, then skip the snapshot slot reserved to hold
+        // its value.
+        if (script()->argumentsHasVarBinding())
+            iter.skip();
+        flags_ &= ~StackFrame::HAS_ARGS_OBJ;
     } else {
-        Value v = iter.read();
-        if (v.isObject()) {
-            scopeChain_ = &v.toObject();
+        Value scopeChain = iter.read();
+        JS_ASSERT(scopeChain.isObject() || scopeChain.isUndefined());
+        if (scopeChain.isObject()) {
+            scopeChain_ = &scopeChain.toObject();
             flags_ |= StackFrame::HAS_SCOPECHAIN;
             if (isFunctionFrame() && fun()->isHeavyweight())
                 flags_ |= StackFrame::HAS_CALL_OBJ;
-        } else {
-            JS_ASSERT(v.isUndefined());
+        }
+
+        // The second slot will be an arguments object if the script needs one.
+        if (script()->argumentsHasVarBinding()) {
+            Value argsObj = iter.read();
+            JS_ASSERT(argsObj.isObject() || argsObj.isUndefined());
+            if (argsObj.isObject())
+                initArgsObj(argsObj.toObject().asArguments());
         }
     }
 
@@ -126,7 +139,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
         if (isConstructing())
             JS_ASSERT(!thisv.isPrimitive());
 
-        JS_ASSERT(iter.slots() >= CountArgSlots(fun()));
+        JS_ASSERT(iter.slots() >= CountArgSlots(script(), fun()));
         IonSpew(IonSpew_Bailouts, " frame slots %u, nargs %u, nfixed %u",
                 iter.slots(), fun()->nargs, script()->nfixed);
 
@@ -135,7 +148,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
             formals()[i] = arg;
         }
     }
-    exprStackSlots -= CountArgSlots(maybeFun());
+    exprStackSlots -= CountArgSlots(script(), maybeFun());
 
     for (uint32_t i = 0; i < script()->nfixed; i++) {
         Value slot = iter.read();
@@ -223,7 +236,7 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     // determine if we have a critical sequence of bailout.
     //
     // Note: frame conversion only occurs in sequential mode
-    if (it.script()->ion == it.ionScript()) {
+    if (it.script()->maybeIonScript() == it.ionScript()) {
         IonSpew(IonSpew_Bailouts, " Current script use count is %u",
                 it.script()->getUseCount());
     }
@@ -232,6 +245,7 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     // Set a flag to avoid bailing out on every iteration or function call. Ion can
     // compile and run the script again after an invalidation.
     it.ionScript()->setBailoutExpected();
+    it.script()->updateBaselineOrIonRaw();
 
     // We use OffTheBooks instead of cx because at this time we cannot iterate
     // on the stack safely and the reported error attempts to walk the IonMonkey
@@ -499,7 +513,7 @@ ion::ReflowTypeInfo(uint32_t bailoutResult)
     return true;
 }
 
-// Initialize the decl env Object and the call object of the current frame.
+// Initialize the decl env Object, call object, and any arguments obj of the current frame.
 bool
 ion::EnsureHasScopeObjects(JSContext *cx, AbstractFramePtr fp)
 {
@@ -539,8 +553,7 @@ ion::ShapeGuardFailure()
     JSContext *cx = GetIonContext()->cx;
     RawScript script = GetBailedJSScript(cx);
 
-    JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ion->invalidated());
+    JS_ASSERT(!script->ionScript()->invalidated());
 
     script->failedShapeGuard = true;
 
@@ -555,15 +568,14 @@ ion::CachedShapeGuardFailure()
     JSContext *cx = GetIonContext()->cx;
     RawScript script = GetBailedJSScript(cx);
 
-    JS_ASSERT(script->hasIonScript());
-    JS_ASSERT(!script->ion->invalidated());
+    JS_ASSERT(!script->ionScript()->invalidated());
 
     script->failedShapeGuard = true;
 
     // Purge JM caches in the script and all inlined script, to avoid baking in
     // the same shape guard next time.
-    for (size_t i = 0; i < script->ion->scriptEntries(); i++)
-        mjit::PurgeCaches(script->ion->getScript(i));
+    for (size_t i = 0; i < script->ionScript()->scriptEntries(); i++)
+        mjit::PurgeCaches(script->ionScript()->getScript(i));
 
     IonSpew(IonSpew_Invalidate, "Invalidating due to shape guard failure");
 
@@ -606,20 +618,22 @@ ion::ThunkToInterpreter(Value *vp)
             fp = iter.interpFrame();
             script = iter.script();
             if (script->needsArgsObj()) {
-                // Currently IonMonkey does not compile if the script needs an
-                // arguments object, so the frame should not have any argument
-                // object yet.
-                JS_ASSERT(!fp->hasArgsObj());
-                ArgumentsObject *argsobj = ArgumentsObject::createExpected(cx, fp);
-                if (!argsobj) {
-                    resumeMode = JSINTERP_RETHROW;
-                    break;
+                ArgumentsObject *argsObj;
+                if (fp->hasArgsObj()) {
+                    argsObj = &fp->argsObj();
+                } else {
+                    argsObj = ArgumentsObject::createExpected(cx, fp);
+                    if (!argsObj) {
+                        resumeMode = JSINTERP_RETHROW;
+                        break;
+                    }
                 }
+
                 // The arguments is a local binding and needsArgsObj does not
                 // check if it is clobbered. Ensure that the local binding
                 // restored during bailout before storing the arguments object
                 // to the slot.
-                SetFrameArgumentsObject(cx, fp, script, argsobj);
+                SetFrameArgumentsObject(cx, fp, script, argsObj);
             }
             ++iter;
         } while (fp != br->entryfp());

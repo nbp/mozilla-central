@@ -42,6 +42,7 @@ pref("extensions.getAddons.getWithPerformance.url", "https://services.addons.moz
 pref("extensions.getAddons.search.browseURL", "https://addons.mozilla.org/%LOCALE%/firefox/search?q=%TERMS%&platform=%OS%&appver=%VERSION%");
 pref("extensions.getAddons.search.url", "https://services.addons.mozilla.org/%LOCALE%/firefox/api/%API_VERSION%/search/%TERMS%/all/%MAX_RESULTS%/%OS%/%VERSION%/%COMPATIBILITY_MODE%?src=firefox");
 pref("extensions.webservice.discoverURL", "https://services.addons.mozilla.org/%LOCALE%/firefox/discovery/pane/%VERSION%/%OS%/%COMPATIBILITY_MODE%");
+pref("extensions.getAddons.recommended.url", "https://services.addons.mozilla.org/%LOCALE%/%APP%/api/%API_VERSION%/list/recommended/all/%MAX_RESULTS%/%OS%/%VERSION%?src=firefox");
 
 // Blocklist preferences
 pref("extensions.blocklist.enabled", true);
@@ -210,9 +211,6 @@ pref("xpinstall.whitelist.add.180", "marketplace.firefox.com");
 pref("lightweightThemes.update.enabled", true);
 
 pref("keyword.enabled", true);
-// Override the default keyword.URL. Empty value means
-// "use the search service's default engine"
-pref("keyword.URL", "");
 
 pref("general.useragent.locale", "@AB_CD@");
 pref("general.skins.selectedSkin", "classic/1.0");
@@ -539,6 +537,8 @@ pref("browser.gesture.twist.right", "cmd_gestureRotateRight");
 pref("browser.gesture.twist.left", "cmd_gestureRotateLeft");
 pref("browser.gesture.twist.end", "cmd_gestureRotateEnd");
 pref("browser.gesture.tap", "cmd_fullZoomReset");
+
+pref("browser.snapshots.limit", 0);
 
 // 0: Nothing happens
 // 1: Scrolling contents
@@ -918,9 +918,7 @@ pref("dom.ipc.plugins.enabled.x86_64", true);
 pref("dom.ipc.plugins.enabled", true);
 #endif
 
-#ifdef MOZ_E10S_COMPAT
-pref("browser.tabs.remote", true);
-#endif
+pref("browser.tabs.remote", false);
 
 // This pref governs whether we attempt to work around problems caused by
 // plugins using OS calls to manipulate the cursor while running out-of-
@@ -1015,8 +1013,8 @@ pref("services.sync.prefs.sync.security.OCSP.disable_button.managecrl", true);
 pref("services.sync.prefs.sync.security.OCSP.enabled", true);
 pref("services.sync.prefs.sync.security.OCSP.require", true);
 pref("services.sync.prefs.sync.security.default_personal_cert", true);
-pref("services.sync.prefs.sync.security.enable_ssl3", true);
-pref("services.sync.prefs.sync.security.enable_tls", true);
+pref("services.sync.prefs.sync.security.tls.version.min", true);
+pref("services.sync.prefs.sync.security.tls.version.max", true);
 pref("services.sync.prefs.sync.signon.rememberSignons", true);
 pref("services.sync.prefs.sync.spellchecker.dictionary", true);
 pref("services.sync.prefs.sync.xpinstall.whitelist.required", true);
@@ -1038,6 +1036,7 @@ pref("devtools.toolbox.host", "bottom");
 pref("devtools.toolbox.selectedTool", "webconsole");
 pref("devtools.toolbox.toolbarSpec", '["paintflashing toggle","tilt toggle","scratchpad","resize toggle"]');
 pref("devtools.toolbox.sideEnabled", true);
+pref("devtools.toolbox.disabledTools", "[]");
 
 // Enable the Inspector
 pref("devtools.inspector.enabled", true);
@@ -1060,6 +1059,7 @@ pref("devtools.debugger.remote-host", "localhost");
 pref("devtools.debugger.remote-autoconnect", false);
 pref("devtools.debugger.remote-connection-retries", 3);
 pref("devtools.debugger.remote-timeout", 20000);
+pref("devtools.debugger.source-maps-enabled", false);
 
 // The default Debugger UI settings
 pref("devtools.debugger.ui.win-x", 0);
@@ -1076,6 +1076,13 @@ pref("devtools.debugger.ui.variables-searchbox-visible", false);
 
 // Enable the Profiler
 pref("devtools.profiler.enabled", true);
+
+// Enable the Network Monitor
+pref("devtools.netmonitor.enabled", true);
+
+// The default Network Monitor UI settings
+pref("devtools.netmonitor.panes-network-details-width", 450);
+pref("devtools.netmonitor.panes-network-details-height", 450);
 
 // Enable the Tilt inspector
 pref("devtools.tilt.enabled", true);
@@ -1120,6 +1127,8 @@ pref("devtools.webconsole.filter.error", true);
 pref("devtools.webconsole.filter.warn", true);
 pref("devtools.webconsole.filter.info", true);
 pref("devtools.webconsole.filter.log", true);
+pref("devtools.webconsole.filter.secerror", true);
+pref("devtools.webconsole.filter.secwarn", true);
 
 // Text size in the Web Console. Use 0 for the system default size.
 pref("devtools.webconsole.fontSize", 0);
@@ -1207,7 +1216,7 @@ pref("social.manifest.facebook", "{\"origin\":\"https://www.facebook.com\",\"nam
 // comma separated list of domain origins (e.g. https://domain.com) for
 // providers that can install from their own website without user warnings.
 // entries are
-pref("social.whitelist", "");
+pref("social.whitelist", "https://mozsocial.cliqz.com,https://now.msn.com,https://mixi.jp");
 // omma separated list of domain origins (e.g. https://domain.com) for directory
 // websites (e.g. AMO) that can install providers for other sites
 pref("social.directories", "https://addons.mozilla.org");

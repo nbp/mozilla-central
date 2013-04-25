@@ -135,7 +135,7 @@ MarkMessageManagers()
         static_cast<nsFrameMessageManager*>(tabMM)->GetCallback();
       if (cb) {
         nsFrameLoader* fl = static_cast<nsFrameLoader*>(cb);
-        nsIDOMEventTarget* et = fl->GetTabChildGlobalAsEventTarget();
+        EventTarget* et = fl->GetTabChildGlobalAsEventTarget();
         if (!et) {
           continue;
         }
@@ -188,7 +188,7 @@ MarkContentViewer(nsIContentViewer* aViewer, bool aCleanupJS,
       if (elm) {
         elm->MarkForCC();
       }
-      nsCOMPtr<nsIDOMEventTarget> win = do_QueryInterface(doc->GetInnerWindow());
+      nsCOMPtr<EventTarget> win = do_QueryInterface(doc->GetInnerWindow());
       if (win) {
         elm = win->GetListenerManager(false);
         if (elm) {

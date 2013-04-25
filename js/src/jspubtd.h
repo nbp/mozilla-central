@@ -1,5 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -206,7 +206,19 @@ struct Runtime
     /* Restrict zone access during Minor GC. */
     bool needsBarrier_;
 
-    Runtime() : needsBarrier_(false) {}
+#ifdef JSGC_GENERATIONAL
+    /* Allow inlining of Nursery::isInside. */
+    uintptr_t gcNurseryStart_;
+    uintptr_t gcNurseryEnd_;
+#endif
+
+    Runtime()
+      : needsBarrier_(false)
+#ifdef JSGC_GENERATIONAL
+      , gcNurseryStart_(0)
+      , gcNurseryEnd_(0)
+#endif
+    {}
 };
 
 } /* namespace shadow */
@@ -232,6 +244,7 @@ enum ThingRootKind
     THING_ROOT_VALUE,
     THING_ROOT_TYPE,
     THING_ROOT_BINDINGS,
+    THING_ROOT_PROPERTY_DESCRIPTOR,
     THING_ROOT_LIMIT
 };
 

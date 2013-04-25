@@ -46,7 +46,6 @@
 #include "nsRect.h"
 #include "mozFlushType.h"
 #include "prclist.h"
-#include "nsIDOMStorageObsolete.h"
 #include "nsIDOMStorageEvent.h"
 #include "nsIDOMStorageIndexedDB.h"
 #include "nsIDOMOfflineResourceList.h"
@@ -123,6 +122,7 @@ namespace mozilla {
 namespace dom {
 class Navigator;
 class URL;
+class SpeechSynthesis;
 namespace indexedDB {
 class IDBFactory;
 } // namespace indexedDB
@@ -340,6 +340,12 @@ public:
 
   // nsIDOMEventTarget
   NS_DECL_NSIDOMEVENTTARGET
+  using mozilla::dom::EventTarget::RemoveEventListener;
+  virtual void AddEventListener(const nsAString& aType,
+                                nsIDOMEventListener* aListener,
+                                bool aUseCapture,
+                                const mozilla::dom::Nullable<bool>& aWantsUntrusted,
+                                mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
 
   // nsITouchEventReceiver
   NS_DECL_NSITOUCHEVENTRECEIVER
@@ -352,7 +358,7 @@ public:
   virtual NS_HIDDEN_(void) ActivateOrDeactivate(bool aActivate);
   virtual NS_HIDDEN_(void) SetActive(bool aActive);
   virtual NS_HIDDEN_(void) SetIsBackground(bool aIsBackground);
-  virtual NS_HIDDEN_(void) SetChromeEventHandler(nsIDOMEventTarget* aChromeEventHandler);
+  virtual NS_HIDDEN_(void) SetChromeEventHandler(mozilla::dom::EventTarget* aChromeEventHandler);
 
   virtual NS_HIDDEN_(void) SetInitialPrincipalToSubject();
 
@@ -414,12 +420,12 @@ public:
   static nsGlobalWindow *FromSupports(nsISupports *supports)
   {
     // Make sure this matches the casts we do in QueryInterface().
-    return (nsGlobalWindow *)(nsIDOMEventTarget *)supports;
+    return (nsGlobalWindow *)(mozilla::dom::EventTarget *)supports;
   }
   static nsISupports *ToSupports(nsGlobalWindow *win)
   {
     // Make sure this matches the casts we do in QueryInterface().
-    return (nsISupports *)(nsIDOMEventTarget *)win;
+    return (nsISupports *)(mozilla::dom::EventTarget *)win;
   }
   static nsGlobalWindow *FromWrapper(nsIXPConnectWrappedNative *wrapper)
   {
@@ -578,7 +584,7 @@ public:
             mCleanedUp);
   }
 
-  static void FirePopupBlockedEvent(nsIDOMDocument* aDoc,
+  static void FirePopupBlockedEvent(nsIDocument* aDoc,
                                     nsIDOMWindow *aRequestingWindow, nsIURI *aPopupURI,
                                     const nsAString &aPopupWindowName,
                                     const nsAString &aPopupWindowFeatures);
@@ -702,6 +708,10 @@ public:
 #undef BEFOREUNLOAD_EVENT
 #undef ERROR_EVENT
 #undef EVENT
+
+#ifdef MOZ_WEBSPEECH
+  mozilla::dom::SpeechSynthesis* GetSpeechSynthesisInternal();
+#endif
 
 protected:
   // Array of idle observers that are notified of idle events.
@@ -1017,6 +1027,8 @@ protected:
                                   bool aDefaultStylesOnly,
                                   nsIDOMCSSStyleDeclaration** aReturn);
 
+  void PreloadLocalStorage();
+
   // When adding new member variables, be careful not to create cycles
   // through JavaScript.  If there is any chance that a member variable
   // could own objects that are implemented in JavaScript, then those
@@ -1193,10 +1205,15 @@ protected:
 
   nsTArray<uint32_t> mEnabledSensors;
 
+#ifdef MOZ_WEBSPEECH
+  // mSpeechSynthesis is only used on inner windows.
+  nsRefPtr<mozilla::dom::SpeechSynthesis> mSpeechSynthesis;
+#endif
+
   friend class nsDOMScriptableHelper;
   friend class nsDOMWindowUtils;
   friend class PostMessageEvent;
-  friend class nsDOMDesktopNotification;
+  friend class DesktopNotification;
 
   static WindowByIdTable* sWindowsById;
   static bool sWarnedAboutWindowInternal;

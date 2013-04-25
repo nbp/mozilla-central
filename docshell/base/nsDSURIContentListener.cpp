@@ -260,9 +260,9 @@ nsDSURIContentListener::SetParentContentListener(nsIURIContentListener*
     return NS_OK;
 }
 
-bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
+bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIHttpChannel *httpChannel,
                                                         const nsAString& policy) {
-    static const char allowFrom[] = "allow-from ";
+    static const char allowFrom[] = "allow-from";
     const uint32_t allowFromLen = ArrayLength(allowFrom) - 1;
     bool isAllowFrom =
         StringHead(policy, allowFromLen).LowerCaseEqualsLiteral(allowFrom);
@@ -272,11 +272,6 @@ bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
         !policy.LowerCaseEqualsLiteral("sameorigin") &&
         !isAllowFrom)
         return true;
-
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(request);
-    if (!httpChannel) {
-        return true;
-    }
 
     nsCOMPtr<nsIURI> uri;
     httpChannel->GetURI(getter_AddRefs(uri));
@@ -376,6 +371,12 @@ bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
     // If the X-Frame-Options value is "allow-from [uri]", then the top
     // frame in the parent chain must be from that origin
     if (isAllowFrom) {
+        if (policy.Length() == allowFromLen ||
+            (policy[allowFromLen] != ' ' &&
+             policy[allowFromLen] != '\t')) {
+            ReportXFOViolation(curDocShellItem, uri, eALLOWFROM);
+            return false;
+        }
         rv = NS_NewURI(getter_AddRefs(uri),
                        Substring(policy, allowFromLen));
         if (NS_FAILED(rv))
@@ -396,7 +397,20 @@ bool nsDSURIContentListener::CheckOneFrameOptionsPolicy(nsIRequest *request,
 // in the request (comma-separated in a header, multiple headers, etc).
 bool nsDSURIContentListener::CheckFrameOptions(nsIRequest *request)
 {
-    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(request);
+    nsresult rv;
+    nsCOMPtr<nsIChannel> chan = do_QueryInterface(request);
+    if (!chan) {
+      return true;
+    }
+
+    nsCOMPtr<nsIHttpChannel> httpChannel = do_QueryInterface(chan);
+    if (!httpChannel) {
+      // check if it is hiding in a multipart channel
+      rv = mDocShell->GetHttpChannel(chan, getter_AddRefs(httpChannel));
+      if (NS_FAILED(rv))
+        return false;
+    }
+
     if (!httpChannel) {
         return true;
     }
@@ -415,7 +429,7 @@ bool nsDSURIContentListener::CheckFrameOptions(nsIRequest *request)
     nsCharSeparatedTokenizer tokenizer(xfoHeaderValue, ',');
     while (tokenizer.hasMoreTokens()) {
         const nsSubstring& tok = tokenizer.nextToken();
-        if (!CheckOneFrameOptionsPolicy(request, tok)) {
+        if (!CheckOneFrameOptionsPolicy(httpChannel, tok)) {
             // cancel the load and display about:blank
             httpChannel->Cancel(NS_BINDING_ABORTED);
             if (mDocShell) {

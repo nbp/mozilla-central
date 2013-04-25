@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -174,7 +173,6 @@ class LTableSwitchV : public LInstructionHelper<0, BOX_PIECES, 3>
     }
 };
 
-// Guard against an object's shape.
 class LGuardShape : public LInstructionHelper<0, 1, 0>
 {
   public:
@@ -185,6 +183,19 @@ class LGuardShape : public LInstructionHelper<0, 1, 0>
     }
     const MGuardShape *mir() const {
         return mir_->toGuardShape();
+    }
+};
+
+class LGuardObjectType : public LInstructionHelper<0, 1, 0>
+{
+  public:
+    LIR_HEADER(GuardObjectType)
+
+    LGuardObjectType(const LAllocation &in) {
+        setOperand(0, in);
+    }
+    const MGuardObjectType *mir() const {
+        return mir_->toGuardObjectType();
     }
 };
 

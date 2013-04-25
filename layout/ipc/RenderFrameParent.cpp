@@ -17,7 +17,7 @@
 #include "mozilla/dom/TabParent.h"
 #include "mozilla/layers/AsyncPanZoomController.h"
 #include "mozilla/layers/CompositorParent.h"
-#include "mozilla/layers/ShadowLayersParent.h"
+#include "mozilla/layers/LayerTransactionParent.h"
 #include "nsContentUtils.h"
 #include "nsFrameLoader.h"
 #include "nsIObserver.h"
@@ -589,8 +589,7 @@ private:
 
 RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
                                      ScrollingBehavior aScrollingBehavior,
-                                     LayersBackend* aBackendType,
-                                     int* aMaxTextureSize,
+                                     TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                      uint64_t* aId)
   : mLayersId(0)
   , mFrameLoader(aFrameLoader)
@@ -600,15 +599,14 @@ RenderFrameParent::RenderFrameParent(nsFrameLoader* aFrameLoader,
   mContentViews[FrameMetrics::ROOT_SCROLL_ID] =
     new nsContentView(aFrameLoader, FrameMetrics::ROOT_SCROLL_ID);
 
-  *aBackendType = mozilla::layers::LAYERS_NONE;
-  *aMaxTextureSize = 0;
   *aId = 0;
 
   nsRefPtr<LayerManager> lm = GetFrom(mFrameLoader);
   // Perhaps the document containing this frame currently has no presentation?
-  if (lm) {
-    *aBackendType = lm->GetBackendType();
-    *aMaxTextureSize = lm->GetMaxTextureSize();
+  if (lm && lm->AsShadowManager()) {
+    *aTextureFactoryIdentifier = lm->GetTextureFactoryIdentifier();
+  } else {
+    *aTextureFactoryIdentifier = TextureFactoryIdentifier();
   }
 
   if (CompositorParent::CompositorLoop()) {
@@ -631,13 +629,13 @@ RenderFrameParent::~RenderFrameParent()
 void
 RenderFrameParent::Destroy()
 {
-  size_t numChildren = ManagedPLayersParent().Length();
+  size_t numChildren = ManagedPLayerTransactionParent().Length();
   NS_ABORT_IF_FALSE(0 == numChildren || 1 == numChildren,
                     "render frame must only have 0 or 1 layer manager");
 
   if (numChildren) {
-    ShadowLayersParent* layers =
-      static_cast<ShadowLayersParent*>(ManagedPLayersParent()[0]);
+    LayerTransactionParent* layers =
+      static_cast<LayerTransactionParent*>(ManagedPLayerTransactionParent()[0]);
     layers->Destroy();
   }
 
@@ -659,7 +657,7 @@ RenderFrameParent::ContentViewScaleChanged(nsContentView* aView)
 }
 
 void
-RenderFrameParent::ShadowLayersUpdated(ShadowLayersParent* aLayerTree,
+RenderFrameParent::ShadowLayersUpdated(LayerTransactionParent* aLayerTree,
                                        const TargetConfig& aTargetConfig,
                                        bool isFirstPaint)
 {
@@ -848,18 +846,18 @@ RenderFrameParent::RecvDetectScrollableSubframe()
   return true;
 }
 
-PLayersParent*
-RenderFrameParent::AllocPLayers()
+PLayerTransactionParent*
+RenderFrameParent::AllocPLayerTransaction()
 {
   if (!mFrameLoader || mFrameLoaderDestroyed) {
     return nullptr;
   }
   nsRefPtr<LayerManager> lm = GetFrom(mFrameLoader);
-  return new ShadowLayersParent(lm->AsShadowManager(), this, 0);
+  return new LayerTransactionParent(lm->AsShadowManager(), this, 0);
 }
 
 bool
-RenderFrameParent::DeallocPLayers(PLayersParent* aLayers)
+RenderFrameParent::DeallocPLayerTransaction(PLayerTransactionParent* aLayers)
 {
   delete aLayers;
   return true;
@@ -917,14 +915,14 @@ RenderFrameParent::TriggerRepaint()
   docFrame->SchedulePaint();
 }
 
-ShadowLayersParent*
+LayerTransactionParent*
 RenderFrameParent::GetShadowLayers() const
 {
-  const InfallibleTArray<PLayersParent*>& shadowParents = ManagedPLayersParent();
+  const InfallibleTArray<PLayerTransactionParent*>& shadowParents = ManagedPLayerTransactionParent();
   NS_ABORT_IF_FALSE(shadowParents.Length() <= 1,
-                    "can only support at most 1 ShadowLayersParent");
+                    "can only support at most 1 LayerTransactionParent");
   return (shadowParents.Length() == 1) ?
-    static_cast<ShadowLayersParent*>(shadowParents[0]) : nullptr;
+    static_cast<LayerTransactionParent*>(shadowParents[0]) : nullptr;
 }
 
 uint64_t
@@ -936,7 +934,7 @@ RenderFrameParent::GetLayerTreeId() const
 ContainerLayer*
 RenderFrameParent::GetRootLayer() const
 {
-  ShadowLayersParent* shadowLayers = GetShadowLayers();
+  LayerTransactionParent* shadowLayers = GetShadowLayers();
   return shadowLayers ? shadowLayers->GetRoot() : nullptr;
 }
 

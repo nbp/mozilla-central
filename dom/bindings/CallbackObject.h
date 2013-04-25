@@ -34,9 +34,15 @@
 namespace mozilla {
 namespace dom {
 
+#define DOM_CALLBACKOBJECT_IID \
+{ 0xbe74c190, 0x6d76, 0x4991, \
+ { 0x84, 0xb9, 0x65, 0x06, 0x99, 0xe6, 0x93, 0x2b } }
+
 class CallbackObject : public nsISupports
 {
 public:
+  NS_DECLARE_STATIC_IID_ACCESSOR(DOM_CALLBACKOBJECT_IID)
+
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(CallbackObject)
 
@@ -54,7 +60,7 @@ public:
     // If aOwner is not null, enter the compartment of aOwner's
     // underlying object.
     if (aOwner) {
-      aOwner = js::UnwrapObject(aOwner);
+      aOwner = js::UncheckedUnwrap(aOwner);
       JSAutoCompartment ac(cx, aOwner);
       if (!JS_WrapObject(cx, &aCallback)) {
         *aInited = false;
@@ -134,7 +140,7 @@ protected:
 
   JSObject* mCallback;
 
-  class NS_STACK_CLASS CallSetup
+  class MOZ_STACK_CLASS CallSetup
   {
     /**
      * A class that performs whatever setup we need to safely make a
@@ -201,7 +207,7 @@ class CallbackObjectHolderBase
 protected:
   // Returns null on all failures
   already_AddRefed<nsISupports> ToXPCOMCallback(CallbackObject* aCallback,
-                                                const nsIID& aIID);
+                                                const nsIID& aIID) const;
 };
 
 template<class WebIDLCallbackT, class XPCOMCallbackT>
@@ -244,9 +250,36 @@ public:
     UnlinkSelf();
   }
 
+  void operator=(WebIDLCallbackT* aCallback)
+  {
+    UnlinkSelf();
+    mPtrBits = reinterpret_cast<uintptr_t>(aCallback);
+    NS_IF_ADDREF(aCallback);
+  }
+
+  void operator=(XPCOMCallbackT* aCallback)
+  {
+    UnlinkSelf();
+    mPtrBits = reinterpret_cast<uintptr_t>(aCallback) | XPCOMCallbackFlag;
+    NS_IF_ADDREF(aCallback);
+  }
+
+  void operator=(const CallbackObjectHolder& aOther)
+  {
+    UnlinkSelf();
+    mPtrBits = aOther.mPtrBits;
+    NS_IF_ADDREF(GetISupports());
+  }
+
   nsISupports* GetISupports() const
   {
     return reinterpret_cast<nsISupports*>(mPtrBits & ~XPCOMCallbackFlag);
+  }
+
+  // Boolean conversion operator so people can use this in boolean tests
+  operator bool() const
+  {
+    return GetISupports();
   }
 
   // Even if HasWebIDLCallback returns true, GetWebIDLCallback() might still
@@ -282,9 +315,9 @@ public:
     }
 
     JSObject* thisObj =
-      js::UnwrapObject(GetWebIDLCallback()->CallbackPreserveColor());
+      js::UncheckedUnwrap(GetWebIDLCallback()->CallbackPreserveColor());
     JSObject* otherObj =
-      js::UnwrapObject(aOtherCallback->CallbackPreserveColor());
+      js::UncheckedUnwrap(aOtherCallback->CallbackPreserveColor());
     return thisObj == otherObj;
   }
 
@@ -304,7 +337,7 @@ public:
   }
 
   // Try to return an XPCOMCallbackT version of this object.
-  already_AddRefed<XPCOMCallbackT> ToXPCOMCallback()
+  already_AddRefed<XPCOMCallbackT> ToXPCOMCallback() const
   {
     if (!HasWebIDLCallback()) {
       nsRefPtr<XPCOMCallbackT> callback = GetXPCOMCallback();
@@ -319,7 +352,7 @@ public:
   }
 
   // Try to return a WebIDLCallbackT version of this object.
-  already_AddRefed<WebIDLCallbackT> ToWebIDLCallback()
+  already_AddRefed<WebIDLCallbackT> ToWebIDLCallback() const
   {
     if (HasWebIDLCallback()) {
       nsRefPtr<WebIDLCallbackT> callback = GetWebIDLCallback();
@@ -370,6 +403,8 @@ private:
 
   uintptr_t mPtrBits;
 };
+
+NS_DEFINE_STATIC_IID_ACCESSOR(CallbackObject, DOM_CALLBACKOBJECT_IID)
 
 template<class T, class U>
 inline void

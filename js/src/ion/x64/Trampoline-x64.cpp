@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -333,6 +332,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Load the number of |undefined|s to push into %rcx.
     masm.movq(Operand(rsp, IonRectifierFrameLayout::offsetOfCalleeToken()), rax);
+    masm.clearCalleeTag(rax, mode);
     masm.movzwl(Operand(rax, offsetof(JSFunction, nargs)), rcx);
     masm.subq(r8, rcx);
 
@@ -388,13 +388,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     // Call the target function.
     // Note that this code assumes the function is JITted.
     masm.movq(Operand(rax, offsetof(JSFunction, u.i.script_)), rax);
-    if (mode == SequentialExecution) {
-        masm.loadBaselineOrIonCode(rax, r9, NULL);
-    } else {
-        masm.movq(Operand(rax, OffsetOfIonInJSScript(mode)), rax);
-        masm.movq(Operand(rax, IonScript::offsetOfMethod()), rax);
-    }
-    masm.movq(Operand(rax, IonCode::offsetOfCode()), rax);
+    masm.loadBaselineOrIonRaw(rax, rax, mode, NULL);
     masm.call(rax);
     uint32_t returnOffset = masm.currentOffset();
 
@@ -501,6 +495,9 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Wrapper register set is a superset of Volatile register set.
     JS_STATIC_ASSERT((Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0);
 
+    // The context is the first argument.
+    Register cxreg = IntArgReg0;
+
     // Stack is:
     //    ... frame ...
     //  +12 [args]
@@ -508,7 +505,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     //  +0  returnAddress
     //
     // We're aligned to an exit frame, so link it up.
-    masm.enterExitFrame(&f);
+    masm.enterExitFrameAndLoadContext(&f, cxreg, regs.getAny(), f.executionMode);
 
     // Save the current stack pointer as the base for copying arguments.
     Register argsBase = InvalidReg;
@@ -544,12 +541,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    Register temp = regs.getAny();
-    masm.setupUnalignedABICall(f.argc(), temp);
-
-    // Initialize the context parameter.
-    Register cxreg = IntArgReg0;
-    masm.loadJSContext(cxreg);
+    masm.setupUnalignedABICall(f.argc(), regs.getAny());
     masm.passABIArg(cxreg);
 
     size_t argDisp = 0;
@@ -582,15 +574,17 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     masm.callWithABI(f.wrapped);
 
     // Test for failure.
-    Label exception;
+    Label failure;
     switch (f.failType()) {
       case Type_Object:
-        masm.testq(rax, rax);
-        masm.j(Assembler::Zero, &exception);
+        masm.branchTestPtr(Assembler::Zero, rax, rax, &failure);
         break;
       case Type_Bool:
         masm.testb(rax, rax);
-        masm.j(Assembler::Zero, &exception);
+        masm.j(Assembler::Zero, &failure);
+        break;
+      case Type_ParallelResult:
+        masm.branchPtr(Assembler::NotEqual, rax, Imm32(TP_SUCCESS), &failure);
         break;
       default:
         JS_NOT_REACHED("unknown failure kind");
@@ -619,8 +613,8 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
                     f.explicitStackSlots() * sizeof(void *) +
                     f.extraValuesToPop * sizeof(Value)));
 
-    masm.bind(&exception);
-    masm.handleException();
+    masm.bind(&failure);
+    masm.handleFailure(f.executionMode);
 
     Linker linker(masm);
     IonCode *wrapper = linker.newCode(cx, JSC::OTHER_CODE);
@@ -645,7 +639,7 @@ IonRuntime::generatePreBarrier(JSContext *cx, MIRType type)
     masm.PushRegsInMask(regs);
 
     JS_ASSERT(PreBarrierReg == rdx);
-    masm.movq(ImmWord(cx->runtime), rcx);
+    masm.mov(ImmWord(cx->runtime), rcx);
 
     masm.setupUnalignedABICall(2, rax);
     masm.passABIArg(rcx);

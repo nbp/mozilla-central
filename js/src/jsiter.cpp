@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -796,7 +795,7 @@ iterator_next(JSContext *cx, unsigned argc, Value *vp)
     return CallNonGenericMethod<IsIterator, iterator_next_impl>(cx, args);
 }
 
-static JSFunctionSpec iterator_methods[] = {
+static const JSFunctionSpec iterator_methods[] = {
     JS_FN("iterator",  iterator_iterator,   0, 0),
     JS_FN("next",      iterator_next,       0, 0),
     JS_FS_END
@@ -837,7 +836,7 @@ Class PropertyIteratorObject::class_ = {
     JSCLASS_HAS_PRIVATE |
     JSCLASS_BACKGROUND_FINALIZE,
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -940,7 +939,7 @@ Class js::ElementIteratorClass = {
     JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_RESERVED_SLOTS(ElementIteratorObject::NumSlots),
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -949,7 +948,7 @@ Class js::ElementIteratorClass = {
     NULL                     /* finalize    */
 };
 
-JSFunctionSpec ElementIteratorObject::methods[] = {
+const JSFunctionSpec ElementIteratorObject::methods[] = {
     JS_FN("next", next, 0, 0),
     JS_FS_END
 };
@@ -1298,7 +1297,7 @@ Class js::StopIterationClass = {
     JSCLASS_HAS_CACHED_PROTO(JSProto_StopIteration) |
     JSCLASS_FREEZE_PROTO,
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -1395,7 +1394,7 @@ Class js::GeneratorClass = {
     "Generator",
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS,
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -1745,7 +1744,7 @@ generator_close(JSContext *cx, unsigned argc, Value *vp)
 
 #define JSPROP_ROPERM   (JSPROP_READONLY | JSPROP_PERMANENT)
 
-static JSFunctionSpec generator_methods[] = {
+static const JSFunctionSpec generator_methods[] = {
     JS_FN("iterator",  iterator_iterator,  0, 0),
     JS_FN("next",      generator_next,     0,JSPROP_ROPERM),
     JS_FN("send",      generator_send,     1,JSPROP_ROPERM),

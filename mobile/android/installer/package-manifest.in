@@ -128,7 +128,6 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_json.xpt
-@BINPATH@/components/dom_push.xpt
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_power.xpt
 @BINPATH@/components/dom_quota.xpt
@@ -262,6 +261,8 @@
 @BINPATH@/components/ConsoleAPI.js
 @BINPATH@/components/ContactManager.js
 @BINPATH@/components/ContactManager.manifest
+@BINPATH@/components/NavigatorPropertyHelper.js
+@BINPATH@/components/NavigatorPropertyHelper.manifest
 @BINPATH@/components/SettingsManager.js
 @BINPATH@/components/SettingsManager.manifest
 @BINPATH@/components/SettingsService.js
@@ -366,10 +367,6 @@
 @BINPATH@/components/Webapps.manifest
 @BINPATH@/components/AppsService.js
 @BINPATH@/components/AppsService.manifest
-@BINPATH@/components/Push.js
-@BINPATH@/components/Push.manifest
-@BINPATH@/components/PushService.js
-@BINPATH@/components/PushService.manifest
 @BINPATH@/components/AppProtocolHandler.js
 @BINPATH@/components/AppProtocolHandler.manifest
 
@@ -559,7 +556,6 @@ bin/components/@DLL_PREFIX@nkgnomevfs@DLL_SUFFIX@
 @BINPATH@/components/ContentPermissionPrompt.js
 @BINPATH@/components/DirectoryProvider.js
 @BINPATH@/components/DownloadManagerUI.js
-@BINPATH@/components/FormAutoComplete.js
 @BINPATH@/components/HelperAppDialog.js
 @BINPATH@/components/LoginManagerPrompter.js
 @BINPATH@/components/MobileComponents.manifest

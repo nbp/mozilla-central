@@ -9,7 +9,7 @@ import subprocess
 import runxpcshelltests as xpcshell
 import tempfile
 from automationutils import replaceBackSlashes
-from mozdevice import devicemanagerADB, devicemanagerSUT, DMError
+import devicemanagerADB, devicemanagerSUT, devicemanager
 
 here = os.path.dirname(os.path.abspath(__file__))
 
@@ -71,7 +71,7 @@ class XPCShellRemote(xpcshell.XPCShellTests, object):
                 if packageName:
                     self.appRoot = self.device.getAppRoot(packageName.strip())
             except Exception as detail:
-                print "unable to determine app root: " + detail
+                print "unable to determine app root: " + str(detail)
                 pass
         return None
 

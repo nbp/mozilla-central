@@ -1,5 +1,6 @@
-/* -*-  Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2; -*- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -444,14 +445,14 @@ namespace UInt64 {
 static JSClass sCTypesGlobalClass = {
   "ctypes",
   JSCLASS_HAS_RESERVED_SLOTS(CTYPESGLOBAL_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sCABIClass = {
   "CABI",
   JSCLASS_HAS_RESERVED_SLOTS(CABI_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
@@ -461,7 +462,7 @@ static JSClass sCABIClass = {
 static JSClass sCTypeProtoClass = {
   "CType",
   JSCLASS_HAS_RESERVED_SLOTS(CTYPEPROTO_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, CType::FinalizeProtoClass,
   NULL, ConstructAbstract, NULL, ConstructAbstract
 };
@@ -471,14 +472,14 @@ static JSClass sCTypeProtoClass = {
 static JSClass sCDataProtoClass = {
   "CData",
   0,
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sCTypeClass = {
   "CType",
   JSCLASS_IMPLEMENTS_BARRIERS | JSCLASS_HAS_RESERVED_SLOTS(CTYPE_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, CType::Finalize,
   NULL, CType::ConstructData, CType::HasInstance, CType::ConstructData,
   CType::Trace
@@ -487,7 +488,7 @@ static JSClass sCTypeClass = {
 static JSClass sCDataClass = {
   "CData",
   JSCLASS_HAS_RESERVED_SLOTS(CDATA_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, ArrayType::Getter, ArrayType::Setter,
+  JS_PropertyStub, JS_DeletePropertyStub, ArrayType::Getter, ArrayType::Setter,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, CData::Finalize,
   NULL, FunctionType::Call, NULL, FunctionType::Call
 };
@@ -495,7 +496,7 @@ static JSClass sCDataClass = {
 static JSClass sCClosureClass = {
   "CClosure",
   JSCLASS_IMPLEMENTS_BARRIERS | JSCLASS_HAS_RESERVED_SLOTS(CCLOSURE_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, CClosure::Finalize,
   NULL, NULL, NULL, NULL, CClosure::Trace
 };
@@ -506,7 +507,7 @@ static JSClass sCClosureClass = {
 static JSClass sCDataFinalizerProtoClass = {
   "CDataFinalizer",
   0,
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
@@ -519,7 +520,7 @@ static JSClass sCDataFinalizerProtoClass = {
 static JSClass sCDataFinalizerClass = {
   "CDataFinalizer",
   JSCLASS_HAS_PRIVATE | JSCLASS_HAS_RESERVED_SLOTS(CDATAFINALIZER_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, CDataFinalizer::Finalize,
 };
 
@@ -542,7 +543,7 @@ static JSClass sCDataFinalizerClass = {
 #define CDATAFINALIZERFN_FLAGS \
   (JSPROP_READONLY | JSPROP_PERMANENT)
 
-static JSPropertySpec sCTypeProps[] = {
+static const JSPropertySpec sCTypeProps[] = {
   { "name", 0, CTYPESPROP_FLAGS, JSOP_WRAPPER(CType::NameGetter), JSOP_NULLWRAPPER },
   { "size", 0, CTYPESPROP_FLAGS, JSOP_WRAPPER(CType::SizeGetter), JSOP_NULLWRAPPER },
   { "ptr", 0, CTYPESPROP_FLAGS, JSOP_WRAPPER(CType::PtrGetter), JSOP_NULLWRAPPER },
@@ -550,26 +551,26 @@ static JSPropertySpec sCTypeProps[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sCTypeFunctions[] = {
+static const JSFunctionSpec sCTypeFunctions[] = {
   JS_FN("array", CType::CreateArray, 0, CTYPESFN_FLAGS),
   JS_FN("toString", CType::ToString, 0, CTYPESFN_FLAGS),
   JS_FN("toSource", CType::ToSource, 0, CTYPESFN_FLAGS),
   JS_FS_END
 };
 
-static JSFunctionSpec sCABIFunctions[] = {
+static const JSFunctionSpec sCABIFunctions[] = {
   JS_FN("toSource", ABI::ToSource, 0, CABIFN_FLAGS),
   JS_FN("toString", ABI::ToSource, 0, CABIFN_FLAGS),
   JS_FS_END
 };
 
-static JSPropertySpec sCDataProps[] = {
+static const JSPropertySpec sCDataProps[] = {
   { "value", 0, JSPROP_SHARED | JSPROP_PERMANENT,
     JSOP_WRAPPER(CData::ValueGetter), JSOP_WRAPPER(CData::ValueSetter) },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sCDataFunctions[] = {
+static const JSFunctionSpec sCDataFunctions[] = {
   JS_FN("address", CData::Address, 0, CDATAFN_FLAGS),
   JS_FN("readString", CData::ReadString, 0, CDATAFN_FLAGS),
   JS_FN("readStringReplaceMalformed", CData::ReadStringReplaceMalformed, 0, CDATAFN_FLAGS),
@@ -578,11 +579,11 @@ static JSFunctionSpec sCDataFunctions[] = {
   JS_FS_END
 };
 
-static JSPropertySpec sCDataFinalizerProps[] = {
+static const JSPropertySpec sCDataFinalizerProps[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sCDataFinalizerFunctions[] = {
+static const JSFunctionSpec sCDataFinalizerFunctions[] = {
   JS_FN("dispose",  CDataFinalizer::Methods::Dispose,  0, CDATAFINALIZERFN_FLAGS),
   JS_FN("forget",   CDataFinalizer::Methods::Forget,   0, CDATAFINALIZERFN_FLAGS),
   JS_FN("readString",CData::ReadString, 0, CDATAFINALIZERFN_FLAGS),
@@ -591,33 +592,33 @@ static JSFunctionSpec sCDataFinalizerFunctions[] = {
   JS_FS_END
 };
 
-static JSFunctionSpec sPointerFunction =
+static const JSFunctionSpec sPointerFunction =
   JS_FN("PointerType", PointerType::Create, 1, CTYPESCTOR_FLAGS);
 
-static JSPropertySpec sPointerProps[] = {
+static const JSPropertySpec sPointerProps[] = {
   { "targetType", 0, CTYPESPROP_FLAGS,
     JSOP_WRAPPER(PointerType::TargetTypeGetter), JSOP_NULLWRAPPER },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sPointerInstanceFunctions[] = {
+static const JSFunctionSpec sPointerInstanceFunctions[] = {
   JS_FN("isNull", PointerType::IsNull, 0, CTYPESFN_FLAGS),
   JS_FN("increment", PointerType::Increment, 0, CTYPESFN_FLAGS),
   JS_FN("decrement", PointerType::Decrement, 0, CTYPESFN_FLAGS),
   JS_FS_END
 };
 
-static JSPropertySpec sPointerInstanceProps[] = {
+static const JSPropertySpec sPointerInstanceProps[] = {
   { "contents", 0, JSPROP_SHARED | JSPROP_PERMANENT,
     JSOP_WRAPPER(PointerType::ContentsGetter),
     JSOP_WRAPPER(PointerType::ContentsSetter) },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sArrayFunction =
+static const JSFunctionSpec sArrayFunction =
   JS_FN("ArrayType", ArrayType::Create, 1, CTYPESCTOR_FLAGS);
 
-static JSPropertySpec sArrayProps[] = {
+static const JSPropertySpec sArrayProps[] = {
   { "elementType", 0, CTYPESPROP_FLAGS,
     JSOP_WRAPPER(ArrayType::ElementTypeGetter), JSOP_NULLWRAPPER },
   { "length", 0, CTYPESPROP_FLAGS,
@@ -625,40 +626,40 @@ static JSPropertySpec sArrayProps[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sArrayInstanceFunctions[] = {
+static const JSFunctionSpec sArrayInstanceFunctions[] = {
   JS_FN("addressOfElement", ArrayType::AddressOfElement, 1, CDATAFN_FLAGS),
   JS_FS_END
 };
 
-static JSPropertySpec sArrayInstanceProps[] = {
+static const JSPropertySpec sArrayInstanceProps[] = {
   { "length", 0, JSPROP_SHARED | JSPROP_READONLY | JSPROP_PERMANENT,
     JSOP_WRAPPER(ArrayType::LengthGetter), JSOP_NULLWRAPPER },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sStructFunction =
+static const JSFunctionSpec sStructFunction =
   JS_FN("StructType", StructType::Create, 2, CTYPESCTOR_FLAGS);
 
-static JSPropertySpec sStructProps[] = {
+static const JSPropertySpec sStructProps[] = {
   { "fields", 0, CTYPESPROP_FLAGS,
     JSOP_WRAPPER(StructType::FieldsArrayGetter), JSOP_NULLWRAPPER },
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sStructFunctions[] = {
+static const JSFunctionSpec sStructFunctions[] = {
   JS_FN("define", StructType::Define, 1, CDATAFN_FLAGS),
   JS_FS_END
 };
 
-static JSFunctionSpec sStructInstanceFunctions[] = {
+static const JSFunctionSpec sStructInstanceFunctions[] = {
   JS_FN("addressOfField", StructType::AddressOfField, 1, CDATAFN_FLAGS),
   JS_FS_END
 };
 
-static JSFunctionSpec sFunctionFunction =
+static const JSFunctionSpec sFunctionFunction =
   JS_FN("FunctionType", FunctionType::Create, 2, CTYPESCTOR_FLAGS);
 
-static JSPropertySpec sFunctionProps[] = {
+static const JSPropertySpec sFunctionProps[] = {
   { "argTypes", 0, CTYPESPROP_FLAGS,
     JSOP_WRAPPER(FunctionType::ArgTypesGetter), JSOP_NULLWRAPPER },
   { "returnType", 0, CTYPESPROP_FLAGS,
@@ -670,7 +671,7 @@ static JSPropertySpec sFunctionProps[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sFunctionInstanceFunctions[] = {
+static const JSFunctionSpec sFunctionInstanceFunctions[] = {
   JS_FN("call", js_fun_call, 1, CDATAFN_FLAGS),
   JS_FN("apply", js_fun_apply, 2, CDATAFN_FLAGS),
   JS_FS_END
@@ -679,32 +680,32 @@ static JSFunctionSpec sFunctionInstanceFunctions[] = {
 static JSClass sInt64ProtoClass = {
   "Int64",
   0,
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sUInt64ProtoClass = {
   "UInt64",
   0,
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
 };
 
 static JSClass sInt64Class = {
   "Int64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize
 };
 
 static JSClass sUInt64Class = {
   "UInt64",
   JSCLASS_HAS_RESERVED_SLOTS(INT64_SLOTS),
-  JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+  JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
   JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub, Int64Base::Finalize
 };
 
-static JSFunctionSpec sInt64StaticFunctions[] = {
+static const JSFunctionSpec sInt64StaticFunctions[] = {
   JS_FN("compare", Int64::Compare, 2, CTYPESFN_FLAGS),
   JS_FN("lo", Int64::Lo, 1, CTYPESFN_FLAGS),
   JS_FN("hi", Int64::Hi, 1, CTYPESFN_FLAGS),
@@ -712,7 +713,7 @@ static JSFunctionSpec sInt64StaticFunctions[] = {
   JS_FS_END
 };
 
-static JSFunctionSpec sUInt64StaticFunctions[] = {
+static const JSFunctionSpec sUInt64StaticFunctions[] = {
   JS_FN("compare", UInt64::Compare, 2, CTYPESFN_FLAGS),
   JS_FN("lo", UInt64::Lo, 1, CTYPESFN_FLAGS),
   JS_FN("hi", UInt64::Hi, 1, CTYPESFN_FLAGS),
@@ -720,19 +721,19 @@ static JSFunctionSpec sUInt64StaticFunctions[] = {
   JS_FS_END
 };
 
-static JSFunctionSpec sInt64Functions[] = {
+static const JSFunctionSpec sInt64Functions[] = {
   JS_FN("toString", Int64::ToString, 0, CTYPESFN_FLAGS),
   JS_FN("toSource", Int64::ToSource, 0, CTYPESFN_FLAGS),
   JS_FS_END
 };
 
-static JSFunctionSpec sUInt64Functions[] = {
+static const JSFunctionSpec sUInt64Functions[] = {
   JS_FN("toString", UInt64::ToString, 0, CTYPESFN_FLAGS),
   JS_FN("toSource", UInt64::ToSource, 0, CTYPESFN_FLAGS),
   JS_FS_END
 };
 
-static JSPropertySpec sModuleProps[] = {
+static const JSPropertySpec sModuleProps[] = {
   { "errno", 0, JSPROP_SHARED | JSPROP_PERMANENT,
     JSOP_WRAPPER(CData::ErrnoGetter), JSOP_NULLWRAPPER },
 #if defined(XP_WIN)
@@ -742,7 +743,7 @@ static JSPropertySpec sModuleProps[] = {
   { 0, 0, 0, JSOP_NULLWRAPPER, JSOP_NULLWRAPPER }
 };
 
-static JSFunctionSpec sModuleFunctions[] = {
+static const JSFunctionSpec sModuleFunctions[] = {
   JS_FN("CDataFinalizer", CDataFinalizer::Construct, 2, CTYPESFN_FLAGS),
   JS_FN("open", Library::Open, 1, CTYPESFN_FLAGS),
   JS_FN("cast", CData::Cast, 2, CTYPESFN_FLAGS),
@@ -802,7 +803,7 @@ TypeError(JSContext* cx, const char* expected, jsval actual)
 {
   JSString* str = JS_ValueToSource(cx, actual);
   JSAutoByteString bytes;
-  
+
   const char* src;
   if (str) {
     src = bytes.encodeLatin1(cx, str);
@@ -860,13 +861,13 @@ static JSObject*
 InitABIClass(JSContext* cx, JSObject* parent)
 {
   RootedObject obj(cx, JS_NewObject(cx, NULL, NULL, NULL));
-  
+
   if (!obj)
     return NULL;
-    
+
   if (!JS_DefineFunctions(cx, obj, sCABIFunctions))
     return NULL;
-  
+
   return obj;
 }
 
@@ -935,11 +936,11 @@ InitTypeConstructor(JSContext* cx,
                     HandleObject parent,
                     HandleObject CTypeProto,
                     HandleObject CDataProto,
-                    JSFunctionSpec spec,
-                    JSFunctionSpec* fns,
-                    JSPropertySpec* props,
-                    JSFunctionSpec* instanceFns,
-                    JSPropertySpec* instanceProps,
+                    const JSFunctionSpec spec,
+                    const JSFunctionSpec* fns,
+                    const JSPropertySpec* props,
+                    const JSFunctionSpec* instanceFns,
+                    const JSPropertySpec* instanceProps,
                     MutableHandleObject typeProto,
                     MutableHandleObject dataProto)
 {
@@ -1009,8 +1010,8 @@ InitInt64Class(JSContext* cx,
                HandleObject parent,
                JSClass* clasp,
                JSNative construct,
-               JSFunctionSpec* fs,
-               JSFunctionSpec* static_fs)
+               const JSFunctionSpec* fs,
+               const JSFunctionSpec* static_fs)
 {
   // Init type class and constructor
   RootedObject prototype(cx, JS_InitClass(cx, parent, NULL, clasp, construct,
@@ -1251,8 +1252,8 @@ GetCallbacks(JSObject* obj)
 bool GetObjectProperty(JSContext *cx, HandleObject obj,
                        const char *property, MutableHandleObject result)
 {
-  jsval val;
-  if (!JS_GetProperty(cx, obj, property, &val)) {
+  RootedValue val(cx);
+  if (!JS_GetProperty(cx, obj, property, val.address())) {
     return false;
   }
 
@@ -1620,8 +1621,8 @@ jsvalToInteger(JSContext* cx, jsval val, IntegerType* result)
     }
 
     if (CDataFinalizer::IsCDataFinalizer(obj)) {
-      jsval innerData;
-      if (!CDataFinalizer::GetValue(cx, obj, &innerData)) {
+      RootedValue innerData(cx);
+      if (!CDataFinalizer::GetValue(cx, obj, innerData.address())) {
         return false; // Nothing to convert
       }
       return jsvalToInteger(cx, innerData, result);
@@ -1800,8 +1801,8 @@ jsvalToBigInteger(JSContext* cx,
     }
 
     if (CDataFinalizer::IsCDataFinalizer(obj)) {
-      jsval innerData;
-      if (!CDataFinalizer::GetValue(cx, obj, &innerData)) {
+      RootedValue innerData(cx);
+      if (!CDataFinalizer::GetValue(cx, obj, innerData.address())) {
         return false; // Nothing to convert
       }
       return jsvalToBigInteger(cx, innerData, allowString, result);
@@ -2185,11 +2186,12 @@ bool CanConvertTypedArrayItemTo(JSObject *baseType, JSObject *valObj, JSContext 
 JSBool
 ImplicitConvert(JSContext* cx,
                 jsval val,
-                JSObject* targetType,
+                JSObject* targetType_,
                 void* buffer,
                 bool isArgument,
                 bool* freePointer)
 {
+  RootedObject targetType(cx, targetType_);
   JS_ASSERT(CType::IsSizeDefined(targetType));
 
   // First, check if val is either a CData object or a CDataFinalizer
@@ -2384,7 +2386,7 @@ ImplicitConvert(JSContext* cx,
     return TypeError(cx, "pointer", val);
   }
   case TYPE_array: {
-    JSObject* baseType = ArrayType::GetBaseType(targetType);
+    RootedObject baseType(cx, ArrayType::GetBaseType(targetType));
     size_t targetLength = ArrayType::GetLength(targetType);
 
     if (JSVAL_IS_STRING(val)) {
@@ -2519,10 +2521,10 @@ ImplicitConvert(JSContext* cx,
         return false;
       }
 
-      jsid id;
+      RootedId id(cx);
       size_t i = 0;
       while (1) {
-        if (!JS_NextProperty(cx, iter, &id))
+        if (!JS_NextProperty(cx, iter, id.address()))
           return false;
         if (JSID_IS_VOID(id))
           break;
@@ -2574,7 +2576,7 @@ ImplicitConvert(JSContext* cx,
 // storing the result in 'buffer'. This function is more forceful than
 // ImplicitConvert.
 JSBool
-ExplicitConvert(JSContext* cx, jsval val, HandleObject targetType, void* buffer)
+ExplicitConvert(JSContext* cx, HandleValue val, HandleObject targetType, void* buffer)
 {
   // If ImplicitConvert succeeds, use that result.
   if (ImplicitConvert(cx, val, targetType, buffer, false, NULL))
@@ -3130,7 +3132,7 @@ CType::ConstructBasic(JSContext* cx,
     return JS_FALSE;
 
   if (args.length() == 1) {
-    if (!ExplicitConvert(cx, args[0], obj, CData::GetData(result)))
+    if (!ExplicitConvert(cx, args.handleAt(0), obj, CData::GetData(result)))
       return JS_FALSE;
   }
 
@@ -3144,11 +3146,13 @@ CType::Create(JSContext* cx,
               HandleObject dataProto,
               TypeCode type,
               JSString* name_,
-              jsval size,
-              jsval align,
+              jsval size_,
+              jsval align_,
               ffi_type* ffiType)
 {
   RootedString name(cx, name_);
+  RootedValue size(cx, size_);
+  RootedValue align(cx, align_);
   RootedObject parent(cx, JS_GetParent(typeProto));
   JS_ASSERT(parent);
 
@@ -3216,13 +3220,15 @@ CType::DefineBuiltin(JSContext* cx,
                      JSObject* dataProto_,
                      const char* name,
                      TypeCode type,
-                     jsval size,
-                     jsval align,
+                     jsval size_,
+                     jsval align_,
                      ffi_type* ffiType)
 {
   RootedObject parent(cx, parent_);
   RootedObject typeProto(cx, typeProto_);
   RootedObject dataProto(cx, dataProto_);
+  RootedValue size(cx, size_);
+  RootedValue align(cx, align_);
 
   RootedString nameStr(cx, JS_NewStringCopyZ(cx, name));
   if (!nameStr)
@@ -3569,8 +3575,8 @@ CType::GetProtoFromType(JSContext* cx, JSObject* obj, CTypeProtoSlot slot)
   JS_ASSERT(IsCType(obj));
 
   // Get the prototype of the type object.
-  JSObject* proto;
-  if (!JS_GetPrototype(cx, obj, &proto))
+  RootedObject proto(cx);
+  if (!JS_GetPrototype(cx, obj, proto.address()))
     return NULL;
   JS_ASSERT(proto);
   JS_ASSERT(CType::IsCTypeProto(proto));
@@ -3749,9 +3755,9 @@ CType::HasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue v, JS
   if (JSVAL_IS_PRIMITIVE(v))
     return JS_TRUE;
 
-  JSObject* proto = &v.toObject();
+  RootedObject proto(cx, &v.toObject());
   for (;;) {
-    if (!JS_GetPrototype(cx, proto, &proto))
+    if (!JS_GetPrototype(cx, proto, proto.address()))
       return JS_FALSE;
     if (!proto)
       break;
@@ -3768,8 +3774,8 @@ CType::GetGlobalCTypes(JSContext* cx, JSObject* obj)
 {
   JS_ASSERT(CType::IsCType(obj));
 
-  JSObject *objTypeProto;
-  if (!JS_GetPrototype(cx, obj, &objTypeProto))
+  RootedObject objTypeProto(cx);
+  if (!JS_GetPrototype(cx, obj, objTypeProto.address()))
     return NULL;
   JS_ASSERT(objTypeProto);
   JS_ASSERT(CType::IsCTypeProto(objTypeProto));
@@ -3799,7 +3805,7 @@ ABI::ToSource(JSContext* cx, unsigned argc, jsval* vp)
     JS_ReportError(cx, "toSource takes zero arguments");
     return JS_FALSE;
   }
-  
+
   JSObject* obj = JS_THIS_OBJECT(cx, vp);
   if (!obj)
     return JS_FALSE;
@@ -3807,7 +3813,7 @@ ABI::ToSource(JSContext* cx, unsigned argc, jsval* vp)
     JS_ReportError(cx, "not an ABI");
     return JS_FALSE;
   }
-  
+
   JSString* result;
   switch (GetABICode(obj)) {
     case ABI_DEFAULT:
@@ -3825,7 +3831,7 @@ ABI::ToSource(JSContext* cx, unsigned argc, jsval* vp)
   }
   if (!result)
     return JS_FALSE;
-  
+
   args.rval().setString(result);
   return JS_TRUE;
 }
@@ -3946,7 +3952,7 @@ PointerType::ConstructData(JSContext* cx,
       JS_ReportError(cx, "first argument must be a function");
       return JS_FALSE;
     }
-    return ExplicitConvert(cx, args[0], obj, CData::GetData(result));
+    return ExplicitConvert(cx, args.handleAt(0), obj, CData::GetData(result));
   }
 
   //
@@ -4108,8 +4114,8 @@ PointerType::ContentsGetter(JSContext* cx,
     return JS_FALSE;
   }
 
-  jsval result;
-  if (!ConvertToJS(cx, baseType, NullPtr(), data, false, false, &result))
+  RootedValue result(cx);
+  if (!ConvertToJS(cx, baseType, NullPtr(), data, false, false, result.address()))
     return JS_FALSE;
 
   vp.set(result);
@@ -4210,8 +4216,8 @@ ArrayType::CreateInternal(JSContext* cx,
     return NULL;
   }
 
-  jsval sizeVal = JSVAL_VOID;
-  jsval lengthVal = JSVAL_VOID;
+  RootedValue sizeVal(cx, JSVAL_VOID);
+  RootedValue lengthVal(cx, JSVAL_VOID);
   if (lengthDefined) {
     // Check for overflow, and convert to an int or double as required.
     size_t size = length * baseSize;
@@ -4219,8 +4225,8 @@ ArrayType::CreateInternal(JSContext* cx,
       JS_ReportError(cx, "size overflow");
       return NULL;
     }
-    if (!SizeTojsval(cx, size, &sizeVal) ||
-        !SizeTojsval(cx, length, &lengthVal))
+    if (!SizeTojsval(cx, size, sizeVal.address()) ||
+        !SizeTojsval(cx, length, lengthVal.address()))
       return NULL;
   }
 
@@ -4338,7 +4344,7 @@ ArrayType::ConstructData(JSContext* cx,
   args.rval().setObject(*result);
 
   if (convertObject) {
-    if (!ExplicitConvert(cx, args[0], obj, CData::GetData(result)))
+    if (!ExplicitConvert(cx, args.handleAt(0), obj, CData::GetData(result)))
       return JS_FALSE;
   }
 
@@ -4549,7 +4555,7 @@ JSBool
 ArrayType::AddressOfElement(JSContext* cx, unsigned argc, jsval* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
-  JSObject* obj = JS_THIS_OBJECT(cx, vp);
+  RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
   if (!obj)
     return JS_FALSE;
   if (!CData::IsCData(obj)) {
@@ -4574,7 +4580,7 @@ ArrayType::AddressOfElement(JSContext* cx, unsigned argc, jsval* vp)
     return JS_FALSE;
 
   // Create a PointerType CData object containing null.
-  JSObject* result = CData::Create(cx, pointerType, NullPtr(), NULL, true);
+  RootedObject result(cx, CData::Create(cx, pointerType, NullPtr(), NULL, true));
   if (!result)
     return JS_FALSE;
 
@@ -4616,8 +4622,8 @@ ExtractStructField(JSContext* cx, jsval val, JSObject** typeObj)
     return NULL;
   js::AutoObjectRooter iterroot(cx, iter);
 
-  jsid nameid;
-  if (!JS_NextProperty(cx, iter, &nameid))
+  RootedId nameid(cx);
+  if (!JS_NextProperty(cx, iter, nameid.address()))
     return NULL;
   if (JSID_IS_VOID(nameid)) {
     JS_ReportError(cx, "struct field descriptors require a valid name and type");
@@ -4841,8 +4847,8 @@ StructType::DefineInternal(JSContext* cx, JSObject* typeObj_, JSObject* fieldsOb
     structAlign = 1;
   }
 
-  jsval sizeVal;
-  if (!SizeTojsval(cx, structSize, &sizeVal))
+  RootedValue sizeVal(cx);
+  if (!SizeTojsval(cx, structSize, sizeVal.address()))
     return JS_FALSE;
 
   JS_SetReservedSlot(typeObj, SLOT_FIELDINFO, PRIVATE_TO_JSVAL(fields.forget()));
@@ -4935,7 +4941,7 @@ JSBool
 StructType::Define(JSContext* cx, unsigned argc, jsval* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
-  JSObject* obj = JS_THIS_OBJECT(cx, vp);
+  RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
   if (!obj)
     return JS_FALSE;
   if (!CType::IsCType(obj) ||
@@ -5005,7 +5011,7 @@ StructType::ConstructData(JSContext* cx,
     // are mutually exclusive, so we can pick the right one.
 
     // Try option 1) first.
-    if (ExplicitConvert(cx, args[0], obj, buffer))
+    if (ExplicitConvert(cx, args.handleAt(0), obj, buffer))
       return JS_TRUE;
 
     if (fields->count() != 1)
@@ -5187,7 +5193,7 @@ JSBool
 StructType::AddressOfField(JSContext* cx, unsigned argc, jsval* vp)
 {
   CallArgs args = CallArgsFromVp(argc, vp);
-  JSObject* obj = JS_THIS_OBJECT(cx, vp);
+  RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
   if (!obj)
     return JS_FALSE;
   if (!CData::IsCData(obj)) {
@@ -5703,13 +5709,13 @@ FunctionType::Call(JSContext* cx,
 {
   CallArgs args = CallArgsFromVp(argc, vp);
   // get the callee object...
-  JSObject* obj = &args.callee();
+  RootedObject obj(cx, &args.callee());
   if (!CData::IsCData(obj)) {
     JS_ReportError(cx, "not a CData");
     return false;
   }
 
-  JSObject* typeObj = CData::GetCType(obj);
+  RootedObject typeObj(cx, CData::GetCType(obj));
   if (CType::GetTypeCode(typeObj) != TYPE_pointer) {
     JS_ReportError(cx, "not a FunctionType.ptr");
     return false;
@@ -5758,8 +5764,8 @@ FunctionType::Call(JSContext* cx,
       return false;
     }
 
-    JSObject* obj;  // Could reuse obj instead of declaring a second
-    JSObject* type; // JSObject*, but readability would suffer.
+    RootedObject obj(cx);  // Could reuse obj instead of declaring a second
+    RootedObject type(cx); // RootedObject, but readability would suffer.
 
     for (uint32_t i = argcFixed; i < args.length(); ++i) {
       if (JSVAL_IS_PRIMITIVE(args[i]) ||
@@ -5958,9 +5964,10 @@ CClosure::Create(JSContext* cx,
                  HandleObject typeObj,
                  HandleObject fnObj,
                  HandleObject thisObj,
-                 jsval errVal,
+                 jsval errVal_,
                  PRFuncPtr* fnptr)
 {
+  RootedValue errVal(cx, errVal_);
   JS_ASSERT(fnObj);
 
   RootedObject result(cx, JS_NewObject(cx, &sCClosureClass, NULL, NULL));
@@ -5980,8 +5987,8 @@ CClosure::Create(JSContext* cx,
 
   // Get the prototype of the FunctionType object, of class CTypeProto,
   // which stores our JSContext for use with the closure.
-  JSObject* proto;
-  if (!JS_GetPrototype(cx, typeObj, &proto))
+  RootedObject proto(cx);
+  if (!JS_GetPrototype(cx, typeObj, proto.address()))
     return NULL;
   JS_ASSERT(proto);
   JS_ASSERT(CType::IsCTypeProto(proto));
@@ -6171,9 +6178,9 @@ CClosure::ClosureStub(ffi_cif* cif, void* result, void** args, void* userData)
 
   // Call the JS function. 'thisObj' may be NULL, in which case the JS engine
   // will find an appropriate object to use.
-  jsval rval;
+  RootedValue rval(cx);
   JSBool success = JS_CallFunctionValue(cx, thisObj, OBJECT_TO_JSVAL(jsfnObj),
-                                        cif->nargs, argv.begin(), &rval);
+                                        cif->nargs, argv.begin(), rval.address());
 
   // Convert the result. Note that we pass 'isArgument = false', such that
   // ImplicitConvert will *not* autoconvert a JS string into a pointer-to-char
@@ -6785,7 +6792,7 @@ CDataFinalizer::Methods::ToString(JSContext *cx, unsigned argc, jsval *vp)
   }
 
   JSString *strMessage;
-  jsval value;
+  RootedValue value(cx);
   if (!JS_GetPrivate(objThis)) {
     // Pre-check whether CDataFinalizer::GetValue can fail
     // to avoid reporting an error when not appropriate.
@@ -6793,7 +6800,7 @@ CDataFinalizer::Methods::ToString(JSContext *cx, unsigned argc, jsval *vp)
     if (!strMessage) {
       return JS_FALSE;
     }
-  } else if (!CDataFinalizer::GetValue(cx, objThis, &value)) {
+  } else if (!CDataFinalizer::GetValue(cx, objThis, value.address())) {
     JS_NOT_REACHED("Could not convert an empty CDataFinalizer");
   } else {
     strMessage = JS_ValueToString(cx, value);
@@ -6840,8 +6847,8 @@ CDataFinalizer::GetCData(JSContext *cx, JSObject *obj)
     JS_ReportError(cx, "Not C data");
     return NULL;
   }
-  jsval val;
-  if (!CDataFinalizer::GetValue(cx, obj, &val) || JSVAL_IS_PRIMITIVE(val)) {
+  RootedValue val(cx);
+  if (!CDataFinalizer::GetValue(cx, obj, val.address()) || JSVAL_IS_PRIMITIVE(val)) {
     JS_ReportError(cx, "Empty CDataFinalizer");
     return NULL;
   }
@@ -6916,7 +6923,7 @@ CDataFinalizer::Construct(JSContext* cx, unsigned argc, jsval *vp)
     return TypeError(cx, "a _CData_ object of a function pointer type",
                      valCodePtr);
   }
-  JSObject *objCodePtrType = CData::GetCType(objCodePtr);
+  RootedObject objCodePtrType(cx, CData::GetCType(objCodePtr));
   MOZ_ASSERT(objCodePtrType);
 
   TypeCode typCodePtr = CType::GetTypeCode(objCodePtrType);
@@ -6959,7 +6966,7 @@ CDataFinalizer::Construct(JSContext* cx, unsigned argc, jsval *vp)
   // 3. Perform dynamic cast of |args[0]| into |objType|, store it in |cargs|
 
   size_t sizeArg;
-  jsval valData = args[0];
+  RootedValue valData(cx, args[0]);
   if (!CType::GetSafeSize(objArgType, &sizeArg)) {
     return TypeError(cx, "(an object with known size)", valData);
   }
@@ -7126,9 +7133,9 @@ CDataFinalizer::Methods::Forget(JSContext* cx, unsigned argc, jsval *vp)
     return JS_FALSE;
   }
 
-  jsval valJSData;
+  RootedValue valJSData(cx);
   RootedObject ctype(cx, GetCType(cx, obj));
-  if (!ConvertToJS(cx, ctype, NullPtr(), p->cargs, false, true, &valJSData)) {
+  if (!ConvertToJS(cx, ctype, NullPtr(), p->cargs, false, true, valJSData.address())) {
     JS_ReportError(cx, "CDataFinalizer value cannot be represented");
     return JS_FALSE;
   }
@@ -7158,7 +7165,7 @@ CDataFinalizer::Methods::Dispose(JSContext* cx, unsigned argc, jsval *vp)
     return JS_FALSE;
   }
 
-  JSObject *obj = JS_THIS_OBJECT(cx, vp);
+  RootedObject obj(cx, JS_THIS_OBJECT(cx, vp));
   if (!obj)
     return JS_FALSE;
   if (!CDataFinalizer::IsCDataFinalizer(obj)) {
@@ -7189,7 +7196,7 @@ CDataFinalizer::Methods::Dispose(JSContext* cx, unsigned argc, jsval *vp)
   JS_ASSERT(CType::GetTypeCode(objCodeType) == TYPE_function);
 
   RootedObject resultType(cx, FunctionType::GetFunctionInfo(objCodeType)->mReturnType);
-  jsval result = JSVAL_VOID;
+  RootedValue result(cx, JSVAL_VOID);
 
   int errnoStatus;
 #if defined(XP_WIN)
@@ -7204,7 +7211,7 @@ CDataFinalizer::Methods::Dispose(JSContext* cx, unsigned argc, jsval *vp)
   JS_SetReservedSlot(objCTypes, SLOT_LASTERROR, INT_TO_JSVAL(lastErrorStatus));
 #endif // defined(XP_WIN)
 
-  if (ConvertToJS(cx, resultType, NullPtr(), p->rvalue, false, true, &result)) {
+  if (ConvertToJS(cx, resultType, NullPtr(), p->rvalue, false, true, result.address())) {
     CDataFinalizer::Cleanup(p, obj);
     args.rval().set(result);
     return true;
@@ -7406,9 +7413,9 @@ Int64::Construct(JSContext* cx,
     return TypeError(cx, "int64", args[0]);
 
   // Get ctypes.Int64.prototype from the 'prototype' property of the ctor.
-  jsval slot;
+  RootedValue slot(cx);
   RootedObject callee(cx, &args.callee());
-  ASSERT_OK(JS_GetProperty(cx, callee, "prototype", &slot));
+  ASSERT_OK(JS_GetProperty(cx, callee, "prototype", slot.address()));
   RootedObject proto(cx, JSVAL_TO_OBJECT(slot));
   JS_ASSERT(JS_GetClass(proto) == &sInt64ProtoClass);
 
@@ -7576,9 +7583,9 @@ UInt64::Construct(JSContext* cx,
     return TypeError(cx, "uint64", args[0]);
 
   // Get ctypes.UInt64.prototype from the 'prototype' property of the ctor.
-  jsval slot;
+  RootedValue slot(cx);
   RootedObject callee(cx, &args.callee());
-  ASSERT_OK(JS_GetProperty(cx, callee, "prototype", &slot));
+  ASSERT_OK(JS_GetProperty(cx, callee, "prototype", slot.address()));
   RootedObject proto(cx, &slot.toObject());
   JS_ASSERT(JS_GetClass(proto) == &sUInt64ProtoClass);
 

@@ -38,7 +38,6 @@
 #include "nsContentUtils.h"
 #include "nsJSUtils.h"
 #include "nsThreadUtils.h"
-#include "nsIJSContextStack.h"
 #include "nsIScriptChannel.h"
 #include "nsIDocument.h"
 #include "nsIObjectInputStream.h"
@@ -294,21 +293,13 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         JSObject *sandboxObj;
         rv = sandbox->GetJSObject(&sandboxObj);
         NS_ENSURE_SUCCESS(rv, rv);
-        sandboxObj = js::UnwrapObject(sandboxObj);
+        sandboxObj = js::UncheckedUnwrap(sandboxObj);
         JSAutoCompartment ac(cx, sandboxObj);
 
         // Push our JSContext on the context stack so the JS_ValueToString call (and
         // JS_ReportPendingException, if relevant) will use the principal of cx.
-        // Note that we do this as late as possible to make popping simpler.
-        nsCOMPtr<nsIJSContextStack> stack =
-            do_GetService("@mozilla.org/js/xpc/ContextStack;1", &rv);
-        if (NS_SUCCEEDED(rv)) {
-            rv = stack->Push(cx);
-        }
-        if (NS_FAILED(rv)) {
-            return rv;
-        }
-
+        nsCxPusher pusher;
+        pusher.Push(cx);
         rv = xpc->EvalInSandboxObject(NS_ConvertUTF8toUTF16(script),
                                       /* filename = */ nullptr, cx,
                                       sandboxObj, true, &v);
@@ -318,8 +309,6 @@ nsresult nsJSThunk::EvaluateScript(nsIChannel *aChannel,
         if (JS_IsExceptionPending(cx)) {
             JS_ReportPendingException(cx);
         }
-
-        stack->Pop(nullptr);
     } else {
         // No need to use the sandbox, evaluate the script directly in
         // the given scope.
@@ -652,8 +641,7 @@ nsJSChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *aContext)
         }
     }
 
-    mDocumentOnloadBlockedOn =
-        do_QueryInterface(mOriginalInnerWindow->GetExtantDocument());
+    mDocumentOnloadBlockedOn = mOriginalInnerWindow->GetExtantDoc();
     if (mDocumentOnloadBlockedOn) {
         // If we're a document channel, we need to actually block onload on our
         // _parent_ document.  This is because we don't actually set our
@@ -678,7 +666,7 @@ nsJSChannel::AsyncOpen(nsIStreamListener *aListener, nsISupports *aContext)
     if (mIsAsync) {
         // post an event to do the rest
         method = &nsJSChannel::EvaluateScript;
-    } else {   
+    } else {
         EvaluateScript();
         if (mOpenedStreamChannel) {
             // That will handle notifying things

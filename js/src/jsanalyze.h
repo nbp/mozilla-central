@@ -1,6 +1,6 @@
-/* -*- Mode: C++; c-basic-offset: 4; tab-width: 4; indent-tabs-mode: nil -*- */
-/* vim: set ts=4 sw=4 et tw=99: */
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -115,7 +115,6 @@ class Bytecode
     bool getStringElement:1;    /* GETELEM which has accessed string properties. */
     bool nonNativeGetElement:1; /* GETELEM on a non-native, non-array object. */
     bool accessGetter: 1;       /* Property read on a shape with a getter hook. */
-    bool notIdempotent: 1;      /* Don't use an idempotent cache for this property read. */
 
     /* Stack depth before this opcode. */
     uint32_t stackDepth;

@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -367,6 +366,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
 
     // Load the number of |undefined|s to push into r6.
     masm.ma_ldr(DTRAddr(sp, DtrOffImm(IonRectifierFrameLayout::offsetOfCalleeToken())), r1);
+    masm.clearCalleeTag(r1, mode);
     masm.ma_ldrh(EDtrAddr(r1, EDtrOffImm(offsetof(JSFunction, nargs))), r6);
 
     masm.ma_sub(r6, r8, r2);
@@ -417,13 +417,7 @@ IonRuntime::generateArgumentsRectifier(JSContext *cx, ExecutionMode mode, void *
     // Call the target function.
     // Note that this code assumes the function is JITted.
     masm.ma_ldr(DTRAddr(r1, DtrOffImm(offsetof(JSFunction, u.i.script_))), r3);
-    if (mode == SequentialExecution) {
-        masm.loadBaselineOrIonCode(r3, r6, NULL);
-    } else {
-        masm.ma_ldr(DTRAddr(r3, DtrOffImm(OffsetOfIonInJSScript(mode))), r3);
-        masm.ma_ldr(DTRAddr(r3, DtrOffImm(IonScript::offsetOfMethod())), r3);
-    }
-    masm.ma_ldr(DTRAddr(r3, DtrOffImm(IonCode::offsetOfCode())), r3);
+    masm.loadBaselineOrIonRaw(r3, r3, mode, NULL);
     masm.ma_callIonHalfPush(r3);
 
     uint32_t returnOffset = masm.currentOffset();
@@ -603,13 +597,16 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     // Wrapper register set is a superset of Volatile register set.
     JS_STATIC_ASSERT((Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0);
 
+    // The context is the first argument; r0 is the first argument register.
+    Register cxreg = r0;
+
     // Stack is:
     //    ... frame ...
     //  +8  [args] + argPadding
     //  +0  ExitFrame
     //
     // We're aligned to an exit frame, so link it up.
-    masm.enterExitFrame(&f);
+    masm.enterExitFrameAndLoadContext(&f, cxreg, regs.getAny(), f.executionMode);
 
     // Save the base of the argument set stored on the stack.
     Register argsBase = InvalidReg;
@@ -648,13 +645,7 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
         break;
     }
 
-    Register temp = regs.getAny();
-    masm.setupUnalignedABICall(f.argc(), temp);
-
-    // Initialize and set the context parameter.
-    // r0 is the first argument register.
-    Register cxreg = r0;
-    masm.loadJSContext(cxreg);
+    masm.setupUnalignedABICall(f.argc(), regs.getAny());
     masm.passABIArg(cxreg);
 
     size_t argDisp = 0;
@@ -692,10 +683,20 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
     masm.callWithABI(f.wrapped);
 
     // Test for failure.
-    Label exception;
-    // Called functions return bools, which are 0/false and non-zero/true
-    masm.ma_cmp(r0, Imm32(0));
-    masm.ma_b(&exception, Assembler::Zero);
+    Label failure;
+    switch (f.failType()) {
+      case Type_Object:
+      case Type_Bool:
+        // Called functions return bools, which are 0/false and non-zero/true
+        masm.branch32(Assembler::Equal, r0, Imm32(0), &failure);
+        break;
+      case Type_ParallelResult:
+        masm.branch32(Assembler::NotEqual, r0, Imm32(TP_SUCCESS), &failure);
+        break;
+      default:
+        JS_NOT_REACHED("unknown failure kind");
+        break;
+    }
 
     // Load the outparam and free any allocated stack.
     switch (f.outParam) {
@@ -719,8 +720,8 @@ IonRuntime::generateVMWrapper(JSContext *cx, const VMFunction &f)
                     f.explicitStackSlots() * sizeof(void *) +
                     f.extraValuesToPop * sizeof(Value)));
 
-    masm.bind(&exception);
-    masm.handleException();
+    masm.bind(&failure);
+    masm.handleFailure(f.executionMode);
 
     Linker linker(masm);
     IonCode *wrapper = linker.newCode(cx, JSC::OTHER_CODE);

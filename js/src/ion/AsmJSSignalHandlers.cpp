@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -283,8 +282,13 @@ LookupHeapAccess(const AsmJSModule &module, uint8_t *pc)
 //
 // See: https://chromiumcodereview.appspot.com/10829122/
 // See: http://code.google.com/p/android/issues/detail?id=34784
-# if defined(__ANDROID__) && !defined(__BIONIC_HAVE_UCONTEXT_T)
+# if (defined(ANDROID)) && !defined(__BIONIC_HAVE_UCONTEXT_T)
 #  if defined(__arm__)
+// GLibc on ARM defines mcontext_t has a typedef for 'struct sigcontext'.
+// Old versions of the C library <signal.h> didn't define the type.
+#if !defined(__BIONIC_HAVE_STRUCT_SIGCONTEXT)
+#include <asm/sigcontext.h>
+#endif
 
 typedef struct sigcontext mcontext_t;
 
@@ -945,7 +949,7 @@ js::TriggerOperationCallbackForAsmJSCode(JSRuntime *rt)
 
 # if defined(XP_WIN)
     DWORD oldProtect;
-    if (!VirtualProtect(module.functionCode(), 4096, PAGE_NOACCESS, &oldProtect))
+    if (!VirtualProtect(module.functionCode(), module.functionBytes(), PAGE_NOACCESS, &oldProtect))
         MOZ_CRASH();
 # else  // assume Unix
     if (mprotect(module.functionCode(), module.functionBytes(), PROT_NONE))

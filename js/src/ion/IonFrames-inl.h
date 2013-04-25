@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -103,9 +102,9 @@ IonFrameIterator::frameSize() const
 
 // Returns the JSScript associated with the topmost Ion frame.
 inline RawScript
-GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
+GetTopIonJSScript(PerThreadData *pt, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
 {
-    IonFrameIterator iter(cx->mainThread().ionTop);
+    IonFrameIterator iter(pt->ionTop);
     JS_ASSERT(iter.type() == IonFrame_Exit);
     ++iter;
 
@@ -124,6 +123,13 @@ GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void 
 
     JS_ASSERT(iter.isScripted());
     return iter.script();
+}
+
+
+inline RawScript
+GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
+{
+    return GetTopIonJSScript(&cx->mainThread(), safepointIndexOut, returnAddrOut);
 }
 
 inline BaselineFrame *

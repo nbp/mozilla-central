@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -285,4 +284,28 @@ bool
 LIRGeneratorX86::visitAsmJSLoadFuncPtr(MAsmJSLoadFuncPtr *ins)
 {
     return define(new LAsmJSLoadFuncPtr(useRegisterAtStart(ins->index())), ins);
+}
+
+LGetPropertyCacheT *
+LIRGeneratorX86::newLGetPropertyCacheT(MGetPropertyCache *ins)
+{
+    // Since x86 doesn't have a scratch register and we need one for the
+    // indirect jump for dispatch-style ICs, we need a temporary in the case
+    // of a double output type as we can't get a scratch from the output.
+    LDefinition scratch;
+    if (ins->type() == MIRType_Double)
+        scratch = temp();
+    else
+        scratch = LDefinition::BogusTemp();
+    return new LGetPropertyCacheT(useRegister(ins->object()), scratch);
+}
+
+bool
+LIRGeneratorX86::lowerTruncateDToInt32(MTruncateToInt32 *ins)
+{
+    MDefinition *opd = ins->input();
+    JS_ASSERT(opd->type() == MIRType_Double);
+
+    LDefinition maybeTemp = Assembler::HasSSE3() ? LDefinition::BogusTemp() : tempFloat();
+    return define(new LTruncateDToInt32(useRegister(opd), maybeTemp), ins);
 }

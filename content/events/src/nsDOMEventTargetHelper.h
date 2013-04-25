@@ -31,6 +31,12 @@ public:
   NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS(nsDOMEventTargetHelper)
 
   NS_DECL_NSIDOMEVENTTARGET
+  using mozilla::dom::EventTarget::RemoveEventListener;
+  virtual void AddEventListener(const nsAString& aType,
+                                nsIDOMEventListener* aListener,
+                                bool aCapture,
+                                const mozilla::dom::Nullable<bool>& aWantsUntrusted,
+                                mozilla::ErrorResult& aRv) MOZ_OVERRIDE;
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_DOMEVENTTARGETHELPER_IID)
 
@@ -45,15 +51,15 @@ public:
 
   static nsDOMEventTargetHelper* FromSupports(nsISupports* aSupports)
   {
-    nsIDOMEventTarget* target =
-      static_cast<nsIDOMEventTarget*>(aSupports);
+    mozilla::dom::EventTarget* target =
+      static_cast<mozilla::dom::EventTarget*>(aSupports);
 #ifdef DEBUG
     {
-      nsCOMPtr<nsIDOMEventTarget> target_qi =
+      nsCOMPtr<mozilla::dom::EventTarget> target_qi =
         do_QueryInterface(aSupports);
 
       // If this assertion fires the QI implementation for the object in
-      // question doesn't use the nsIDOMEventTarget pointer as the
+      // question doesn't use the EventTarget pointer as the
       // nsISupports pointer. That must be fixed, or we'll crash...
       NS_ASSERTION(target_qi == target, "Uh, fix QI!");
     }
@@ -61,8 +67,6 @@ public:
 
     return static_cast<nsDOMEventTargetHelper*>(target);
   }
-
-  void Init(JSContext* aCx = nullptr);
 
   bool HasListenersFor(nsIAtom* aTypeWithOn)
   {
@@ -205,6 +209,11 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsDOMEventTargetHelper,
   } \
   virtual JSContext * GetJSContextForEventHandlers(void) { \
     return _to GetJSContextForEventHandlers(); \
-  } 
+  }
+
+#define NS_REALLY_FORWARD_NSIDOMEVENTTARGET(_class) \
+  using _class::AddEventListener;                   \
+  using _class::RemoveEventListener;                \
+  NS_FORWARD_NSIDOMEVENTTARGET(_class::)
 
 #endif // nsDOMEventTargetHelper_h_

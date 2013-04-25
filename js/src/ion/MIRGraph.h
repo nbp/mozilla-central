@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -37,7 +36,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         NORMAL,
         PENDING_LOOP_HEADER,
         LOOP_HEADER,
-        SPLIT_EDGE
+        SPLIT_EDGE,
+        DEAD
     };
 
   private:
@@ -76,7 +76,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
                                              MBasicBlock *pred, jsbytecode *entryPc);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
     static MBasicBlock *NewParBailout(MIRGraph &graph, CompileInfo &info,
-                                      MBasicBlock *pred, jsbytecode *entryPc);
+                                      MBasicBlock *pred, jsbytecode *entryPc,
+                                      MResumePoint *resumePoint);
 
     bool dominates(MBasicBlock *other);
 
@@ -102,6 +103,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MDefinition *peek(int32_t depth);
 
     MDefinition *scopeChain();
+    MDefinition *argumentsObject();
 
     // Increase the number of slots available
     bool increaseSlots(size_t num);
@@ -137,6 +139,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void pushLocal(uint32_t local);
     void pushSlot(uint32_t slot);
     void setScopeChain(MDefinition *ins);
+    void setArgumentsObject(MDefinition *ins);
 
     // Returns the top of the stack, then decrements the virtual stack pointer.
     MDefinition *pop();
@@ -183,8 +186,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void clearDominatorInfo();
 
     // Sets a back edge. This places phi nodes and rewrites instructions within
-    // the current loop as necessary.
-    bool setBackedge(MBasicBlock *block);
+    // the current loop as necessary. If the backedge introduces new types for
+    // phis at the loop header, returns a disabling abort.
+    AbortReason setBackedge(MBasicBlock *block);
 
     // Resets a LOOP_HEADER block to a NORMAL block.  This is needed when
     // optimizations remove the backedge.
@@ -192,6 +196,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Propagates phis placed in a loop header down to this successor block.
     void inheritPhis(MBasicBlock *header);
+
+    // Compute the types for phis in this block according to their inputs.
+    void specializePhis();
 
     void insertBefore(MInstruction *at, MInstruction *ins);
     void insertAfter(MInstruction *at, MInstruction *ins);
@@ -208,9 +215,16 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MInstructionIterator discardAt(MInstructionIterator &iter);
     MInstructionReverseIterator discardAt(MInstructionReverseIterator &iter);
     MDefinitionIterator discardDefAt(MDefinitionIterator &iter);
+    void discardAllInstructions();
+    void discardAllPhis();
 
     // Discards a phi instruction and updates predecessor successorWithPhis.
     MPhiIterator discardPhiAt(MPhiIterator &at);
+
+    // Mark this block as having been removed from the graph.
+    void markAsDead() {
+        kind_ = DEAD;
+    }
 
     ///////////////////////////////////////////////////////
     /////////// END GRAPH BUILDING INSTRUCTIONS ///////////
@@ -301,6 +315,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
     bool isSplitEdge() const {
         return kind_ == SPLIT_EDGE;
+    }
+    bool isDead() const {
+        return kind_ == DEAD;
     }
 
     uint32_t stackDepth() const {
@@ -480,12 +497,11 @@ class MIRGraph
     // List of compiled/inlined scripts.
     Vector<RawScript, 4, IonAllocPolicy> scripts_;
 
-    size_t numBlocks_;
+    // List of possible scripts that this graph may call. Currently this is
+    // only tracked when compiling for parallel execution.
+    Vector<RawScript, 4, IonAllocPolicy> callTargets_;
 
-#ifdef DEBUG
-    // Is the graph in Reverse Post Order
-    bool inRPO_;
-#endif
+    size_t numBlocks_;
 
   public:
     MIRGraph(TempAllocator *alloc)
@@ -496,9 +512,6 @@ class MIRGraph
         osrBlock_(NULL),
         osrStart_(NULL),
         numBlocks_(0)
-#ifdef DEBUG
-        , inRPO_(false)
-#endif
     { }
 
     template <typename T>
@@ -547,28 +560,26 @@ class MIRGraph
         return blocks_.end();
     }
     PostorderIterator poBegin() {
-        JS_ASSERT(inRPO_);
         return blocks_.rbegin();
     }
     PostorderIterator poEnd() {
-        JS_ASSERT(inRPO_);
         return blocks_.rend();
     }
     ReversePostorderIterator rpoBegin() {
-        JS_ASSERT(inRPO_);
         return blocks_.begin();
     }
     ReversePostorderIterator rpoEnd() {
-        JS_ASSERT(inRPO_);
         return blocks_.end();
     }
+    void removeBlocksAfter(MBasicBlock *block);
     void removeBlock(MBasicBlock *block) {
         blocks_.remove(block);
         numBlocks_--;
     }
-    void moveBlockToBegin(MBasicBlock *block) {
+    void moveBlockToEnd(MBasicBlock *block) {
+        JS_ASSERT(block->id());
         blocks_.remove(block);
-        blocks_.pushFront(block);
+        blocks_.pushBack(block);
     }
     size_t numBlocks() const {
         return numBlocks_;
@@ -622,12 +633,19 @@ class MIRGraph
     JSScript **scripts() {
         return scripts_.begin();
     }
-
-#ifdef DEBUG
-    void setInRPO() {
-        inRPO_ = true;
+    bool addCallTarget(RawScript script) {
+        for (size_t i = 0; i < callTargets_.length(); i++) {
+            if (callTargets_[i] == script)
+                return true;
+        }
+        return callTargets_.append(script);
     }
-#endif
+    size_t numCallTargets() const {
+        return callTargets_.length();
+    }
+    JSScript **callTargets() {
+        return callTargets_.begin();
+    }
 
     // The ParSlice is an instance of ForkJoinSlice*, it carries
     // "per-helper-thread" information.  So as not to modify the

@@ -23,7 +23,6 @@
 #include "nsPIDOMWindow.h"               // for use in inline functions
 #include "nsPropertyTable.h"             // for member
 #include "nsTHashtable.h"                // for member
-#include "mozilla/dom/DirectionalityUtils.h"
 #include "mozilla/dom/DocumentBinding.h"
 
 class imgIRequest;
@@ -48,9 +47,7 @@ class nsIDOMDocument;
 class nsIDOMDocumentFragment;
 class nsIDOMDocumentType;
 class nsIDOMElement;
-class nsIDOMEventTarget;
 class nsIDOMNodeList;
-class nsIDOMTouch;
 class nsIDOMTouchList;
 class nsIDOMXPathExpression;
 class nsIDOMXPathNSResolver;
@@ -88,6 +85,7 @@ class ImageLoader;
 } // namespace css
 
 namespace dom {
+class Attr;
 class CDATASection;
 class Comment;
 class DocumentFragment;
@@ -95,14 +93,17 @@ class DocumentType;
 class DOMImplementation;
 class Element;
 struct ElementRegistrationOptions;
+class EventTarget;
 class GlobalObject;
 class HTMLBodyElement;
 class Link;
 class NodeFilter;
 class NodeIterator;
 class ProcessingInstruction;
+class Touch;
 class TreeWalker;
 class UndoManager;
+template<typename> class OwningNonNull;
 template<typename> class Sequence;
 
 template<typename, typename> class CallbackObjectHolder;
@@ -521,10 +522,6 @@ public:
     mSandboxFlags = sandboxFlags;
   }
 
-  inline mozilla::Directionality GetDocumentDirectionality() {
-    return mDirectionality;
-  }
-  
   /**
    * Access HTTP header data (this may also get set from other
    * sources, like HTML META tags).
@@ -639,7 +636,7 @@ protected:
 public:
   // Get the root <html> element, or return null if there isn't one (e.g.
   // if the root isn't <html>)
-  Element* GetHtmlElement();
+  Element* GetHtmlElement() const;
   // Returns the first child of GetHtmlContent which has the given tag,
   // or nullptr if that doesn't exist.
   Element* GetHtmlChildElement(nsIAtom* aTag);
@@ -1183,7 +1180,7 @@ public:
    * Sanitize the document by resetting all input elements and forms that have
    * autocomplete=off to their default values.
    */
-  virtual nsresult Sanitize() = 0;
+  virtual void Sanitize() = 0;
 
   /**
    * Enumerate all subdocuments.
@@ -1264,7 +1261,7 @@ public:
    * document won't be altered.
    */
   virtual void OnPageShow(bool aPersisted,
-                          nsIDOMEventTarget* aDispatchStartTarget) = 0;
+                          mozilla::dom::EventTarget* aDispatchStartTarget) = 0;
 
   /**
    * Notification that the page has been hidden, for documents which are loaded
@@ -1279,8 +1276,8 @@ public:
    * document won't be altered.
    */
   virtual void OnPageHide(bool aPersisted,
-                          nsIDOMEventTarget* aDispatchStartTarget) = 0;
-  
+                          mozilla::dom::EventTarget* aDispatchStartTarget) = 0;
+
   /*
    * We record the set of links in the document that are relevant to
    * style.
@@ -1950,11 +1947,10 @@ public:
                                             const nsAString& aQualifiedName,
                                             mozilla::ErrorResult& rv);
   already_AddRefed<mozilla::dom::DocumentFragment>
-    CreateDocumentFragment(mozilla::ErrorResult& rv) const;
-  already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData,
-                                              mozilla::ErrorResult& rv) const;
+    CreateDocumentFragment() const;
+  already_AddRefed<nsTextNode> CreateTextNode(const nsAString& aData) const;
   already_AddRefed<mozilla::dom::Comment>
-    CreateComment(const nsAString& aData, mozilla::ErrorResult& rv) const;
+    CreateComment(const nsAString& aData) const;
   already_AddRefed<mozilla::dom::ProcessingInstruction>
     CreateProcessingInstruction(const nsAString& target, const nsAString& data,
                                 mozilla::ErrorResult& rv) const;
@@ -1983,9 +1979,9 @@ public:
   // Deprecated WebIDL bits
   already_AddRefed<mozilla::dom::CDATASection>
     CreateCDATASection(const nsAString& aData, mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMAttr>
+  already_AddRefed<mozilla::dom::Attr>
     CreateAttribute(const nsAString& aName, mozilla::ErrorResult& rv);
-  already_AddRefed<nsIDOMAttr>
+  already_AddRefed<mozilla::dom::Attr>
     CreateAttributeNS(const nsAString& aNamespaceURI,
                       const nsAString& aQualifiedName,
                       mozilla::ErrorResult& rv);
@@ -2000,7 +1996,7 @@ public:
   virtual void GetTitle(nsString& aTitle) = 0;
   virtual void SetTitle(const nsAString& aTitle, mozilla::ErrorResult& rv) = 0;
   void GetDir(nsAString& aDirection) const;
-  void SetDir(const nsAString& aDirection, mozilla::ErrorResult& rv);
+  void SetDir(const nsAString& aDirection);
   nsIDOMWindow* GetDefaultView() const
   {
     return GetWindow();
@@ -2090,20 +2086,20 @@ public:
              nsIDOMXPathNSResolver* aResolver, uint16_t aType,
              nsISupports* aResult, mozilla::ErrorResult& rv);
   // Touch event handlers already on nsINode
-  already_AddRefed<nsIDOMTouch>
-    CreateTouch(nsIDOMWindow* aView, nsISupports* aTarget,
+  already_AddRefed<mozilla::dom::Touch>
+    CreateTouch(nsIDOMWindow* aView, mozilla::dom::EventTarget* aTarget,
                 int32_t aIdentifier, int32_t aPageX, int32_t aPageY,
                 int32_t aScreenX, int32_t aScreenY, int32_t aClientX,
                 int32_t aClientY, int32_t aRadiusX, int32_t aRadiusY,
                 float aRotationAngle, float aForce);
   already_AddRefed<nsIDOMTouchList> CreateTouchList();
   already_AddRefed<nsIDOMTouchList>
-    CreateTouchList(nsIDOMTouch* aTouch,
-                    const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
+    CreateTouchList(mozilla::dom::Touch& aTouch,
+                    const mozilla::dom::Sequence<mozilla::dom::OwningNonNull<mozilla::dom::Touch> >& aTouches);
   already_AddRefed<nsIDOMTouchList>
-    CreateTouchList(const mozilla::dom::Sequence<nsRefPtr<nsIDOMTouch> >& aTouches);
+    CreateTouchList(const mozilla::dom::Sequence<mozilla::dom::OwningNonNull<mozilla::dom::Touch> >& aTouches);
 
-  nsHTMLDocument* AsHTMLDocument();
+  virtual nsHTMLDocument* AsHTMLDocument() { return nullptr; }
 
 private:
   uint64_t mWarnedAbout;
@@ -2147,12 +2143,6 @@ protected:
   nsCString GetContentTypeInternal() const
   {
     return mContentType;
-  }
-
-  inline void
-  SetDocumentDirectionality(mozilla::Directionality aDir)
-  {
-    mDirectionality = aDir;
   }
 
   // All document WrapNode implementations MUST call this method.  A
@@ -2334,9 +2324,6 @@ protected:
   // are immutable - see nsSandboxFlags.h for the possible flags.
   uint32_t mSandboxFlags;
 
-  // The root directionality of this document.
-  mozilla::Directionality mDirectionality;
-
   nsCString mContentLanguage;
 private:
   nsCString mContentType;
@@ -2430,7 +2417,7 @@ NS_DEFINE_STATIC_IID_ACCESSOR(nsIDocument, NS_IDOCUMENT_IID)
  * event is dispatched, if necessary, when the outermost mozAutoSubtreeModified
  * object is deleted.
  */
-class NS_STACK_CLASS mozAutoSubtreeModified
+class MOZ_STACK_CLASS mozAutoSubtreeModified
 {
 public:
   /**
@@ -2467,7 +2454,7 @@ private:
   nsCOMPtr<nsIDocument> mSubtreeOwner;
 };
 
-class NS_STACK_CLASS nsAutoSyncOperation
+class MOZ_STACK_CLASS nsAutoSyncOperation
 {
 public:
   nsAutoSyncOperation(nsIDocument* aDocument);
@@ -2490,18 +2477,8 @@ NS_NewSVGDocument(nsIDocument** aInstancePtrResult);
 nsresult
 NS_NewImageDocument(nsIDocument** aInstancePtrResult);
 
-#ifdef MOZ_MEDIA
 nsresult
 NS_NewVideoDocument(nsIDocument** aInstancePtrResult);
-#endif
-
-already_AddRefed<mozilla::dom::DocumentFragment>
-NS_NewDocumentFragment(nsNodeInfoManager* aNodeInfoManager,
-                       mozilla::ErrorResult& aRv);
-
-nsresult
-NS_NewDocumentFragment(nsIDOMDocumentFragment** aInstancePtrResult,
-                       nsNodeInfoManager *aNodeInfoManager);
 
 // Note: it's the caller's responsibility to create or get aPrincipal as needed
 // -- this method will not attempt to get a principal based on aDocumentURI.

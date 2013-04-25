@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -231,12 +230,11 @@ class ParallelSpewer
         spew(SpewOps, "%s%sBAILOUT %d%s", bold(), yellow(), count, reset());
     }
 
-    void beginCompile(HandleFunction fun) {
+    void beginCompile(HandleScript script) {
         if (!active[SpewCompile])
             return;
 
-        spew(SpewCompile, "COMPILE %p:%s:%u",
-             fun.get(), fun->nonLazyScript()->filename(), fun->nonLazyScript()->lineno);
+        spew(SpewCompile, "COMPILE %p:%s:%u", script.get(), script->filename(), script->lineno);
         depth++;
     }
 
@@ -334,9 +332,9 @@ parallel::SpewBailout(uint32_t count)
 }
 
 void
-parallel::SpewBeginCompile(HandleFunction fun)
+parallel::SpewBeginCompile(HandleScript script)
 {
-    spewer.beginCompile(fun);
+    spewer.beginCompile(script);
 }
 
 MethodStatus
@@ -403,7 +401,7 @@ class ParallelIonInvoke
         IonCode *code = ion->method();
         jitcode_ = code->raw();
         enter_ = cx->compartment->ionCompartment()->enterJIT();
-        calleeToken_ = CalleeToToken(callee);
+        calleeToken_ = CalleeToParallelToken(callee);
     }
 
     bool invoke(JSContext *cx) {
@@ -505,10 +503,17 @@ class ParallelDo : public ForkJoinOp
                 return Method_Error;
         }
 
+        if (script->hasParallelIonScript() &&
+            !script->parallelIonScript()->hasInvalidatedCallTarget())
+        {
+            Spew(SpewOps, "Already compiled");
+            return Method_Compiled;
+        }
+
         Spew(SpewOps, "Compiling all reachable functions");
 
         ParallelCompileContext compileContext(cx_);
-        if (!compileContext.appendToWorklist(callee))
+        if (!compileContext.appendToWorklist(script))
             return Method_Error;
 
         MethodStatus status = compileContext.compileTransitively();
@@ -541,8 +546,6 @@ class ParallelDo : public ForkJoinOp
             return true;
         }
 
-        IonScript *ion = script->parallelIonScript();
-        JS_ASSERT(pendingInvalidations.length() == ion->parallelInvalidatedScriptEntries());
         Vector<types::RecompileInfo> invalid(cx_);
         for (uint32_t i = 0; i < pendingInvalidations.length(); i++) {
             JSScript *script = pendingInvalidations[i];
@@ -550,7 +553,6 @@ class ParallelDo : public ForkJoinOp
                 JS_ASSERT(script->hasParallelIonScript());
                 if (!invalid.append(script->parallelIonScript()->recompileInfo()))
                     return false;
-                ion->parallelInvalidatedScriptList()[i] = script;
             }
             pendingInvalidations[i] = NULL;
         }

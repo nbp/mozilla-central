@@ -326,7 +326,7 @@ void
 nsXMLHttpRequest::RootJSResultObjects()
 {
   nsContentUtils::PreserveWrapper(
-    static_cast<nsIDOMEventTarget*>(
+    static_cast<EventTarget*>(
       static_cast<nsDOMEventTargetHelper*>(this)), this);
 }
 
@@ -390,7 +390,7 @@ nsXMLHttpRequest::InitParameters(bool aAnon, bool aSystem)
   // Chrome is always allowed access, so do the permission check only
   // for non-chrome pages.
   if (!nsContentUtils::IsCallerChrome()) {
-    nsCOMPtr<nsIDocument> doc = do_QueryInterface(window->GetExtantDocument());
+    nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
     if (!doc) {
       return;
     }
@@ -560,7 +560,7 @@ static void LogMessage(const char* aWarning, nsPIDOMWindow* aWindow)
 {
   nsCOMPtr<nsIDocument> doc;
   if (aWindow) {
-    doc = do_QueryInterface(aWindow->GetExtantDocument());
+    doc = aWindow->GetExtantDoc();
   }
   nsContentUtils::ReportToConsole(nsIScriptError::warningFlag,
                                   "DOM", doc,
@@ -2149,7 +2149,7 @@ nsXMLHttpRequest::OnStopRequest(nsIRequest *request, nsISupports *ctxt, nsresult
   if (mIsHtml) {
     NS_ASSERTION(!(mState & XML_HTTP_REQUEST_SYNCLOOPING),
       "We weren't supposed to support HTML parsing with XHR!");
-    nsCOMPtr<nsIDOMEventTarget> eventTarget = do_QueryInterface(mResponseXML);
+    nsCOMPtr<EventTarget> eventTarget = do_QueryInterface(mResponseXML);
     nsEventListenerManager* manager = eventTarget->GetListenerManager(true);
     manager->AddEventListenerByType(new nsXHRParseEndListener(this),
                                     NS_LITERAL_STRING("DOMContentLoaded"),
@@ -2861,7 +2861,7 @@ nsXMLHttpRequest::Send(nsIVariant* aVariant, const Nullable<RequestBody>& aBody)
         nsCOMPtr<nsPIDOMWindow> suspendedWindow(do_QueryInterface(topWindow));
         if (suspendedWindow &&
             (suspendedWindow = suspendedWindow->GetCurrentInnerWindow())) {
-          suspendedDoc = do_QueryInterface(suspendedWindow->GetExtantDocument());
+          suspendedDoc = suspendedWindow->GetExtantDoc();
           if (suspendedDoc) {
             suspendedDoc->SuppressEventHandling();
           }

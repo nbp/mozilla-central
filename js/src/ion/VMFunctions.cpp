@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -70,26 +69,6 @@ InvokeFunction(JSContext *cx, HandleFunction fun0, uint32_t argc, Value *argv, V
             if (!fun)
                 return false;
         }
-
-        // In order to prevent massive bouncing between Ion and JM, see if we keep
-        // hitting functions that are uncompilable.
-        if (cx->methodJitEnabled && !fun->nonLazyScript()->canIonCompile()) {
-            RawScript script = GetTopIonJSScript(cx);
-            if (script->hasIonScript() &&
-                ++script->ion->slowCallCount >= js_IonOptions.slowCallLimit)
-            {
-                AutoFlushCache afc("InvokeFunction");
-
-                // Poison the script so we don't try to run it again. This will
-                // trigger invalidation.
-                ForbidCompilation(cx, script);
-            }
-        }
-
-        // When caller runs in IM, but callee not, we take a slow path to the interpreter.
-        // This has a significant overhead. In order to decrease the number of times this happens,
-        // the useCount gets incremented faster to compile this function in IM and use the fastpath.
-        fun->nonLazyScript()->incUseCount(js_IonOptions.slowCallIncUseCount);
     }
 
     // TI will return false for monitorReturnTypes, meaning there is no
@@ -495,9 +474,8 @@ SPSExit(JSContext *cx, HandleScript script)
 bool
 OperatorIn(JSContext *cx, HandleValue key, HandleObject obj, JSBool *out)
 {
-    RootedValue dummy(cx); // Disregards atomization changes: no way to propagate.
     RootedId id(cx);
-    if (!FetchElementId(cx, obj, key, &id, &dummy))
+    if (!ValueToId<CanGC>(cx, key, &id))
         return false;
 
     RootedObject obj2(cx);
@@ -510,9 +488,26 @@ OperatorIn(JSContext *cx, HandleValue key, HandleObject obj, JSBool *out)
 }
 
 bool
+OperatorInI(JSContext *cx, uint32_t index, HandleObject obj, JSBool *out)
+{
+    RootedValue key(cx, Int32Value(index));
+    return OperatorIn(cx, key, obj, out);
+}
+
+bool
 GetIntrinsicValue(JSContext *cx, HandlePropertyName name, MutableHandleValue rval)
 {
-    return cx->global()->getIntrinsicValue(cx, name, rval);
+    if (!cx->global()->getIntrinsicValue(cx, name, rval))
+        return false;
+
+    // This function is called when we try to compile a cold getintrinsic
+    // op. MCallGetIntrinsicValue has an AliasSet of None for optimization
+    // purposes, as its side effect is not observable from JS. We are
+    // guaranteed to bail out after this function, but because of its AliasSet,
+    // type info will not be reflowed. Manually monitor here.
+    types::TypeScript::Monitor(cx, rval);
+
+    return true;
 }
 
 bool
@@ -526,7 +521,10 @@ CreateThis(JSContext *cx, HandleObject callee, MutableHandleValue rval)
             JSScript *script = fun->getOrCreateScript(cx);
             if (!script || !script->ensureHasTypes(cx))
                 return false;
-            rval.set(ObjectValue(*CreateThisForFunction(cx, callee, false)));
+            JSObject *thisObj = CreateThisForFunction(cx, callee, false);
+            if (!thisObj)
+                return false;
+            rval.set(ObjectValue(*thisObj));
         }
     }
 
@@ -639,6 +637,9 @@ DebugEpilogue(JSContext *cx, BaselineFrame *frame, JSBool ok)
     if (frame->isNonEvalFunctionFrame()) {
         JS_ASSERT_IF(ok, frame->hasReturnValue());
         DebugScopes::onPopCall(frame, cx);
+    } else if (frame->isStrictEvalFrame()) {
+        JS_ASSERT_IF(frame->hasCallObj(), frame->scopeChain()->asCall().isForEval());
+        DebugScopes::onPopStrictEvalScope(frame);
     }
 
     if (!ok) {
@@ -679,8 +680,8 @@ HandleDebugTrap(JSContext *cx, BaselineFrame *frame, uint8_t *retAddr, JSBool *m
 {
     *mustReturn = false;
 
-    RootedScript script(cx, GetTopIonJSScript(cx));
-    jsbytecode *pc = script->baseline->icEntryFromReturnAddress(retAddr).pc(script);
+    RootedScript script(cx, frame->script());
+    jsbytecode *pc = script->baselineScript()->icEntryFromReturnAddress(retAddr).pc(script);
 
     JS_ASSERT(cx->compartment->debugMode());
     JS_ASSERT(script->stepModeEnabled() || script->hasBreakpointsAt(pc));

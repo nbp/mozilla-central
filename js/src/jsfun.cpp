@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -548,7 +547,7 @@ JS_FRIEND_DATA(Class) js::FunctionClass = {
     JSCLASS_NEW_RESOLVE | JSCLASS_IMPLEMENTS_BARRIERS |
     JSCLASS_HAS_CACHED_PROTO(JSProto_Function),
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     fun_enumerate,
@@ -1103,7 +1102,7 @@ bool
 JSFunction::initializeLazyScript(JSContext *cx)
 {
     JS_ASSERT(isInterpretedLazy());
-    JSFunctionSpec *fs = static_cast<JSFunctionSpec *>(getExtendedSlot(0).toPrivate());
+    const JSFunctionSpec *fs = static_cast<JSFunctionSpec *>(getExtendedSlot(0).toPrivate());
     Rooted<JSFunction*> self(cx, this);
     RootedAtom funAtom(cx, Atomize(cx, fs->selfHostedName, strlen(fs->selfHostedName)));
     if (!funAtom)
@@ -1268,7 +1267,7 @@ OnBadFormal(JSContext *cx, TokenKind tt)
     return false;
 }
 
-JSFunctionSpec js::function_methods[] = {
+const JSFunctionSpec js::function_methods[] = {
 #if JS_HAS_TOSOURCE
     JS_FN(js_toSource_str,   fun_toSource,   0,0),
 #endif

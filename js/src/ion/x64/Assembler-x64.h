@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -160,8 +159,10 @@ static const Register PreBarrierReg = rdx;
 // jitted code.
 static const uint32_t StackAlignment = 16;
 static const bool StackKeptAligned = false;
+static const uint32_t CodeAlignment = 8;
 static const uint32_t NativeFrameSize = sizeof(void*);
 static const uint32_t AlignmentAtPrologue = sizeof(void*);
+static const uint32_t AlignmentMidPrologue = AlignmentAtPrologue;
 
 static const Scale ScalePointer = TimesEight;
 
@@ -348,8 +349,7 @@ class Assembler : public AssemblerX86Shared
         movsd(src, Operand(StackPointer, 0));
     }
     CodeOffsetLabel pushWithPatch(const ImmWord &word) {
-        movq(word, ScratchReg);
-        CodeOffsetLabel label = masm.currentOffset();
+        CodeOffsetLabel label = movWithPatch(word, ScratchReg);
         push(ScratchReg);
         return label;
     }
@@ -509,7 +509,16 @@ class Assembler : public AssemblerX86Shared
     }
 
     void mov(ImmWord word, const Register &dest) {
-        movq(word, dest);
+        // If the word value is in [0,UINT32_MAX], we can use the more compact
+        // movl instruction, which has a 32-bit immediate field which it
+        // zero-extends into the 64-bit register.
+        if (word.value <= UINT32_MAX) {
+            uint32_t value32 = static_cast<uint32_t>(word.value);
+            Imm32 imm32(static_cast<int32_t>(value32));
+            movl(imm32, dest);
+        } else {
+            movq(word, dest);
+        }
     }
     void mov(const Imm32 &imm32, const Register &dest) {
         movl(imm32, dest);
@@ -657,8 +666,8 @@ class Assembler : public AssemblerX86Shared
     // Do not mask shared implementations.
     using AssemblerX86Shared::call;
 
-    void cvttsd2si(const FloatRegister &src, const Register &dest) {
-        masm.cvttsd2si_rr(src.code(), dest.code());
+    void cvttsd2sq(const FloatRegister &src, const Register &dest) {
+        masm.cvttsd2sq_rr(src.code(), dest.code());
     }
     void cvtsq2sd(const Register &src, const FloatRegister &dest) {
         masm.cvtsq2sd_rr(src.code(), dest.code());

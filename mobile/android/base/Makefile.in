@@ -44,6 +44,7 @@ UTIL_JAVA_FILES := \
   $(NULL)
 
 FENNEC_JAVA_FILES = \
+  ANRReporter.java \
   ActivityHandlerHelper.java \
   AlertNotification.java \
   AllCapsTextView.java \
@@ -68,6 +69,7 @@ FENNEC_JAVA_FILES = \
   CameraVideoResultHandler.java \
   CanvasDelegate.java \
   CheckableLinearLayout.java \
+  ClickableWhenDisabledEditText.java \
   SyncPreference.java \
   db/BrowserDB.java \
   db/LocalBrowserDB.java \
@@ -88,6 +90,7 @@ FENNEC_JAVA_FILES = \
   GeckoApplication.java \
   GeckoApp.java \
   GeckoAppShell.java \
+  GeckoActivity.java \
   GeckoBatteryManager.java \
   GeckoConnectivityReceiver.java \
   GeckoEditable.java \
@@ -100,9 +103,12 @@ FENNEC_JAVA_FILES = \
   GeckoMessageReceiver.java \
   GeckoSubMenu.java \
   GeckoPreferences.java \
+  GeckoPreferenceFragment.java \
   GeckoProfile.java \
   GeckoPopupMenu.java \
+  GeckoSmsManager.java \
   GeckoThread.java \
+  GeckoJavaSampler.java \
   GlobalHistory.java \
   GeckoViewsFactory.java \
   HeightChangeAnimation.java \
@@ -129,6 +135,7 @@ FENNEC_JAVA_FILES = \
   PropertyAnimator.java \
   ProfileMigrator.java \
   PromptService.java \
+  Restarter.java \
   sqlite/ByteBufferInputStream.java \
   sqlite/MatrixBlobCursor.java \
   sqlite/SQLiteBridge.java \
@@ -141,6 +148,7 @@ FENNEC_JAVA_FILES = \
   SetupScreen.java \
   ShapedButton.java \
   SiteIdentityPopup.java \
+  SmsManager.java \
   SuggestClient.java \
   SurfaceBits.java \
   Tab.java \
@@ -154,9 +162,17 @@ FENNEC_JAVA_FILES = \
   TextSelectionHandle.java \
   ThumbnailHelper.java \
   TouchEventInterceptor.java \
+  UpdateServiceHelper.java \
   VideoPlayer.java \
   WebAppAllocator.java \
+  WebAppImpl.java \
   ZoomConstraints.java \
+  db/BrowserContract.java \
+  db/BrowserProvider.java \
+  db/FormHistoryProvider.java \
+  db/GeckoProvider.java \
+  db/PasswordsProvider.java \
+  db/TabsProvider.java \
   gfx/Axis.java \
   gfx/BitmapUtils.java \
   gfx/BufferedCairoImage.java \
@@ -196,7 +212,8 @@ FENNEC_JAVA_FILES = \
   gfx/TouchEventHandler.java \
   gfx/ViewTransform.java \
   gfx/VirtualLayer.java \
-  widget/AboutHomeContent.java \
+  widget/AboutHome.java \
+  widget/AboutHomeView.java \
   widget/AboutHomeSection.java \
   widget/AddonsSection.java \
   widget/DateTimePicker.java \
@@ -216,10 +233,6 @@ FENNEC_JAVA_FILES = \
   ReferrerReceiver.java \
   $(NULL)
 
-ifdef MOZ_WEBSMS_BACKEND
-FENNEC_JAVA_FILES += GeckoSmsManager.java
-endif
-
 ifdef MOZ_WEBRTC
 WEBRTC_VIDEO_CAPTURE_JAVA_FILES = \
   CaptureCapabilityAndroid.java \
@@ -234,7 +247,6 @@ endif
 
 ifdef MOZ_ANDROID_ANR_REPORTER
 DEFINES += -DMOZ_ANDROID_ANR_REPORTER=1
-FENNEC_JAVA_FILES += ANRReporter.java
 endif
 
 FENNEC_PP_JAVA_VIEW_FILES = \
@@ -251,30 +263,13 @@ FENNEC_PP_JAVA_VIEW_FILES = \
 
 FENNEC_PP_JAVA_FILES = \
   App.java \
-  MarketplaceApp.java \
+  AppConstants.java \
   WebApp.java \
   WebApps.java \
-  GeckoActivity.java \
-  GeckoAppInfo.java \
-  LauncherShortcuts.java \
-  Restarter.java \
-  db/BrowserContract.java \
-  db/BrowserProvider.java \
-  db/PasswordsProvider.java \
-  db/FormHistoryProvider.java \
-  db/TabsProvider.java \
-  db/GeckoProvider.java \
-  SmsManager.java \
-  UpdateServiceHelper.java \
   $(NULL)
 
 FENNEC_PP_XML_FILES = \
-  res/xml/preferences.xml \
   res/xml/searchable.xml \
-  res/menu/browser_app_menu.xml \
-  res/menu-v11/browser_app_menu.xml \
-  res/menu-large-v11/browser_app_menu.xml \
-  res/menu-xlarge-v11/browser_app_menu.xml \
   $(NULL)
 
 ifneq (,$(findstring -march=armv7,$(OS_CFLAGS)))
@@ -394,11 +389,9 @@ RES_LAYOUT = \
   res/layout/autocomplete_list_item.xml \
   res/layout/awesomebar.xml \
   res/layout/awesomebar_actionbar.xml \
-  res/layout/awesomebar_expandable_list.xml \
   res/layout/awesomebar_folder_row.xml \
   res/layout/awesomebar_header_row.xml \
   res/layout/awesomebar_allpages_list.xml \
-  res/layout/awesomebar_list.xml \
   res/layout/awesomebar_row.xml \
   res/layout/awesomebar_search.xml \
   res/layout/awesomebar_suggestion_row.xml \
@@ -442,6 +435,8 @@ RES_LAYOUT = \
   res/layout/list_item_header.xml \
   res/layout/select_dialog_list.xml \
   res/layout/select_dialog_multichoice.xml \
+  res/layout/select_dialog_singlechoice.xml \
+  res/layout/simple_dropdown_item_1line.xml \
   res/layout/abouthome_addon_row.xml \
   res/layout/abouthome_last_tabs_row.xml \
   res/layout/abouthome_section.xml \
@@ -459,8 +454,6 @@ RES_LAYOUT_LAND_V14 = \
 RES_LAYOUT_LARGE_V11 = \
   res/layout-large-v11/awesomebar_search.xml \
   res/layout-large-v11/browser_toolbar_menu.xml \
-  res/layout-large-v11/doorhangerpopup.xml \
-  res/layout-large-v11/site_identity_popup.xml \
   $(NULL)
 
 RES_LAYOUT_LARGE_LAND_V11 = \
@@ -511,6 +504,7 @@ RES_VALUES_LARGE_V11 = \
   res/values-large-v11/dimens.xml \
   res/values-large-v11/layout.xml \
   res/values-large-v11/styles.xml \
+  res/values-large-v11/themes.xml \
   $(NULL)
 
 RES_VALUES_LARGE_LAND_V11 = \
@@ -532,8 +526,12 @@ RES_VALUES_V14 = \
   $(NULL)
 
 RES_XML = \
-	$(SYNC_RES_XML) \
-	$(NULL)
+  res/xml/preference_headers.xml \
+  res/xml/preferences_general.xml \
+  res/xml/preferences_privacy.xml \
+  res/xml/preferences_content.xml \
+  $(SYNC_RES_XML) \
+  $(NULL)
 
 RES_ANIM = \
   res/anim/awesomebar_fade_in.xml \
@@ -985,20 +983,30 @@ RES_COLOR = \
   res/color/awesome_bar_title.xml \
   res/color/awesome_bar_title_hint.xml \
   res/color/menu_item_title.xml \
+  res/color/primary_text.xml \
+  res/color/primary_text_inverse.xml \
+  res/color/secondary_text.xml \
+  res/color/secondary_text_inverse.xml \
   res/color/select_item_multichoice.xml \
+  res/color/tertiary_text.xml \
+  res/color/tertiary_text_inverse.xml \
   $(NULL)
 
 RES_MENU = \
+  res/menu/abouthome_topsites_contextmenu.xml \
   res/menu/awesomebar_contextmenu.xml \
+  res/menu/browser_app_menu.xml \
   res/menu/gecko_app_menu.xml \
   res/menu/titlebar_contextmenu.xml \
-  res/menu/abouthome_topsites_contextmenu.xml \
+  res/menu-large-v11/browser_app_menu.xml \
+  res/menu-v11/browser_app_menu.xml \
+  res/menu-xlarge-v11/browser_app_menu.xml \
   $(NULL)
 
 JAVA_CLASSPATH = $(ANDROID_SDK)/android.jar
 
 ifdef MOZ_CRASHREPORTER
-FENNEC_PP_JAVA_FILES += CrashReporter.java
+FENNEC_JAVA_FILES += CrashReporter.java
 RES_DRAWABLE_MDPI += res/drawable-mdpi/crash_reporter.png
 RES_LAYOUT += res/layout/crash_reporter.xml
 endif
@@ -1037,6 +1045,7 @@ MOZ_ANDROID_DRAWABLES += \
   mobile/android/base/resources/drawable/tab_thumbnail.xml                      \
   mobile/android/base/resources/drawable/tabs_level.xml                         \
   mobile/android/base/resources/drawable/tabs_panel_indicator.xml               \
+  mobile/android/base/resources/drawable/textbox_bg.xml                         \
   mobile/android/base/resources/drawable/webapp_titlebar_bg.xml                 \
   $(NULL)
 
@@ -1146,6 +1155,7 @@ jars:
 
 CLASSES_WITH_JNI= \
     org.mozilla.gecko.GeckoAppShell \
+		org.mozilla.gecko.GeckoJavaSampler \
     $(NULL)
 
 ifdef MOZ_WEBSMS_BACKEND

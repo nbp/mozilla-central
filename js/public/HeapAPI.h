@@ -1,8 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- */
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef js_heap_api_h___
 #define js_heap_api_h___
@@ -149,9 +149,8 @@ GCThingIsMarkedGray(void *thing)
 }
 
 static JS_ALWAYS_INLINE bool
-IsIncrementalBarrierNeededOnGCThing(void *thing, JSGCTraceKind kind)
+IsIncrementalBarrierNeededOnGCThing(shadow::Runtime *rt, void *thing, JSGCTraceKind kind)
 {
-    shadow::Runtime *rt = js::gc::GetGCThingRuntime(thing);
     if (!rt->needsBarrier_)
         return false;
     js::Zone *zone = GetGCThingZone(thing);

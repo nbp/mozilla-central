@@ -43,10 +43,12 @@ public:
    * Transfers ownership of aEngine to the new AudioNodeStream.
    */
   AudioNodeStream(AudioNodeEngine* aEngine,
-                  MediaStreamGraph::AudioNodeStreamKind aKind)
+                  MediaStreamGraph::AudioNodeStreamKind aKind,
+                  uint32_t aNumberOfInputChannels = 0)
     : ProcessedMediaStream(nullptr),
       mEngine(aEngine),
-      mKind(aKind)
+      mKind(aKind),
+      mNumberOfInputChannels(aNumberOfInputChannels)
   {
     // AudioNodes are always producing data
     mHasCurrentData = true;
@@ -74,6 +76,7 @@ public:
                                   double aStreamTime);
   virtual void ProduceOutput(GraphTime aFrom, GraphTime aTo);
   TrackTicks GetCurrentPosition();
+  bool AllInputsFinished() const;
 
   // Any thread
   AudioNodeEngine* Engine() { return mEngine; }
@@ -90,6 +93,8 @@ protected:
   AudioChunk mLastChunk;
   // Whether this is an internal or external stream
   MediaStreamGraph::AudioNodeStreamKind mKind;
+  // The number of input channels that this stream requires. 0 means don't care.
+  uint32_t mNumberOfInputChannels;
 };
 
 }

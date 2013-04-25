@@ -424,8 +424,9 @@ static void RemoveArg(char **argv)
  * @param aArg the parameter to check. Must be lowercase.
  * @param aCheckOSInt if true returns ARG_BAD if the osint argument is present
  *        when aArg is also present.
- * @param if non-null, the -arg <data> will be stored in this pointer. This is *not*
- *        allocated, but rather a pointer to the argv data.
+ * @param aParam if non-null, the -arg <data> will be stored in this pointer.
+ *        This is *not* allocated, but rather a pointer to the argv data.
+ * @param aRemArg if true, the argument is removed from the gArgv array.
  */
 static ArgResult
 CheckArg(const char* aArg, bool aCheckOSInt = false, const char **aParam = nullptr, bool aRemArg = true)
@@ -617,7 +618,6 @@ NS_IMETHODIMP
 nsXULAppInfo::GetVendor(nsACString& aResult)
 {
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    NS_WARNING("Attempt to get unavailable information in content process.");
     return NS_ERROR_NOT_AVAILABLE;
   }
   aResult.Assign(gAppData->vendor);
@@ -629,7 +629,6 @@ NS_IMETHODIMP
 nsXULAppInfo::GetName(nsACString& aResult)
 {
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    NS_WARNING("Attempt to get unavailable information in content process.");
     return NS_ERROR_NOT_AVAILABLE;
   }
   aResult.Assign(gAppData->name);
@@ -641,7 +640,6 @@ NS_IMETHODIMP
 nsXULAppInfo::GetID(nsACString& aResult)
 {
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    NS_WARNING("Attempt to get unavailable information in content process.");
     return NS_ERROR_NOT_AVAILABLE;
   }
   aResult.Assign(gAppData->ID);
@@ -695,7 +693,6 @@ NS_IMETHODIMP
 nsXULAppInfo::GetUAName(nsACString& aResult)
 {
   if (XRE_GetProcessType() == GeckoProcessType_Content) {
-    NS_WARNING("Attempt to get unavailable information in content process.");
     return NS_ERROR_NOT_AVAILABLE;
   }
   aResult.Assign(gAppData->UAName);
@@ -3399,7 +3396,8 @@ XREMain::XRE_mainStartup(bool* aExitFlag)
   // An environment variable is used instead of a pref on X11 platforms because we start having 
   // access to prefs long after the first call to XOpenDisplay which is hard to change due to 
   // interdependencies in the initialization.
-  if (PR_GetEnv("MOZ_USE_OMTC")) {
+  if (PR_GetEnv("MOZ_USE_OMTC") ||
+      PR_GetEnv("MOZ_OMTC_ENABLED")) {
     XInitThreads();
   }
 #endif
@@ -3893,7 +3891,7 @@ XREMain::XRE_mainRun()
 int
 XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 {
-  profiler_init();
+  GeckoProfilerInitRAII profilerGuard;
   PROFILER_LABEL("Startup", "XRE_Main");
 
   nsresult rv = NS_OK;
@@ -3994,7 +3992,6 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
     MOZ_gdk_display_close(mGdkDisplay);
 #endif
 
-    profiler_shutdown();
     rv = LaunchChild(mNativeApp, true);
 
 #ifdef MOZ_CRASHREPORTER
@@ -4016,8 +4013,6 @@ XREMain::XRE_main(int argc, char* argv[], const nsXREAppData* aAppData)
 #endif
 
   XRE_DeinitCommandLine();
-
-  profiler_shutdown();
 
   return NS_FAILED(rv) ? 1 : 0;
 }
@@ -4091,7 +4086,7 @@ public:
 int
 XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
 {
-  profiler_init();
+  GeckoProfilerInitRAII profilerGuard;
   PROFILER_LABEL("Startup", "XRE_Main");
 
   nsresult rv = NS_OK;
@@ -4132,7 +4127,6 @@ XRE_mainMetro(int argc, char* argv[], const nsXREAppData* aAppData)
   // thread that called XRE_metroStartup.
   NS_ASSERTION(!xreMainPtr->mScopedXPCom,
                "XPCOM Shutdown hasn't occured, and we are exiting.");
-  profiler_shutdown();
   return 0;
 }
 

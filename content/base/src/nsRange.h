@@ -65,6 +65,9 @@ public:
   static nsresult CreateRange(nsIDOMNode* aStartParent, int32_t aStartOffset,
                               nsIDOMNode* aEndParent, int32_t aEndOffset,
                               nsIDOMRange** aRange);
+  static nsresult CreateRange(nsINode* aStartParent, int32_t aStartOffset,
+                              nsINode* aEndParent, int32_t aEndOffset,
+                              nsRange** aRange);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(nsRange, nsIDOMRange)
@@ -256,7 +259,7 @@ protected:
    */
   nsINode* GetRegisteredCommonAncestor();
 
-  struct NS_STACK_CLASS AutoInvalidateSelection
+  struct MOZ_STACK_CLASS AutoInvalidateSelection
   {
     AutoInvalidateSelection(nsRange* aRange) : mRange(aRange)
     {

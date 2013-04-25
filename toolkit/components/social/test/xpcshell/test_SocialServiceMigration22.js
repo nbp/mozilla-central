@@ -16,6 +16,7 @@ function run_test() {
   let manifest = { // normal provider
     name: "provider 1",
     origin: "https://example1.com",
+    builtin: true // as of fx22 this should be true for default prefs
   };
 
   DEFAULT_PREFS.setCharPref(manifest.origin, JSON.stringify(manifest));
@@ -25,6 +26,8 @@ function run_test() {
              createInstance(Ci.nsISupportsString);
   let active = {};
   active[manifest.origin] = 1;
+  // bad.origin tests that a missing manifest does not break migration, bug 859715
+  active["bad.origin"] = 1;
   activeVal.data = JSON.stringify(active);
   Services.prefs.setComplexValue("social.activeProviders",
                                  Ci.nsISupportsString, activeVal);
@@ -45,16 +48,18 @@ function testMigration(manifest, next) {
   // we should be set as a user level pref after migration
   do_check_false(MANIFEST_PREFS.prefHasUserValue(manifest.origin));
   // we need to access the providers for everything to initialize
-  SocialService.getProviderList(function(providers) {
-    do_check_true(SocialService.enabled);
-    do_check_true(Services.prefs.prefHasUserValue("social.activeProviders"));
+  yield SocialService.getProviderList(next);
+  do_check_true(SocialService.enabled);
+  do_check_true(Services.prefs.prefHasUserValue("social.activeProviders"));
 
-    let activeProviders;
-    let pref = Services.prefs.getComplexValue("social.activeProviders",
-                                              Ci.nsISupportsString);
-    activeProviders = JSON.parse(pref);
-    do_check_true(activeProviders.has(manifest.origin));
-    do_check_true(MANIFEST_PREFS.prefHasUserValue(manifest.origin));
-  });
-  yield true;
+  let activeProviders;
+  let pref = Services.prefs.getComplexValue("social.activeProviders",
+                                            Ci.nsISupportsString);
+  activeProviders = JSON.parse(pref);
+  do_check_true(activeProviders[manifest.origin]);
+  do_check_true(MANIFEST_PREFS.prefHasUserValue(manifest.origin));
+  do_check_true(JSON.parse(DEFAULT_PREFS.getCharPref(manifest.origin)).builtin);
+
+  // bug 859715, this should have been removed during migration
+  do_check_false(!!activeProviders["bad.origin"]);
 }

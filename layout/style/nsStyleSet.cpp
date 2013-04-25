@@ -138,7 +138,7 @@ nsStyleSet::SizeOfIncludingThis(nsMallocSizeOfFun aMallocSizeOf) const
   return n;
 }
 
-nsresult
+void
 nsStyleSet::Init(nsPresContext *aPresContext)
 {
   mFirstLineRule = new nsEmptyStyleRule;
@@ -149,8 +149,6 @@ nsStyleSet::Init(nsPresContext *aPresContext)
 
   GatherRuleProcessors(eAnimationSheet);
   GatherRuleProcessors(eTransitionSheet);
-
-  return NS_OK;
 }
 
 nsresult
@@ -1728,12 +1726,20 @@ nsStyleSet::ReparentStyleContext(nsStyleContext* aStyleContext,
     flags |= eDoAnimation;
   }
 
+  if (aElement && aElement->IsRootOfAnonymousSubtree()) {
+    // For anonymous subtree roots, don't tweak "display" value based on
+    // whether or not the parent is styled as a flex container. (If the parent
+    // has anonymous-subtree kids, then we know it's not actually going to get
+    // a flex container frame, anyway.)
+    flags |= eSkipFlexItemStyleFixup;
+  }
+
   return GetContext(aNewParentContext, ruleNode, visitedRuleNode,
                     pseudoTag, pseudoType,
                     aElement, flags);
 }
 
-struct StatefulData : public StateRuleProcessorData {
+struct MOZ_STACK_CLASS StatefulData : public StateRuleProcessorData {
   StatefulData(nsPresContext* aPresContext, Element* aElement,
                nsEventStates aStateMask, TreeMatchContext& aTreeMatchContext)
     : StateRuleProcessorData(aPresContext, aElement, aStateMask,
@@ -1793,7 +1799,7 @@ nsStyleSet::HasStateDependentStyle(nsPresContext*       aPresContext,
   return data.mHint;
 }
 
-struct AttributeData : public AttributeRuleProcessorData {
+struct MOZ_STACK_CLASS AttributeData : public AttributeRuleProcessorData {
   AttributeData(nsPresContext* aPresContext,
                 Element* aElement, nsIAtom* aAttribute, int32_t aModType,
                 bool aAttrHasChanged, TreeMatchContext& aTreeMatchContext)

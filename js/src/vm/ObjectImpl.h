@@ -1,9 +1,8 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=78:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #ifndef ObjectImpl_h___
 #define ObjectImpl_h___
@@ -25,6 +24,7 @@ namespace js {
 
 class Debugger;
 class ObjectImpl;
+class Nursery;
 ForwardDeclare(Shape);
 
 class AutoPropDescArrayRooter;
@@ -560,11 +560,11 @@ struct uint8_clamped {
 };
 
 /* Note that we can't use std::numeric_limits here due to uint8_clamped. */
-template<typename T> static inline const bool TypeIsFloatingPoint() { return false; }
+template<typename T> inline const bool TypeIsFloatingPoint() { return false; }
 template<> inline const bool TypeIsFloatingPoint<float>() { return true; }
 template<> inline const bool TypeIsFloatingPoint<double>() { return true; }
 
-template<typename T> static inline const bool TypeIsUnsigned() { return false; }
+template<typename T> inline const bool TypeIsUnsigned() { return false; }
 template<> inline const bool TypeIsUnsigned<uint8_t>() { return true; }
 template<> inline const bool TypeIsUnsigned<uint16_t>() { return true; }
 template<> inline const bool TypeIsUnsigned<uint32_t>() { return true; }
@@ -931,6 +931,7 @@ class ObjectElements
     friend class ::JSObject;
     friend class ObjectImpl;
     friend class ArrayBufferObject;
+    friend class Nursery;
 
     /* See Flags enum above. */
     uint32_t flags;
@@ -1284,6 +1285,18 @@ class ObjectImpl : public gc::Cell
     inline bool nativeContains(JSContext *cx, PropertyName* name);
     inline bool nativeContains(JSContext *cx, Shape* shape);
 
+    /*
+     * Contextless; can be called from parallel code. Returns false if the
+     * operation would have been effectful.
+     */
+    Shape *nativeLookupPure(jsid id);
+    inline Shape *nativeLookupPure(PropertyId pid);
+    inline Shape *nativeLookupPure(PropertyName *name);
+
+    inline bool nativeContainsPure(jsid id);
+    inline bool nativeContainsPure(PropertyName* name);
+    inline bool nativeContainsPure(Shape* shape);
+
     inline JSClass *getJSClass() const;
     inline bool hasClass(const Class *c) const;
     inline const ObjectOps *getOps() const;
@@ -1400,6 +1413,10 @@ class ObjectImpl : public gc::Cell
          * (which have at least two fixed slots) and can only result in a leak.
          */
         return elements != emptyObjectElements && elements != fixedElements();
+    }
+
+    inline bool hasFixedElements() const {
+        return elements == fixedElements();
     }
 
     inline bool hasEmptyElements() const {

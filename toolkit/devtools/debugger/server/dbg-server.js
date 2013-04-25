@@ -25,7 +25,9 @@ Cu.import("resource://gre/modules/jsdebugger.jsm");
 addDebuggerToGlobal(this);
 
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
-const { defer, resolve, reject } = Promise;
+const { defer, resolve, reject, all } = Promise;
+
+Cu.import("resource://gre/modules/devtools/SourceMap.jsm");
 
 function dumpn(str) {
   if (wantLogging) {
@@ -55,7 +57,7 @@ loadSubScript.call(this, "chrome://global/content/devtools/dbg-transport.js");
 // XPCOM constructors
 const ServerSocket = CC("@mozilla.org/network/server-socket;1",
                         "nsIServerSocket",
-                        "init");
+                        "initSpecialConnection");
 
 /***
  * Public API
@@ -212,14 +214,14 @@ var DebuggerServer = {
       return true;
     }
 
-    let localOnly = false;
+    let flags = Ci.nsIServerSocket.KeepWhenOffline;
     // A preference setting can force binding on the loopback interface.
     if (Services.prefs.getBoolPref("devtools.debugger.force-local")) {
-      localOnly = true;
+      flags |= Ci.nsIServerSocket.LoopbackOnly;
     }
 
     try {
-      let socket = new ServerSocket(aPort, localOnly, 4);
+      let socket = new ServerSocket(aPort, flags, 4);
       socket.asyncListen(this);
       this._listener = socket;
     } catch (e) {
@@ -600,6 +602,17 @@ DebuggerServerConnection.prototype = {
     return null;
   },
 
+  _unknownError: function DSC__unknownError(aPrefix, aError) {
+    let errorString = safeErrorString(aError);
+    errorString += "\n" + aError.stack;
+    Cu.reportError(errorString);
+    dumpn(errorString);
+    return {
+      error: "unknownError",
+      message: (aPrefix + "': " + errorString)
+    };
+  },
+
   // Transport hooks.
 
   /**
@@ -622,12 +635,9 @@ DebuggerServerConnection.prototype = {
       try {
         instance = new actor();
       } catch (e) {
-        Cu.reportError(e);
-        this.transport.send({
-          error: "unknownError",
-          message: ("error occurred while creating actor '" + actor.name +
-                    "': " + safeErrorString(e))
-        });
+        this.transport.send(this._unknownError(
+          "Error occurred while creating actor '" + actor.name,
+          e));
       }
       instance.parentID = actor.parentID;
       // We want the newly-constructed actor to completely replace the factory
@@ -639,16 +649,14 @@ DebuggerServerConnection.prototype = {
     }
 
     var ret = null;
-
     // Dispatch the request to the actor.
     if (actor.requestTypes && actor.requestTypes[aPacket.type]) {
       try {
         ret = actor.requestTypes[aPacket.type].bind(actor)(aPacket);
       } catch(e) {
-        Cu.reportError(e);
-        ret = { error: "unknownError",
-                message: ("error occurred while processing '" + aPacket.type +
-                          "' request: " + safeErrorString(e)) };
+        this.transport.send(this._unknownError(
+          "error occurred while processing '" + aPacket.type,
+          e));
       }
     } else {
       ret = { error: "unrecognizedPacketType",
@@ -663,12 +671,19 @@ DebuggerServerConnection.prototype = {
       return;
     }
 
-    resolve(ret).then(function(returnPacket) {
-      if (!returnPacket.from) {
-        returnPacket.from = aPacket.to;
-      }
-      this.transport.send(returnPacket);
-    }.bind(this));
+    resolve(ret)
+      .then(null, (e) => {
+        return this._unknownError(
+          "error occurred while processing '" + aPacket.type,
+          e);
+      })
+      .then(function (aResponse) {
+        if (!aResponse.from) {
+          aResponse.from = aPacket.to;
+        }
+        return aResponse;
+      })
+      .then(this.transport.send.bind(this.transport));
   },
 
   /**

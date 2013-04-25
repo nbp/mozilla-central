@@ -1,6 +1,5 @@
 /* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -36,6 +35,10 @@
 #include "frontend/Parser.h"
 #include "vm/Debugger.h"
 #include "vm/Shape.h"
+
+#ifdef JS_ASMJS
+#include "ion/AsmJSModule.h"
+#endif
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -614,6 +617,12 @@ JS_SetScriptUserBit(JSScript *script, bool b)
     script->userBit = b;
 }
 
+JS_PUBLIC_API(bool)
+JS_GetScriptIsSelfHosted(JSScript *script)
+{
+    return script->selfHosted;
+}
+
 /***************************************************************************/
 
 JS_PUBLIC_API(void)
@@ -918,18 +927,46 @@ JS_DumpCompartmentPCCounts(JSContext *cx)
         if (script->hasScriptCounts && script->enclosingScriptsCompiledSuccessfully())
             JS_DumpPCCounts(cx, script);
     }
+
+#if defined(JS_ASMJS) && defined(DEBUG)
+    for (unsigned thingKind = FINALIZE_OBJECT0; thingKind < FINALIZE_OBJECT_LIMIT; thingKind++) {
+        for (CellIter i(cx->zone(), (AllocKind) thingKind); !i.done(); i.next()) {
+            JSObject *obj = i.get<JSObject>();
+            if (obj->compartment() != cx->compartment)
+                continue;
+
+            if (IsAsmJSModuleObject(obj)) {
+                AsmJSModule &module = AsmJSModuleObjectToModule(obj);
+
+                Sprinter sprinter(cx);
+                if (!sprinter.init())
+                    return;
+
+                fprintf(stdout, "--- Asm.js Module ---\n");
+
+                for (size_t i = 0; i < module.numFunctionCounts(); i++) {
+                    ion::IonScriptCounts *counts = module.functionCounts(i);
+                    DumpIonScriptCounts(&sprinter, counts);
+                }
+
+                fputs(sprinter.string(), stdout);
+                fprintf(stdout, "--- END Asm.js Module ---\n");
+            }
+        }
+    }
+#endif
 }
 
 JS_PUBLIC_API(JSObject *)
 JS_UnwrapObject(JSObject *obj)
 {
-    return UnwrapObject(obj);
+    return UncheckedUnwrap(obj);
 }
 
 JS_PUBLIC_API(JSObject *)
 JS_UnwrapObjectAndInnerize(JSObject *obj)
 {
-    return UnwrapObject(obj, /* stopAtOuter = */ false);
+    return UncheckedUnwrap(obj, /* stopAtOuter = */ false);
 }
 
 JS_FRIEND_API(JSBool)

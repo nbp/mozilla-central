@@ -260,7 +260,7 @@
             <scrollbox id="start-scrollbox" orient="horizontal" flex="1">
             <vbox id="start-topsites" class="meta-section">
               <label class="meta-section-title" value="&startTopSitesHeader.label;"/>
-              <richgrid id="start-topsites-grid" seltype="multiple" flex="1"/>
+              <richgrid id="start-topsites-grid" rows="3" columns="3" seltype="multiple" flex="1"/>
             </vbox>
             <vbox id="start-bookmarks" class="meta-section">
               <label class="meta-section-title" value="&startBookmarksHeader.label;"
@@ -283,7 +283,7 @@
             <scrollbox id="snapped-scrollbox" orient="vertical" flex="1">
               <vbox id="snapped-topsites">
                 <label class="meta-section-title" value="&startTopSitesHeader.label;"/>
-                <!--  TODO bug 835999 -->
+                <richgrid id="snapped-topsites-grid" rows="8" columns="1" flex="1"/>
               </vbox>
               <label class="meta-section-title" value="&startBookmarksHeader.label;"
                 onclick="PanelUI.show('bookmarks-container');"/>
@@ -294,7 +294,7 @@
             </scrollbox>
           </vbox>
           <!-- Autocompletion interface -->
-          <box id="start-autocomplete"/>
+          <box id="start-autocomplete" observes="bcast_windowState"/>
         </hbox>
       </vbox> <!-- end tray -->
 
@@ -314,11 +314,12 @@
     <!-- Windows 8 Appbar -->
     <appbar id="appbar" mousethrough="never" observes="bcast_windowState">
       <!-- contextual actions temporarily hidden, pending #800996 -->
-      <hbox id="contextualactions-tray" flex="1" hidden="true">
-        <toolbarbutton id="delete-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('delete')"/>
-        <toolbarbutton id="restore-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('restore')"/>
-        <toolbarbutton id="pin-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('pin')"/>
-        <toolbarbutton id="unpin-selected-button" hidden="true" oncommand="Appbar.dispatchContextualAction('unpin')"/>
+      <hbox id="contextualactions-tray" flex="1">
+        <toolbarbutton id="delete-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('delete')"/>
+        <toolbarbutton id="restore-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('restore')"/>
+        <toolbarbutton id="pin-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('pin')"/>
+        <toolbarbutton id="unpin-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('unpin')"/>
+        <toolbarbutton id="clear-selected-button" hidden="true" fade="true" oncommand="Appbar.dispatchContextualAction('clear')"/>
       </hbox>
       <hbox flex="1">
         <toolbarbutton id="download-button" oncommand="Appbar.onDownloadButton()"/>
@@ -334,7 +335,7 @@
       </hbox>
     </appbar>
 
-    <vbox id="panel-container" hidden="true" class="window-width window-height meta">
+    <vbox id="panel-container" hidden="true" class="window-width window-height meta" observes="bcast_windowState">
       <hbox id="panel-header">
         <toolbarbutton id="panel-close-button" command="cmd_panel"/>
 
@@ -349,18 +350,18 @@
         </menulist>
       </hbox>
 
-      <deck id="panel-items" selectedIndex="0" flex="1">
+      <deck id="panel-items" selectedIndex="0" flex="1" >
         <scrollbox id="bookmarks-container" flex="1">
-          <richgrid id="bookmarks-list" seltype="single" flex="1"/>
+          <richgrid id="bookmarks-list" class="canSnapTiles" seltype="single" flex="1"/>
         </scrollbox>
         <scrollbox id="history-container" flex="1">
-          <richgrid id="history-list" seltype="single" flex="1"/>
+          <richgrid id="history-list" class="canSnapTiles" seltype="single" flex="1"/>
         </scrollbox>
         <scrollbox id="downloads-container" flex="1">
-          <richgrid id="downloads-list" seltype="single" flex="1"/>
+          <richgrid id="downloads-list" class="canSnapTiles" seltype="single" flex="1"/>
         </scrollbox>
         <scrollbox id="remotetabs-container" flex="1">
-          <richgrid id="remotetabs-list" seltype="single" flex="1"/>
+          <richgrid id="remotetabs-list" class="canSnapTiles" seltype="single" flex="1"/>
         </scrollbox>
         <vbox id="console-container" flex="1">
           <vbox id="console-header" class="panel-list">
@@ -460,8 +461,15 @@
         </hbox>
       </settings>
       <setting pref="signon.rememberSignons" title="&optionsHeader.privacy.passwords.label;" type="bool"/>
-      <settings id="prefs-donottrack" label="&optionsHeader.privacy.doNotTrack.title;">
-        <setting pref="privacy.donottrackheader.enabled" title="&optionsHeader.privacy.doNotTrack.label;" type="bool"/>
+      <settings id="prefs-dnt" label="&doNotTrack.title;">
+        <description>&doNotTrack.desc;</description>
+        <setting id="prefs-dnt-value" pref="privacy.donottrackheader.value" onpreferencechanged="PreferencesPanelView.onDNTPreferenceChanged()" type="radio" >
+          <radiogroup id="prefs-dnt-options">
+            <radio id="prefs-dnt-notrack" label="&doNotTrack.options.trackingNotOkay;" value="1"/>
+            <radio id="prefs-dnt-nopref" label="&doNotTrack.options.noPreference;" value="-1"/>
+            <radio id="prefs-dnt-oktrack" label="&doNotTrack.options.trackingOkay;" value="0"/>
+          </radiogroup>
+        </setting>
       </settings>
     </flyoutpanel>
 
@@ -675,6 +683,11 @@
       </vbox>
     </hbox>
   </stack>
+
+  <html:div id="overlay-back" class="overlay-button"
+            observes="cmd_back" onclick="CommandUpdater.doCommand('cmd_back');"></html:div>
+  <html:div id="overlay-plus" class="overlay-button"
+            observes="cmd_back" onclick="CommandUpdater.doCommand('cmd_newTab');"></html:div>
 
   <svg:svg height="0">
     <svg:clipPath id="forward-button-clip-path" clipPathUnits="objectBoundingBox">

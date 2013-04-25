@@ -124,6 +124,7 @@ public:
                 __android_log_print(ANDROID_LOG_INFO, "AndroidBridge",
                                     "###!!!!!!! Something's grabbing the JNIEnv from the wrong thread! (thr %p should be %p)",
                                     (void*)pthread_self(), (void*)sBridge->mThread);
+                MOZ_ASSERT(false, "###!!!!!!! Something's grabbing the JNIEnv from the wrong thread!");
                 return nullptr;
             }
             return sBridge->mJNIEnv;
@@ -131,7 +132,7 @@ public:
         }
         return nullptr;
     }
-    
+
     static jclass GetGeckoAppShellClass() {
         return sBridge->mGeckoAppShellClass;
     }
@@ -150,6 +151,14 @@ public:
                                  const nsAString& aModeHint, const nsAString& aActionHint);
 
     static void NotifyIMEChange(const PRUnichar *aText, uint32_t aTextLen, int aStart, int aEnd, int aNewEnd);
+
+    void StartJavaProfiling(int aInterval, int aSamples);
+    void StopJavaProfiling();
+    void PauseJavaProfiling();
+    void UnpauseJavaProfiling();
+    bool GetThreadNameJavaProfiling(uint32_t aThreadId, nsCString & aResult);
+    bool GetFrameNameJavaProfiling(uint32_t aThreadId, uint32_t aSampleId, uint32_t aFrameId, nsCString & aResult);
+    double GetSampleTimeJavaProfiling(uint32_t aThreadId, uint32_t aSampleId);
 
     nsresult CaptureThumbnail(nsIDOMWindow *window, int32_t bufW, int32_t bufH, int32_t tabId, jobject buffer);
     void SendThumbnail(jobject buffer, int32_t tabId, bool success);
@@ -359,6 +368,15 @@ public:
     void RegisterSurfaceTextureFrameListener(jobject surfaceTexture, int id);
     void UnregisterSurfaceTextureFrameListener(jobject surfaceTexture);
 
+    jclass jGeckoJavaSamplerClass;
+    jmethodID jStart;
+    jmethodID jStop;
+    jmethodID jPause;
+    jmethodID jUnpause;
+    jmethodID jGetThreadName;
+    jmethodID jGetFrameName;
+    jmethodID jGetSampleTime;
+
     void GetGfxInfoData(nsACString& aRet);
     nsresult GetProxyForURI(const nsACString & aSpec,
                             const nsACString & aScheme,
@@ -367,7 +385,7 @@ public:
                             nsACString & aResult);
 protected:
     static AndroidBridge *sBridge;
-    static StaticAutoPtr<nsTArray<nsCOMPtr<nsIMobileMessageCallback> > > sSmsRequests;
+    nsTArray<nsCOMPtr<nsIMobileMessageCallback> > mSmsRequests;
 
     // the global JavaVM
     JavaVM *mJavaVM;

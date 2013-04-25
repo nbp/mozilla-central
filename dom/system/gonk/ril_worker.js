@@ -67,13 +67,15 @@ const MMI_MAX_LENGTH_SHORT_CODE = 2;
 
 const MMI_END_OF_USSD = "#";
 
-let RILQUIRKS_CALLSTATE_EXTRA_UINT32 = libcutils.property_get("ro.moz.ril.callstate_extra_int");
+let RILQUIRKS_CALLSTATE_EXTRA_UINT32 = libcutils.property_get("ro.moz.ril.callstate_extra_int", "false") === "true";
 // This may change at runtime since in RIL v6 and later, we get the version
 // number via the UNSOLICITED_RIL_CONNECTED parcel.
-let RILQUIRKS_V5_LEGACY = libcutils.property_get("ro.moz.ril.v5_legacy");
-let RILQUIRKS_REQUEST_USE_DIAL_EMERGENCY_CALL = libcutils.property_get("ro.moz.ril.dial_emergency_call");
-let RILQUIRKS_MODEM_DEFAULTS_TO_EMERGENCY_MODE = libcutils.property_get("ro.moz.ril.emergency_by_default");
-let RILQUIRKS_SIM_APP_STATE_EXTRA_FIELDS = libcutils.property_get("ro.moz.ril.simstate_extra_field");
+let RILQUIRKS_V5_LEGACY = libcutils.property_get("ro.moz.ril.v5_legacy", "true") === "true";
+let RILQUIRKS_REQUEST_USE_DIAL_EMERGENCY_CALL = libcutils.property_get("ro.moz.ril.dial_emergency_call", "false") === "true";
+let RILQUIRKS_MODEM_DEFAULTS_TO_EMERGENCY_MODE = libcutils.property_get("ro.moz.ril.emergency_by_default", "false") === "true";
+let RILQUIRKS_SIM_APP_STATE_EXTRA_FIELDS = libcutils.property_get("ro.moz.ril.simstate_extra_field", "false") === "true";
+// Needed for call-waiting on Peak device
+let RILQUIRKS_EXTRA_UINT32_2ND_CALL = libcutils.property_get("ro.moz.ril.extra_int_2nd_call", "false") == "true";
 
 // Marker object.
 let PENDING_NETWORK_TYPE = {};
@@ -1380,6 +1382,19 @@ let RIL = {
   },
 
   /**
+   * Query call waiting status.
+   *
+   */
+  queryCallWaiting: function queryCallWaiting(options) {
+    Buf.newParcel(REQUEST_QUERY_CALL_WAITING, options);
+    Buf.writeUint32(1);
+    // As per 3GPP TS 24.083, section 1.6 UE doesn't need to send service
+    // class parameter in call waiting interrogation  to network
+    Buf.writeUint32(ICC_SERVICE_CLASS_NONE);
+    Buf.sendParcel();
+  },
+
+  /**
    * Set call waiting status.
    *
    * @param on
@@ -1801,10 +1816,8 @@ let RIL = {
    *        String containing the recipient number.
    * @param body
    *        String containing the message text.
-   * @param requestId
-   *        String identifying the sms request used by the SmsRequestManager.
-   * @param processId
-   *        String containing the processId for the SmsRequestManager.
+   * @param envelopeId
+   *        Numeric value identifying the sms request.
    */
   sendSMS: function sendSMS(options) {
     options.langIndex = options.langIndex || PDU_NL_IDENTIFIER_DEFAULT;
@@ -4368,6 +4381,13 @@ RIL[REQUEST_GET_CURRENT_CALLS] = function REQUEST_GET_CURRENT_CALLS(length, opti
   let calls = {};
   for (let i = 0; i < calls_length; i++) {
     let call = {};
+
+    // Extra uint32 field to get correct callIndex and rest of call data for
+    // call waiting feature.
+    if (RILQUIRKS_EXTRA_UINT32_2ND_CALL && i > 0) {
+      Buf.readUint32();
+    }
+
     call.state          = Buf.readUint32(); // CALL_STATE_*
     call.callIndex      = Buf.readUint32(); // GSM index (1-based)
     call.toa            = Buf.readUint32();
@@ -4726,9 +4746,25 @@ RIL[REQUEST_SET_CALL_FORWARD] =
     }
     this.sendDOMMessage(options);
 };
-RIL[REQUEST_QUERY_CALL_WAITING] = null;
+RIL[REQUEST_QUERY_CALL_WAITING] =
+  function REQUEST_QUERY_CALL_WAITING(length, options) {
+  options.success = options.rilRequestError == 0;
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+    this.sendDOMMessage(options);
+    return;
+  }
+  options.length = Buf.readUint32();
+  options.enabled = ((Buf.readUint32() == 1) &&
+                     ((Buf.readUint32() & ICC_SERVICE_CLASS_VOICE) == 0x01));
+  this.sendDOMMessage(options);
+};
+
 RIL[REQUEST_SET_CALL_WAITING] = function REQUEST_SET_CALL_WAITING(length, options) {
-  options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  options.success = options.rilRequestError == 0;
+  if (!options.success) {
+    options.errorMsg = RIL_ERROR_TO_GECKO_ERROR[options.rilRequestError];
+  }
   this.sendDOMMessage(options);
 };
 RIL[REQUEST_SMS_ACKNOWLEDGE] = null;

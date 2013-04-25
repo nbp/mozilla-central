@@ -121,7 +121,7 @@ ErrorResult::ClearMessage()
 }
 
 void
-ErrorResult::ThrowJSException(JSContext* cx, JS::Value exn)
+ErrorResult::ThrowJSException(JSContext* cx, JS::Handle<JS::Value> exn)
 {
   MOZ_ASSERT(mMightHaveUnreportedJSException,
              "Why didn't you tell us you planned to throw a JS exception?");
@@ -130,6 +130,10 @@ ErrorResult::ThrowJSException(JSContext* cx, JS::Value exn)
     delete mMessage;
   }
 
+  // Make sure mJSException is initialized _before_ we try to root it.  But
+  // don't set it to exn yet, because we don't want to do that until after we
+  // root.
+  mJSException = JS::UndefinedValue();
   if (!JS_AddNamedValueRoot(cx, &mJSException, "ErrorResult::mJSException")) {
     // Don't use NS_ERROR_DOM_JS_EXCEPTION, because that indicates we have
     // in fact rooted mJSException.
@@ -667,7 +671,7 @@ QueryInterface(JSContext* cx, unsigned argc, JS::Value* vp)
   // Get the object. It might be a security wrapper, in which case we do a checked
   // unwrap.
   JSObject* origObj = JSVAL_TO_OBJECT(thisv);
-  JSObject* obj = js::UnwrapObjectChecked(origObj);
+  JSObject* obj = js::CheckedUnwrap(origObj);
   if (!obj) {
       JS_ReportError(cx, "Permission denied to access object");
       return false;
@@ -1245,7 +1249,7 @@ HasPropertyOnPrototype(JSContext* cx, JSObject* proxy, DOMProxyHandler* handler,
 {
   Maybe<JSAutoCompartment> ac;
   if (xpc::WrapperFactory::IsXrayWrapper(proxy)) {
-    proxy = js::UnwrapObject(proxy);
+    proxy = js::UncheckedUnwrap(proxy);
     ac.construct(cx, proxy);
   }
   MOZ_ASSERT(js::IsProxy(proxy) && js::GetProxyHandler(proxy) == handler);
@@ -1303,21 +1307,21 @@ SetXrayExpandoChain(JSObject* obj, JSObject* chain)
 
 JSContext*
 MainThreadDictionaryBase::ParseJSON(const nsAString& aJSON,
-                                    mozilla::Maybe<JSAutoRequest>& aAr,
-                                    mozilla::Maybe<JSAutoCompartment>& aAc,
-                                    JS::Value& aVal)
+                                    Maybe<JSAutoRequest>& aAr,
+                                    Maybe<JSAutoCompartment>& aAc,
+                                    Maybe< JS::Rooted<JS::Value> >& aVal)
 {
-  JSContext* cx = nsContentUtils::ThreadJSContextStack()->GetSafeJSContext();
-  NS_ENSURE_TRUE(cx, nullptr);
+  SafeAutoJSContext cx;
   JSObject* global = JS_GetGlobalObject(cx);
-  aAr.construct(cx);
-  aAc.construct(cx, global);
+  aAr.construct(static_cast<JSContext*>(cx));
+  aAc.construct(static_cast<JSContext*>(cx), global);
+  aVal.construct(static_cast<JSContext*>(cx), JS::UndefinedValue());
   if (aJSON.IsEmpty()) {
     return cx;
   }
   if (!JS_ParseJSON(cx,
                     static_cast<const jschar*>(PromiseFlatString(aJSON).get()),
-                    aJSON.Length(), &aVal)) {
+                    aJSON.Length(), aVal.ref().address())) {
     return nullptr;
   }
   return cx;
@@ -1409,7 +1413,7 @@ NativeToString(JSContext* cx, JSObject* wrapper, JSObject* object, const char* p
 }
 
 // Dynamically ensure that two objects don't end up with the same reserved slot.
-class AutoCloneDOMObjectSlotGuard NS_STACK_CLASS
+class MOZ_STACK_CLASS AutoCloneDOMObjectSlotGuard
 {
 public:
   AutoCloneDOMObjectSlotGuard(JSObject* aOld, JSObject* aNew)
@@ -1433,8 +1437,10 @@ private:
 };
 
 nsresult
-ReparentWrapper(JSContext* aCx, JSObject* aObj)
+ReparentWrapper(JSContext* aCx, JS::HandleObject aObjArg)
 {
+  // aObj is assigned to below, so needs to be re-rooted.
+  JS::RootedObject aObj(aCx, aObjArg);
   const DOMClass* domClass = GetDOMClass(aObj);
 
   JSObject* oldParent = JS_GetParent(aObj);
@@ -1461,6 +1467,12 @@ ReparentWrapper(JSContext* aCx, JSObject* aObj)
   JSObject* ww = xpc::WrapperFactory::WrapForSameCompartment(aCx, aObj);
   if (!ww) {
     return NS_ERROR_FAILURE;
+  }
+
+  bool isProxy = js::IsProxy(aObj);
+  JSObject* expandoObject;
+  if (isProxy) {
+    expandoObject = DOMProxyHandler::GetAndClearExpandoObject(aObj);
   }
 
   JSAutoCompartment newAc(aCx, newParent);
@@ -1491,18 +1503,23 @@ ReparentWrapper(JSContext* aCx, JSObject* aObj)
   // clearing |aObj|'s reserved slot the reserved slot of |newobj| will be
   // set to null. |aObj| will go away soon, because we swap it with
   // another object during the transplant and let that object die.
-  JSObject *propertyHolder;
+  JSObject* propertyHolder;
   {
     AutoCloneDOMObjectSlotGuard cloneGuard(aObj, newobj);
 
-    propertyHolder = JS_NewObjectWithGivenProto(aCx, nullptr, nullptr,
-                                                newParent);
-    if (!propertyHolder) {
-      return NS_ERROR_OUT_OF_MEMORY;
-    }
+    JSObject* copyFrom = isProxy ? expandoObject : aObj;
+    if (copyFrom) {
+      propertyHolder = JS_NewObjectWithGivenProto(aCx, nullptr, nullptr,
+                                                  newParent);
+      if (!propertyHolder) {
+        return NS_ERROR_OUT_OF_MEMORY;
+      }
 
-    if (!JS_CopyPropertiesFrom(aCx, propertyHolder, aObj)) {
-      return NS_ERROR_FAILURE;
+      if (!JS_CopyPropertiesFrom(aCx, propertyHolder, copyFrom)) {
+        return NS_ERROR_FAILURE;
+      }
+    } else {
+      propertyHolder = nullptr;
     }
 
     // Expandos from other compartments are attached to the target JS object.
@@ -1551,8 +1568,18 @@ ReparentWrapper(JSContext* aCx, JSObject* aObj)
   cache->SetPreservingWrapper(false);
   cache->SetWrapper(aObj);
   cache->SetPreservingWrapper(preserving);
-  if (!JS_CopyPropertiesFrom(aCx, aObj, propertyHolder)) {
-    MOZ_CRASH();
+
+  if (propertyHolder) {
+    JSObject* copyTo;
+    if (isProxy) {
+      copyTo = DOMProxyHandler::EnsureExpandoObject(aCx, aObj);
+    } else {
+      copyTo = aObj;
+    }
+
+    if (!copyTo || !JS_CopyPropertiesFrom(aCx, copyTo, propertyHolder)) {
+      MOZ_CRASH();
+    }
   }
 
   nsObjectLoadingContent* htmlobject;
@@ -1587,7 +1614,7 @@ GetGlobalObject(JSContext* aCx, JSObject* aObject,
                 Maybe<JSAutoCompartment>& aAutoCompartment)
 {
   if (js::IsWrapper(aObject)) {
-    aObject = js::UnwrapObjectChecked(aObject, /* stopAtOuter = */ false);
+    aObject = js::CheckedUnwrap(aObject, /* stopAtOuter = */ false);
     if (!aObject) {
       Throw<mainThread>(aCx, NS_ERROR_XPC_SECURITY_MANAGER_VETO);
       return nullptr;
@@ -1636,7 +1663,7 @@ InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSObject* instance,
   const DOMIfaceAndProtoJSClass* clasp =
     DOMIfaceAndProtoJSClass::FromJSClass(js::GetObjectClass(obj));
 
-  const DOMClass* domClass = GetDOMClass(js::UnwrapObject(instance));
+  const DOMClass* domClass = GetDOMClass(js::UncheckedUnwrap(instance));
 
   MOZ_ASSERT(!domClass || clasp->mPrototypeID != prototypes::id::_ID_Count,
              "Why do we have a hasInstance hook if we don't have a prototype "
@@ -1686,6 +1713,16 @@ InterfaceHasInstance(JSContext* cx, JSHandleObject obj, JSMutableHandleValue vp,
   }
 
   return InterfaceHasInstance(cx, obj, &vp.toObject(), bp);
+}
+
+void
+ReportLenientThisUnwrappingFailure(JSContext* cx, JS::Handle<JSObject*> obj)
+{
+  GlobalObject global(cx, obj);
+  nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(global.Get());
+  if (window && window->GetDoc()) {
+    window->GetDoc()->WarnOnceAbout(nsIDocument::eLenientThis);
+  }
 }
 
 } // namespace dom

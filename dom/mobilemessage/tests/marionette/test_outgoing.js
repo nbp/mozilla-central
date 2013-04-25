@@ -1,7 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-MARIONETTE_TIMEOUT = 40000;
+MARIONETTE_TIMEOUT = 60000;
 
 SpecialPowers.setBoolPref("dom.sms.enabled", true);
 SpecialPowers.setBoolPref("dom.sms.strict7BitEncoding", false);
@@ -93,9 +93,9 @@ function doSendMessageAndCheckSuccess(receivers, body, callback) {
   }
 
   function onRequestSuccess(event) {
-    log("SmsRequest.onsuccess event received.");
+    log("request.onsuccess event received.");
 
-    ok(event.target instanceof MozSmsRequest,
+    ok(event.target instanceof DOMRequest,
        "event.target is instanceof " + event.target.constructor);
     event.target.removeEventListener("success", onRequestSuccess);
 
@@ -158,7 +158,7 @@ function doSendMessageAndCheckSuccess(receivers, body, callback) {
 
   for (let i = 0; i < result.length; i++) {
     let request = result[i];
-    ok(request instanceof MozSmsRequest,
+    ok(request instanceof DOMRequest,
        "request is instanceof " + request.constructor);
     request.addEventListener("success", onRequestSuccess);
   }

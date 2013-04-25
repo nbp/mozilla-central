@@ -199,6 +199,13 @@ struct BidiParagraphData {
     }
   }
 
+  void ResetForNewBlock()
+  {
+    for (BidiParagraphData* bpd = this; bpd; bpd = bpd->mSubParagraph) {
+      bpd->mPrevFrame = nullptr;
+    }
+  }
+
   void AppendFrame(nsIFrame* aFrame,
                    nsBlockInFlowLineIterator* aLineIter,
                    nsIContent* aContent = nullptr)
@@ -603,8 +610,7 @@ nsBidiPresUtils::Resolve(nsBlockFrame* aBlockFrame)
        block = static_cast<nsBlockFrame*>(block->GetNextContinuation())) {
     block->RemoveStateBits(NS_BLOCK_NEEDS_BIDI_RESOLUTION);
     nsBlockInFlowLineIterator lineIter(block, block->begin_lines());
-    bpd.mPrevFrame = nullptr;
-    bpd.GetSubParagraph()->mPrevFrame = nullptr;
+    bpd.ResetForNewBlock();
     TraverseFrames(aBlockFrame, &lineIter, block->GetFirstPrincipalChild(), &bpd);
     // XXX what about overflow lines?
   }
@@ -874,7 +880,7 @@ nsBidiPresUtils::ResolveParagraph(nsBlockFrame* aBlockFrame,
     }
   } // for
 
-  if (aBpd->mParagraphDepth > 1) {
+  if (aBpd->mParagraphDepth > 0) {
     nsIFrame* child;
     nsIFrame* parent;
     if (firstFrame) {
@@ -919,6 +925,10 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
 {
   if (!aCurrentFrame)
     return;
+
+#ifdef DEBUG
+  nsBlockFrame* initialLineContainer = aLineIter->GetContainer();
+#endif
 
   nsIFrame* childFrame = aCurrentFrame;
   do {
@@ -1165,6 +1175,8 @@ nsBidiPresUtils::TraverseFrames(nsBlockFrame*              aBlockFrame,
     }
     childFrame = nextSibling;
   } while (childFrame);
+
+  MOZ_ASSERT(initialLineContainer == aLineIter->GetContainer());
 }
 
 void
@@ -1981,7 +1993,7 @@ nsresult nsBidiPresUtils::ProcessText(const PRUnichar*       aText,
   return NS_OK;
 }
 
-class NS_STACK_CLASS nsIRenderingContextBidiProcessor : public nsBidiPresUtils::BidiProcessor {
+class MOZ_STACK_CLASS nsIRenderingContextBidiProcessor : public nsBidiPresUtils::BidiProcessor {
 public:
   nsIRenderingContextBidiProcessor(nsRenderingContext* aCtx,
                                    nsRenderingContext* aTextRunConstructionContext,

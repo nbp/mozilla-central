@@ -1229,10 +1229,10 @@ nsBlockFrame::Reflow(nsPresContext*           aPresContext,
         !(isRoot && NS_UNCONSTRAINEDSIZE == reflowState->ComputedHeight()) &&
         aMetrics.height != oldSize.height;
 
+      nsRect containingBlock(nsPoint(0, 0), containingBlockSize);
       absoluteContainer->Reflow(this, aPresContext, *reflowState,
                                 state.mReflowStatus,
-                                containingBlockSize.width,
-                                containingBlockSize.height, true,
+                                containingBlock, true,
                                 cbWidthChanged, cbHeightChanged,
                                 &aMetrics.mOverflowAreas);
 
@@ -1992,7 +1992,8 @@ nsBlockFrame::ReflowDirtyLines(nsBlockReflowState& aState)
     // push lines?  Why does that work?
     if (!line->IsDirty() &&
         aState.mReflowState.availableHeight != NS_UNCONSTRAINEDSIZE &&
-        (deltaY != 0 || aState.mReflowState.mFlags.mVResize) &&
+        (deltaY != 0 || aState.mReflowState.mFlags.mVResize ||
+         aState.mReflowState.mFlags.mMustReflowPlaceholders) &&
         (line->IsBlock() || line->HasFloats() || line->HadFloatPushed())) {
       line->MarkDirty();
     }

@@ -21,7 +21,6 @@
 #include "nsIWebBrowserChromeFocus.h"
 #include "nsIWidget.h"
 #include "nsIDOMEventListener.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIInterfaceRequestor.h"
 #include "nsIWindowProvider.h"
 #include "nsIXPCScriptable.h"
@@ -59,6 +58,10 @@ class nsICachedFileDescriptorListener;
 namespace mozilla {
 namespace layout {
 class RenderFrameChild;
+}
+
+namespace layers {
+struct TextureFactoryIdentifier;
 }
 
 namespace dom {
@@ -109,6 +112,7 @@ public:
     return nsDOMEventTargetHelper::AddEventListener(aType, aListener,
                                                     aUseCapture, false, 2);
   }
+  using nsDOMEventTargetHelper::AddEventListener;
   NS_IMETHOD AddEventListener(const nsAString& aType,
                               nsIDOMEventListener* aListener,
                               bool aUseCapture, bool aWantsUntrusted,
@@ -332,8 +336,7 @@ public:
 
 protected:
     virtual PRenderFrameChild* AllocPRenderFrame(ScrollingBehavior* aScrolling,
-                                                 LayersBackend* aBackend,
-                                                 int32_t* aMaxTextureSize,
+                                                 TextureFactoryIdentifier* aTextureFactoryIdentifier,
                                                  uint64_t* aLayersId) MOZ_OVERRIDE;
     virtual bool DeallocPRenderFrame(PRenderFrameChild* aFrame) MOZ_OVERRIDE;
     virtual bool RecvDestroy() MOZ_OVERRIDE;

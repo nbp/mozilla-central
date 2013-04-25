@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -276,6 +275,16 @@ LIRGeneratorShared::useAnyOrConstant(MDefinition *mir)
 {
     return useRegisterOrConstant(mir);
 }
+LAllocation
+LIRGeneratorShared::useStorable(MDefinition *mir)
+{
+    return useRegister(mir);
+}
+LAllocation
+LIRGeneratorShared::useStorableAtStart(MDefinition *mir)
+{
+    return useRegisterAtStart(mir);
+}
 
 LAllocation
 LIRGeneratorShared::useAny(MDefinition *mir)
@@ -294,6 +303,17 @@ LIRGeneratorShared::useAny(MDefinition *mir)
 {
     return use(mir);
 }
+LAllocation
+LIRGeneratorShared::useStorable(MDefinition *mir)
+{
+    return useRegisterOrConstant(mir);
+}
+LAllocation
+LIRGeneratorShared::useStorableAtStart(MDefinition *mir)
+{
+    return useRegisterOrConstantAtStart(mir);
+}
+
 #endif
 
 LAllocation
@@ -381,6 +401,9 @@ LIRGeneratorShared::add(T *ins, MInstruction *mir)
 static inline uint32_t
 VirtualRegisterOfPayload(MDefinition *mir)
 {
+    // Type barriers may have box inputs, and pass through their input's vreg.
+    while (mir->isTypeBarrier())
+        mir = mir->getOperand(0);
     if (mir->isBox()) {
         MDefinition *inner = mir->toBox()->getOperand(0);
         if (!inner->isConstant() && inner->type() != MIRType_Double)

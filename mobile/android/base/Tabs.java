@@ -20,6 +20,7 @@ import android.database.ContentObserver;
 import android.graphics.Color;
 import android.net.Uri;
 import android.util.Log;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -170,8 +171,8 @@ public class Tabs implements GeckoEventListener {
     }
 
     private Tab addTab(int id, String url, boolean external, int parentId, String title, boolean isPrivate) {
-        final Tab tab = isPrivate ? new PrivateTab(id, url, external, parentId, title) :
-                                    new Tab(id, url, external, parentId, title);
+        final Tab tab = isPrivate ? new PrivateTab(mActivity, id, url, external, parentId, title) :
+                                    new Tab(mActivity, id, url, external, parentId, title);
         synchronized (this) {
             lazyRegisterBookmarkObserver();
             mTabs.put(id, tab);

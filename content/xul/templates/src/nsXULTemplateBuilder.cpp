@@ -41,7 +41,6 @@
 #include "nsIScriptGlobalObject.h"
 #include "nsIServiceManager.h"
 #include "nsISimpleEnumerator.h"
-#include "nsISupportsArray.h"
 #include "nsIMutableArray.h"
 #include "nsIURL.h"
 #include "nsIXPConnect.h"
@@ -1075,8 +1074,7 @@ nsXULTemplateBuilder::Observe(nsISupports* aSubject,
     if (!strcmp(aTopic, DOM_WINDOW_DESTROYED_TOPIC)) {
         nsCOMPtr<nsPIDOMWindow> window = do_QueryInterface(aSubject);
         if (window) {
-            nsCOMPtr<nsIDocument> doc =
-                do_QueryInterface(window->GetExtantDocument());
+            nsCOMPtr<nsIDocument> doc = window->GetExtantDoc();
             if (doc && doc == mObservedDocument)
                 NodeWillBeDestroyed(doc);
         }
@@ -1545,7 +1543,7 @@ nsXULTemplateBuilder::ParseAttribute(const nsAString& aAttributeValue,
 }
 
 
-struct NS_STACK_CLASS SubstituteTextClosure {
+struct MOZ_STACK_CLASS SubstituteTextClosure {
     SubstituteTextClosure(nsIXULTemplateResult* aResult, nsAString& aString)
         : result(aResult), str(aString) {}
 

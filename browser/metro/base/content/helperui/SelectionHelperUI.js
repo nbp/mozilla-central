@@ -13,8 +13,13 @@
  *  padding top: 6
  */
 
+XPCOMUtils.defineLazyModuleGetter(this, "Promise", "resource://gre/modules/commonjs/sdk/core/promise.js");
+
 // Y axis scroll distance that will disable this module and cancel selection
 const kDisableOnScrollDistance = 25;
+
+// Drag hysteresis programmed into monocle drag moves
+const kDragHysteresisDistance = 10;
 
 /*
  * Markers
@@ -99,6 +104,8 @@ Marker.prototype = {
   _selectionHelperUI: null,
   _xPos: 0,
   _yPos: 0,
+  _xDrag: 0,
+  _yDrag: 0,
   _tag: "",
   _hPlane: 0,
   _vPlane: 0,
@@ -174,6 +181,8 @@ Marker.prototype = {
   },
 
   dragStart: function dragStart(aX, aY) {
+    this._xDrag = 0;
+    this._yDrag = 0;
     this._selectionHelperUI.markerDragStart(this);
   },
 
@@ -184,7 +193,15 @@ Marker.prototype = {
   moveBy: function moveBy(aDx, aDy, aClientX, aClientY) {
     this._xPos -= aDx;
     this._yPos -= aDy;
-    let direction = (aDx >= 0 && aDy >= 0 ? "start" : "end");
+    this._xDrag -= aDx;
+    this._yDrag -= aDy;
+    // Add a bit of hysteresis to our directional detection so "big fingers"
+    // are detected accurately.
+    let direction = "tbd";
+    if (Math.abs(this._xDrag) > kDragHysteresisDistance ||
+        Math.abs(this._yDrag) > kDragHysteresisDistance) {
+      direction = (this._xDrag <= 0 && this._yDrag <= 0 ? "start" : "end");
+    }
     // We may swap markers in markerDragMove. If markerDragMove
     // returns true keep processing, otherwise get out of here.
     if (this._selectionHelperUI.markerDragMove(this, direction)) {
@@ -236,7 +253,6 @@ var SelectionHelperUI = {
   _target: null,
   _movement: { active: false, x:0, y: 0 },
   _activeSelectionRect: null,
-  _selectionHandlerActive: false,
   _selectionMarkIds: [],
   _targetIsEditable: false,
 
@@ -272,16 +288,86 @@ var SelectionHelperUI = {
   /*
    * isActive (prop)
    *
-   * Determines if an edit session is currently active.
+   * Determines if a selection edit session is currently active.
    */
   get isActive() {
-    return (this._msgTarget &&
-            this._selectionHandlerActive);
+    return this._msgTarget ? true : false;
+  },
+
+  /*
+   * isSelectionUIVisible (prop)
+   *
+   * Determines if edit session monocles are visible. Useful
+   * in checking if selection handler is setup for tests.
+   */
+  get isSelectionUIVisible() {
+    if (!this._msgTarget || !this._startMark)
+      return false;
+    return this._startMark.visible;
+  },
+
+  /*
+   * isCaretUIVisible (prop)
+   *
+   * Determines if caret browsing monocle is visible. Useful
+   * in checking if selection handler is setup for tests.
+   */
+  get isCaretUIVisible() {
+    if (!this._msgTarget || !this._caretMark)
+      return false;
+    return this._caretMark.visible;
+  },
+
+  /*
+   * hasActiveDrag (prop)
+   *
+   * Determines if a marker is actively being dragged (missing call
+   * to markerDragStop). Useful in checking if selection handler is
+   * setup for tests.
+   */
+  get hasActiveDrag() {
+    if (!this._msgTarget)
+      return false;
+    if ((this._caretMark && this._caretMark.dragging) ||
+        (this._startMark && this._startMark.dragging) ||
+        (this._endMark && this._endMark.dragging))
+      return true;
+    return false;
   },
 
   /*
    * Public apis
    */
+
+  /*
+   * pingSelectionHandler
+   * 
+   * Ping the SelectionHandler and wait for the right response. Insures
+   * all previous messages have been received. Useful in checking if
+   * selection handler is setup for tests.
+   *
+   * @return a promise
+   */
+  pingSelectionHandler: function pingSelectionHandler() {
+    if (!this.isActive)
+      return null;
+
+    if (this._pingCount == undefined) {
+      this._pingCount = 0;
+      this._pingArray = [];
+    }
+
+    this._pingCount++;
+
+    let deferred = Promise.defer();
+    this._pingArray.push({
+      id: this._pingCount,
+      deferred: deferred
+    });
+
+    this._sendAsyncMessage("Browser:SelectionHandlerPing", { id: this._pingCount });
+    return deferred.promise;
+  },
 
   /*
    * openEditSession
@@ -301,7 +387,6 @@ var SelectionHelperUI = {
     // Send this over to SelectionHandler in content, they'll message us
     // back with information on the current selection. SelectionStart
     // takes client coordinates.
-    this._selectionHandlerActive = false;
     this._sendAsyncMessage("Browser:SelectionStart", {
       xPos: aX,
       yPos: aY
@@ -325,7 +410,6 @@ var SelectionHelperUI = {
     // Send this over to SelectionHandler in content, they'll message us
     // back with information on the current selection. SelectionAttach
     // takes client coordinates.
-    this._selectionHandlerActive = false;
     this._sendAsyncMessage("Browser:SelectionAttach", {
       xPos: aX,
       yPos: aY
@@ -351,11 +435,12 @@ var SelectionHelperUI = {
     if (!this.isActive) {
       this._init(aBrowser);
       this._setupDebugOptions();
+    } else {
+      this._hideMonocles();
     }
 
     this._lastPoint = { xPos: aX, yPos: aY };
 
-    this._selectionHandlerActive = false;
     this._sendAsyncMessage("Browser:CaretAttach", {
       xPos: aX,
       yPos: aY
@@ -383,11 +468,15 @@ var SelectionHelperUI = {
    * clear any selection. optional, the default is false.
    */
   closeEditSession: function closeEditSession(aClearSelection) {
+    if (!this.isActive) {
+      return;
+    }
+    // This will callback in _selectionHandlerShutdown in
+    // which we will call _shutdown().
     let clearSelection = aClearSelection || false;
     this._sendAsyncMessage("Browser:SelectionClose", {
       clearSelection: clearSelection
     });
-    this._shutdown();
   },
 
   /*
@@ -410,6 +499,8 @@ var SelectionHelperUI = {
     messageManager.addMessageListener("Content:SelectionCopied", this);
     messageManager.addMessageListener("Content:SelectionFail", this);
     messageManager.addMessageListener("Content:SelectionDebugRect", this);
+    messageManager.addMessageListener("Content:HandlerShutdown", this);
+    messageManager.addMessageListener("Content:SelectionHandlerPong", this);
 
     window.addEventListener("keypress", this, true);
     window.addEventListener("click", this, false);
@@ -434,6 +525,8 @@ var SelectionHelperUI = {
     messageManager.removeMessageListener("Content:SelectionCopied", this);
     messageManager.removeMessageListener("Content:SelectionFail", this);
     messageManager.removeMessageListener("Content:SelectionDebugRect", this);
+    messageManager.removeMessageListener("Content:HandlerShutdown", this);
+    messageManager.removeMessageListener("Content:SelectionHandlerPong", this);
 
     window.removeEventListener("keypress", this, true);
     window.removeEventListener("click", this, false);
@@ -455,7 +548,6 @@ var SelectionHelperUI = {
     this._selectionMarkIds = [];
     this._msgTarget = null;
     this._activeSelectionRect = null;
-    this._selectionHandlerActive = false;
 
     this.overlay.displayDebugLayer = false;
     this.overlay.enabled = false;
@@ -516,8 +608,8 @@ var SelectionHelperUI = {
     this._sendAsyncMessage("Browser:SelectionSwitchMode", {
       newMode: "selection",
       change: targetMark.tag,
-      xPos: this._msgTarget.xctob(targetMark.xPos, true),
-      yPos: this._msgTarget.yctob(targetMark.yPos, true),
+      xPos: this._msgTarget.ctobx(targetMark.xPos, true),
+      yPos: this._msgTarget.ctoby(targetMark.yPos, true),
     });
   },
 
@@ -534,7 +626,6 @@ var SelectionHelperUI = {
     this.closeEditSession(true);
 
     // Reset some of our state
-    this._selectionHandlerActive = false;
     this._activeSelectionRect = null;
 
     // Reset the monocles
@@ -791,6 +882,14 @@ var SelectionHelperUI = {
                               aMsg.color, aMsg.fill, aMsg.id);
   },
 
+  _selectionHandlerShutdown: function _selectionHandlerShutdown() {
+    this._shutdown();
+  },
+
+  /*
+   * Message handlers
+   */
+
   _onSelectionCopied: function _onSelectionCopied(json) {
     this.closeEditSession(true);
   },
@@ -800,13 +899,13 @@ var SelectionHelperUI = {
 
     // start and end contain client coordinates.
     if (json.updateStart) {
-      this.startMark.position(this._msgTarget.xbtoc(json.start.xPos, true),
-                              this._msgTarget.ybtoc(json.start.yPos, true));
+      this.startMark.position(this._msgTarget.btocx(json.start.xPos, true),
+                              this._msgTarget.btocy(json.start.yPos, true));
       this.startMark.show();
     }
     if (json.updateEnd) {
-      this.endMark.position(this._msgTarget.xbtoc(json.end.xPos, true),
-                            this._msgTarget.ybtoc(json.end.yPos, true));
+      this.endMark.position(this._msgTarget.btocx(json.end.xPos, true),
+                            this._msgTarget.btocy(json.end.yPos, true));
       this.endMark.show();
     }
     if (json.updateCaret) {
@@ -815,8 +914,8 @@ var SelectionHelperUI = {
       // position information we can use.
       haveSelectionRect = json.selectionRangeFound;
       if (json.selectionRangeFound) {
-        this.caretMark.position(this._msgTarget.xbtoc(json.caret.xPos, true),
-                                this._msgTarget.ybtoc(json.caret.yPos, true));
+        this.caretMark.position(this._msgTarget.btocx(json.caret.xPos, true),
+                                this._msgTarget.btocy(json.caret.yPos, true));
         this.caretMark.show();
       }
     }
@@ -833,6 +932,21 @@ var SelectionHelperUI = {
     Util.dumpLn("failed to get a selection.");
     this.closeEditSession();
   },
+
+  /*
+   * _onPong
+   *
+   * Handles the closure of promise we return when we send a ping
+   * to SelectionHandler in pingSelectionHandler. Testing use.
+   */
+  _onPong: function _onPong(aId) {
+    let ping = this._pingArray.pop();
+    if (ping.id != aId) {
+      ping.deferred.reject(
+        new Error("Selection module's pong doesn't match our last ping."));
+    }
+    ping.deferred.resolve();
+   },
 
   /*
    * Events
@@ -885,8 +999,11 @@ var SelectionHelperUI = {
         this._onResize(aEvent);
         break;
 
-      case "ZoomChanged":
       case "URLChanged":
+        this._shutdown();
+        break;
+
+      case "ZoomChanged":
       case "MozPrecisePointer":
         this.closeEditSession(true);
         break;
@@ -911,19 +1028,22 @@ var SelectionHelperUI = {
     let json = aMessage.json;
     switch (aMessage.name) {
       case "Content:SelectionFail":
-        this._selectionHandlerActive = false;
         this._onSelectionFail();
         break;
       case "Content:SelectionRange":
-        this._selectionHandlerActive = true;
         this._onSelectionRangeChange(json);
         break;
       case "Content:SelectionCopied":
-        this._selectionHandlerActive = true;
         this._onSelectionCopied(json);
         break;
       case "Content:SelectionDebugRect":
         this._onDebugRectRequest(json);
+        break;
+      case "Content:HandlerShutdown":
+        this._selectionHandlerShutdown();
+        break;
+      case "Content:SelectionHandlerPong":
+        this._onPong(json.id);
         break;
     }
   },
@@ -935,16 +1055,16 @@ var SelectionHelperUI = {
   _getMarkerBaseMessage: function _getMarkerBaseMessage() {
     return {
       start: {
-        xPos: this._msgTarget.xctob(this.startMark.xPos, true),
-        yPos: this._msgTarget.yctob(this.startMark.yPos, true)
+        xPos: this._msgTarget.ctobx(this.startMark.xPos, true),
+        yPos: this._msgTarget.ctoby(this.startMark.yPos, true)
       },
       end: {
-        xPos: this._msgTarget.xctob(this.endMark.xPos, true),
-        yPos: this._msgTarget.yctob(this.endMark.yPos, true)
+        xPos: this._msgTarget.ctobx(this.endMark.xPos, true),
+        yPos: this._msgTarget.ctoby(this.endMark.yPos, true)
       },
       caret: {
-        xPos: this._msgTarget.xctob(this.caretMark.xPos, true),
-        yPos: this._msgTarget.yctob(this.caretMark.yPos, true)
+        xPos: this._msgTarget.ctobx(this.caretMark.xPos, true),
+        yPos: this._msgTarget.ctoby(this.caretMark.yPos, true)
       },
     };
   },
@@ -971,11 +1091,16 @@ var SelectionHelperUI = {
 
   markerDragMove: function markerDragMove(aMarker, aDirection) {
     if (aMarker.tag == "caret") {
-      // We are going to transition from caret browsing mode to selection
-      // mode on drag. So swap the caret monocle for a start or end monocle
-      // depending on the direction of the drag, and start selecting text.
-      this._transitionFromCaretToSelection(aDirection);
-      return false;
+      // If direction is "tbd" the drag monocle hasn't determined which
+      // direction the user is dragging.
+      if (aDirection != "tbd") {
+        // We are going to transition from caret browsing mode to selection
+        // mode on drag. So swap the caret monocle for a start or end monocle
+        // depending on the direction of the drag, and start selecting text.
+        this._transitionFromCaretToSelection(aDirection);
+        return false;
+      }
+      return true;
     }
     let json = this._getMarkerBaseMessage();
     json.change = aMarker.tag;

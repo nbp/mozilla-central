@@ -29,10 +29,21 @@ private:
   CERTCertDBHandle *defaultcertdb;
   nsCOMPtr<nsINSSComponent> nssComponent;
 
+  // XXX: old, non-libpkix version of check that will be removed after the
+  // switch to libpkix is final.
   void check(const char *suffix,
              SECCertificateUsage aCertUsage,
              uint32_t &aCounter,
              PRUnichar **outUsages);
+
+#ifndef NSS_NO_LIBPKIX
+  uint32_t check(uint32_t previousCheckResult,
+                 const char *suffix,
+                 SECCertificateUsage aCertUsage,
+                 nsCERTValInParamWrapper * aValInParams,
+                 uint32_t &aCounter,
+                 PRUnichar **outUsages);
+#endif
 
   void verifyFailed(uint32_t *_verified, int err);
 };

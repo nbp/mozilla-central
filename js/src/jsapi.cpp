@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99 ft=cpp:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -242,7 +241,7 @@ AssertHeapIsIdle(JSContext *cx)
 static void
 AssertHeapIsIdleOrIterating(JSRuntime *rt)
 {
-    JS_ASSERT(rt->heapState != js::Collecting);
+    JS_ASSERT(!rt->isHeapCollecting());
 }
 
 static void
@@ -686,6 +685,24 @@ JS_FRIEND_API(bool) JS::isGCEnabled() { return true; }
 
 static const JSSecurityCallbacks NullSecurityCallbacks = { };
 
+static bool
+JitSupportsFloatingPoint()
+{
+#if defined(JS_METHODJIT) || defined(JS_ION)
+    if (!JSC::MacroAssembler().supportsFloatingPoint())
+        return false;
+
+#if defined(JS_ION) && WTF_ARM_ARCH_VERSION == 6
+    if (!js::ion::hasVFP())
+        return false;
+#endif
+
+    return true;
+#else
+    return false;
+#endif
+}
+
 PerThreadData::PerThreadData(JSRuntime *runtime)
   : PerThreadDataFriendFields(),
     runtime_(runtime),
@@ -797,7 +814,9 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     gcIsFull(false),
     gcTriggerReason(JS::gcreason::NO_REASON),
     gcStrictCompartmentChecking(false),
+#ifdef DEBUG
     gcDisableStrictProxyCheckingCount(0),
+#endif
     gcIncrementalState(gc::NO_INCREMENTAL),
     gcLastMarkSlice(false),
     gcSweepOnBackgroundThread(false),
@@ -826,6 +845,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
 # ifdef JS_GC_ZEAL
     gcVerifierNursery(),
 # endif
+    gcNursery(thisFromCtor()),
     gcStoreBuffer(thisFromCtor()),
 #endif
 #ifdef JS_GC_ZEAL
@@ -862,7 +882,6 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     data(NULL),
     gcLock(NULL),
     gcHelperThread(thisFromCtor()),
-    sizeOfNonHeapAsmJSArrays_(0),
 #ifdef JS_THREADSAFE
 #ifdef JS_ION
     workerThreadState(NULL),
@@ -893,6 +912,7 @@ JSRuntime::JSRuntime(JSUseHelperThreads useHelperThreads)
     noGCOrAllocationCheck(0),
 #endif
     jitHardening(false),
+    jitSupportsFloatingPoint(false),
     ionPcScriptCache(NULL),
     threadPool(this),
     ctypesActivityCallback(NULL),
@@ -990,6 +1010,8 @@ JSRuntime::init(uint32_t maxbytes)
         return false;
 
     nativeStackBase = GetNativeStackBase();
+
+    jitSupportsFloatingPoint = JitSupportsFloatingPoint();
     return true;
 }
 
@@ -1055,6 +1077,11 @@ JSRuntime::~JSRuntime()
 
     if (ionPcScriptCache)
         js_delete(ionPcScriptCache);
+
+#ifdef JSGC_GENERATIONAL
+    gcStoreBuffer.disable();
+    gcNursery.disable();
+#endif
 }
 
 #ifdef JS_THREADSAFE
@@ -1608,6 +1635,7 @@ JS_TransplantObject(JSContext *cx, JSObject *origobjArg, JSObject *targetArg)
     JS_ASSERT(!IsCrossCompartmentWrapper(target));
 
     AutoMaybeTouchDeadZones agc(cx);
+    AutoDisableProxyCheck adpc(cx->runtime);
 
     JSCompartment *destination = target->compartment();
     RootedValue origv(cx, ObjectValue(*origobj));
@@ -1681,6 +1709,7 @@ js_TransplantObjectWithWrapper(JSContext *cx,
     RootedObject targetwrapper(cx, targetwrapperArg);
 
     AutoMaybeTouchDeadZones agc(cx);
+    AutoDisableProxyCheck adpc(cx->runtime);
 
     AssertHeapIsIdle(cx);
     JS_ASSERT(!IsCrossCompartmentWrapper(origobj));
@@ -3177,6 +3206,13 @@ JS_StrictPropertyStub(JSContext *cx, JSHandleObject obj, JSHandleId id, JSBool s
 }
 
 JS_PUBLIC_API(JSBool)
+JS_DeletePropertyStub(JSContext *cx, JSHandleObject obj, JSHandleId id, JSBool *succeeded)
+{
+    *succeeded = true;
+    return true;
+}
+
+JS_PUBLIC_API(JSBool)
 JS_EnumerateStub(JSContext *cx, JSHandleObject obj)
 {
     return JS_TRUE;
@@ -3199,8 +3235,8 @@ JS_ConvertStub(JSContext *cx, JSHandleObject obj, JSType type, JSMutableHandleVa
 JS_PUBLIC_API(JSObject *)
 JS_InitClass(JSContext *cx, JSObject *objArg, JSObject *parent_protoArg,
              JSClass *clasp, JSNative constructor, unsigned nargs,
-             JSPropertySpec *ps, JSFunctionSpec *fs,
-             JSPropertySpec *static_ps, JSFunctionSpec *static_fs)
+             const JSPropertySpec *ps, const JSFunctionSpec *fs,
+             const JSPropertySpec *static_ps, const JSFunctionSpec *static_fs)
 {
     RootedObject obj(cx, objArg);
     RootedObject parent_proto(cx, parent_protoArg);
@@ -4411,16 +4447,17 @@ JS_DeletePropertyById2(JSContext *cx, JSObject *objArg, jsid id, jsval *rval)
 
     RootedValue value(cx);
 
+    JSBool succeeded;
     if (JSID_IS_SPECIAL(id)) {
         Rooted<SpecialId> sid(cx, JSID_TO_SPECIALID(id));
-        if (!JSObject::deleteSpecial(cx, obj, sid, &value, false))
+        if (!JSObject::deleteSpecial(cx, obj, sid, &succeeded))
             return false;
     } else {
-        if (!JSObject::deleteByValue(cx, obj, IdToValue(id), &value, false))
+        if (!JSObject::deleteByValue(cx, obj, IdToValue(id), &succeeded))
             return false;
     }
 
-    *rval = value;
+    *rval = BooleanValue(succeeded);
     return true;
 }
 
@@ -4433,11 +4470,11 @@ JS_DeleteElement2(JSContext *cx, JSObject *objArg, uint32_t index, jsval *rval)
     assertSameCompartment(cx, obj);
     JSAutoResolveFlags rf(cx, 0);
 
-    RootedValue value(cx);
-    if (!JSObject::deleteElement(cx, obj, index, &value, false))
+    JSBool succeeded;
+    if (!JSObject::deleteElement(cx, obj, index, &succeeded))
         return false;
 
-    *rval = value;
+    *rval = BooleanValue(succeeded);
     return true;
 }
 
@@ -4453,11 +4490,11 @@ JS_DeleteProperty2(JSContext *cx, JSObject *objArg, const char *name, jsval *rva
     if (!atom)
         return false;
 
-    RootedValue value(cx);
-    if (!JSObject::deleteByValue(cx, obj, StringValue(atom), &value, false))
+    JSBool succeeded;
+    if (!JSObject::deleteByValue(cx, obj, StringValue(atom), &succeeded))
         return false;
 
-    *rval = value;
+    *rval = BooleanValue(succeeded);
     return true;
 }
 
@@ -4473,11 +4510,11 @@ JS_DeleteUCProperty2(JSContext *cx, JSObject *objArg, const jschar *name, size_t
     if (!atom)
         return false;
 
-    RootedValue value(cx);
-    if (!JSObject::deleteByValue(cx, obj, StringValue(atom), &value, false))
+    JSBool succeeded;
+    if (!JSObject::deleteByValue(cx, obj, StringValue(atom), &succeeded))
         return false;
 
-    *rval = value;
+    *rval = BooleanValue(succeeded);
     return true;
 }
 
@@ -4629,7 +4666,7 @@ static Class prop_iter_class = {
     "PropertyIterator",
     JSCLASS_HAS_PRIVATE | JSCLASS_IMPLEMENTS_BARRIERS | JSCLASS_HAS_RESERVED_SLOTS(1),
     JS_PropertyStub,         /* addProperty */
-    JS_PropertyStub,         /* delProperty */
+    JS_DeletePropertyStub,   /* delProperty */
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     JS_EnumerateStub,
@@ -4986,7 +5023,7 @@ js_generic_native_method_dispatcher(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
 
-    JSFunctionSpec *fs = (JSFunctionSpec *)
+    const JSFunctionSpec *fs = (JSFunctionSpec *)
         vp->toObject().toFunction()->getExtendedSlot(0).toPrivate();
     JS_ASSERT((fs->flags & JSFUN_GENERIC_NATIVE) != 0);
 

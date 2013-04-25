@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -13,6 +12,8 @@
 #include "AsmJS.h"
 #include "AsmJSModule.h"
 #include "frontend/BytecodeCompiler.h"
+
+#include "Ion.h"
 
 using namespace js;
 using namespace js::ion;
@@ -29,7 +30,7 @@ LinkFail(JSContext *cx, const char *str)
 }
 
 static bool
-ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Global global,
+ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Global &global,
                        HandleValue importVal)
 {
     JS_ASSERT(global.which() == AsmJSModule::Global::Variable);
@@ -69,7 +70,7 @@ ValidateGlobalVariable(JSContext *cx, const AsmJSModule &module, AsmJSModule::Gl
 }
 
 static bool
-ValidateFFI(JSContext *cx, AsmJSModule::Global global, HandleValue importVal,
+ValidateFFI(JSContext *cx, AsmJSModule::Global &global, HandleValue importVal,
             AutoObjectVector *ffis)
 {
     RootedPropertyName field(cx, global.ffiField());
@@ -85,7 +86,7 @@ ValidateFFI(JSContext *cx, AsmJSModule::Global global, HandleValue importVal,
 }
 
 static bool
-ValidateArrayView(JSContext *cx, AsmJSModule::Global global, HandleValue globalVal,
+ValidateArrayView(JSContext *cx, AsmJSModule::Global &global, HandleValue globalVal,
                   HandleValue bufferVal)
 {
     RootedPropertyName field(cx, global.viewName());
@@ -100,7 +101,7 @@ ValidateArrayView(JSContext *cx, AsmJSModule::Global global, HandleValue globalV
 }
 
 static bool
-ValidateMathBuiltin(JSContext *cx, AsmJSModule::Global global, HandleValue globalVal)
+ValidateMathBuiltin(JSContext *cx, AsmJSModule::Global &global, HandleValue globalVal)
 {
     RootedValue v(cx);
     if (!GetProperty(cx, globalVal, cx->names().Math, &v))
@@ -135,7 +136,7 @@ ValidateMathBuiltin(JSContext *cx, AsmJSModule::Global global, HandleValue globa
 }
 
 static bool
-ValidateGlobalConstant(JSContext *cx, AsmJSModule::Global global, HandleValue globalVal)
+ValidateGlobalConstant(JSContext *cx, AsmJSModule::Global &global, HandleValue globalVal)
 {
     RootedPropertyName field(cx, global.constantName());
     RootedValue v(cx);
@@ -200,6 +201,12 @@ DynamicallyLinkModule(JSContext *cx, CallArgs args, AsmJSModule &module)
             JSC::X86Assembler::setPointer(access.patchLengthAt(code), heapLength);
             JSC::X86Assembler::setPointer(access.patchOffsetAt(code), heapOffset);
         }
+#elif defined(JS_CPU_ARM)
+        // Now the length of the array is know, patch all of the bounds check sites
+        // with the new length.
+        ion::IonContext ic(cx, NULL);
+        module.patchBoundsChecks(heap->byteLength());
+
 #endif
     }
 
@@ -208,7 +215,7 @@ DynamicallyLinkModule(JSContext *cx, CallArgs args, AsmJSModule &module)
         return false;
 
     for (unsigned i = 0; i < module.numGlobals(); i++) {
-        AsmJSModule::Global global = module.global(i);
+        AsmJSModule::Global &global = module.global(i);
         switch (global.which()) {
           case AsmJSModule::Global::Variable:
             if (!ValidateGlobalVariable(cx, module, global, importVal))
@@ -323,8 +330,13 @@ CallAsmJS(JSContext *cx, unsigned argc, Value *vp)
         AsmJSActivation activation(cx, module);
 
         // Call into generated code.
+#ifdef JS_CPU_ARM
+        if (!func.code()(coercedArgs.begin(), module.globalData()))
+            return false;
+#else
         if (!func.code()(coercedArgs.begin()))
             return false;
+#endif
     }
 
     switch (func.returnType()) {
@@ -368,6 +380,8 @@ HandleDynamicLinkFailure(JSContext *cx, CallArgs args, AsmJSModule &module, Hand
 
     uint32_t length = info.bufEnd_ - info.bufStart_;
     Rooted<JSStableString*> src(cx, info.scriptSource_->substring(cx, info.bufStart_, info.bufEnd_));
+    if (!src)
+        return false;
     const jschar *chars = src->chars().get();
 
     RootedFunction fun(cx, NewFunction(cx, NullPtr(), NULL, 0, JSFunction::INTERPRETED,

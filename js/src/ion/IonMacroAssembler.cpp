@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -419,16 +418,11 @@ MacroAssembler::clampDoubleToUint8(FloatRegister input, Register output)
 }
 
 void
-MacroAssembler::newGCThing(const Register &result,
-                           JSObject *templateObject, Label *fail)
+MacroAssembler::newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail)
 {
     // Inlined equivalent of js::gc::NewGCThing() without failure case handling.
 
-    gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
-    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
-    int thingSize = (int)gc::Arena::thingSize(allocKind);
-
-    JS_ASSERT(!templateObject->hasDynamicElements());
+    int thingSize = int(gc::Arena::thingSize(allocKind));
 
     Zone *zone = GetIonContext()->compartment->zone();
 
@@ -451,6 +445,22 @@ MacroAssembler::newGCThing(const Register &result,
     addPtr(Imm32(thingSize), result);
     storePtr(result, AbsoluteAddress(&list->first));
     subPtr(Imm32(thingSize), result);
+}
+
+void
+MacroAssembler::newGCThing(const Register &result, JSObject *templateObject, Label *fail)
+{
+    gc::AllocKind allocKind = templateObject->tenuredGetAllocKind();
+    JS_ASSERT(allocKind >= gc::FINALIZE_OBJECT0 && allocKind <= gc::FINALIZE_OBJECT_LAST);
+    JS_ASSERT(!templateObject->hasDynamicElements());
+
+    newGCThing(result, allocKind, fail);
+}
+
+void
+MacroAssembler::newGCString(const Register &result, Label *fail)
+{
+    newGCThing(result, js::gc::FINALIZE_STRING, fail);
 }
 
 void
@@ -662,7 +672,7 @@ MacroAssembler::performOsr()
     const Register ionScript = regs.takeAny();
     const Register osrEntry = regs.takeAny();
 
-    loadPtr(Address(script, offsetof(JSScript, ion)), ionScript);
+    loadPtr(Address(script, JSScript::offsetOfIonScript()), ionScript);
     load32(Address(ionScript, IonScript::offsetOfOsrEntryOffset()), osrEntry);
 
     // Get ionScript->method->code, and scoot to the osrEntry.
@@ -837,7 +847,8 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
         load32(Address(temp, BaselineFrame::reverseOffsetOfFrameSize()), temp);
         makeFrameDescriptor(temp, IonFrame_BaselineJS);
         push(temp);
-        push(Imm32(0)); // Fake return address.
+        loadPtr(Address(bailoutInfo, offsetof(BaselineBailoutInfo, resumeAddr)), temp);
+        push(temp);
         enterFakeExitFrame();
 
         // If monitorStub is non-null, handle resumeAddr appropriately.
@@ -930,47 +941,20 @@ MacroAssembler::generateBailoutTail(Register scratch, Register bailoutInfo)
 }
 
 void
-MacroAssembler::loadBaselineOrIonCode(Register script, Register scratch, Label *failure)
+MacroAssembler::loadBaselineOrIonRaw(Register script, Register dest, ExecutionMode mode,
+                                     Label *failure)
 {
-    bool baselineEnabled = ion::IsBaselineEnabled(GetIonContext()->cx);
-
-    Label noIonScript, done;
-    Address scriptIon(script, offsetof(JSScript, ion));
-    branchPtr(Assembler::BelowOrEqual, scriptIon, ImmWord(ION_COMPILING_SCRIPT),
-              &noIonScript);
-    {
-        // Load IonScript method.
-        loadPtr(scriptIon, scratch);
-
-        // Check bailoutExpected flag
-        if (baselineEnabled || failure) {
-            Address bailoutExpected(scratch, IonScript::offsetOfBailoutExpected());
-            branch32(Assembler::NotEqual, bailoutExpected, Imm32(0), &noIonScript);
-        }
-
-        loadPtr(Address(scratch, IonScript::offsetOfMethod()), script);
-        jump(&done);
+    if (mode == SequentialExecution) {
+        loadPtr(Address(script, JSScript::offsetOfBaselineOrIonRaw()), dest);
+        if (failure)
+            branchTestPtr(Assembler::Zero, dest, dest, failure);
+    } else {
+        loadPtr(Address(script, JSScript::offsetOfParallelIonScript()), dest);
+        if (failure)
+            branchPtr(Assembler::BelowOrEqual, dest, ImmWord(ION_COMPILING_SCRIPT), failure);
+        loadPtr(Address(dest, IonScript::offsetOfMethod()), dest);
+        loadPtr(Address(dest, IonCode::offsetOfCode()), dest);
     }
-    bind(&noIonScript);
-    {
-        // The script does not have an IonScript. If |failure| is NULL,
-        // assume the script has a baseline script.
-        if (baselineEnabled) {
-            loadPtr(Address(script, offsetof(JSScript, baseline)), script);
-            if (failure)
-                branchPtr(Assembler::BelowOrEqual, script, ImmWord(BASELINE_DISABLED_SCRIPT), failure);
-            loadPtr(Address(script, BaselineScript::offsetOfMethod()), script);
-        } else if (failure) {
-            jump(failure);
-        } else {
-#ifdef DEBUG
-            breakpoint();
-            breakpoint();
-#endif
-        }
-    }
-
-    bind(&done);
 }
 
 void
@@ -978,6 +962,101 @@ MacroAssembler::loadBaselineFramePtr(Register framePtr, Register dest)
 {
     movePtr(framePtr, dest);
     subPtr(Imm32(BaselineFrame::Size()), dest);
+}
+
+void
+MacroAssembler::enterParallelExitFrameAndLoadSlice(const VMFunction *f, Register slice,
+                                                   Register scratch)
+{
+    // Load the current ForkJoinSlice *. If we need a parallel exit frame,
+    // chances are we are about to do something very slow anyways, so just
+    // call ParForkJoinSlice again instead of using the cached version.
+    setupUnalignedABICall(0, scratch);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void *, ParForkJoinSlice));
+    if (ReturnReg != slice)
+        movePtr(ReturnReg, slice);
+    // Load the PerThreadData from from the slice.
+    loadPtr(Address(slice, offsetof(ForkJoinSlice, perThreadData)), scratch);
+    linkParallelExitFrame(scratch);
+    // Push the ioncode.
+    exitCodePatch_ = PushWithPatch(ImmWord(-1));
+    // Push the VMFunction pointer, to mark arguments.
+    Push(ImmWord(f));
+}
+
+void
+MacroAssembler::enterExitFrameAndLoadContext(const VMFunction *f, Register cxReg, Register scratch,
+                                             ExecutionMode executionMode)
+{
+    switch (executionMode) {
+      case SequentialExecution:
+        // The scratch register is not used for sequential execution.
+        enterExitFrame(f);
+        loadJSContext(cxReg);
+        break;
+      case ParallelExecution:
+        enterParallelExitFrameAndLoadSlice(f, cxReg, scratch);
+        break;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+}
+
+void
+MacroAssembler::handleFailure(ExecutionMode executionMode)
+{
+    // Re-entry code is irrelevant because the exception will leave the
+    // running function and never come back
+    if (sps_)
+        sps_->skipNextReenter();
+    leaveSPSFrame();
+
+    void *handler;
+    switch (executionMode) {
+      case SequentialExecution:
+        handler = JS_FUNC_TO_DATA_PTR(void *, ion::HandleException);
+        break;
+      case ParallelExecution:
+        handler = JS_FUNC_TO_DATA_PTR(void *, ion::HandleParallelFailure);
+        break;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+    MacroAssemblerSpecific::handleFailureWithHandler(handler);
+
+    // Doesn't actually emit code, but balances the leave()
+    if (sps_)
+        sps_->reenter(*this, InvalidReg);
+}
+
+void
+MacroAssembler::tagCallee(Register callee, ExecutionMode mode)
+{
+    switch (mode) {
+      case SequentialExecution:
+        // CalleeToken_Function is untagged, so we don't need to do anything.
+        return;
+      case ParallelExecution:
+        orPtr(Imm32(CalleeToken_ParallelFunction), callee);
+        return;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
+}
+
+void
+MacroAssembler::clearCalleeTag(Register callee, ExecutionMode mode)
+{
+    switch (mode) {
+      case SequentialExecution:
+        // CalleeToken_Function is untagged, so we don't need to do anything.
+        return;
+      case ParallelExecution:
+        andPtr(Imm32(~0x3), callee);
+        return;
+      default:
+        JS_NOT_REACHED("No such execution mode");
+    }
 }
 
 void printf0_(const char *output) {

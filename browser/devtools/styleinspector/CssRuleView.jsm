@@ -74,12 +74,8 @@ function ElementStyle(aElement, aStore)
     this.store.userProperties = new UserProperties();
   }
 
-  if (this.store.disabled) {
-    this.store.disabled = aStore.disabled;
-  } else {
-    // FIXME: This should be a WeakMap once bug 753517 is fixed.
-    // See Bug 777373 for details.
-    this.store.disabled = new Map();
+  if (!("disabled" in this.store)) {
+    this.store.disabled = new WeakMap();
   }
 
   let doc = aElement.ownerDocument;
@@ -1105,8 +1101,7 @@ RuleEditor.prototype = {
 
     // Add the source link.
     let source = createChild(this.element, "div", {
-      class: "ruleview-rule-source theme-link",
-      textContent: this.rule.title
+      class: "ruleview-rule-source theme-link"
     });
     source.addEventListener("click", function() {
       let rule = this.rule;
@@ -1116,6 +1111,11 @@ RuleEditor.prototype = {
       });
       this.element.dispatchEvent(evt);
     }.bind(this));
+    let sourceLabel = this.doc.createElementNS(XUL_NS, "label");
+    sourceLabel.setAttribute("crop", "center");
+    sourceLabel.setAttribute("value", this.rule.title);
+    sourceLabel.setAttribute("tooltiptext", this.rule.title);
+    source.appendChild(sourceLabel);
 
     let code = createChild(this.element, "div", {
       class: "ruleview-code"
@@ -1666,9 +1666,7 @@ TextPropertyEditor.prototype = {
  */
 function UserProperties()
 {
-  // FIXME: This should be a WeakMap once bug 753517 is fixed.
-  // See Bug 777373 for details.
-  this.map = new Map();
+  this.weakMap = new WeakMap();
 }
 
 UserProperties.prototype = {
@@ -1688,7 +1686,7 @@ UserProperties.prototype = {
    *          otherwise.
    */
   getProperty: function UP_getProperty(aStyle, aName, aComputedValue) {
-    let entry = this.map.get(aStyle, null);
+    let entry = this.weakMap.get(aStyle, null);
 
     if (entry && aName in entry) {
       let item = entry[aName];
@@ -1717,13 +1715,13 @@ UserProperties.prototype = {
    *        The value of the property to set.
    */
   setProperty: function UP_setProperty(aStyle, aName, aComputedValue, aUserValue) {
-    let entry = this.map.get(aStyle, null);
+    let entry = this.weakMap.get(aStyle, null);
     if (entry) {
       entry[aName] = { computed: aComputedValue, user: aUserValue };
     } else {
       let props = {};
       props[aName] = { computed: aComputedValue, user: aUserValue };
-      this.map.set(aStyle, props);
+      this.weakMap.set(aStyle, props);
     }
   },
 
@@ -1736,7 +1734,7 @@ UserProperties.prototype = {
    *        The name of the property to check.
    */
   contains: function UP_contains(aStyle, aName) {
-    let entry = this.map.get(aStyle, null);
+    let entry = this.weakMap.get(aStyle, null);
     return !!entry && aName in entry;
   },
 };

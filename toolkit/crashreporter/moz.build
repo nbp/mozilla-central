@@ -46,9 +46,6 @@ elif CONFIG['OS_ARCH'] == 'SunOS':
         'google-breakpad/src/tools/solaris/dump_syms',
     ]
 
-if CONFIG['OS_TARGET'] == 'Android':
-    DIRS += ['fileid']
-
 DIRS += ['client']
 
 if CONFIG['MOZ_CRASHREPORTER_INJECTOR']:
@@ -57,4 +54,8 @@ if CONFIG['MOZ_CRASHREPORTER_INJECTOR']:
 TEST_TOOL_DIRS += ['test']
 
 MODULE = 'crashreporter'
+
+EXPORTS += [
+    'nsExceptionHandler.h',
+]
 

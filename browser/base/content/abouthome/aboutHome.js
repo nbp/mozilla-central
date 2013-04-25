@@ -256,19 +256,6 @@ function onSearchSubmit(aEvent)
 
 function setupSearchEngine()
 {
-  let searchEngineName = document.documentElement.getAttribute("searchEngineName");
-  let searchEngineInfo = SEARCH_ENGINES[searchEngineName];
-  if (!searchEngineInfo) {
-    return;
-  }
-
-  // Add search engine logo.
-  if (searchEngineInfo.image) {
-    let logoElt = document.getElementById("searchEngineLogo");
-    logoElt.src = searchEngineInfo.image;
-    logoElt.alt = searchEngineName;
-  }
-
   // The "autofocus" attribute doesn't focus the form element
   // immediately when the element is first drawn, so the
   // attribute is also used for styling when the page first loads.
@@ -277,6 +264,22 @@ function setupSearchEngine()
     searchText.removeEventListener("blur", searchText_onBlur);
     searchText.removeAttribute("autofocus");
   });
+ 
+  let searchEngineName = document.documentElement.getAttribute("searchEngineName");
+  let searchEngineInfo = SEARCH_ENGINES[searchEngineName];
+  let logoElt = document.getElementById("searchEngineLogo");
+
+  // Add search engine logo.
+  if (searchEngineInfo && searchEngineInfo.image) {
+    logoElt.parentNode.hidden = false;
+    logoElt.src = searchEngineInfo.image;
+    logoElt.alt = searchEngineName;
+    searchText.placeholder = "";
+  }
+  else {
+    logoElt.parentNode.hidden = true;
+    searchText.placeholder = searchEngineName;
+  }
 
 }
 
@@ -340,6 +343,19 @@ function loadSnippets()
 let _snippetsShown = false;
 function showSnippets()
 {
+  let snippetsElt = document.getElementById("snippets");
+
+  // Show about:rights notification, if needed.
+  let showRights = document.documentElement.getAttribute("showKnowYourRights");
+  if (showRights) {
+    let rightsElt = document.getElementById("rightsSnippet");
+    let anchor = rightsElt.getElementsByTagName("a")[0];
+    anchor.href = "about:rights";
+    snippetsElt.appendChild(rightsElt);
+    rightsElt.removeAttribute("hidden");
+    return;
+  }
+
   if (!gSnippetsMap)
     throw new Error("Snippets map has not properly been initialized");
   if (_snippetsShown) {
@@ -350,7 +366,6 @@ function showSnippets()
   }
   _snippetsShown = true;
 
-  let snippetsElt = document.getElementById("snippets");
   let snippets = gSnippetsMap.get("snippets");
   // If there are remotely fetched snippets, try to to show them.
   if (snippets) {

@@ -1667,13 +1667,14 @@ WrapPreserve3DListInternal(nsIFrame* aFrame, nsDisplayListBuilder *aBuilder, nsD
 
   nsresult rv = NS_OK;
   while (nsDisplayItem *item = aList->RemoveBottom()) {
-    nsIFrame *childFrame = item->GetUnderlyingFrame();
+    nsIFrame *childFrame = item->Frame();
 
     // We accumulate sequential items that aren't transforms into the 'temp' list
     // and then flush this list into aOutput by wrapping the whole lot with a single
     // nsDisplayTransform.
 
-    if (childFrame && (childFrame->GetParent()->Preserves3DChildren() || childFrame == aFrame)) {
+    if (childFrame->GetParent() &&
+        (childFrame->GetParent()->Preserves3DChildren() || childFrame == aFrame)) {
       switch (item->GetType()) {
         case nsDisplayItem::TYPE_TRANSFORM: {
           if (!aTemp->IsEmpty()) {
@@ -1866,8 +1867,7 @@ nsIFrame::BuildDisplayListForStackingContext(nsDisplayListBuilder* aBuilder,
   for (;;) {
     nsDisplayItem* item = set.PositionedDescendants()->GetBottom();
     if (item) {
-      nsIFrame* f = item->GetUnderlyingFrame();
-      NS_ASSERTION(f, "After sorting, every item in the list should have an underlying frame");
+      nsIFrame* f = item->Frame();
       if (nsLayoutUtils::GetZIndex(f) < 0) {
         set.PositionedDescendants()->RemoveBottom();
         resultList.AppendToTop(item);
@@ -1963,7 +1963,7 @@ WrapInWrapList(nsDisplayListBuilder* aBuilder,
                nsIFrame* aFrame, nsDisplayList* aList)
 {
   nsDisplayItem* item = aList->GetBottom();
-  if (!item || item->GetAbove() || item->GetUnderlyingFrame() != aFrame) {
+  if (!item || item->GetAbove() || item->Frame() != aFrame) {
     return new (aBuilder) nsDisplayWrapList(aBuilder, aFrame, aList);
   }
   aList->RemoveBottom();
@@ -2092,7 +2092,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
     || child->IsTransformed()
     || nsSVGIntegrationUtils::UsingEffectsForFrame(child);
 
-  bool isPositioned = !isSVG && disp->IsPositioned(child);
+  bool isPositioned = disp->IsPositioned(child);
   bool isStackingContext =
     (isPositioned && pos->mZIndex.GetUnit() == eStyleUnit_Integer) ||
      isVisuallyAtomic || (aFlags & DISPLAY_CHILD_FORCE_STACKING_CONTEXT);
@@ -2219,7 +2219,7 @@ nsIFrame::BuildDisplayListForChild(nsDisplayListBuilder*   aBuilder,
           nsDisplayList fixedPosDescendantList;
           fixedPosDescendantList.AppendToTop(item);
           aLists.PositionedDescendants()->AppendNewToTop(
-              new (aBuilder) nsDisplayFixedPosition(aBuilder, item->GetUnderlyingFrame(),
+              new (aBuilder) nsDisplayFixedPosition(aBuilder, item->Frame(),
                                                     child, &fixedPosDescendantList));
         }
       }
@@ -3095,7 +3095,7 @@ NS_IMETHODIMP nsFrame::HandleRelease(nsPresContext* aPresContext,
                            parentContent, aEvent, aEventStatus);
 }
 
-struct NS_STACK_CLASS FrameContentRange {
+struct MOZ_STACK_CLASS FrameContentRange {
   FrameContentRange(nsIContent* aContent, int32_t aStart, int32_t aEnd) :
     content(aContent), start(aStart), end(aEnd) { }
   nsCOMPtr<nsIContent> content;
@@ -4114,8 +4114,9 @@ nsFrame::ReflowAbsoluteFrames(nsPresContext*           aPresContext,
     nsContainerFrame* container = do_QueryFrame(this);
     NS_ASSERTION(container, "Abs-pos children only supported on container frames for now");
 
+    nsRect containingBlock(0, 0, containingBlockWidth, containingBlockHeight);
     absoluteContainer->Reflow(container, aPresContext, aReflowState, aStatus,
-                              containingBlockWidth, containingBlockHeight,
+                              containingBlock,
                               aConstrainHeight, true, true, // XXX could be optimized
                               &aDesiredSize.mOverflowAreas);
   }
@@ -4583,7 +4584,14 @@ nsIFrame::AreLayersMarkedActive(nsChangeHint aChangeHint)
 {
   LayerActivity* layerActivity =
     static_cast<LayerActivity*>(Properties().Get(LayerActivityProperty()));
-  return layerActivity && (layerActivity->mChangeHint & aChangeHint);
+  if (layerActivity && (layerActivity->mChangeHint & aChangeHint)) {
+    return true;
+  }
+  if (aChangeHint & nsChangeHint_UpdateTransformLayer &&
+      Preserves3D()) {
+    return GetParent()->AreLayersMarkedActive(nsChangeHint_UpdateTransformLayer);
+  }
+  return false;
 }
 
 /* static */ void
@@ -8303,14 +8311,17 @@ DR_init_constraints_cookie::~DR_init_constraints_cookie()
 DR_init_offsets_cookie::DR_init_offsets_cookie(
                      nsIFrame*                aFrame,
                      nsCSSOffsetState*        aState,
-                     nscoord                  aCBWidth,
+                     nscoord                  aHorizontalPercentBasis,
+                     nscoord                  aVerticalPercentBasis,
                      const nsMargin*          aMargin,
                      const nsMargin*          aPadding)
   : mFrame(aFrame)
   , mState(aState)
 {
   MOZ_COUNT_CTOR(DR_init_offsets_cookie);
-  mValue = nsCSSOffsetState::DisplayInitOffsetsEnter(mFrame, mState, aCBWidth,
+  mValue = nsCSSOffsetState::DisplayInitOffsetsEnter(mFrame, mState,
+                                                     aHorizontalPercentBasis,
+                                                     aVerticalPercentBasis,
                                                      aMargin, aPadding);
 }
 
@@ -9251,7 +9262,8 @@ nsHTMLReflowState::DisplayInitConstraintsExit(nsIFrame* aFrame,
 /* static */ void*
 nsCSSOffsetState::DisplayInitOffsetsEnter(nsIFrame* aFrame,
                                           nsCSSOffsetState* aState,
-                                          nscoord aContainingBlockWidth,
+                                          nscoord aHorizontalPercentBasis,
+                                          nscoord aVerticalPercentBasis,
                                           const nsMargin* aBorder,
                                           const nsMargin* aPadding)
 {
@@ -9266,9 +9278,12 @@ nsCSSOffsetState::DisplayInitOffsetsEnter(nsIFrame* aFrame,
   if (treeNode && treeNode->mDisplay) {
     DR_state->DisplayFrameTypeInfo(aFrame, treeNode->mIndent);
 
-    char width[16];
-    DR_state->PrettyUC(aContainingBlockWidth, width);
-    printf("InitOffsets cbw=%s", width);
+    char horizPctBasisStr[16];
+    char vertPctBasisStr[16];
+    DR_state->PrettyUC(aHorizontalPercentBasis, horizPctBasisStr);
+    DR_state->PrettyUC(aVerticalPercentBasis,   vertPctBasisStr);
+    printf("InitOffsets pct_basis=%s,%s", horizPctBasisStr, vertPctBasisStr);
+
     DR_state->PrintMargin("b", aBorder);
     DR_state->PrintMargin("p", aPadding);
     putchar('\n');

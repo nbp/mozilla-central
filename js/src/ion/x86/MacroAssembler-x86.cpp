@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -195,7 +194,7 @@ MacroAssemblerX86::callWithABI(const Address &fun, Result result)
 }
 
 void
-MacroAssemblerX86::handleException()
+MacroAssemblerX86::handleFailureWithHandler(void *handler)
 {
     // Reserve space for exception information.
     subl(Imm32(sizeof(ResumeFromException)), esp);
@@ -204,7 +203,7 @@ MacroAssemblerX86::handleException()
     // Ask for an exception handler.
     setupUnalignedABICall(1, ecx);
     passABIArg(eax);
-    callWithABI(JS_FUNC_TO_DATA_PTR(void *, ion::HandleException));
+    callWithABI(handler);
 
     Label catch_;
     Label entryFrame;

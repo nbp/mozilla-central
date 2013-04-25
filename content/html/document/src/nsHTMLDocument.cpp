@@ -1504,8 +1504,7 @@ nsHTMLDocument::Open(JSContext* cx,
   // Note: We want to use GetDocumentFromContext here because this document
   // should inherit the security information of the document that's opening us,
   // (since if it's secure, then it's presumably trusted).
-  nsCOMPtr<nsIDocument> callerDoc =
-    do_QueryInterface(nsContentUtils::GetDocumentFromContext());
+  nsCOMPtr<nsIDocument> callerDoc = nsContentUtils::GetDocumentFromContext();
   if (!callerDoc) {
     // If we're called from C++ or in some other way without an originating
     // document we can't do a document.open w/o changing the principal of the
@@ -2961,19 +2960,12 @@ nsHTMLDocument::EditingStateChanged()
       result = agentSheets.AppendObject(sheet);
       NS_ENSURE_TRUE(result, NS_ERROR_OUT_OF_MEMORY);
 
-      // Disable scripting and plugins.
-      rv = editSession->DisableJSAndPlugins(window);
-      NS_ENSURE_SUCCESS(rv, rv);
-
       updateState = true;
       spellRecheckAll = oldState == eContentEditable;
     }
     else if (oldState == eDesignMode) {
       // designMode is being turned off (contentEditable is still on).
       RemoveFromAgentSheets(agentSheets, NS_LITERAL_STRING("resource://gre/res/designmode.css"));
-
-      rv = editSession->RestoreJSAndPlugins(window);
-      NS_ENSURE_SUCCESS(rv, rv);
 
       updateState = true;
     }

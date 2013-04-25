@@ -40,7 +40,7 @@ public:
 
   NS_IMETHOD Run() {
     // Get file path
-#   if defined(SPS_PLAT_arm_android)
+#   if defined(SPS_PLAT_arm_android) && !defined(MOZ_WIDGET_GONK)
     nsCString tmpPath;
     tmpPath.AppendPrintf("/sdcard/profile_%i_%i.txt", XRE_GetProcessType(), getpid());
 #   else
@@ -82,7 +82,7 @@ public:
       JSAutoRequest ar(cx);
       static JSClass c = {
           "global", JSCLASS_GLOBAL_FLAGS,
-          JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+          JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
           JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub
       };
       JSObject *obj = JS_NewGlobalObject(cx, &c, NULL);
@@ -97,7 +97,7 @@ public:
         stream.close();
         LOGF("Saved to %s", tmpPath.get());
       } else {
-        LOG("Fail to open profile log file.");
+        LOGF("Fail to open profile log file '%s'.", tmpPath.get());
       }
     }
     JS_EndRequest(cx);

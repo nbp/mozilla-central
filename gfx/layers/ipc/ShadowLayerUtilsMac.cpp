@@ -5,9 +5,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/layers/PLayers.h"
+#include "mozilla/layers/PLayerTransaction.h"
 #include "mozilla/layers/ShadowLayers.h"
- 
+
 #include "gfxPlatform.h"
 
 #include "gfxSharedQuartzSurface.h"
@@ -18,10 +18,10 @@ namespace mozilla {
 namespace layers {
 
 bool
-ShadowLayerForwarder::PlatformAllocBuffer(const gfxIntSize& aSize,
-                                          gfxASurface::gfxContentType aContent,
-                                          uint32_t aCaps,
-                                          SurfaceDescriptor* aBuffer)
+ISurfaceAllocator::PlatformAllocSurfaceDescriptor(const gfxIntSize& aSize,
+                                                  gfxASurface::gfxContentType aContent,
+                                                  uint32_t aCaps,
+                                                  SurfaceDescriptor* aBuffer)
 {
   return false;
 }
@@ -77,7 +77,7 @@ ShadowLayerManager::PlatformSyncBeforeReplyUpdate()
 }
 
 bool
-ShadowLayerManager::PlatformDestroySharedSurface(SurfaceDescriptor*)
+ISurfaceAllocator::PlatformDestroySharedSurface(SurfaceDescriptor*)
 {
   return false;
 }
@@ -89,6 +89,13 @@ ShadowLayerManager::OpenDescriptorForDirectTexturing(GLContext*,
 {
   return nullptr;
 }
+
+/*static*/ bool
+ShadowLayerManager::SupportsDirectTexturing()
+{
+  return false;
+}
+
 
 } // namespace layers
 } // namespace mozilla

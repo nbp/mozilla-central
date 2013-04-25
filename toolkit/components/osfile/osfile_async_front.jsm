@@ -237,7 +237,7 @@ File.prototype = {
    * @rejects {OS.File.Error}
    */
   close: function close() {
-    if (this._fdmsg) {
+    if (this._fdmsg != null) {
       let msg = this._fdmsg;
       this._fdmsg = null;
       return this._closeResult =
@@ -254,9 +254,6 @@ File.prototype = {
    * @rejects {OS.File.Error}
    */
   stat: function stat() {
-    if (!this._fdmsg) {
-      return Promise.reject(OSError.closed("accessing file"));
-    }
     return Scheduler.post("File_prototype_stat", [this._fdmsg], this).then(
       File.Info.fromMsg
     );
@@ -549,13 +546,14 @@ File.makeDir = function makeDir(path, options) {
  * @param {string} path The path to the file.
  * @param {number=} bytes Optionally, an upper bound to the number of bytes
  * to read.
+ * @param {JSON} options Additional options.
  *
  * @resolves {Uint8Array} A buffer holding the bytes
  * read from the file.
  */
-File.read = function read(path, bytes) {
+File.read = function read(path, bytes, options) {
   let promise = Scheduler.post("read",
-    [Type.path.toMsg(path), bytes], path);
+    [Type.path.toMsg(path), bytes, options], path);
   return promise.then(
     function onSuccess(data) {
       return new Uint8Array(data.buffer, data.byteOffset, data.byteLength);

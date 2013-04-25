@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=4 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -40,6 +39,23 @@ BaselineCompiler::init()
         return false;
 
     return true;
+}
+
+bool
+BaselineCompiler::addPCMappingEntry(bool addIndexEntry)
+{
+    // Don't add multiple entries for a single pc.
+    size_t nentries = pcMappingEntries_.length();
+    if (nentries > 0 && pcMappingEntries_[nentries - 1].pcOffset == unsigned(pc - script->code))
+        return true;
+
+    PCMappingEntry entry;
+    entry.pcOffset = pc - script->code;
+    entry.nativeOffset = masm.currentOffset();
+    entry.slotInfo = getStackTopSlotInfo();
+    entry.addIndexEntry = addIndexEntry;
+
+    return pcMappingEntries_.append(entry);
 }
 
 MethodStatus
@@ -123,13 +139,14 @@ BaselineCompiler::compile()
                                                          pcEntries.length());
     if (!baselineScript)
         return Method_Error;
-    script->baseline = baselineScript;
+
+    baselineScript->setMethod(code);
+
+    script->setBaselineScript(baselineScript);
 
     IonSpew(IonSpew_BaselineScripts, "Created BaselineScript %p (raw %p) for %s:%d",
-            (void *) script->baseline, (void *) code->raw(),
+            (void *) script->baselineScript(), (void *) code->raw(),
             script->filename(), script->lineno);
-
-    script->baseline->setMethod(code);
 
     JS_ASSERT(pcMappingIndexEntries.length() > 0);
     baselineScript->copyPCMappingIndexEntries(&pcMappingIndexEntries[0]);
@@ -394,7 +411,7 @@ BaselineCompiler::emitUseCountIncrement()
     // Emit no use count increments or bailouts if Ion is not
     // enabled, or if the script will never be Ion-compileable
 
-    if (!ionCompileable_)
+    if (!ionCompileable_ && !ionOSRCompileable_)
         return true;
 
     Register scriptReg = R2.scratchReg();
@@ -412,7 +429,7 @@ BaselineCompiler::emitUseCountIncrement()
     masm.branch32(Assembler::LessThan, countReg, Imm32(minUses), &skipCall);
 
     masm.branchPtr(Assembler::Equal,
-                   Address(scriptReg, offsetof(JSScript, ion)),
+                   Address(scriptReg, JSScript::offsetOfIonScript()),
                    ImmWord(ION_COMPILING_SCRIPT), &skipCall);
 
     // Call IC.
@@ -1312,7 +1329,7 @@ BaselineCompiler::emit_JSOP_NEWOBJECT()
     }
 
     RootedObject baseObject(cx, script->getObject(pc));
-    RootedObject templateObject(cx, CopyInitializerObject(cx, baseObject, MaybeSingletonObject));
+    RootedObject templateObject(cx, CopyInitializerObject(cx, baseObject, TenuredObject));
     if (!templateObject)
         return false;
 
@@ -1359,7 +1376,7 @@ BaselineCompiler::emit_JSOP_NEWINIT()
         JS_ASSERT(key == JSProto_Object);
 
         RootedObject templateObject(cx);
-        templateObject = NewBuiltinClassInstance(cx, &ObjectClass, MaybeSingletonObject);
+        templateObject = NewBuiltinClassInstance(cx, &ObjectClass, TenuredObject);
         if (!templateObject)
             return false;
 
@@ -2412,7 +2429,7 @@ BaselineCompiler::emit_JSOP_ARGUMENTS()
         // Load script->baseline.
         Register scratch = R1.scratchReg();
         masm.movePtr(ImmGCPtr(script), scratch);
-        masm.loadPtr(Address(scratch, offsetof(JSScript, baseline)), scratch);
+        masm.loadPtr(Address(scratch, JSScript::offsetOfBaselineScript()), scratch);
 
         // If we don't need an arguments object, skip the VM call.
         masm.branchTest32(Assembler::Zero, Address(scratch, BaselineScript::offsetOfFlags()),

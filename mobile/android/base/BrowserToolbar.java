@@ -6,16 +6,17 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.ImmutableViewportMetrics;
+import org.mozilla.gecko.gfx.LayerView;
 import org.mozilla.gecko.util.HardwareUtils;
 
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.graphics.drawable.AnimationDrawable;
 import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.StateListDrawable;
-import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -45,7 +46,6 @@ import android.widget.ViewSwitcher;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.TimerTask;
 
 public class BrowserToolbar implements ViewSwitcher.ViewFactory,
                                        Tabs.OnTabsChangedListener,
@@ -321,6 +321,18 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
             }
         });
 
+        mReader.setOnLongClickListener(new Button.OnLongClickListener() {
+            public boolean onLongClick(View v) {
+                Tab tab = Tabs.getInstance().getSelectedTab();
+                if (tab != null) {
+                    tab.addToReadingList();
+                    return true;
+                }
+
+                return false;
+            }
+        });
+
         mShadow = (ImageView) mLayout.findViewById(R.id.shadow);
 
         mHandler = new Handler();
@@ -496,9 +508,12 @@ public class BrowserToolbar implements ViewSwitcher.ViewFactory,
     private boolean canToolbarHide() {
         // Forbid the toolbar from hiding if hiding the toolbar would cause
         // the page to go into overscroll.
-        ImmutableViewportMetrics metrics = GeckoApp.mAppContext.getLayerView().
-            getLayerClient().getViewportMetrics();
-        return (metrics.getPageHeight() >= metrics.getHeight());
+        LayerView layerView = GeckoApp.mAppContext.getLayerView();
+        if (layerView != null) {
+            ImmutableViewportMetrics metrics = layerView.getViewportMetrics();
+            return (metrics.getPageHeight() >= metrics.getHeight());
+        }
+        return false;
     }
 
     public void animateVisibility(boolean show) {

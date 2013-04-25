@@ -14,7 +14,6 @@
 #include "mozilla/dom/XMLDocument.h"
 #include "nsForwardReference.h"
 #include "nsIContent.h"
-#include "nsIDOMEventTarget.h"
 #include "nsIDOMXULCommandDispatcher.h"
 #include "nsIDOMXULDocument.h"
 #include "nsCOMArray.h"
@@ -182,8 +181,6 @@ public:
                    void* aData);
 
     NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(XULDocument, XMLDocument)
-
-    virtual nsXPCClassInfo* GetClassInfo();
 
     void TraceProtos(JSTracer* aTrc, uint32_t aGCNumber);
 

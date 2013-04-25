@@ -34,9 +34,7 @@ public:
 
   AudioParam(AudioNode* aNode,
              CallbackType aCallback,
-             float aDefaultValue,
-             float aMinValue,
-             float aMaxValue);
+             float aDefaultValue);
   virtual ~AudioParam();
 
   NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(AudioParam)
@@ -90,20 +88,14 @@ public:
     AudioParamTimeline::SetTargetAtTime(aTarget, aStartTime, aTimeConstant, aRv);
     mCallback(mNode);
   }
+  void SetTargetValueAtTime(float aTarget, double aStartTime, double aTimeConstant, ErrorResult& aRv)
+  {
+    SetTargetAtTime(aTarget, aStartTime, aTimeConstant, aRv);
+  }
   void CancelScheduledValues(double aStartTime)
   {
     AudioParamTimeline::CancelScheduledValues(aStartTime);
     mCallback(mNode);
-  }
-
-  float MinValue() const
-  {
-    return mMinValue;
-  }
-
-  float MaxValue() const
-  {
-    return mMaxValue;
   }
 
   float DefaultValue() const
@@ -115,8 +107,6 @@ private:
   nsRefPtr<AudioNode> mNode;
   CallbackType mCallback;
   const float mDefaultValue;
-  const float mMinValue;
-  const float mMaxValue;
 };
 
 }

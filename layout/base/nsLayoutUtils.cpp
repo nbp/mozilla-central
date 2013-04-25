@@ -53,9 +53,7 @@
 #include "gfxPlatform.h"
 #include "nsClientRect.h"
 #include <algorithm>
-#ifdef MOZ_MEDIA
 #include "mozilla/dom/HTMLVideoElement.h"
-#endif
 #include "mozilla/dom/HTMLImageElement.h"
 #include "imgIRequest.h"
 #include "nsIImageLoadingContent.h"
@@ -1079,12 +1077,9 @@ nsLayoutUtils::GetActiveScrolledRootFor(nsDisplayItem* aItem,
                                         nsDisplayListBuilder* aBuilder,
                                         bool* aShouldFixToViewport)
 {
-  nsIFrame* f = aItem->GetUnderlyingFrame();
+  nsIFrame* f = aItem->Frame();
   if (aShouldFixToViewport) {
     *aShouldFixToViewport = false;
-  }
-  if (!f) {
-    return nullptr;
   }
   if (aItem->ShouldFixToViewport(aBuilder)) {
     if (aShouldFixToViewport) {
@@ -2973,17 +2968,16 @@ nsLayoutUtils::IntrinsicForContainer(nsRenderingContext *aRenderingContext,
 }
 
 /* static */ nscoord
-nsLayoutUtils::ComputeWidthDependentValue(
-                 nscoord              aContainingBlockWidth,
-                 const nsStyleCoord&  aCoord)
+nsLayoutUtils::ComputeCBDependentValue(nscoord aPercentBasis,
+                                       const nsStyleCoord& aCoord)
 {
-  NS_WARN_IF_FALSE(aContainingBlockWidth != NS_UNCONSTRAINEDSIZE,
-                   "have unconstrained width; this should only result from "
-                   "very large sizes, not attempts at intrinsic width "
-                   "calculation");
+  NS_WARN_IF_FALSE(aPercentBasis != NS_UNCONSTRAINEDSIZE,
+                   "have unconstrained width or height; this should only "
+                   "result from very large sizes, not attempts at intrinsic "
+                   "size calculation");
 
   if (aCoord.IsCoordPercentCalcUnit()) {
-    return nsRuleNode::ComputeCoordPercentCalc(aCoord, aContainingBlockWidth);
+    return nsRuleNode::ComputeCoordPercentCalc(aCoord, aPercentBasis);
   }
   NS_ASSERTION(aCoord.GetUnit() == eStyleUnit_None ||
                aCoord.GetUnit() == eStyleUnit_Auto,
@@ -4744,13 +4738,11 @@ nsLayoutUtils::SurfaceFromElement(dom::Element* aElement,
     return SurfaceFromElement(canvas, aSurfaceFlags);
   }
 
-#ifdef MOZ_MEDIA
   // Maybe it's <video>?
   if (HTMLVideoElement* video =
         HTMLVideoElement::FromContentOrNull(aElement)) {
     return SurfaceFromElement(video, aSurfaceFlags);
   }
-#endif
 
   // Finally, check if it's a normal image
   nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(aElement);

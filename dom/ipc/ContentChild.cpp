@@ -19,7 +19,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/dom/ExternalHelperAppChild.h"
 #include "mozilla/dom/PCrashReporterChild.h"
-#include "mozilla/dom/StorageChild.h"
+#include "mozilla/dom/DOMStorageIPC.h"
 #include "mozilla/Hal.h"
 #include "mozilla/hal_sandbox/PHalChild.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
@@ -494,14 +494,14 @@ ContentChild::DeallocPMemoryReportRequest(PMemoryReportRequestChild* actor)
 }
 
 bool
-ContentChild::RecvDumpMemoryReportsToFile(const nsString& aIdentifier,
+ContentChild::RecvDumpMemoryInfoToTempDir(const nsString& aIdentifier,
                                           const bool& aMinimizeMemoryUsage,
                                           const bool& aDumpChildProcesses)
 {
     nsCOMPtr<nsIMemoryInfoDumper> dumper = do_GetService("@mozilla.org/memory-info-dumper;1");
 
-    dumper->DumpMemoryReportsToFile(
-        aIdentifier, aMinimizeMemoryUsage, aDumpChildProcesses);
+    dumper->DumpMemoryInfoToTempDir(aIdentifier, aMinimizeMemoryUsage,
+                                    aDumpChildProcesses);
     return true;
 }
 
@@ -839,7 +839,7 @@ ContentChild::DeallocPSms(PSmsChild* aSms)
 }
 
 PStorageChild*
-ContentChild::AllocPStorage(const StorageConstructData& aData)
+ContentChild::AllocPStorage()
 {
     NS_NOTREACHED("We should never be manually allocating PStorageChild actors");
     return nullptr;
@@ -848,7 +848,7 @@ ContentChild::AllocPStorage(const StorageConstructData& aData)
 bool
 ContentChild::DeallocPStorage(PStorageChild* aActor)
 {
-    StorageChild* child = static_cast<StorageChild*>(aActor);
+    DOMStorageDBChild* child = static_cast<DOMStorageDBChild*>(aActor);
     child->ReleaseIPDLReference();
     return true;
 }
@@ -1176,10 +1176,7 @@ ContentChild::RecvLastPrivateDocShellDestroyed()
 bool
 ContentChild::RecvFilePathUpdate(const nsString& type, const nsString& path, const nsCString& aReason)
 {
-    nsCOMPtr<nsIFile> file;
-    NS_NewLocalFile(path, false, getter_AddRefs(file));
-
-    nsRefPtr<DeviceStorageFile> dsf = new DeviceStorageFile(type, file);
+    nsRefPtr<DeviceStorageFile> dsf = new DeviceStorageFile(type, path);
 
     nsString reason;
     CopyASCIItoUTF16(aReason, reason);

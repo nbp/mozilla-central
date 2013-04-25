@@ -136,13 +136,8 @@ function TopSitesView(aGrid, aMaxSites, aUseThumbnails) {
   this._set.controller = this;
   this._topSitesMax = aMaxSites;
   this._useThumbs = aUseThumbnails;
-
-  // handle selectionchange DOM events from the grid/tile group
-  this._set.addEventListener("context-action", this, false);
-
   // clean up state when the appbar closes
   window.addEventListener('MozAppbarDismissing', this, false);
-
   let history = Cc["@mozilla.org/browser/nav-history-service;1"].
                 getService(Ci.nsINavHistoryService);
   history.addObserver(this, false);
@@ -230,13 +225,8 @@ TopSitesView.prototype = {
       },0);
     }
   },
-
   handleEvent: function(aEvent) {
     switch (aEvent.type){
-      case "context-action":
-        this.doActionOnSelectedTiles(aEvent.action, aEvent);
-        aEvent.stopPropagation(); // event is handled, no need to let it bubble further
-        break;
       case "MozAppbarDismissing":
         // clean up when the context appbar is dismissed - we don't remember selections
         this._lastSelectedSites = null;
@@ -274,7 +264,7 @@ TopSitesView.prototype = {
       if (!iconURLfromSiteURL) {
         return;
       }
-      aTileNode.iconSrc = iconURLfromSiteURL;
+      aTileNode.iconSrc = iconURLfromSiteURL.spec;
       let faviconURL = (PlacesUtils.favicons.getFaviconLinkForIcon(iconURLfromSiteURL)).spec;
       let xpFaviconURI = Util.makeURI(faviconURL.replace("moz-anno:favicon:",""));
       ColorUtils.getForegroundAndBackgroundIconColors(xpFaviconURI, function(foreground, background) {
@@ -408,15 +398,15 @@ let TopSitesStartView = {
   },
 
   show: function show() {
-    this._grid.arrangeItems(3, 3);
+    this._grid.arrangeItems();
   },
 };
 
 let TopSitesSnappedView = {
-  get _grid() { return document.getElementById("snapped-topsite-grid"); },
+  get _grid() { return document.getElementById("snapped-topsites-grid"); },
 
   show: function show() {
-    this._grid.arrangeItems(1, 8);
+    this._grid.arrangeItems();
   },
 
   init: function() {
@@ -425,8 +415,19 @@ let TopSitesSnappedView = {
       let topsitesVbox = document.getElementById("snapped-topsites");
       topsitesVbox.setAttribute("hidden", "true");
     }
+    Services.obs.addObserver(this, "metro_viewstate_dom_snapped", false);
   },
+
   uninit: function uninit() {
     this._view.destruct();
+    Services.obs.removeObserver(this, "metro_viewstate_dom_snapped");
+  },
+
+  observe: function(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "metro_viewstate_dom_snapped":
+          this._grid.arrangeItems();
+        break;
+    }
   },
 };

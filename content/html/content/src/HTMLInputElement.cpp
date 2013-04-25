@@ -7,6 +7,7 @@
 
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLInputElementBinding.h"
+#include "nsAsyncDOMEvent.h"
 #include "nsAttrValueInlines.h"
 
 #include "nsIDOMHTMLInputElement.h"
@@ -56,7 +57,6 @@
 #include "nsLayoutUtils.h"
 
 #include "nsIDOMMutationEvent.h"
-#include "nsIDOMEventTarget.h"
 #include "nsMutationEvent.h"
 #include "nsEventListenerManager.h"
 
@@ -100,7 +100,6 @@
 #include "jsapi.h"
 
 NS_IMPL_NS_NEW_HTML_ELEMENT_CHECK_PARSER(Input)
-DOMCI_NODE_DATA(HTMLInputElement, mozilla::dom::HTMLInputElement)
 
 // XXX align=left, hspace, vspace, border? other nav4 attrs
 
@@ -397,8 +396,7 @@ HTMLInputElement::AsyncClickHandler::Run()
     uint32_t permission;
     pm->TestPermission(doc->NodePrincipal(), &permission);
     if (permission == nsIPopupWindowManager::DENY_POPUP) {
-      nsCOMPtr<nsIDOMDocument> domDoc = do_QueryInterface(doc);
-      nsGlobalWindow::FirePopupBlockedEvent(domDoc, win, nullptr, EmptyString(), EmptyString());
+      nsGlobalWindow::FirePopupBlockedEvent(doc, win, nullptr, EmptyString(), EmptyString());
       return NS_OK;
     }
   }
@@ -716,7 +714,7 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLInputElement)
                                    nsIConstraintValidation)
   NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLInputElement,
                                                nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_TABLE_TAIL_CLASSINFO(HTMLInputElement)
+NS_HTML_CONTENT_INTERFACE_MAP_END
 
 // nsIConstraintValidation
 NS_IMPL_NSICONSTRAINTVALIDATION_EXCEPT_SETCUSTOMVALIDITY(HTMLInputElement)
@@ -1225,11 +1223,9 @@ HTMLInputElement::ConvertStringToNumber(nsAString& aValue,
       aResultValue = static_cast<double>(milliseconds);
       return true;
     default:
+      MOZ_ASSERT(false, "Unrecognized input type");
       return false;
   }
-
-  MOZ_NOT_REACHED();
-  return false;
 }
 
 double
@@ -1279,6 +1275,13 @@ HTMLInputElement::SetValue(const nsAString& aValue, ErrorResult& aRv)
       GetValueInternal(currentValue);
 
       SetValueInternal(aValue, false, true);
+
+      if (mType == NS_FORM_INPUT_RANGE) {
+        nsRangeFrame* frame = do_QueryFrame(GetPrimaryFrame());
+        if (frame) {
+          frame->UpdateForValueChange();
+        }
+      }
 
       if (mFocusedValue.Equals(currentValue)) {
         GetValueInternal(mFocusedValue);
@@ -1429,7 +1432,7 @@ HTMLInputElement::ConvertNumberToString(double aValue,
         return true;
       }
     default:
-      MOZ_NOT_REACHED();
+      MOZ_ASSERT(false, "Unrecognized input type");
       return false;
   }
 }
@@ -1488,7 +1491,7 @@ HTMLInputElement::GetValueAsDate(JSContext* aCx, ErrorResult& aRv)
     }
   }
 
-  MOZ_NOT_REACHED();
+  MOZ_ASSERT(false, "Unrecognized input type");
   aRv.Throw(NS_ERROR_UNEXPECTED);
   return JS::NullValue();
 }
@@ -2716,6 +2719,7 @@ HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent)
 {
   MOZ_ASSERT(mIsDraggingRange);
 
+  mIsDraggingRange = false;
   if (nsIPresShell::GetCapturingContent() == this) {
     nsIPresShell::SetCapturingContent(nullptr, 0); // cancel capture
   }
@@ -2732,8 +2736,10 @@ HTMLInputElement::CancelRangeThumbDrag(bool aIsForUserEvent)
     if (frame) {
       frame->UpdateForValueChange();
     }
+    nsRefPtr<nsAsyncDOMEvent> event =
+      new nsAsyncDOMEvent(this, NS_LITERAL_STRING("input"), true, false);
+    event->RunDOMEventWhenSafe();
   }
-  mIsDraggingRange = false;
 }
 
 void
@@ -2784,7 +2790,7 @@ IsLTR(Element* aElement)
 }
 
 bool
-HTMLInputElement::ShouldPreventDOMActivateDispatch(nsIDOMEventTarget* aOriginalTarget)
+HTMLInputElement::ShouldPreventDOMActivateDispatch(EventTarget* aOriginalTarget)
 {
   /*
    * For the moment, there is only one situation where we actually want to
@@ -5693,9 +5699,10 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
     NS_ERROR("nsIIDNService isn't present!");
   }
 
-  // If the email address is empty, begins with a '@' or ends with a '.',
-  // we know it's invalid.
-  if (length == 0 || value[0] == '@' || value[length-1] == '.') {
+  // If the email address is empty, begins with an '@'
+  // or ends with a '.' or '-', we know it's invalid.
+  if (length == 0 || value[0] == '@' || value[length-1] == '.' ||
+      value[length-1] == '-') {
     return false;
   }
 
@@ -5713,14 +5720,13 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
     }
   }
 
-  // There is no domain name (or it's one-character long),
-  // that's not a valid email address.
+  // If there is no domain name, that's not a valid email address.
   if (++i >= length) {
     return false;
   }
 
-  // The domain name can't begin with a dot.
-  if (value[i] == '.') {
+  // The domain name can't begin with a dot or a dash.
+  if (value[i] == '.' || value[i] == '-') {
     return false;
   }
 
@@ -5729,7 +5735,12 @@ HTMLInputElement::IsValidEmailAddress(const nsAString& aValue)
     PRUnichar c = value[i];
 
     if (c == '.') {
-      // A dot can't follow a dot.
+      // A dot can't follow a dot or a dash.
+      if (value[i-1] == '.' || value[i-1] == '-') {
+        return false;
+      }
+    } else if (c == '-'){
+      // A dash can't follow a dot.
       if (value[i-1] == '.') {
         return false;
       }
@@ -6068,7 +6079,7 @@ HTMLInputElement::GetStepScaleFactor() const
     case NS_FORM_INPUT_TIME:
       return kStepScaleFactorTime;
     default:
-      MOZ_NOT_REACHED();
+      MOZ_ASSERT(false, "Unrecognized input type");
       return MOZ_DOUBLE_NaN();
   }
 }
@@ -6086,7 +6097,7 @@ HTMLInputElement::GetDefaultStep() const
     case NS_FORM_INPUT_TIME:
       return kDefaultStepTime;
     default:
-      MOZ_NOT_REACHED();
+      MOZ_ASSERT(false, "Unrecognized input type");
       return MOZ_DOUBLE_NaN();
   }
 }

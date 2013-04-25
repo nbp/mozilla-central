@@ -1,6 +1,5 @@
-/* -*- Mode: C++; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
- * vim: set ts=8 sw=4 et tw=99:
- *
+/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ * vim: set ts=8 sts=4 et sw=4 tw=99:
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -177,7 +176,7 @@ const uint32_t JSSLOT_SAVED_ID        = 1;
 Class js_NoSuchMethodClass = {
     "NoSuchMethod",
     JSCLASS_HAS_RESERVED_SLOTS(2) | JSCLASS_IS_ANONYMOUS,
-    JS_PropertyStub, JS_PropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
+    JS_PropertyStub, JS_DeletePropertyStub, JS_PropertyStub, JS_StrictPropertyStub,
     JS_EnumerateStub, JS_ResolveStub, JS_ConvertStub,
 };
 
@@ -1013,19 +1012,6 @@ js::IteratorNext(JSContext *cx, HandleObject iterobj, MutableHandleValue rval)
     return js_IteratorNext(cx, iterobj, rval);
 }
 
-/*
- * For bytecodes which push values and then fall through, make sure the
- * types of the pushed values are consistent with type inference information.
- */
-static inline void
-TypeCheckNextBytecode(JSContext *cx, HandleScript script, unsigned n, const FrameRegs &regs)
-{
-#ifdef DEBUG
-    if (cx->typeInferenceEnabled() && n == GetBytecodeLength(regs.pc))
-        TypeScript::CheckBytecode(cx, script, regs.pc, regs.sp);
-#endif
-}
-
 JS_NEVER_INLINE InterpretStatus
 js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode, bool useNewType)
 {
@@ -1248,7 +1234,6 @@ js::Interpret(JSContext *cx, StackFrame *entryFrame, InterpMode interpMode, bool
         JS_ASSERT(js_CodeSpec[op].length == 1);
         len = 1;
       advance_pc:
-        TypeCheckNextBytecode(cx, script, len, regs);
         js::gc::MaybeVerifyBarriers(cx);
         regs.pc += len;
         op = (JSOp) *regs.pc;
@@ -1648,10 +1633,10 @@ BEGIN_CASE(JSOP_AND)
 }
 END_CASE(JSOP_AND)
 
-#define FETCH_ELEMENT_ID(obj, n, id)                                          \
+#define FETCH_ELEMENT_ID(n, id)                                               \
     JS_BEGIN_MACRO                                                            \
         const Value &idval_ = regs.sp[n];                                     \
-        if (!ValueToId<CanGC>(cx, obj, idval_, &id))                          \
+        if (!ValueToId<CanGC>(cx, idval_, &id))                               \
             goto error;                                                       \
     JS_END_MACRO
 
@@ -1681,7 +1666,7 @@ BEGIN_CASE(JSOP_IN)
     RootedObject &obj = rootObject0;
     obj = &rref.toObject();
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -2, id);
+    FETCH_ELEMENT_ID(-2, id);
     RootedObject &obj2 = rootObject1;
     RootedShape &prop = rootShape0;
     if (!JSObject::lookupGeneric(cx, obj, id, &obj2, &prop))
@@ -1804,7 +1789,7 @@ BEGIN_CASE(JSOP_ENUMCONSTELEM)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -2, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -1, id);
+    FETCH_ELEMENT_ID(-1, id);
     if (!JSObject::defineGeneric(cx, obj, id, rval,
                                  JS_PropertyStub, JS_StrictPropertyStub,
                                  JSPROP_ENUMERATE | JSPROP_PERMANENT | JSPROP_READONLY)) {
@@ -2129,9 +2114,15 @@ BEGIN_CASE(JSOP_DELPROP)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -1, obj);
 
-    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
-    if (!JSObject::deleteProperty(cx, obj, name, res, script->strict))
+    JSBool succeeded;
+    if (!JSObject::deleteProperty(cx, obj, name, &succeeded))
         goto error;
+    if (!succeeded && script->strict) {
+        obj->reportNotConfigurable(cx, NameToId(name));
+        goto error;
+    }
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-1]);
+    res.setBoolean(succeeded);
 }
 END_CASE(JSOP_DELPROP)
 
@@ -2144,10 +2135,22 @@ BEGIN_CASE(JSOP_DELELEM)
     RootedValue &propval = rootValue0;
     propval = regs.sp[-1];
 
-    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
-    if (!JSObject::deleteByValue(cx, obj, propval, res, script->strict))
+    JSBool succeeded;
+    if (!JSObject::deleteByValue(cx, obj, propval, &succeeded))
         goto error;
+    if (!succeeded && script->strict) {
+        // XXX This observably calls ToString(propval).  We should convert to
+        //     PropertyKey and use that to delete, and to report an error if
+        //     necessary!
+        RootedId id(cx);
+        if (!ValueToId<CanGC>(cx, propval, &id))
+            goto error;
+        obj->reportNotConfigurable(cx, id);
+        goto error;
+    }
 
+    MutableHandleValue res = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
+    res.setBoolean(succeeded);
     regs.sp--;
 }
 END_CASE(JSOP_DELELEM)
@@ -2308,7 +2311,7 @@ BEGIN_CASE(JSOP_SETELEM)
     RootedObject &obj = rootObject0;
     FETCH_OBJECT(cx, -3, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -2, id);
+    FETCH_ELEMENT_ID(-2, id);
     Value &value = regs.sp[-1];
     if (!SetObjectElementOperation(cx, obj, id, value, script->strict))
         goto error;
@@ -2325,7 +2328,7 @@ BEGIN_CASE(JSOP_ENUMELEM)
     /* Funky: the value to set is under the [obj, id] pair. */
     FETCH_OBJECT(cx, -2, obj);
     RootedId &id = rootId0;
-    FETCH_ELEMENT_ID(obj, -1, id);
+    FETCH_ELEMENT_ID(-1, id);
     rval = regs.sp[-3];
     if (!JSObject::setGeneric(cx, obj, obj, id, &rval, script->strict))
         goto error;
@@ -2851,7 +2854,7 @@ BEGIN_CASE(JSOP_SETTER)
 
     /* Ensure that id has a type suitable for use with obj. */
     if (JSID_IS_VOID(id))
-        FETCH_ELEMENT_ID(obj, i, id);
+        FETCH_ELEMENT_ID(i, id);
 
     if (!js_IsCallable(rval)) {
         JS_ReportErrorNumber(cx, js_GetErrorMessage, NULL, JSMSG_BAD_GETTER_OR_SETTER,
@@ -2992,7 +2995,7 @@ BEGIN_CASE(JSOP_INITELEM)
 {
     JS_ASSERT(regs.stackDepth() >= 3);
     HandleValue val = HandleValue::fromMarkedLocation(&regs.sp[-1]);
-    MutableHandleValue id = MutableHandleValue::fromMarkedLocation(&regs.sp[-2]);
+    HandleValue id = HandleValue::fromMarkedLocation(&regs.sp[-2]);
 
     RootedObject &obj = rootObject0;
     obj = &regs.sp[-3].toObject();
@@ -3613,22 +3616,17 @@ template <bool strict>
 bool
 js::DeleteProperty(JSContext *cx, HandleValue v, HandlePropertyName name, JSBool *bp)
 {
-    // default op result is false (failure)
-    *bp = true;
-
     // convert value to JSObject pointer
     RootedObject obj(cx, ToObjectFromStack(cx, v));
     if (!obj)
         return false;
 
-    // Call deleteProperty on obj
-    RootedValue result(cx, NullValue());
-    bool delprop_ok = JSObject::deleteProperty(cx, obj, name, &result, strict);
-    if (!delprop_ok)
+    if (!JSObject::deleteProperty(cx, obj, name, bp))
         return false;
-
-    // convert result into *bp and return
-    *bp = result.toBoolean();
+    if (strict && !*bp) {
+        obj->reportNotConfigurable(cx, NameToId(name));
+        return false;
+    }
     return true;
 }
 
@@ -3643,16 +3641,23 @@ js::DeleteElement(JSContext *cx, HandleValue val, HandleValue index, JSBool *bp)
     if (!obj)
         return false;
 
-    RootedValue result(cx);
-    if (!JSObject::deleteByValue(cx, obj, index, &result, strict))
+    if (!JSObject::deleteByValue(cx, obj, index, bp))
         return false;
-
-    *bp = result.toBoolean();
+    if (strict && !*bp) {
+        // XXX This observably calls ToString(propval).  We should convert to
+        //     PropertyKey and use that to delete, and to report an error if
+        //     necessary!
+        RootedId id(cx);
+        if (!ValueToId<CanGC>(cx, index, &id))
+            return false;
+        obj->reportNotConfigurable(cx, id);
+        return false;
+    }
     return true;
 }
 
-template bool js::DeleteElement<true> (JSContext *, HandleValue, HandleValue, JSBool *);
-template bool js::DeleteElement<false>(JSContext *, HandleValue, HandleValue, JSBool *);
+template bool js::DeleteElement<true> (JSContext *, HandleValue, HandleValue, JSBool *succeeded);
+template bool js::DeleteElement<false>(JSContext *, HandleValue, HandleValue, JSBool *succeeded);
 
 bool
 js::GetElement(JSContext *cx, MutableHandleValue lref, HandleValue rref, MutableHandleValue vp)
@@ -3682,8 +3687,7 @@ js::SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleV
                      JSBool strict)
 {
     RootedId id(cx);
-    RootedValue indexval(cx, index);
-    if (!FetchElementId(cx, obj, indexval, &id, &indexval))
+    if (!ValueToId<CanGC>(cx, index, &id))
         return false;
     return SetObjectElementOperation(cx, obj, id, value, strict);
 }
@@ -3694,10 +3698,15 @@ js::SetObjectElement(JSContext *cx, HandleObject obj, HandleValue index, HandleV
 {
     JS_ASSERT(pc);
     RootedId id(cx);
-    RootedValue indexval(cx, index);
-    if (!FetchElementId(cx, obj, indexval, &id, &indexval))
+    if (!ValueToId<CanGC>(cx, index, &id))
         return false;
     return SetObjectElementOperation(cx, obj, id, value, strict, script, pc);
+}
+
+bool
+js::InitElementArray(JSContext *cx, jsbytecode *pc, HandleObject obj, uint32_t index, HandleValue value)
+{
+    return InitArrayElemOperation(cx, pc, obj, index, value);
 }
 
 bool
@@ -3757,10 +3766,16 @@ js::DeleteNameOperation(JSContext *cx, HandlePropertyName name, HandleObject sco
     if (!LookupName(cx, name, scopeObj, &scope, &pobj, &shape))
         return false;
 
-    /* ECMA says to return true if name is undefined or inherited. */
-    res.setBoolean(true);
-    if (shape)
-        return JSObject::deleteProperty(cx, scope, name, res, false);
+    if (!scope) {
+        // Return true for non-existent names.
+        res.setBoolean(true);
+        return true;
+    }
+
+    JSBool succeeded;
+    if (!JSObject::deleteProperty(cx, scope, name, &succeeded))
+        return false;
+    res.setBoolean(succeeded);
     return true;
 }
 

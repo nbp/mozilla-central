@@ -18,7 +18,6 @@
 #include "nsIJSNativeInitializer.h"
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/dom/EventBinding.h"
-#include "mozilla/dom/BindingUtils.h"
 #include "nsIScriptGlobalObject.h"
 
 class nsIContent;
@@ -26,7 +25,13 @@ class nsPresContext;
 struct JSContext;
 class JSObject;
 
-class nsDOMEvent : public nsIDOMEvent,
+// Dummy class so we can cast through it to get from nsISupports to
+// nsDOMEvent subclasses with only two non-ambiguous static casts.
+class nsDOMEventBase : public nsIDOMEvent
+{
+};
+
+class nsDOMEvent : public nsDOMEventBase,
                    public nsIJSNativeInitializer,
                    public nsWrapperCache
 {

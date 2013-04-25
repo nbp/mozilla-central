@@ -23,8 +23,6 @@
 
 class nsContentList;
 class nsGlobalWindow;
-class nsICanvasRenderingContextInternal;
-class nsIDOMHTMLOptionsCollection;
 class nsIDOMWindow;
 class nsIForm;
 class nsIHTMLDocument;
@@ -733,121 +731,6 @@ public:
 };
 
 
-// HTMLSelectElement helper
-
-class nsHTMLSelectElementSH : public nsElementSH
-{
-protected:
-  nsHTMLSelectElementSH(nsDOMClassInfoData* aData) : nsElementSH(aData)
-  {
-  }
-
-  virtual ~nsHTMLSelectElementSH()
-  {
-  }
-
-public:
-  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval);
-  NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp,
-                         bool *_retval);
-  NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval);
-
-  static nsresult SetOption(JSContext *cx, jsval *vp, uint32_t aIndex,
-                            nsIDOMHTMLOptionsCollection *aOptCollection);
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsHTMLSelectElementSH(aData);
-  }
-};
-
-
-// HTMLEmbed/Object/AppletElement helper
-
-class nsHTMLPluginObjElementSH : public nsElementSH
-{
-protected:
-  nsHTMLPluginObjElementSH(nsDOMClassInfoData* aData)
-    : nsElementSH(aData)
-  {
-  }
-
-  virtual ~nsHTMLPluginObjElementSH()
-  {
-  }
-
-  // Passing a null aWrapper is fine for WebIDL objects
-  static nsresult GetPluginInstanceIfSafe(nsIXPConnectWrappedNative *aWrapper,
-                                          JSObject *obj,
-                                          JSContext *cx,
-                                          nsNPAPIPluginInstance **aResult);
-
-  static nsresult GetPluginJSObject(JSContext *cx, JSObject *obj,
-                                    nsNPAPIPluginInstance *plugin_inst,
-                                    JSObject **plugin_obj,
-                                    JSObject **plugin_proto);
-
-public:
-  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval);
-  NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
-                       JSObject *globalObj, JSObject **parentObj);
-  NS_IMETHOD PostCreate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj);
-  NS_IMETHOD PostTransplant(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                            JSObject *obj);
-  NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval);
-  NS_IMETHOD SetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval);
-  NS_IMETHOD Call(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                  JSObject *obj, uint32_t argc, jsval *argv, jsval *vp,
-                  bool *_retval);
-
-
-  static nsresult SetupProtoChain(JSContext *cx, JSObject *obj,
-                                  nsIXPConnectWrappedNative *wrapper = nullptr,
-                                  JSObject *aCanonicalProto = nullptr);
-
-  // The actual implementation of Call.  This allows the caller to
-  // pass in an explicit "this" value and does not make any
-  // assumptions about negative indices into argv.
-  static nsresult DoCall(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, uint32_t argc, jsval *argv, jsval *vp,
-                         jsval thisVal, bool *_retval);
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsHTMLPluginObjElementSH(aData);
-  }
-
-  class SetupProtoChainRunner MOZ_FINAL : public nsIRunnable
-  {
-  public:
-    NS_DECL_ISUPPORTS
-
-    // wrapper can be null, but then aContent must be non-null
-    SetupProtoChainRunner(nsIXPConnectWrappedNative* aWrapper,
-                          nsIScriptContext* aScriptContext,
-                          nsObjectLoadingContent* aContent);
-
-    NS_IMETHOD Run();
-
-  private:
-    nsCOMPtr<nsIXPConnectWrappedNative> mWrapper;
-    nsCOMPtr<nsIScriptContext> mContext;
-    // We store an nsIObjectLoadingContent because we can
-    // unambiguously refcount that.
-    nsRefPtr<nsIObjectLoadingContent> mContent;
-  };
-};
-
-
 // Plugin helper
 
 class nsPluginSH : public nsNamedArraySH
@@ -1106,37 +989,6 @@ class nsDOMTouchListSH : public nsArraySH
   }
 };
 
-#ifdef MOZ_XUL
-// TreeColumns helper
-
-class nsTreeColumnsSH : public nsNamedArraySH
-{
-protected:
-  nsTreeColumnsSH(nsDOMClassInfoData* aData) : nsNamedArraySH(aData)
-  {
-  }
-
-  virtual ~nsTreeColumnsSH()
-  {
-  }
-
-  virtual nsISupports* GetItemAt(nsISupports *aNative, uint32_t aIndex,
-                                 nsWrapperCache **aCache, nsresult *aResult);
-
-  // Override nsNamedArraySH::GetNamedItem()
-  virtual nsISupports* GetNamedItem(nsISupports *aNative,
-                                    const nsAString& aName,
-                                    nsWrapperCache **cache,
-                                    nsresult *aResult);
-
-public:
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsTreeColumnsSH(aData);
-  }
-};
-#endif
-
 // WebApps Storage helpers
 
 class nsStorage2SH : public nsDOMGenericSH
@@ -1158,7 +1010,7 @@ protected:
   NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                          JSObject *obj, jsid id, jsval *vp, bool *_retval);
   NS_IMETHOD DelProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval);
+                         JSObject *obj, jsid id, bool *_retval);
   NS_IMETHOD NewEnumerate(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
                           JSObject *obj, uint32_t enum_op, jsval *statep,
                           jsid *idp, bool *_retval);
@@ -1289,29 +1141,6 @@ public:
   static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
   {
     return new nsOfflineResourceListSH(aData);
-  }
-};
-
-// SVGStringList helper
-
-class nsSVGStringListSH : public nsStringArraySH
-{
-protected:
-  nsSVGStringListSH(nsDOMClassInfoData* aData) : nsStringArraySH(aData)
-  {
-  }
-  
-  virtual ~nsSVGStringListSH()
-  {
-  }
-  
-  virtual nsresult GetStringAt(nsISupports *aNative, int32_t aIndex,
-                               nsAString& aResult);
-  
-public:
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsSVGStringListSH(aData);
   }
 };
 

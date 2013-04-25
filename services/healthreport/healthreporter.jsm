@@ -19,10 +19,10 @@ Cu.import("resource://services-common/bagheeraclient.js");
 #endif
 
 Cu.import("resource://services-common/log4moz.js");
-Cu.import("resource://services-common/preferences.js");
 Cu.import("resource://services-common/utils.js");
 Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
 Cu.import("resource://gre/modules/osfile.jsm");
+Cu.import("resource://gre/modules/Preferences.jsm");
 Cu.import("resource://gre/modules/Services.jsm");
 Cu.import("resource://gre/modules/Task.jsm");
 Cu.import("resource://gre/modules/TelemetryStopwatch.jsm");
@@ -504,6 +504,8 @@ AbstractHealthReporter.prototype = Object.freeze({
     }
 
     return Task.spawn(function doCollection() {
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
+
       try {
         TelemetryStopwatch.start(TELEMETRY_COLLECT_CONSTANT, this);
         yield this._providerManager.collectConstantData();
@@ -534,6 +536,8 @@ AbstractHealthReporter.prototype = Object.freeze({
                          CommonUtils.exceptionStr(ex));
         }
       }
+
+      yield this._providerManager.ensurePullOnlyProvidersUnregistered();
 
       // Flush gathered data to disk. This will incur an fsync. But, if
       // there is ever a time we want to persist data to disk, it's
@@ -569,6 +573,7 @@ AbstractHealthReporter.prototype = Object.freeze({
     }
 
     return Task.spawn(function collectAndObtain() {
+      yield this._storage.setAutoCheckpoint(0);
       yield this._providerManager.ensurePullOnlyProvidersRegistered();
 
       let payload;
@@ -583,6 +588,7 @@ AbstractHealthReporter.prototype = Object.freeze({
                                ex);
       } finally {
         yield this._providerManager.ensurePullOnlyProvidersUnregistered();
+        yield this._storage.setAutoCheckpoint(1);
 
         if (error) {
           throw error;
@@ -631,6 +637,11 @@ AbstractHealthReporter.prototype = Object.freeze({
   _getJSONPayload: function (now, asObject=false) {
     let pingDateString = this._formatDate(now);
     this._log.info("Producing JSON payload for " + pingDateString);
+
+    // May not be present if we are generating as a result of init error.
+    if (this._providerManager) {
+      yield this._providerManager.ensurePullOnlyProvidersRegistered();
+    }
 
     let o = {
       version: 2,
@@ -758,6 +769,10 @@ AbstractHealthReporter.prototype = Object.freeze({
       TelemetryStopwatch.start(TELEMETRY_JSON_PAYLOAD_SERIALIZE, this);
       o = JSON.stringify(o);
       TelemetryStopwatch.finish(TELEMETRY_JSON_PAYLOAD_SERIALIZE, this);
+    }
+
+    if (this._providerManager) {
+      yield this._providerManager.ensurePullOnlyProvidersUnregistered();
     }
 
     throw new Task.Result(o);

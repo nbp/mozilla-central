@@ -19,6 +19,8 @@ Cu.import("resource://gre/modules/AddonRepository.jsm");
 
 
 const PREF_DISCOVERURL = "extensions.webservice.discoverURL";
+const PREF_DISCOVER_ENABLED = "extensions.getAddons.showPane";
+const PREF_XPI_ENABLED = "xpinstall.enabled";
 const PREF_MAXRESULTS = "extensions.getAddons.maxResults";
 const PREF_GETADDONS_CACHE_ENABLED = "extensions.getAddons.cache.enabled";
 const PREF_GETADDONS_CACHE_ID_ENABLED = "extensions.%ID%.getAddons.cache.enabled";
@@ -100,7 +102,7 @@ function initialize(event) {
 
   // Allow passing in a view through the window arguments
   if ("arguments" in window && window.arguments.length > 0 &&
-      "view" in window.arguments[0]) {
+      window.arguments[0] !== null && "view" in window.arguments[0]) {
     view = window.arguments[0].view;
   }
 
@@ -141,6 +143,23 @@ function loadView(aViewId) {
   } else {
     gViewController.loadView(aViewId);
   }
+}
+
+function isDiscoverEnabled() {
+  if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID)
+    return false;
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_DISCOVER_ENABLED))
+      return false;
+  } catch (e) {}
+
+  try {
+    if (!Services.prefs.getBoolPref(PREF_XPI_ENABLED))
+      return false;
+  } catch (e) {}
+
+  return true;
 }
 
 /**
@@ -1749,8 +1768,8 @@ var gDiscoverView = {
   _loadListeners: [],
 
   initialize: function gDiscoverView_initialize() {
-    if (Services.prefs.getPrefType(PREF_DISCOVERURL) == Services.prefs.PREF_INVALID) {
-      this.enabled = false;
+    this.enabled = isDiscoverEnabled();
+    if (!this.enabled) {
       gCategories.get("addons://discover/").hidden = true;
       return;
     }
