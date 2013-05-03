@@ -1941,7 +1941,7 @@ CodeGenerator::generateArgumentsChecks()
     Label miss;
     for (uint32_t i = info.startArgSlot(); i < info.endArgSlot(); i++) {
         // All initial parameters are guaranteed to be MParameters.
-        MParameter *param = rp->getOperand(i)->toDefinition()->toParameter();
+        MParameter *param = rp->getOperand(i)->toParameter();
         const types::TypeSet *types = param->resultTypeSet();
         if (!types || types->unknown())
             continue;

@@ -125,7 +125,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
     for (MResumePoint **it = iter.begin(), **end = iter.end(); it != end; ++it) {
         MResumePoint *mir = *it;
         for (size_t j = 0; j < mir->numOperands(); ++i, ++j) {
-            MDefinition *def = mir->getOperand(j)->toDefinition();
+            MDefinition *def = mir->getOperand(j);
 
             if (def->isPassArg())
                 def = def->toPassArg()->getArgument();

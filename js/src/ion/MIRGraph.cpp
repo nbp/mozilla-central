@@ -311,7 +311,7 @@ MBasicBlock::inheritResumePoint(MBasicBlock *pred)
     // Copy slots from the resume point.
     stackPosition_ = entryResumePoint_->numOperands();
     for (uint32_t i = 0; i < stackPosition_; i++)
-        slots_[i] = entryResumePoint_->getOperand(i)->toDefinition();
+        slots_[i] = entryResumePoint_->getOperand(i);
 
     JS_ASSERT(info_.nslots() >= stackPosition_);
     JS_ASSERT(kind_ != PENDING_LOOP_HEADER);

@@ -506,7 +506,7 @@ IonBuilder::build()
     // analysis explicitly checks (this is the same mechanism used for
     // effectful operations).
     for (uint32_t i = 0; i < info().endArgSlot(); i++) {
-        MInstruction *ins = current->getEntrySlot(i)->toDefinition()->toInstruction();
+        MInstruction *ins = current->getEntrySlot(i)->toInstruction();
         if (ins->type() == MIRType_Value)
             ins->setResumePoint(current->entryResumePoint());
     }

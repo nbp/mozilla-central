@@ -137,7 +137,7 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
             resumePoint->numOperands(), (void *) resumePoint, *startIndex);
     for (uint32_t slotno = 0; slotno < resumePoint->numOperands(); slotno++) {
         uint32_t i = slotno + *startIndex;
-        MDefinition *mir = resumePoint->toDefinition()->getOperand(slotno);
+        MDefinition *mir = resumePoint->getOperand(slotno);
 
         if (mir->isPassArg())
             mir = mir->toPassArg()->getArgument();

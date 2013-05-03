@@ -225,7 +225,7 @@ JSONSpewer::spewMResumePoint(MResumePoint *rp)
     beginListProperty("operands");
     for (MResumePoint *iter = rp; iter; iter = iter->caller()) {
         for (int i = iter->numOperands() - 1; i >= 0; i--)
-            integerValue(iter->getOperand(i)->toDefinition()->id());
+            integerValue(iter->getOperand(i)->id());
     }
     endList();
 
