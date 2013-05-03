@@ -811,7 +811,7 @@ private:
 
   static JSBool
   Resolve(JSContext* aCx, JSHandleObject aObj, JSHandleId aId, unsigned aFlags,
-          JSMutableHandleObject aObjp)
+          JS::MutableHandle<JSObject*> aObjp)
   {
     JSBool resolved;
     if (!JS_ResolveStandardClass(aCx, aObj, aId, &resolved)) {
@@ -965,9 +965,9 @@ CreateDedicatedWorkerGlobalScope(JSContext* aCx)
   WorkerPrivate* worker = GetWorkerPrivateFromContext(aCx);
   JS_ASSERT(worker);
 
-  JSObject* global =
+  JS::Rooted<JSObject*> global(aCx,
     JS_NewGlobalObject(aCx, DedicatedWorkerGlobalScope::Class(),
-                       GetWorkerPrincipal());
+                       GetWorkerPrincipal()));
   if (!global) {
     return NULL;
   }

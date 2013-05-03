@@ -14,8 +14,6 @@
 
 using WebCore::DynamicsCompressor;
 
-const unsigned DEFAULT_NUMBER_OF_CHANNELS = 2;
-
 namespace mozilla {
 namespace dom {
 
@@ -48,8 +46,7 @@ public:
     , mRatio(12.f)
     , mAttack(0.003f)
     , mRelease(0.25f)
-    , mCompressor(new DynamicsCompressor(aNode->Context()->SampleRate(),
-                                         DEFAULT_NUMBER_OF_CHANNELS))
+    , mCompressor(new DynamicsCompressor(IdealAudioRate(), 2))
   {
   }
 
@@ -105,6 +102,13 @@ public:
       return;
     }
 
+    const uint32_t channelCount = aInput.mChannelData.Length();
+    if (mCompressor->numberOfChannels() != channelCount) {
+      // Create a new compressor object with a new channel count
+      mCompressor = new WebCore::DynamicsCompressor(IdealAudioRate(),
+                                                    aInput.mChannelData.Length());
+    }
+
     TrackTicks pos = aStream->GetCurrentPosition();
     mCompressor->setParameterValue(DynamicsCompressor::ParamThreshold,
                                    mThreshold.GetValueAtTime(pos));
@@ -117,7 +121,7 @@ public:
     mCompressor->setParameterValue(DynamicsCompressor::ParamRelease,
                                    mRelease.GetValueAtTime(pos));
 
-    AllocateAudioBlock(DEFAULT_NUMBER_OF_CHANNELS, aOutput);
+    AllocateAudioBlock(channelCount, aOutput);
     mCompressor->process(&aInput, aOutput, aInput.GetDuration());
 
     SendReductionParamToMainThread(aStream,
@@ -140,7 +144,15 @@ private:
 
       NS_IMETHODIMP Run()
       {
-        nsRefPtr<DynamicsCompressorNode> node = static_cast<DynamicsCompressorNode*>(mStream->Engine()->Node());
+        nsRefPtr<DynamicsCompressorNode> node;
+        {
+          // No need to keep holding the lock for the whole duration of this
+          // function, since we're holding a strong reference to it, so if
+          // we can obtain the reference, we will hold the node alive in
+          // this function.
+          MutexAutoLock lock(mStream->Engine()->NodeMutex());
+          node = static_cast<DynamicsCompressorNode*>(mStream->Engine()->Node());
+        }
         if (node) {
           AudioParam* reduction = node->Reduction();
           reduction->CancelAllEvents();
@@ -169,7 +181,10 @@ private:
 };
 
 DynamicsCompressorNode::DynamicsCompressorNode(AudioContext* aContext)
-  : AudioNode(aContext)
+  : AudioNode(aContext,
+              2,
+              ChannelCountMode::Explicit,
+              ChannelInterpretation::Speakers)
   , mThreshold(new AudioParam(this, SendThresholdToStream, -24.f))
   , mKnee(new AudioParam(this, SendKneeToStream, 30.f))
   , mRatio(new AudioParam(this, SendRatioToStream, 12.f))
@@ -178,13 +193,12 @@ DynamicsCompressorNode::DynamicsCompressorNode(AudioContext* aContext)
   , mRelease(new AudioParam(this, SendReleaseToStream, 0.25f))
 {
   DynamicsCompressorNodeEngine* engine = new DynamicsCompressorNodeEngine(this, aContext->Destination());
-  mStream = aContext->Graph()->CreateAudioNodeStream(engine, MediaStreamGraph::INTERNAL_STREAM,
-                                                     DEFAULT_NUMBER_OF_CHANNELS);
+  mStream = aContext->Graph()->CreateAudioNodeStream(engine, MediaStreamGraph::INTERNAL_STREAM);
   engine->SetSourceStream(static_cast<AudioNodeStream*> (mStream.get()));
 }
 
 JSObject*
-DynamicsCompressorNode::WrapObject(JSContext* aCx, JSObject* aScope)
+DynamicsCompressorNode::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
   return DynamicsCompressorNodeBinding::Wrap(aCx, aScope, this);
 }

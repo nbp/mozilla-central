@@ -518,14 +518,25 @@ protected:
 
   class WakeLockBoolWrapper {
   public:
-    WakeLockBoolWrapper(bool val = false) : mValue(val), mOuter(nullptr), mWakeLock(nullptr) {}
+    WakeLockBoolWrapper(bool val = false)
+      : mValue(val), mCanPlay(true), mOuter(nullptr) {}
+
     void SetOuter(HTMLMediaElement* outer) { mOuter = outer; }
+    void SetCanPlay(bool aCanPlay);
+
     operator bool() const { return mValue; }
+
     WakeLockBoolWrapper& operator=(bool val);
+
     bool operator !() const { return !mValue; }
+
   private:
+    void UpdateWakeLock();
+
     bool mValue;
+    bool mCanPlay;
     HTMLMediaElement* mOuter;
+
     nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
   };
 
@@ -802,7 +813,7 @@ protected:
   nsresult UpdateChannelMuteState(bool aCanPlay);
 
   // Update the audio channel playing state
-  void UpdateAudioChannelPlayingState();
+  virtual void UpdateAudioChannelPlayingState();
 
   // The current decoder. Load() has been called on this decoder.
   // At most one of mDecoder and mSrcStream can be non-null.

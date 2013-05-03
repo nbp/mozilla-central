@@ -336,8 +336,8 @@ nsPluginHost::GetInst()
     NS_ADDREF(sInst);
   }
 
-  NS_ADDREF(sInst);
-  return sInst;
+  nsRefPtr<nsPluginHost> inst = sInst;
+  return inst.forget();
 }
 
 bool nsPluginHost::IsRunningPlugin(nsPluginTag * aPluginTag)
@@ -1078,7 +1078,7 @@ nsPluginHost::IsPluginClickToPlayForType(const nsACString &aMimeType, bool *aRes
   nsresult rv = GetBlocklistStateForType(aMimeType.Data(), &blocklistState);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (mPluginsClickToPlay ||
+  if ((mPluginsClickToPlay && plugin->IsClicktoplay()) ||
       blocklistState == nsIBlocklistService::STATE_VULNERABLE_NO_UPDATE ||
       blocklistState == nsIBlocklistService::STATE_VULNERABLE_UPDATE_AVAILABLE) {
     *aResult = true;

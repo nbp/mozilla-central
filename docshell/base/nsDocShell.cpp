@@ -65,7 +65,6 @@
 #include "nsIUploadChannel.h"
 #include "nsISecurityEventSink.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsIJSContextStack.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsIScrollableFrame.h"
 #include "nsContentPolicyUtils.h" // NS_CheckContentLoadPolicy(...)
@@ -1651,10 +1650,8 @@ nsDocShell::MaybeInitTiming()
         return NS_OK;
     }
 
-    if (Preferences::GetBool("dom.enable_performance", false)) {
-        mTiming = new nsDOMNavigationTiming();
-        mTiming->NotifyNavigationStart();
-    }
+    mTiming = new nsDOMNavigationTiming();
+    mTiming->NotifyNavigationStart();
     return NS_OK;
 }
 
@@ -2760,7 +2757,7 @@ already_AddRefed<nsDocShell>
 nsDocShell::GetParentDocshell()
 {
     nsCOMPtr<nsIDocShell> docshell = do_QueryInterface(GetAsSupports(mParent));
-    return static_cast<nsDocShell*>(docshell.forget().get());
+    return docshell.forget().downcast<nsDocShell>();
 }
 
 nsresult
@@ -9521,11 +9518,9 @@ nsDocShell::DoURILoad(nsIURI * aURI,
         }
     }
 
-    if (Preferences::GetBool("dom.enable_performance", false)) {
-        nsCOMPtr<nsITimedChannel> timedChannel(do_QueryInterface(channel));
-        if (timedChannel) {
-            timedChannel->SetTimingEnabled(true);
-        }
+    nsCOMPtr<nsITimedChannel> timedChannel(do_QueryInterface(channel));
+    if (timedChannel) {
+        timedChannel->SetTimingEnabled(true);
     }
 
     rv = DoChannelLoad(channel, uriLoader, aBypassClassifier);

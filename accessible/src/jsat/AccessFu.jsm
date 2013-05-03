@@ -50,7 +50,13 @@ this.AccessFu = {
       this._activatePref = ACCESSFU_DISABLE;
     }
 
-    Input.quickNavMode.updateModes(this.prefsBranch);
+    try {
+      this._notifyOutput = this.prefsBranch.getBoolPref('notify_output');
+    } catch (x) {
+      this._notifyOutput = false;
+    }
+
+    this.Input.quickNavMode.updateModes(this.prefsBranch);
 
     this._enableOrDisable();
   },
@@ -101,7 +107,7 @@ this.AccessFu = {
     Utils.win.document.insertBefore(stylesheet, Utils.win.document.firstChild);
     this.stylesheet = Cu.getWeakReference(stylesheet);
 
-    Input.start();
+    this.Input.start();
     Output.start();
     TouchAdapter.start();
 
@@ -136,7 +142,7 @@ this.AccessFu = {
       this._removeMessageListeners(mm);
     }
 
-    Input.stop();
+    this.Input.stop();
     Output.stop();
     TouchAdapter.stop();
 
@@ -182,22 +188,27 @@ this.AccessFu = {
         this._output(aMessage.json, aMessage.target);
         break;
       case 'AccessFu:Input':
-        Input.setEditState(aMessage.json);
+        this.Input.setEditState(aMessage.json);
         break;
     }
   },
 
   _output: function _output(aPresentationData, aBrowser) {
-      try {
-        for each (let presenter in aPresentationData) {
-          if (!presenter)
-            continue;
+    for each (let presenter in aPresentationData) {
+      if (!presenter)
+        continue;
 
-          Output[presenter.type](presenter.details, aBrowser);
-        }
+      try {
+        Output[presenter.type](presenter.details, aBrowser);
       } catch (x) {
         Logger.logException(x);
       }
+    }
+
+    if (this._notifyOutput) {
+      Services.obs.notifyObservers(null, 'accessfu-output',
+                                   JSON.stringify(aPresentationData));
+    }
   },
 
   _loadFrameScript: function _loadFrameScript(aMessageManager) {
@@ -239,10 +250,10 @@ this.AccessFu = {
         this._enableOrDisable();
         break;
       case 'Accessibility:NextObject':
-        Input.moveCursor('moveNext', 'Simple', 'gesture');
+        this.Input.moveCursor('moveNext', 'Simple', 'gesture');
         break;
       case 'Accessibility:PreviousObject':
-        Input.moveCursor('movePrevious', 'Simple', 'gesture');
+        this.Input.moveCursor('movePrevious', 'Simple', 'gesture');
         break;
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
@@ -253,11 +264,19 @@ this.AccessFu = {
         }
         break;
       case 'nsPref:changed':
-        if (aData == 'activate') {
-          this._activatePref = this.prefsBranch.getIntPref('activate');
-          this._enableOrDisable();
-        } else if (aData == 'quicknav_modes') {
-          Input.quickNavMode.updateModes(this.prefsBranch);
+        switch (aData) {
+          case 'activate':
+            this._activatePref = this.prefsBranch.getIntPref('activate');
+            this._enableOrDisable();
+            break;
+          case 'quicknav_modes':
+            this.Input.quickNavMode.updateModes(this.prefsBranch);
+            break;
+          case 'notify_output':
+            this._notifyOutput = this.prefsBranch.getBoolPref('notify_output');
+            break;
+          default:
+            break;
         }
         break;
       case 'remote-browser-frame-shown':
@@ -456,12 +475,18 @@ var Input = {
   editState: {},
 
   start: function start() {
-    Utils.win.document.addEventListener('keypress', this, true);
+    // XXX: This is too disruptive on desktop for now.
+    // Might need to add special modifiers.
+    if (Utils.MozBuildApp != 'browser') {
+      Utils.win.document.addEventListener('keypress', this, true);
+    }
     Utils.win.addEventListener('mozAccessFuGesture', this, true);
   },
 
   stop: function stop() {
-    Utils.win.document.removeEventListener('keypress', this, true);
+    if (Utils.MozBuildApp != 'browser') {
+      Utils.win.document.removeEventListener('keypress', this, true);
+    }
     Utils.win.removeEventListener('mozAccessFuGesture', this, true);
   },
 
@@ -694,3 +719,4 @@ var Input = {
     _currentIndex: -1
   }
 };
+AccessFu.Input = Input;
