@@ -274,7 +274,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
     SnapshotOffset offset = snapshots_.startSnapshot(frameCount, snapshot->bailoutKind(),
-                                                     resumeAfter);
+                                                     resumeAfter, recover->offset());
 
     uint32_t startIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {

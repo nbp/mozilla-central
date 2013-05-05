@@ -32,7 +32,7 @@ class SnapshotWriter
     void writeSlotHeader(JSValueType type, uint32_t regCode);
 
   public:
-    SnapshotOffset startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter);
+    SnapshotOffset startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter, RecoverOffset offset);
     void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
 #ifdef TRACK_SNAPSHOTS
     void trackFrame(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,

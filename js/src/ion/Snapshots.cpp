@@ -26,6 +26,7 @@ using namespace js::ion;
 //
 //   [vwu] bits (n-31]: frame count
 //         bits [0,n):  bailout kind (n = BAILOUT_KIND_BITS)
+//   [vwu] recover offset
 //
 // Snapshot body, repeated "frame count" times, from oldest frame to newest frame.
 // Note that the first frame doesn't have the "parent PC" field.
@@ -117,14 +118,17 @@ void
 SnapshotReader::readSnapshotHeader()
 {
     uint32_t bits = reader_.readUnsigned();
+    recoverOffset_ = reader_.readUnsigned();
+
     frameCount_ = bits >> BAILOUT_FRAMECOUNT_SHIFT;
     JS_ASSERT(frameCount_ > 0);
     bailoutKind_ = BailoutKind((bits >> BAILOUT_KIND_SHIFT) & BAILOUT_KIND_MASK);
     resumeAfter_ = !!(bits & (1 << BAILOUT_RESUME_SHIFT));
     framesRead_ = 0;
 
-    IonSpew(IonSpew_Snapshots, "Read snapshot header with frameCount %u, bailout kind %u (ra: %d)",
-            frameCount_, bailoutKind_, resumeAfter_);
+    IonSpew(IonSpew_Snapshots,
+            "Read snapshot header with frameCount %u, bailout kind %u (ra: %d), recover offset %u",
+            frameCount_, bailoutKind_, resumeAfter_, recoverOffset_);
 }
 
 void
@@ -273,15 +277,17 @@ SnapshotReader::readSlot()
 }
 
 SnapshotOffset
-SnapshotWriter::startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter)
+SnapshotWriter::startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter,
+                              RecoverOffset offset)
 {
     nframes_ = frameCount;
     framesWritten_ = 0;
 
     lastStart_ = writer_.length();
 
-    IonSpew(IonSpew_Snapshots, "starting snapshot with frameCount %u, bailout kind %u",
-            frameCount, kind);
+    IonSpew(IonSpew_Snapshots,
+            "starting snapshot with frameCount %u, bailout kind %u, recover offset %u",
+            frameCount, kind, offset);
     JS_ASSERT(frameCount > 0);
     JS_ASSERT(frameCount < (1 << BAILOUT_FRAMECOUNT_BITS));
     JS_ASSERT(uint32_t(kind) < (1 << BAILOUT_KIND_BITS));
@@ -292,6 +298,7 @@ SnapshotWriter::startSnapshot(uint32_t frameCount, BailoutKind kind, bool resume
         bits |= (1 << BAILOUT_RESUME_SHIFT);
 
     writer_.writeUnsigned(bits);
+    writer_.writeUnsigned(offset);
     return lastStart_;
 }
 
