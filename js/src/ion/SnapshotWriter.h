@@ -70,13 +70,13 @@ class SnapshotWriter
     }
 };
 
-class RecoveryWriter
+class RecoverWriter
 {
-    // The recovery writer is used to encode resume points logic independently
+    // The recover writer is used to encode resume points logic independently
     // of their allocations. It also offers the ability to encode multiple
-    // recovery operations for one snapshot.
+    // recover operations for one snapshot.
     //
-    // RecoveryOffset:
+    // RecoverOffset:
     //   Nb Operations
     //   * {
     //     Function Index
@@ -99,13 +99,13 @@ class RecoveryWriter
 
   public:
 
-    RecoveryOffset startRevocery(uint32_t operationCount);
+    RecoverOffset startRecover(uint32_t operationCount);
 
-    void startOperation(RecoveryFunction fun, uint32_t nbOperands);
+    void startOperation(RecoverFunction fun, uint32_t nbOperands);
     void addOperand(bool isSlot, uint32_t index);
     void endOperation();
 
-    void endRecovery();
+    void endRecover();
 
     size_t size() const {
         return writer_.length();

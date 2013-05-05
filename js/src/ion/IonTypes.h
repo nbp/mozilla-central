@@ -13,10 +13,10 @@
 namespace js {
 namespace ion {
 
-typedef uint32_t RecoveryOffset;
-static const RecoveryOffset INVALID_RECOVERY_OFFSET = uint32_t(-1);
+typedef uint32_t RecoverOffset;
+static const RecoverOffset INVALID_RECOVER_OFFSET = uint32_t(-1);
 
-enum RecoveryFunction
+enum RecoverFunction
 {
     // Logic used to recover one frame.
     Recover_StackFrame,

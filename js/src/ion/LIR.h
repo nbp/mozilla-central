@@ -853,37 +853,37 @@ class LCallInstructionHelper : public LInstructionHelper<Defs, Operands, Temps>
     }
 };
 
-struct LRecoveryOperand : public TempObject
+struct LRecoverOperand : public TempObject
 {
     bool isSlot : 1;
     uint32_t index : 31;
 };
 
-struct LRecoveryOperation : public TempObject
+struct LRecoverOperation : public TempObject
 {
     MNode *mir;
-    LRecoveryOperand *operands;
+    LRecoverOperand *operands;
 };
 
-// An LRecovery is similar to a resume point, except that it exhibit a linear
+// An LRecover is similar to a resume point, except that it exhibit a linear
 // behavior and provides an interpretation for a LSnapshot having the same
 // number of slots.  As resume points can be used by multiple MIR nodes, an
-// LRecovery can be referenced by multiple LSnapshots. During code generation,
-// LRecoverys are compressed and saved in the compiled script.
-class LRecovery : public TempObject
+// LRecover can be referenced by multiple LSnapshots. During code generation,
+// LRecovers are compressed and saved in the compiled script.
+class LRecover : public TempObject
 {
-    RecoveryOffset recoveryOffset_;
+    RecoverOffset recoverOffset_;
 
-    // Resume point used to generate this recovery structure.
+    // Resume point used to generate this recover structure.
     MResumePoint *mir_;
 
     // Ordered list of resume operations.
-    Vector<LRecoveryOperation *, 1, IonAllocPolicy> operations_;
+    Vector<LRecoverOperation *, 1, IonAllocPolicy> operations_;
 
     // Number of slots stored in the snapshot.
     uint32_t numSlots_;
 
-    LRecovery(MResumePoint *mir);
+    LRecover(MResumePoint *mir);
 
     bool initGeneric(MIRGenerator *gen, MNode *mir);
     bool init(MIRGenerator *gen, MDefinition *mir);
@@ -891,7 +891,7 @@ class LRecovery : public TempObject
     bool init(MIRGenerator *gen);
 
   public:
-    static LRecovery *New(MIRGenerator *gen, MResumePoint *mir);
+    static LRecover *New(MIRGenerator *gen, MResumePoint *mir);
 
     uint32_t numSlots() const {
         return numSlots_;
@@ -900,17 +900,17 @@ class LRecovery : public TempObject
         return mir_;
     }
 
-    LRecoveryOperation **begin() {
+    LRecoverOperation **begin() {
         return operations_.begin();
     }
-    LRecoveryOperation **end() {
+    LRecoverOperation **end() {
         return operations_.end();
     }
-    RecoveryOffset offset() const {
-        return recoveryOffset_;
+    RecoverOffset offset() const {
+        return recoverOffset_;
     }
-    void setOffset(RecoveryOffset offset) {
-        recoveryOffset_ = offset;
+    void setOffset(RecoverOffset offset) {
+        recoverOffset_ = offset;
     }
 };
 
@@ -924,16 +924,16 @@ class LSnapshot : public TempObject
   private:
     uint32_t numSlots_;
     LAllocation *slots_;
-    LRecovery *recovery_;
+    LRecover *recover_;
     SnapshotOffset snapshotOffset_;
     BailoutId bailoutId_;
     BailoutKind bailoutKind_;
 
-    LSnapshot(LRecovery *recovery, BailoutKind kind);
+    LSnapshot(LRecover *recover, BailoutKind kind);
     bool init(MIRGenerator *gen);
 
   public:
-    static LSnapshot *New(MIRGenerator *gen, LRecovery *recovery, BailoutKind kind);
+    static LSnapshot *New(MIRGenerator *gen, LRecover *recover, BailoutKind kind);
 
     size_t numEntries() const {
         return numSlots_;
@@ -961,11 +961,11 @@ class LSnapshot : public TempObject
         JS_ASSERT(i < numSlots_);
         slots_[i] = alloc;
     }
-    LRecovery *recovery() const {
-        return recovery_;
+    LRecover *recover() const {
+        return recover_;
     }
     MResumePoint *mir() const {
-        return recovery_->mir();
+        return recover_->mir();
     }
     SnapshotOffset snapshotOffset() const {
         return snapshotOffset_;

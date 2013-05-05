@@ -130,33 +130,33 @@ ToStackIndex(LAllocation *a)
 }
 
 bool
-CodeGeneratorShared::encode(LRecovery *recovery)
+CodeGeneratorShared::encode(LRecover *recover)
 {
-    if (recovery->offset() != INVALID_RECOVERY_OFFSET)
+    if (recover->offset() != INVALID_RECOVER_OFFSET)
         return true;
 
-    size_t nbOperations = recovery->end() - recovery->begin();
-    IonSpew(IonSpew_Snapshots, "Encoding LRecovery %p (Nb Operations: %u)",
-            (void *)recovery, nbOperations);
+    size_t nbOperations = recover->end() - recover->begin();
+    IonSpew(IonSpew_Snapshots, "Encoding LRecover %p (Nb Operations: %u)",
+            (void *)recover, nbOperations);
 
-    RecoveryOffset offset = recoverys_.startRecovery(nbOperations);
+    RecoverOffset offset = recovers_.startRecover(nbOperations);
 
-    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+    for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
 
         size_t numOperands = mir->numOperands();
-        recoverys_.startOperation(Recover_StackFrame, numOperands);
+        recovers_.startOperation(Recover_StackFrame, numOperands);
         for (size_t i = 0; i < numOperands; i++) {
-            LRecoveryOperand &op = (*it)->operands[i];
-            recoverys_.addOperand(op.isSlot, op.index);
+            LRecoverOperand &op = (*it)->operands[i];
+            recovers_.addOperand(op.isSlot, op.index);
         }
-        recoverys_.endOperation();
+        recovers_.endOperation();
     }
 
-    recoverys_.endRecovery();
+    recovers_.endRecover();
 
-    recovery->setOffset(offset);
-    return !recoverys_.oom();
+    recover->setOffset(offset);
+    return !recovers_.oom();
 }
 
 bool
@@ -265,11 +265,11 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (frameCount %u)",
             (void *)snapshot, frameCount);
 
-    LRecovery *recovery = snapshot->recovery();
-    if (!encode(recovery))
+    LRecover *recover = snapshot->recover();
+    if (!encode(recover))
         return false;
 
-    MResumePoint::Mode mode = recovery->mir()->mode();
+    MResumePoint::Mode mode = recover->mir()->mode();
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
@@ -277,7 +277,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
                                                      resumeAfter);
 
     uint32_t startIndex = 0;
-    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+    for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MResumePoint *mir = (*it)->mir->toResumePoint();
         MBasicBlock *block = mir->block();
         JSFunction *fun = block->info().fun();

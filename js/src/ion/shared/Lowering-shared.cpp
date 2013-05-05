@@ -59,14 +59,14 @@ LIRGeneratorShared::lowerTypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock
 
 #ifdef JS_NUNBOX32
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecovery *recovery, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecover *recover, BailoutKind kind)
 {
-    LSnapshot *snapshot = LSnapshot::New(gen, recovery, kind);
+    LSnapshot *snapshot = LSnapshot::New(gen, recover, kind);
     if (!snapshot)
         return NULL;
 
     size_t slotIndex = 0;
-    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+    for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
         for (size_t j = 0; j < mir->numOperands(); ++j) {
             MDefinition *def = mir->getOperand(j);
@@ -114,14 +114,14 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecovery *recovery, Bailou
 #elif JS_PUNBOX64
 
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecovery *recovery, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecover *recover, BailoutKind kind)
 {
-    LSnapshot *snapshot = LSnapshot::New(gen, recovery, kind);
+    LSnapshot *snapshot = LSnapshot::New(gen, recover, kind);
     if (!snapshot)
         return NULL;
 
     size_t slotIndex = 0;
-    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+    for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
         for (size_t j = 0; j < mir->numOperands(); ++j) {
             MDefinition *def = mir->getOperand(j);
@@ -158,10 +158,10 @@ LIRGeneratorShared::assignSnapshot(LInstruction *ins, BailoutKind kind)
     // it may add new instructions for emitted-at-use operands.
     JS_ASSERT(ins->id() == 0);
 
-    if (!lastRecovery_ || lastRecovery_->mir() != lastResumePoint_)
-        lastRecovery_ = LRecovery::New(gen, lastResumePoint_);
+    if (!lastRecover_ || lastRecover_->mir() != lastResumePoint_)
+        lastRecover_ = LRecover::New(gen, lastResumePoint_);
 
-    LSnapshot *snapshot = buildSnapshot(ins, lastRecovery_, kind);
+    LSnapshot *snapshot = buildSnapshot(ins, lastRecover_, kind);
     if (!snapshot)
         return false;
 
@@ -178,10 +178,10 @@ LIRGeneratorShared::assignSafepoint(LInstruction *ins, MInstruction *mir)
     ins->initSafepoint();
 
     MResumePoint *mrp = mir->resumePoint() ? mir->resumePoint() : lastResumePoint_;
-    if (!lastRecovery_ || lastRecovery_->mir() != mrp)
-        lastRecovery_ = LRecovery::New(gen, mrp);
+    if (!lastRecover_ || lastRecover_->mir() != mrp)
+        lastRecover_ = LRecover::New(gen, mrp);
 
-    LSnapshot *postSnapshot = buildSnapshot(ins, lastRecovery_, Bailout_Normal);
+    LSnapshot *postSnapshot = buildSnapshot(ins, lastRecover_, Bailout_Normal);
     if (!postSnapshot)
         return false;
 
