@@ -539,7 +539,7 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 //         }
 
 RecoveryOffset
-RecoveryWriter::startRevocery(uint32_t operationCount)
+RecoveryWriter::startRecovery(uint32_t operationCount)
 {
     RecoveryOffset start = writer_.length();
     IonSpew(IonSpew_Snapshots, "starting recover with operationCount %u",

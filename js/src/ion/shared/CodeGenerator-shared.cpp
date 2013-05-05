@@ -139,7 +139,7 @@ CodeGeneratorShared::encode(LRecovery *recovery)
     IonSpew(IonSpew_Snapshots, "Encoding LRecovery %p (Nb Operations: %u)",
             (void *)recovery, nbOperations);
 
-    RecoveryOffset offset = recoverys_.startRevocery(nbOperations);
+    RecoveryOffset offset = recoverys_.startRecovery(nbOperations);
 
     for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
         MNode *mir = (*it)->mir;
