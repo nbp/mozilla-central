@@ -59,24 +59,27 @@ LIRGeneratorShared::lowerTypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock
 
 #ifdef JS_NUNBOX32
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecovery *recovery, BailoutKind kind)
 {
-    LSnapshot *snapshot = LSnapshot::New(gen, rp, kind);
+    LSnapshot *snapshot = LSnapshot::New(gen, recovery, kind);
     if (!snapshot)
         return NULL;
 
-    FlattenedMResumePointIter iter(rp);
-    if (!iter.init())
-        return NULL;
+    size_t slotIndex = 0;
+    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+        MNode *mir = (*it)->mir;
+        for (size_t j = 0; j < mir->numOperands(); ++j) {
+            MDefinition *def = mir->getOperand(j);
+            if (def->isResumeOperation()) {
+                JS_ASSERT(!(*it)->operands[j].isSlot);
+                continue;
+            }
 
-    size_t i = 0;
-    for (MResumePoint **it = iter.begin(), **end = iter.end(); it != end; ++it) {
-        MResumePoint *mir = *it;
-        for (size_t j = 0; j < mir->numOperands(); ++i, ++j) {
-            MDefinition *ins = mir->getOperand(j);
-
-            LAllocation *type = snapshot->typeOfSlot(i);
-            LAllocation *payload = snapshot->payloadOfSlot(i);
+            JS_ASSERT((*it)->operands[j].isSlot);
+            JS_ASSERT((*it)->operands[j].index == slotIndex);
+            LAllocation *type = snapshot->typeOfSlot(slotIndex);
+            LAllocation *payload = snapshot->payloadOfSlot(slotIndex);
+            slotIndex++;
 
             if (ins->isPassArg())
                 ins = ins->toPassArg()->getArgument();
@@ -111,26 +114,29 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
 #elif JS_PUNBOX64
 
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecovery *recovery, BailoutKind kind)
 {
-    LSnapshot *snapshot = LSnapshot::New(gen, rp, kind);
+    LSnapshot *snapshot = LSnapshot::New(gen, recovery, kind);
     if (!snapshot)
         return NULL;
 
-    FlattenedMResumePointIter iter(rp);
-    if (!iter.init())
-        return NULL;
-
-    size_t i = 0;
-    for (MResumePoint **it = iter.begin(), **end = iter.end(); it != end; ++it) {
-        MResumePoint *mir = *it;
-        for (size_t j = 0; j < mir->numOperands(); ++i, ++j) {
+    size_t slotIndex = 0;
+    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+        MNode *mir = (*it)->mir;
+        for (size_t j = 0; j < mir->numOperands(); ++j) {
             MDefinition *def = mir->getOperand(j);
+            if (def->isResumeOperation()) {
+                JS_ASSERT(!(*it)->operands[j].isSlot);
+                continue;
+            }
 
             if (def->isPassArg())
                 def = def->toPassArg()->getArgument();
 
-            LAllocation *a = snapshot->getEntry(i);
+            JS_ASSERT((*it)->operands[j].isSlot);
+            JS_ASSERT((*it)->operands[j].index == slotIndex);
+            LAllocation *a = snapshot->getEntry(slotIndex);
+            slotIndex++;
 
             if (def->isUnused()) {
                 *a = LConstantIndex::Bogus();
@@ -152,7 +158,10 @@ LIRGeneratorShared::assignSnapshot(LInstruction *ins, BailoutKind kind)
     // it may add new instructions for emitted-at-use operands.
     JS_ASSERT(ins->id() == 0);
 
-    LSnapshot *snapshot = buildSnapshot(ins, lastResumePoint_, kind);
+    if (!lastRecovery_ || lastRecovery_->mir() != lastResumePoint_)
+        lastRecovery_ = LRecovery::New(gen, lastResumePoint_);
+
+    LSnapshot *snapshot = buildSnapshot(ins, lastRecovery_, kind);
     if (!snapshot)
         return false;
 
@@ -169,7 +178,10 @@ LIRGeneratorShared::assignSafepoint(LInstruction *ins, MInstruction *mir)
     ins->initSafepoint();
 
     MResumePoint *mrp = mir->resumePoint() ? mir->resumePoint() : lastResumePoint_;
-    LSnapshot *postSnapshot = buildSnapshot(ins, mrp, Bailout_Normal);
+    if (!lastRecovery_ || lastRecovery_->mir() != mrp)
+        lastRecovery_ = LRecovery::New(gen, mrp);
+
+    LSnapshot *postSnapshot = buildSnapshot(ins, lastRecovery_, Bailout_Normal);
     if (!postSnapshot)
         return false;
 

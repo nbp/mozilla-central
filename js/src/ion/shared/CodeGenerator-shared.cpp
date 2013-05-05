@@ -235,23 +235,17 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (frameCount %u)",
             (void *)snapshot, frameCount);
 
-    MResumePoint::Mode mode = snapshot->mir()->mode();
+    LRecovery *recovery = snapshot->recovery();
+    MResumePoint::Mode mode = recovery->mir()->mode();
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
     SnapshotOffset offset = snapshots_.startSnapshot(frameCount, snapshot->bailoutKind(),
                                                      resumeAfter);
 
-    FlattenedMResumePointIter mirOperandIter(snapshot->mir());
-    if (!mirOperandIter.init())
-        return false;
-
     uint32_t startIndex = 0;
-    for (MResumePoint **it = mirOperandIter.begin(), **end = mirOperandIter.end();
-         it != end;
-         ++it)
-    {
-        MResumePoint *mir = *it;
+    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+        MResumePoint *mir = (*it)->mir->toResumePoint();
         MBasicBlock *block = mir->block();
         JSFunction *fun = block->info().fun();
         JSScript *script = block->info().script();
@@ -293,6 +287,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         snapshots_.trackFrame(pcOpcode, mirOpcode, mirId, lirOpcode, lirId);
 #endif
 
+        JS_ASSERT((*it)->operands[0].index == startIndex);
         if (!encodeSlots(snapshot, mir, &startIndex))
             return false;
         snapshots_.endFrame();

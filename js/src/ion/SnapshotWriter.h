@@ -70,6 +70,55 @@ class SnapshotWriter
     }
 };
 
+class RecoveryWriter
+{
+    // The recovery writer is used to encode resume points logic independently
+    // of their allocations. It also offers the ability to encode multiple
+    // recovery operations for one snapshot.
+    //
+    // RecoveryOffset:
+    //   Nb Operations
+    //   * {
+    //     Function Index
+    //     Nb Operands
+    //     * either {
+    //       - Slot index
+    //       - Operantion index (less than the current one)
+    //     }
+    //   }
+
+    CompactBufferWriter writer_;
+
+    // These are only used to assert sanity.
+#ifdef DEBUG
+    uint32_t nbOperations_;
+    uint32_t operationsWritten_;
+    uint32_t nbOperands_;
+    uint32_t OperandsWritten_;
+#endif
+
+    RecoveryOffset lastStart_;
+
+    // Use to encode the delta since the previous slot.
+    uint32_t lastSlotIndex_;
+
+  public:
+
+    RecoveryOffset startRevocery(uint32_t operationCount, bool resumeAfter);
+    void endRecovery();
+
+    void startOperation(RecoveryFunction fun, uint32_t nbOperands);
+    void addOperand(bool isSlot, uint32_t index);
+    void endOperation();
+
+    size_t size() const {
+        return writer_.length();
+    }
+    const uint8_t *buffer() const {
+        return writer_.buffer();
+    }
+};
+
 }
 }
 

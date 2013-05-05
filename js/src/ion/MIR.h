@@ -50,6 +50,13 @@ MIRType MIRTypeFromValue(const js::Value &vp)
     _(Guard)         /* Not removable if uses == 0 */                           \
     _(Folded)        /* Has constant folded uses not reflected in SSA */        \
                                                                                 \
+    /* The instruction has been marked as a resume operation, it can only be
+     * used by resume points or other resume operations and must provide a way
+     * to resume the execution to which it is attached to.  A resume operation
+     * should never depends on it-self.
+     */                                                                         \
+    _(ResumeOperation)                                                          \
+                                                                                \
     /* The instruction has been marked dead for lazy removal from resume
      * points.
      */                                                                         \
@@ -7513,44 +7520,6 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
             if (operands_[i].hasProducer())
                 operands_[i].producer()->removeUse(&operands_[i]);
         }
-    }
-};
-
-/*
- * Facade for a chain of MResumePoints that cross frame boundaries (due to
- * function inlining). Operands are ordered from oldest frame to newest.
- */
-class FlattenedMResumePointIter
-{
-    Vector<MResumePoint *, 8, SystemAllocPolicy> resumePoints;
-    MResumePoint *newest;
-    size_t numOperands_;
-
-  public:
-    explicit FlattenedMResumePointIter(MResumePoint *newest)
-      : newest(newest), numOperands_(0)
-    {}
-
-    bool init() {
-        MResumePoint *it = newest;
-        do {
-            if (!resumePoints.append(it))
-                return false;
-            it = it->caller();
-        } while (it);
-        Reverse(resumePoints.begin(), resumePoints.end());
-        return true;
-    }
-
-    MResumePoint **begin() {
-        return resumePoints.begin();
-    }
-    MResumePoint **end() {
-        return resumePoints.end();
-    }
-
-    size_t numOperands() const {
-        return numOperands_;
     }
 };
 

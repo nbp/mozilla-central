@@ -32,6 +32,7 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
     LIRGraph &lirGraph_;
     LBlock *current;
     MResumePoint *lastResumePoint_;
+    LRecovery *lastRecovery_;
     LOsiPoint *osiPoint_;
 
   public:
@@ -154,7 +155,7 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
         return tmp;
     }
 
-    LSnapshot *buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind);
+    LSnapshot *buildSnapshot(LInstruction *ins, LRecovery *recovery, BailoutKind kind);
     bool assignPostSnapshot(MInstruction *mir, LInstruction *ins);
 
     // Marks this instruction as fallible, meaning that before it performs

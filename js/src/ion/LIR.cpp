@@ -91,19 +91,108 @@ LBlock::getExitMoveGroup()
     return exitMoveGroup_;
 }
 
-static size_t
-TotalOperandCount(MResumePoint *mir)
+LRecovery::LRecovery(MResumePoint *mir)
+  : recoveryOffset_(INVALID_RECOVERY_OFFSET),
+    mir_(mir),
+    operations_(),
+    numSlots_(0)
+{ }
+
+bool
+LRecovery::initGeneric(MIRGenerator *gen, MNode *mir)
 {
-    size_t accum = mir->numOperands();
-    while ((mir = mir->caller()))
-        accum += mir->numOperands();
-    return accum;
+    LRecoveryOperation *recover = new LRecoveryOperation;
+    if (!recover)
+        return false;
+    recover->mir = mir;
+
+    for (size_t i = 0; i < mir->numOperands(); ++i) {
+        MDefinition *def = mir->getOperand(i);
+        if (def->isResumeOperation() && !def->isInWorklist())
+            init(gen, def);
+    }
+
+    recover->operands = gen->allocate<LRecoveryOperand>(mir->numOperands());
+    if (!recover->operands)
+        return false;
+
+    for (size_t i = 0; i < mir->numOperands(); ++i) {
+        MDefinition *def = mir->getOperand(i);
+        LRecoveryOperand &op = recover->operands[i];
+        op.isSlot = !def->isResumeOperation();
+
+        if (op.isSlot) {
+            op.index = numSlots_++;
+        } else {
+            size_t j;
+            for (j = operations_.length(); j;) {
+                j--;
+                if (operations_[j]->mir == def) {
+                    op.index = j;
+                    break;
+                }
+            }
+            JS_ASSERT(operations_[j]->mir == def);
+        }
+    }
+
+    if (!operations_.append(recover))
+        return false;
+    return true;
 }
 
-LSnapshot::LSnapshot(MResumePoint *mir, BailoutKind kind)
-  : numSlots_(TotalOperandCount(mir) * BOX_PIECES),
+bool
+LRecovery::init(MIRGenerator *gen, MDefinition *mir)
+{
+    JS_ASSERT(!mir->isInWorklist());
+    mir->setInWorklist();
+
+    return initGeneric(gen, mir);
+}
+
+bool
+LRecovery::init(MIRGenerator *gen, MResumePoint *mir)
+{
+    if (mir->caller())
+        init(gen, mir->caller());
+
+    return initGeneric(gen, mir);
+}
+
+bool
+LRecovery::init(MIRGenerator *gen)
+{
+    if (!init(gen, mir_))
+        return false;
+
+    // The init functions have marked all operations to avoid storing
+    // duplicates.  Remove the flags.
+    for (LRecoveryOperation **it = operations_.begin(); it != operations_.end(); it++) {
+        if ((*it)->mir->isDefinition())
+            (*it)->mir->toDefinition()->setNotInWorklist();
+    }
+
+    return true;
+}
+
+
+LRecovery *
+LRecovery::New(MIRGenerator *gen, MResumePoint *mir)
+{
+    LRecovery *recovery = new LRecovery(mir);
+    if (!recovery->init(gen))
+        return NULL;
+
+    IonSpew(IonSpew_Snapshots, "Generating recovery %p from MIR (%p)",
+            (void *)recovery, (void *)mir);
+
+    return recovery;
+}
+
+LSnapshot::LSnapshot(LRecovery *recovery, BailoutKind kind)
+  : numSlots_(recovery->numSlots() * BOX_PIECES),
     slots_(NULL),
-    mir_(mir),
+    recovery_(recovery),
     snapshotOffset_(INVALID_SNAPSHOT_OFFSET),
     bailoutId_(INVALID_BAILOUT_ID),
     bailoutKind_(kind)
@@ -117,14 +206,14 @@ LSnapshot::init(MIRGenerator *gen)
 }
 
 LSnapshot *
-LSnapshot::New(MIRGenerator *gen, MResumePoint *mir, BailoutKind kind)
+LSnapshot::New(MIRGenerator *gen, LRecovery *recovery, BailoutKind kind)
 {
-    LSnapshot *snapshot = new LSnapshot(mir, kind);
+    LSnapshot *snapshot = new LSnapshot(recovery, kind);
     if (!snapshot->init(gen))
         return NULL;
 
     IonSpew(IonSpew_Snapshots, "Generating LIR snapshot %p from MIR (%p)",
-            (void *)snapshot, (void *)mir);
+            (void *)snapshot, (void *)snapshot->mir());
 
     return snapshot;
 }

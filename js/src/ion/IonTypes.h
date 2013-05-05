@@ -13,10 +13,21 @@
 namespace js {
 namespace ion {
 
-typedef uint32_t SnapshotOffset;
-typedef uint32_t BailoutId;
+typedef uint32_t RecoveryOffset;
+static const RecoveryOffset INVALID_RECOVERY_OFFSET = uint32_t(-1);
 
+enum RecoveryFunction
+{
+    // Logic used to recover one frame.
+    Recover_StackFrame,
+
+    Recover_BadFunction
+};
+
+typedef uint32_t SnapshotOffset;
 static const SnapshotOffset INVALID_SNAPSHOT_OFFSET = uint32_t(-1);
+
+typedef uint32_t BailoutId;
 
 // Different kinds of bailouts. When extending this enum, make sure to check
 // the bits reserved for bailout kinds in Bailouts.h
