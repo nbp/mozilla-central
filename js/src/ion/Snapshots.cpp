@@ -523,3 +523,51 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
     }
 }
 
+// The recovery writer is used to encode resume points logic independently of
+// their register allocations (snapshots). It also offers the ability to encode
+// multiple recovery operations and it can be used by multiple snapshots.
+//
+// RecoveryOffset:
+//   [vwu] Nb Operations
+//         * operations: {
+//   [vwu]   Function Index
+//   [vwu]   Nb Operands
+//           <function fields>
+//           * operands: {
+//   [vwu]     Index and (Slot | Operation)
+//           }
+//         }
+
+RecoveryOffset
+RecoveryWriter::startRevocery(uint32_t operationCount)
+{
+    RecoveryOffset start = writer_.length();
+    IonSpew(IonSpew_Snapshots, "starting recover with operationCount %u",
+            operationCount);
+
+    writer_.writeUnsigned(operationCount);
+    return start;
+}
+
+void
+RecoveryWriter::startOperation(RecoveryFunction fun, uint32_t nbOperands)
+{
+    writer_.writeUnsigned(fun);
+    writer_.writeUnsigned(nbOperands);
+}
+
+void
+RecoveryWriter::addOperand(bool isSlot, uint32_t index)
+{
+    writer_.writeUnsigned(index << 1 | (isSlot ? 1 : 0));
+}
+
+void
+RecoveryWriter::endOperation()
+{
+}
+
+void
+RecoveryWriter::endRecovery()
+{
+}

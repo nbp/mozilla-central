@@ -97,25 +97,25 @@ class RecoveryWriter
     uint32_t OperandsWritten_;
 #endif
 
-    RecoveryOffset lastStart_;
-
-    // Use to encode the delta since the previous slot.
-    uint32_t lastSlotIndex_;
-
   public:
 
-    RecoveryOffset startRevocery(uint32_t operationCount, bool resumeAfter);
-    void endRecovery();
+    RecoveryOffset startRevocery(uint32_t operationCount);
 
     void startOperation(RecoveryFunction fun, uint32_t nbOperands);
     void addOperand(bool isSlot, uint32_t index);
     void endOperation();
+
+    void endRecovery();
 
     size_t size() const {
         return writer_.length();
     }
     const uint8_t *buffer() const {
         return writer_.buffer();
+    }
+
+    bool oom() const {
+        return writer_.oom() || writer_.length() >= MAX_BUFFER_SIZE;
     }
 };
 

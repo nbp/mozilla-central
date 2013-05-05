@@ -48,6 +48,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     MIRGenerator *gen;
     LIRGraph &graph;
     LBlock *current;
+    RecoveryWriter recoverys_;
     SnapshotWriter snapshots_;
     IonCode *deoptTable_;
 #ifdef DEBUG
@@ -197,6 +198,9 @@ class CodeGeneratorShared : public LInstructionVisitor
     }
 
   protected:
+    // Encode operation used for resuming the state expected by the interpreter.
+    bool encode(LRecovery *recovery);
+
     // Encodes an LSnapshot into the compressed snapshot buffer, returning
     // false on failure.
     bool encode(LSnapshot *snapshot);

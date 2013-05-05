@@ -130,6 +130,36 @@ ToStackIndex(LAllocation *a)
 }
 
 bool
+CodeGeneratorShared::encode(LRecovery *recovery)
+{
+    if (recovery->offset() != INVALID_RECOVERY_OFFSET)
+        return true;
+
+    size_t nbOperations = recovery->end() - recovery->begin();
+    IonSpew(IonSpew_Snapshots, "Encoding LRecovery %p (Nb Operations: %u)",
+            (void *)recovery, nbOperations);
+
+    RecoveryOffset offset = recoverys_.startRevocery(nbOperations);
+
+    for (LRecoveryOperation **it = recovery->begin(); it != recovery->end(); it++) {
+        MNode *mir = (*it)->mir;
+
+        size_t numOperands = mir->numOperands();
+        recoverys_.startOperation(Recover_StackFrame, numOperands);
+        for (size_t i = 0; i < numOperands; i++) {
+            LRecoveryOperand &op = (*it)->operands[i];
+            recoverys_.addOperand(op.isSlot, op.index);
+        }
+        recoverys_.endOperation();
+    }
+
+    recoverys_.endRecovery();
+
+    recovery->setOffset(offset);
+    return !recoverys_.oom();
+}
+
+bool
 CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
                                  uint32_t *startIndex)
 {
@@ -236,6 +266,9 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
             (void *)snapshot, frameCount);
 
     LRecovery *recovery = snapshot->recovery();
+    if (!encode(recovery))
+        return false;
+
     MResumePoint::Mode mode = recovery->mir()->mode();
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);

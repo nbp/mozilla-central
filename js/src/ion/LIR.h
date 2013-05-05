@@ -865,6 +865,11 @@ struct LRecoveryOperation : public TempObject
     LRecoveryOperand *operands;
 };
 
+// An LRecovery is similar to a resume point, except that it exhibit a linear
+// behavior and provides an interpretation for a LSnapshot having the same
+// number of slots.  As resume points can be used by multiple MIR nodes, an
+// LRecovery can be referenced by multiple LSnapshots. During code generation,
+// LRecoverys are compressed and saved in the compiled script.
 class LRecovery : public TempObject
 {
     RecoveryOffset recoveryOffset_;
@@ -901,9 +906,15 @@ class LRecovery : public TempObject
     LRecoveryOperation **end() {
         return operations_.end();
     }
+    RecoveryOffset offset() const {
+        return recoveryOffset_;
+    }
+    void setOffset(RecoveryOffset offset) {
+        recoveryOffset_ = offset;
+    }
 };
 
-// An LSnapshot is the reflection of an MResumePoint in LIR. Unlike MResumePoints,
+// An LSnapshot is the reflection of a MResumePoint in LIR. Unlike MResumePoints,
 // they cannot be shared, as they are filled in by the register allocator in
 // order to capture the precise low-level stack state in between an
 // instruction's input and output. During code generation, LSnapshots are
