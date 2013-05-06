@@ -12,6 +12,8 @@
 #include "Registers.h"
 #include "CompactBuffer.h"
 
+#include "mozilla/Util.h"
+
 namespace js {
 namespace ion {
 
@@ -195,6 +197,9 @@ class SnapshotReader
   public:
     SnapshotReader(const uint8_t *buffer, const uint8_t *end);
 
+    RecoverOffset recoverOffset() const {
+        return recoverOffset_;
+    }
     uint32_t pcOffset() const {
         return pcOffset_;
     }
@@ -227,6 +232,64 @@ class SnapshotReader
     }
     uint32_t frameCount() const {
         return frameCount_;
+    }
+};
+
+class RInstruction;
+
+class RecoverReader
+{
+    CompactBufferReader reader_;
+
+    uint32_t operationCount_;
+    uint32_t operandCount_;
+
+    uint32_t operationRead_;
+    uint32_t operandRead_;
+
+    // Operand data
+    bool isSlot_;
+    uint32_t index_;
+
+    // Operation
+    RInstruction *operation_;
+    mozilla::AlignedStorage<64> opStorage_;
+
+    void readRecoverHeader();
+    void readOperationHeader();
+
+  public:
+    RecoverReader(const uint8_t *buffer, const uint8_t *end);
+
+    void readOperand();
+    void skipOperand() {
+        readOperand();
+    }
+    bool moreOperand() const {
+        return operandRead_ < operandCount_;
+    }
+
+    bool isSlotIndex() {
+        return isSlot_;
+    }
+    bool isOperationIndex() {
+        return !isSlot_;
+    }
+    uint32_t index() {
+        return index_;
+    }
+
+    void skipOperation() {
+        while (moreOperand())
+            skipOperand();
+        readOperationHeader();
+    }
+    bool moreOperation() const {
+        return operationRead_ < operationCount_;
+    }
+
+    RInstruction *operation() {
+        return operation_;
     }
 };
 

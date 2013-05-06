@@ -11,6 +11,7 @@
 #include "IonSpewer.h"
 #include "SnapshotReader.h"
 #include "SnapshotWriter.h"
+#include "Recover.h"
 
 #ifdef TRACK_SNAPSHOTS
 #include "MIR.h"
@@ -31,7 +32,6 @@ using namespace js::ion;
 // Snapshot body, repeated "frame count" times, from oldest frame to newest frame.
 // Note that the first frame doesn't have the "parent PC" field.
 //
-//   [ptr] Debug only: JSScript *
 //   [vwu] pc offset
 //   [vwu] # of slots, including nargs
 // [slot*] N slot entries, where N = nargs + nfixed + stackDepth
@@ -545,6 +545,36 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 //           }
 //         }
 
+RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
+  : reader_(buffer, end),
+    operationCount_(0),
+    operandCount_(0),
+    operationRead_(0),
+    operandRead_(0)
+{
+}
+
+void
+RecoverReader::readRecoverHeader()
+{
+    operationCount_ = reader_.readUnsigned();
+}
+
+void
+RecoverReader::readOperationHeader()
+{
+    operation_ = RInstruction::dispatch(opStorage_.addr(), reader_);
+    operandCount_ = operation_->numOperands();
+    operationRead_++;
+}
+
+void
+RecoverReader::readOperand()
+{
+    reader_.readUnsigned();
+    operandRead_++;
+}
+
 RecoverOffset
 RecoverWriter::startRecover(uint32_t operationCount)
 {
@@ -557,10 +587,9 @@ RecoverWriter::startRecover(uint32_t operationCount)
 }
 
 void
-RecoverWriter::startOperation(RecoverFunction fun, uint32_t nbOperands)
+RecoverWriter::startOperation(RWriter serialize, MNode *ins)
 {
-    writer_.writeUnsigned(fun);
-    writer_.writeUnsigned(nbOperands);
+    serialize(writer_, ins);
 }
 
 void

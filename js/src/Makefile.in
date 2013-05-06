@@ -251,6 +251,7 @@ CPPSRCS +=	MIR.cpp \
 		TypePolicy.cpp \
 		ValueNumbering.cpp \
 		RangeAnalysis.cpp \
+		Recover.cpp \
 		VMFunctions.cpp \
 		ParallelFunctions.cpp \
 		AliasAnalysis.cpp \

@@ -13,16 +13,13 @@
 namespace js {
 namespace ion {
 
+class MNode;
+
+class CompactBufferWriter;
+
 typedef uint32_t RecoverOffset;
 static const RecoverOffset INVALID_RECOVER_OFFSET = uint32_t(-1);
-
-enum RecoverFunction
-{
-    // Logic used to recover one frame.
-    Recover_StackFrame,
-
-    Recover_BadFunction
-};
+typedef void (*RWriter)(CompactBufferWriter &writer_, MNode *ins);
 
 typedef uint32_t SnapshotOffset;
 static const SnapshotOffset INVALID_SNAPSHOT_OFFSET = uint32_t(-1);

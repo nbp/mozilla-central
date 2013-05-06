@@ -186,6 +186,10 @@ class MNode : public TempObject
     inline MDefinition *toDefinition();
     inline MResumePoint *toResumePoint();
 
+    virtual RWriter getRWriter() const {
+        return NULL;
+    };
+
   protected:
     // Sets an unset operand, updating use information.
     virtual void setOperand(size_t index, MDefinition *operand) = 0;
@@ -7521,6 +7525,8 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
                 operands_[i].producer()->removeUse(&operands_[i]);
         }
     }
+
+    RWriter getRWriter() const;
 };
 
 class MIsCallable
