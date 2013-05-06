@@ -139,6 +139,7 @@ class IonCode : public gc::Cell
 };
 
 class SnapshotWriter;
+class RecoverWriter;
 class SafepointWriter;
 class SafepointIndex;
 class OsiIndex;
@@ -216,6 +217,10 @@ struct IonScript
     uint32_t snapshots_;
     uint32_t snapshotsSize_;
 
+    // Offset from the start of the code buffer to its snapshot buffer.
+    uint32_t recovers_;
+    uint32_t recoversSize_;
+
     // Constant table for constants stored in snapshots.
     uint32_t constantTable_;
     uint32_t constantEntries_;
@@ -288,7 +293,7 @@ struct IonScript
     IonScript();
 
     static IonScript *New(JSContext *cx, uint32_t frameLocals, uint32_t frameSize,
-                          size_t snapshotsSize, size_t snapshotEntries,
+                          size_t snapshotsSize, size_t recoversSize, size_t bailoutEntries,
                           size_t constants, size_t safepointIndexEntries, size_t osiIndexEntries,
                           size_t cacheEntries, size_t runtimeSize,
                           size_t safepointsSize, size_t scriptEntries,
@@ -370,13 +375,19 @@ struct IonScript
         return hasInvalidatedCallTarget_;
     }
     const uint8_t *snapshots() const {
-        return reinterpret_cast<const uint8_t *>(this) + snapshots_;
+        return &bottomBuffer()[snapshots_];
     }
     size_t snapshotsSize() const {
         return snapshotsSize_;
     }
+    const uint8_t *recovers() const {
+        return &bottomBuffer()[recovers_];
+    }
+    size_t recoversSize() const {
+        return recoversSize_;
+    }
     const uint8_t *safepoints() const {
-        return reinterpret_cast<const uint8_t *>(this) + safepointsStart_;
+        return &bottomBuffer()[safepointsStart_];
     }
     size_t safepointsSize() const {
         return safepointsSize_;
@@ -434,6 +445,7 @@ struct IonScript
     void purgeCaches(JS::Zone *zone);
     void destroyCaches();
     void copySnapshots(const SnapshotWriter *writer);
+    void copyRecovers(const RecoverWriter *writer);
     void copyBailoutTable(const SnapshotOffset *table);
     void copyConstants(const HeapValue *vp);
     void copySafepointIndices(const SafepointIndex *firstSafepointIndex, MacroAssembler &masm);

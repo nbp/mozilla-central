@@ -4943,7 +4943,8 @@ CodeGenerator::link()
         return true;
 
     IonScript *ionScript =
-      IonScript::New(cx, graph.totalSlotCount(), scriptFrameSize, snapshots_.size(),
+      IonScript::New(cx, graph.totalSlotCount(), scriptFrameSize,
+                     snapshots_.size(), recovers_.size(),
                      bailouts_.length(), graph.numConstants(),
                      safepointIndices_.length(), osiIndices_.length(),
                      cacheList_.length(), runtimeData_.length(),
@@ -4991,6 +4992,8 @@ CodeGenerator::link()
         ionScript->copyOsiIndices(&osiIndices_[0], masm);
     if (snapshots_.size())
         ionScript->copySnapshots(&snapshots_);
+    if (recovers_.size())
+        ionScript->copyRecovers(&recovers_);
     if (graph.numConstants())
         ionScript->copyConstants(graph.constantPool());
     JS_ASSERT(graph.mir().numScripts() > 0);

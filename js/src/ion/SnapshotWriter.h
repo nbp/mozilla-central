@@ -88,15 +88,6 @@ class RecoverWriter
     //   }
 
     CompactBufferWriter writer_;
-
-    // These are only used to assert sanity.
-#ifdef DEBUG
-    uint32_t nbOperations_;
-    uint32_t operationsWritten_;
-    uint32_t nbOperands_;
-    uint32_t OperandsWritten_;
-#endif
-
   public:
 
     RecoverOffset startRecover(uint32_t operationCount);
