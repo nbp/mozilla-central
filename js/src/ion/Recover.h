@@ -21,11 +21,17 @@ enum RecoverKind
 class MNode;
 typedef void (*RWriter)(CompactBufferWriter &writer_, MNode *ins);
 
+struct RResumePoint;
+
 struct RInstruction
 {
     virtual void read(CompactBufferReader &reader) = 0;
     virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
+
+    RResumePoint *toResumePoint() {
+        return reinterpret_cast<RResumePoint *>(this);
+    }
 };
 
 struct RResumePoint : public RInstruction
@@ -35,6 +41,10 @@ struct RResumePoint : public RInstruction
 
     size_t numOperands() const {
         return numOperands_;
+    }
+
+    uint32_t pcOffset() const {
+        return pcOffset_;
     }
 
     // Offset from script->code.

@@ -58,7 +58,8 @@ template <AllowGC allowGC>
 inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                 JSContext *cx, const IonFrameIterator *iter)
-  : callee_(cx),
+  : ri_(NULL, NULL),
+    callee_(cx),
     script_(cx)
 {
     resetOn(iter);
@@ -70,6 +71,7 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
         JSContext *cx,
         const InlineFrameIteratorMaybeGC<allowGC> *iter)
   : frame_(iter ? iter->frame_ : NULL),
+    ri_(NULL, NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
@@ -186,6 +188,7 @@ inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                                 JSContext *cx, const IonBailoutIterator *iter)
   : frame_(iter),
+    ri_(NULL, NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)

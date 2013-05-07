@@ -23,6 +23,7 @@
 #include "gc/Marking.h"
 #include "SnapshotReader.h"
 #include "Safepoints.h"
+#include "Recover.h"
 #include "VMFunctions.h"
 
 #include "vm/ParallelDo.h"
@@ -1188,11 +1189,16 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     JS_ASSERT(more());
 
     si_ = start_;
+    ri_ = RecoverReader(frame_->ionScript()->recovers() + start_.recoverOffset(),
+                        frame_->ionScript()->recovers() + frame_->ionScript()->recoversSize());
 
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-    pc_ = script_->code + si_.pcOffset();
+
+    // :TODO: r_.settleOnFrame()
+    RResumePoint *rp = ri_.operation()->toResumePoint();
+    pc_ = script_->code + rp->pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif

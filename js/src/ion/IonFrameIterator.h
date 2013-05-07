@@ -293,9 +293,9 @@ template <AllowGC allowGC=CanGC>
 class InlineFrameIteratorMaybeGC
 {
     const IonFrameIterator *frame_;
-    // :TODO: Add a RecoverReader here to interate on the RResumePoint of the recover.
     SnapshotIterator start_;
     SnapshotIterator si_;
+    RecoverReader ri_;
     unsigned framesRead_;
     typename MaybeRooted<JSFunction*, allowGC>::RootType callee_;
     typename MaybeRooted<JSScript*, allowGC>::RootType script_;

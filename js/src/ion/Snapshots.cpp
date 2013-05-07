@@ -538,7 +538,6 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 //   [vwu] Nb Operations
 //         * operations: {
 //   [vwu]   Function Index
-//   [vwu]   Nb Operands
 //           <function fields>
 //           * operands: {
 //   [vwu]     Index and (Slot | Operation)
@@ -552,6 +551,11 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
     operationRead_(0),
     operandRead_(0)
 {
+    if (!buffer)
+        return;
+    readRecoverHeader();
+    JS_ASSERT(operationCount_);
+    readOperationHeader();
 }
 
 void
