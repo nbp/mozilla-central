@@ -284,7 +284,7 @@ class RecoverReader
         return index_;
     }
 
-    void skipOperation() {
+    void nextOperation() {
         while (moreOperand())
             skipOperand();
         readOperationHeader();

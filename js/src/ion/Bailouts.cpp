@@ -17,6 +17,7 @@
 #include "jsinferinlines.h"
 #include "IonFrames-inl.h"
 #include "BaselineJIT.h"
+#include "Recover.h"
 
 using namespace js;
 using namespace js::ion;
@@ -82,9 +83,10 @@ GetBailedJSScript(JSContext *cx)
 }
 
 void
-StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
+StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp)
 {
-    uint32_t exprStackSlots = iter.slots() - script()->nfixed;
+    JS_ASSERT(iter.slots() == rp->numOperands());
+    uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
 
 #ifdef TRACK_SNAPSHOTS
     iter.spewBailingFrom();
@@ -139,9 +141,9 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
         if (isConstructing())
             JS_ASSERT(!thisv.isPrimitive());
 
-        JS_ASSERT(iter.slots() >= CountArgSlots(script(), fun()));
+        JS_ASSERT(rp->numOperands() >= CountArgSlots(script(), fun()));
         IonSpew(IonSpew_Bailouts, " frame slots %u, nargs %u, nfixed %u",
-                iter.slots(), fun()->nargs, script()->nfixed);
+                rp->numOperands(), fun()->nargs, script()->nfixed);
 
         for (uint32_t i = 0; i < fun()->nargs; i++) {
             Value arg = iter.read();
@@ -170,7 +172,9 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
 
         *regs.sp++ = v;
     }
-    unsigned pcOff = iter.pcOffset();
+
+    JS_ASSERT(iter.pcOffset() == rp->pcOffset());
+    unsigned pcOff = rp->pcOffset();
     regs.pc = script()->code + pcOff;
 
     if (iter.resumeAfter())
@@ -293,20 +297,25 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     SnapshotIterator iter(it);
     RecoverReader ri(it.ionScript()->recovers() + iter.recoverOffset(),
                      it.ionScript()->recovers() + it.ionScript()->recoversSize());
-    if (!ri.isFrame())
-        ri.settleOnNextFrame();
 
     while (true) {
-        IonSpew(IonSpew_Bailouts, " restoring frame");
-        fp->initFromBailout(cx, iter);
+        if (ri.isFrame()) {
+            RResumePoint *rp = ri.operation()->toResumePoint();
+            IonSpew(IonSpew_Bailouts, " restoring frame");
+            fp->initFromBailout(cx, iter, rp);
 
-        if (!iter.moreFrames())
-             break;
-        iter.nextFrame();
+            JS_ASSERT_IF(!ri.moreOperation(), !iter.moreFrames());
+            if (!ri.moreOperation())
+                break;
+            iter.nextFrame();
 
-        fp = PushInlinedFrame(cx, fp);
-        if (!fp)
-            return BAILOUT_RETURN_OVERRECURSED;
+            fp = PushInlinedFrame(cx, fp);
+            if (!fp)
+                return BAILOUT_RETURN_OVERRECURSED;
+        }
+
+        JS_ASSERT(ri.moreOperation());
+        ri.nextOperation();
     }
 
     fp->clearRunningInIon();

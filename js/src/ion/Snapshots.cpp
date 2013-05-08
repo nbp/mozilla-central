@@ -595,7 +595,7 @@ RecoverReader::settleOnNextFrame()
 {
     do {
         JS_ASSERT(moreOperation());
-        skipOperation();
+        nextOperation();
     } while (!operation()->isResumePoint());
 }
 
