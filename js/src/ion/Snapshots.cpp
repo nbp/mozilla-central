@@ -580,6 +580,21 @@ RecoverReader::readOperand()
     operandRead_++;
 }
 
+bool
+RecoverReader::isFrame() const
+{
+    return operation_->isResumePoint();
+}
+
+void
+RecoverReader::settleOnNextFrame()
+{
+    do {
+        JS_ASSERT(moreOperation());
+        skipOperation();
+    } while (!operation()->isResumePoint());
+}
+
 RecoverOffset
 RecoverWriter::startRecover(uint32_t frameCount, uint32_t operationCount)
 {

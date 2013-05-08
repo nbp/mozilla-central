@@ -215,9 +215,11 @@ class SnapshotReader
         return resumeAfter_;
     }
     bool moreFrames() const {
+        // :TODO: remove this.
         return framesRead_ < frameCount_;
     }
     void nextFrame() {
+        // :TODO: remove this.
         readFrameHeader();
     }
     Slot readSlot();
@@ -298,6 +300,9 @@ class RecoverReader
     size_t frameCount() const {
         return frameCount_;
     }
+
+    bool isFrame() const;
+    void settleOnNextFrame();
 };
 
 }

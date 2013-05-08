@@ -29,6 +29,10 @@ struct RInstruction
     virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
+    virtual bool isResumePoint() const {
+        return false;
+    }
+
     RResumePoint *toResumePoint() {
         return reinterpret_cast<RResumePoint *>(this);
     }
@@ -38,6 +42,10 @@ struct RResumePoint : public RInstruction
 {
     static void write(CompactBufferWriter &writer, MNode *ins);
     void read(CompactBufferReader &reader);
+
+    bool isResumePoint() const {
+        return true;
+    }
 
     size_t numOperands() const {
         return numOperands_;

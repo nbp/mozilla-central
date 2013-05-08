@@ -1191,13 +1191,13 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     si_ = start_;
     ri_ = RecoverReader(frame_->ionScript()->recovers() + start_.recoverOffset(),
                         frame_->ionScript()->recovers() + frame_->ionScript()->recoversSize());
+    if (!ri_.isFrame())
+        ri_.settleOnNextFrame();
+    RResumePoint *rp = ri_.operation()->toResumePoint();
 
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-
-    // :TODO: r_.settleOnFrame()
-    RResumePoint *rp = ri_.operation()->toResumePoint();
     pc_ = script_->code + rp->pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
@@ -1216,7 +1216,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         JS_ASSERT(numActualArgs_ != 0xbadbad);
 
         // Skip over non-argument slots, as well as |this|.
-        unsigned skipCount = (si_.slots() - 1) - numActualArgs_ - 1;
+        unsigned skipCount = (rp->numOperands() - 1) - numActualArgs_ - 1;
         for (unsigned j = 0; j < skipCount; j++)
             si_.skip();
 
@@ -1227,10 +1227,12 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
             si_.skip();
 
         si_.nextFrame();
+        ri_.settleOnNextFrame();
+        rp = ri_.operation()->toResumePoint();
 
         callee_ = funval.toObject().toFunction();
         script_ = callee_->nonLazyScript();
-        pc_ = script_->code + si_.pcOffset();
+        pc_ = script_->code + rp->pcOffset();
     }
 
     framesRead_++;
