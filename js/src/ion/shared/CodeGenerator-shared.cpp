@@ -143,7 +143,7 @@ CodeGeneratorShared::encode(LRecover *recover)
 
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
-        recovers_.startOperation(mir->getRWriter(), mir);
+        recovers_.startOperation(mir);
         size_t numOperands = mir->numOperands();
         for (size_t i = 0; i < numOperands; i++) {
             LRecoverOperand &op = (*it)->operands[i];

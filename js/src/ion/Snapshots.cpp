@@ -591,9 +591,9 @@ RecoverWriter::startRecover(uint32_t operationCount)
 }
 
 void
-RecoverWriter::startOperation(RWriter serialize, MNode *ins)
+RecoverWriter::startOperation(MNode *ins)
 {
-    serialize(writer_, ins);
+    ins->writeRInstruction(writer_);
 }
 
 void

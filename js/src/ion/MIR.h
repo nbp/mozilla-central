@@ -186,8 +186,8 @@ class MNode : public TempObject
     inline MDefinition *toDefinition();
     inline MResumePoint *toResumePoint();
 
-    virtual RWriter getRWriter() const {
-        return NULL;
+    virtual void writeRInstruction(CompactBufferWriter &writer) const {
+        JS_NOT_REACHED();
     };
 
   protected:
@@ -7526,7 +7526,7 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
         }
     }
 
-    RWriter getRWriter() const;
+    void writeRInstruction(CompactBufferWriter &writer) const;
 };
 
 class MIsCallable

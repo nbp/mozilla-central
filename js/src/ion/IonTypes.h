@@ -19,7 +19,6 @@ class CompactBufferWriter;
 
 typedef uint32_t RecoverOffset;
 static const RecoverOffset INVALID_RECOVER_OFFSET = uint32_t(-1);
-typedef void (*RWriter)(CompactBufferWriter &writer_, MNode *ins);
 
 typedef uint32_t SnapshotOffset;
 static const SnapshotOffset INVALID_SNAPSHOT_OFFSET = uint32_t(-1);

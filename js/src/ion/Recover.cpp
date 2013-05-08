@@ -27,23 +27,16 @@ RInstruction::dispatch(void *mem, CompactBufferReader &reader)
 }
 
 void
-RResumePoint::write(CompactBufferWriter &writer, MNode *ins)
+MResumePoint::writeRInstruction(CompactBufferWriter &writer) const
 {
     writer.writeUnsigned(Recover_ResumePoint);
 
-    MResumePoint *rp = ins->toResumePoint();
     uint32_t bits = 0;
-    bits = rp->pc() - rp->block()->info().script()->code;
+    bits = pc() - block()->info().script()->code;
     bits = bits << 1;
-    bits = bits | (rp->mode() == MResumePoint::ResumeAfter ? 1 : 0);
+    bits = bits | (mode() == MResumePoint::ResumeAfter ? 1 : 0);
     writer.writeUnsigned(bits);
-    writer.writeUnsigned(rp->numOperands());
-}
-
-RWriter
-MResumePoint::getRWriter() const
-{
-    return &RResumePoint::write;
+    writer.writeUnsigned(numOperands());
 }
 
 void

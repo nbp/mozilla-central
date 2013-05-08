@@ -92,7 +92,7 @@ class RecoverWriter
 
     RecoverOffset startRecover(uint32_t operationCount);
 
-    void startOperation(RWriter serialize, MNode *ins);
+    void startOperation(MNode *ins);
     void addOperand(bool isSlot, uint32_t index);
     void endOperation();
 
