@@ -77,6 +77,7 @@ class RecoverWriter
     // recover operations for one snapshot.
     //
     // RecoverOffset:
+    //   Nb Frames
     //   Nb Operations
     //   * {
     //     Function Index
@@ -90,7 +91,7 @@ class RecoverWriter
     CompactBufferWriter writer_;
   public:
 
-    RecoverOffset startRecover(uint32_t operationCount);
+    RecoverOffset startRecover(uint32_t frameCount, uint32_t operationCount);
 
     void startOperation(MNode *ins);
     void addOperand(bool isSlot, uint32_t index);

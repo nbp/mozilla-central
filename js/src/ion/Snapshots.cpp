@@ -561,6 +561,7 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
 void
 RecoverReader::readRecoverHeader()
 {
+    frameCount_ = reader_.readUnsigned();
     operationCount_ = reader_.readUnsigned();
 }
 
@@ -580,12 +581,13 @@ RecoverReader::readOperand()
 }
 
 RecoverOffset
-RecoverWriter::startRecover(uint32_t operationCount)
+RecoverWriter::startRecover(uint32_t frameCount, uint32_t operationCount)
 {
     RecoverOffset start = writer_.length();
     IonSpew(IonSpew_Snapshots, "starting recover with operationCount %u",
             operationCount);
 
+    writer_.writeUnsigned(frameCount);
     writer_.writeUnsigned(operationCount);
     return start;
 }

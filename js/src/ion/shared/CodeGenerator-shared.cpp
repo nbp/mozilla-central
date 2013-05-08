@@ -135,11 +135,12 @@ CodeGeneratorShared::encode(LRecover *recover)
     if (recover->offset() != INVALID_RECOVER_OFFSET)
         return true;
 
+    size_t nbFrames = recover->mir()->frameCount();
     size_t nbOperations = recover->end() - recover->begin();
     IonSpew(IonSpew_Snapshots, "Encoding LRecover %p (Nb Operations: %u)",
             (void *)recover, nbOperations);
 
-    RecoverOffset offset = recovers_.startRecover(nbOperations);
+    RecoverOffset offset = recovers_.startRecover(nbFrames, nbOperations);
 
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;

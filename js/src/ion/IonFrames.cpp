@@ -1205,7 +1205,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
     // This unfortunately is O(n*m), because we must skip over outer frames
     // before reading inner ones.
-    unsigned remaining = start_.frameCount() - framesRead_ - 1;
+    unsigned remaining = ri_.frameCount() - framesRead_ - 1;
     for (unsigned i = 0; i < remaining; i++) {
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 

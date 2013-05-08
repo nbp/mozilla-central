@@ -231,6 +231,7 @@ class SnapshotReader
         return slotsRead_ < slotCount_;
     }
     uint32_t frameCount() const {
+        // :TODO: remove this.
         return frameCount_;
     }
 };
@@ -240,6 +241,8 @@ class RInstruction;
 class RecoverReader
 {
     CompactBufferReader reader_;
+
+    uint32_t frameCount_;
 
     uint32_t operationCount_;
     uint32_t operandCount_;
@@ -290,6 +293,10 @@ class RecoverReader
 
     RInstruction *operation() {
         return operation_;
+    }
+
+    size_t frameCount() const {
+        return frameCount_;
     }
 };
 
