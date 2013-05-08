@@ -291,6 +291,10 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         fp->setConstructing();
 
     SnapshotIterator iter(it);
+    RecoverReader ri(it.ionScript()->recovers() + iter.recoverOffset(),
+                     it.ionScript()->recovers() + it.ionScript()->recoversSize());
+    if (!ri.isFrame())
+        ri.settleOnNextFrame();
 
     while (true) {
         IonSpew(IonSpew_Bailouts, " restoring frame");
