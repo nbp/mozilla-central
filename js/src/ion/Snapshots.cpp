@@ -563,19 +563,23 @@ RecoverReader::readRecoverHeader()
 {
     frameCount_ = reader_.readUnsigned();
     operationCount_ = reader_.readUnsigned();
+    operationRead_ = 0;
 }
 
 void
 RecoverReader::readOperationHeader()
 {
+    JS_ASSERT(moreOperation());
     operation_ = RInstruction::dispatch(opStorage_.addr(), reader_);
     operandCount_ = operation_->numOperands();
     operationRead_++;
+    operandRead_ = 0;
 }
 
 void
 RecoverReader::readOperand()
 {
+    JS_ASSERT(moreOperand());
     reader_.readUnsigned();
     operandRead_++;
 }
