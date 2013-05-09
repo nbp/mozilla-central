@@ -244,7 +244,7 @@ class RecoverReader
 
     // Operation
     RInstruction *operation_;
-    mozilla::AlignedStorage<64> opStorage_;
+    mozilla::AlignedStorage<RMaxSize> opStorage_;
 
     void readRecoverHeader();
     void readOperationHeader();

@@ -42,6 +42,7 @@ MResumePoint::writeRInstruction(CompactBufferWriter &writer) const
 void
 RResumePoint::read(CompactBufferReader &reader)
 {
+    JS_STATIC_ASSERT(sizeof(*this) <= RMaxSize);
     uint32_t bits = reader.readUnsigned();
     resumeAfter_ = bits & 1;
     pcOffset_ = bits >> 1;
