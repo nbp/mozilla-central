@@ -1217,13 +1217,15 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         // Skip over non-argument slots, as well as |this|.
         unsigned skipCount = (rp->numOperands() - 1) - numActualArgs_ - 1;
-        for (unsigned j = 0; j < skipCount; j++)
+        unsigned j = 0;
+        for (j = 0; j < skipCount; j++)
             si_.skip();
 
+        j++;
         Value funval = si_.read();
 
         // Skip extra slots.
-        while (si_.moreSlots())
+        while (j++ < rp->numOperands())
             si_.skip();
 
         si_.nextFrame();
@@ -1248,6 +1250,22 @@ InlineFrameIteratorMaybeGC<allowGC>::numSlots() const
 }
 template size_t InlineFrameIteratorMaybeGC<NoGC>::numSlots() const;
 template size_t InlineFrameIteratorMaybeGC<CanGC>::numSlots() const;
+
+template <AllowGC allowGC>
+Value
+InlineFrameIteratorMaybeGC<allowGC>::maybeReadSlotByIndex(size_t index) const
+{
+    JS_ASSERT(index < numSlots());
+    SnapshotIterator s(snapshotIterator());
+
+    while (index--)
+        s.skip();
+
+    Value val = s.maybeRead(true);
+    return val;
+}
+template Value InlineFrameIteratorMaybeGC<NoGC>::maybeReadSlotByIndex(size_t index) const;
+template Value InlineFrameIteratorMaybeGC<CanGC>::maybeReadSlotByIndex(size_t index) const;
 
 template <AllowGC allowGC>
 bool

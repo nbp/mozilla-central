@@ -271,20 +271,6 @@ class SnapshotIterator : public SnapshotReader
     inline void readFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
                               unsigned start, unsigned formalEnd, unsigned iterEnd,
                               JSScript *script);
-
-    Value maybeReadSlotByIndex(size_t index) {
-        while (index--) {
-            JS_ASSERT(moreSlots());
-            skip();
-        }
-
-        Value s = maybeRead(true);
-
-        while (moreSlots())
-            skip();
-
-        return s;
-    }
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -311,6 +297,8 @@ class InlineFrameIteratorMaybeGC
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
 
     size_t numSlots() const;
+    Value maybeReadSlotByIndex(size_t index) const;
+
     bool more() const {
         return frame_ && framesRead_ < ri_.frameCount();
     }

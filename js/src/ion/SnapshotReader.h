@@ -214,10 +214,6 @@ class SnapshotReader
         readSlot();
         return UndefinedValue();
     }
-
-    bool moreSlots() const {
-        return slotsRead_ < slotCount_;
-    }
 };
 
 class RInstruction;
