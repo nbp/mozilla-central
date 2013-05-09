@@ -303,7 +303,6 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
 
             if (rp->isLastFrame())
                 break;
-            iter.nextFrame();
 
             fp = PushInlinedFrame(cx, fp);
             if (!fp)

@@ -25,13 +25,12 @@ class SnapshotWriter
     // These are only used to assert sanity.
     uint32_t nslots_;
     uint32_t slotsWritten_;
-    uint32_t framesWritten_;
     SnapshotOffset lastStart_;
 
     void writeSlotHeader(JSValueType type, uint32_t regCode);
 
   public:
-    SnapshotOffset startSnapshot(BailoutKind kind, bool resumeAfter, RecoverOffset offset);
+    SnapshotOffset startSnapshot(BailoutKind kind, bool resumeAfter, RecoverOffset offset, uint32_t numSlots);
     void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
 #ifdef TRACK_SNAPSHOTS
     void trackLocation(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,

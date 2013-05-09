@@ -1103,7 +1103,6 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
             callerPC = callPC;
             fun = nextCallee;
             scr = fun->nonLazyScript();
-            snapIter.nextFrame();
 
             frameNo++;
         }

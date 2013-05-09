@@ -268,8 +268,10 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
+    JS_ASSERT(snapshot->numSlots() == recover->numSlots());
     SnapshotOffset offset = snapshots_.startSnapshot(snapshot->bailoutKind(),
-                                                     resumeAfter, recover->offset());
+                                                     resumeAfter, recover->offset(),
+                                                     snapshot->numSlots());
 
     IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (offset %u, Recover offset: %u)",
             (void *)snapshot, offset, recover->offset());
@@ -310,7 +312,7 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         // bailouts.
         DebugOnly<jsbytecode *> bailPC = pc;
         if (mir->mode() == MResumePoint::ResumeAfter)
-          bailPC = GetNextPc(pc);
+            bailPC = GetNextPc(pc);
 
         // For fun.apply({}, arguments) the reconstructStackDepth will have stackdepth 4,
         // but it could be that we inlined the funapply. In that case exprStackSlots,

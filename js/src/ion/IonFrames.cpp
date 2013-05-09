@@ -1228,7 +1228,6 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         while (j++ < rp->numOperands())
             si_.skip();
 
-        si_.nextFrame();
         ri_.settleOnNextFrame();
         rp = ri_.operation()->toResumePoint();
 

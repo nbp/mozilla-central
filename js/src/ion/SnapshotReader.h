@@ -33,9 +33,8 @@ class SnapshotReader
     RecoverOffset recoverOffset_;           // Offset from script->code.
 
     uint32_t slotCount_;          // Number of slots.
-    BailoutKind bailoutKind_;
-    uint32_t framesRead_;         // Number of frame headers that have been read.
     uint32_t slotsRead_;          // Number of slots that have been read.
+    BailoutKind bailoutKind_;
     bool resumeAfter_;
 
 #ifdef TRACK_SNAPSHOTS
@@ -203,10 +202,6 @@ class SnapshotReader
     }
     BailoutKind bailoutKind() const {
         return bailoutKind_;
-    }
-    void nextFrame() {
-        // :TODO: remove this.
-        readFrameHeader();
     }
     Slot readSlot();
 
