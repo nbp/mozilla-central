@@ -9,10 +9,10 @@
 #include "BaselineJIT.h"
 #include "CompileInfo.h"
 #include "IonSpewer.h"
+#include "Recover.h"
+
 #include "IonFrames-inl.h"
-
 #include "vm/Stack-inl.h"
-
 #include "jsopcodeinlines.h"
 
 using namespace js;
@@ -443,11 +443,13 @@ struct BaselineStackBuilder
 //
 static bool
 InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
-                HandleFunction fun, HandleScript script, SnapshotIterator &iter,
+                HandleFunction fun, HandleScript script,
+                SnapshotIterator &iter, RResumePoint *rp,
                 bool invalidate, BaselineStackBuilder &builder,
                 MutableHandleFunction nextCallee, jsbytecode **callPC)
 {
-    uint32_t exprStackSlots = iter.slots() - (script->nfixed + CountArgSlots(script, fun));
+    JS_ASSERT(iter.slots() == rp->numOperands());
+    uint32_t exprStackSlots = rp->numOperands() - (script->nfixed + CountArgSlots(script, fun));
 
     builder.resetFramePushed();
 
@@ -541,7 +543,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 // If pcOffset == 0, we may have to push a new call object, so
                 // we leave scopeChain NULL and enter baseline code before the
                 // prologue.
-                if (iter.pcOffset() != 0 || iter.resumeAfter())
+                if (rp->pcOffset() != 0 || rp->resumeAfter())
                     scopeChain = fun->environment();
             } else {
                 // For global, compile-and-go scripts the scope chain is the
@@ -586,9 +588,9 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
         size_t thisvOffset = builder.framePushed() + IonJSFrameLayout::offsetOfThis();
         *builder.valuePointerAtStackOffset(thisvOffset) = thisv;
 
-        JS_ASSERT(iter.slots() >= CountArgSlots(script, fun));
+        JS_ASSERT(rp->numOperands() >= CountArgSlots(script, fun));
         IonSpew(IonSpew_BaselineBailouts, "      frame slots %u, nargs %u, nfixed %u",
-                iter.slots(), fun->nargs, script->nfixed);
+                rp->numOperands(), fun->nargs, script->nfixed);
 
         for (uint32_t i = 0; i < fun->nargs; i++) {
             Value arg = iter.read();
@@ -628,9 +630,9 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     size_t endOfBaselineJSFrameStack = builder.framePushed();
 
     // Get the PC
-    jsbytecode *pc = script->code + iter.pcOffset();
+    jsbytecode *pc = script->code + rp->pcOffset();
     JSOp op = JSOp(*pc);
-    bool resumeAfter = iter.resumeAfter();
+    bool resumeAfter = rp->resumeAfter();
 
     // If we are resuming at a LOOPENTRY op, resume at the next op to avoid
     // a bailout -> enter Ion -> bailout loop with --ion-eager. See also
@@ -1054,6 +1056,8 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
     IonSpew(IonSpew_BaselineBailouts, "  Incoming frame ptr = %p", builder.startFrame());
 
     SnapshotIterator snapIter(iter);
+    RecoverReader ri(iter.ionScript()->recovers() + snapIter.recoverOffset(),
+                     iter.ionScript()->recovers() + iter.ionScript()->recoversSize());
 
     RootedFunction callee(cx, iter.maybeCallee());
     if (callee) {
@@ -1076,31 +1080,40 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
     jsbytecode *callerPC = NULL;
     RootedFunction fun(cx, callee);
     RootedScript scr(cx, iter.script());
+
     while (true) {
-        IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
-        jsbytecode *callPC = NULL;
-        RootedFunction nextCallee(cx, NULL);
-        if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, invalidate, builder,
-                             &nextCallee, &callPC))
-        {
-            return BAILOUT_RETURN_FATAL_ERROR;
+        if (ri.isFrame()) {
+            RResumePoint *rp = ri.operation()->toResumePoint();
+
+            IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
+            jsbytecode *callPC = NULL;
+            RootedFunction nextCallee(cx, NULL);
+            if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, rp, invalidate, builder,
+                                 &nextCallee, &callPC))
+            {
+                return BAILOUT_RETURN_FATAL_ERROR;
+            }
+
+            if (!snapIter.moreFrames()) {
+                JS_ASSERT(!callPC);
+                break;
+            }
+
+            JS_ASSERT(nextCallee);
+            JS_ASSERT(callPC);
+            caller = scr;
+            callerPC = callPC;
+            fun = nextCallee;
+            scr = fun->nonLazyScript();
+            snapIter.nextFrame();
+
+            frameNo++;
         }
 
-        if (!snapIter.moreFrames()) {
-            JS_ASSERT(!callPC);
-            break;
-        }
-
-        JS_ASSERT(nextCallee);
-        JS_ASSERT(callPC);
-        caller = scr;
-        callerPC = callPC;
-        fun = nextCallee;
-        scr = fun->nonLazyScript();
-        snapIter.nextFrame();
-
-        frameNo++;
+        JS_ASSERT(ri.moreOperation());
+        ri.nextOperation();
     }
+
     IonSpew(IonSpew_BaselineBailouts, "  Done restoring frames");
     BailoutKind bailoutKind = snapIter.bailoutKind();
 

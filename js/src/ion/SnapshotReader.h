@@ -30,7 +30,6 @@ class SnapshotReader
 
     RecoverOffset recoverOffset_;           // Offset from script->code.
 
-    uint32_t pcOffset_;           // Offset from script->code.
     uint32_t slotCount_;          // Number of slots.
     uint32_t frameCount_;
     BailoutKind bailoutKind_;
@@ -199,9 +198,6 @@ class SnapshotReader
 
     RecoverOffset recoverOffset() const {
         return recoverOffset_;
-    }
-    uint32_t pcOffset() const {
-        return pcOffset_;
     }
     uint32_t slots() const {
         return slotCount_;

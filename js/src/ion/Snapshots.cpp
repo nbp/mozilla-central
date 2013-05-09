@@ -137,9 +137,8 @@ SnapshotReader::readFrameHeader()
     JS_ASSERT(moreFrames());
     JS_ASSERT(slotsRead_ == slotCount_);
 
-    pcOffset_ = reader_.readUnsigned();
     slotCount_ = reader_.readUnsigned();
-    IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", pcOffset_, slotCount_);
+    IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", 0 /*pcOffset_*/, slotCount_);
 
 #ifdef TRACK_SNAPSHOTS
     pcOpcode_  = reader_.readUnsigned();
@@ -320,7 +319,6 @@ SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, ui
 
     uint32_t pcoff = uint32_t(pc - script->code);
     IonSpew(IonSpew_Snapshots, "Writing pc offset %u, nslots %u", pcoff, nslots_);
-    writer_.writeUnsigned(pcoff);
     writer_.writeUnsigned(nslots_);
 }
 

@@ -55,6 +55,10 @@ struct RResumePoint : public RInstruction
         return pcOffset_;
     }
 
+    bool resumeAfter() const {
+        return resumeAfter_;
+    }
+
     // Offset from script->code.
     uint32_t pcOffset_;
     uint32_t numOperands_;

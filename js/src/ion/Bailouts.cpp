@@ -173,7 +173,6 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         *regs.sp++ = v;
     }
 
-    JS_ASSERT(iter.pcOffset() == rp->pcOffset());
     unsigned pcOff = rp->pcOffset();
     regs.pc = script()->code + pcOff;
 
@@ -320,7 +319,8 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
 
     fp->clearRunningInIon();
 
-    jsbytecode *bailoutPc = fp->script()->code + iter.pcOffset();
+    RResumePoint *rp = ri.operation()->toResumePoint();
+    jsbytecode *bailoutPc = fp->script()->code + rp->pcOffset();
     br->setBailoutPc(bailoutPc);
 
     switch (iter.bailoutKind()) {
