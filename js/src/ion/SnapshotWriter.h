@@ -34,8 +34,8 @@ class SnapshotWriter
     SnapshotOffset startSnapshot(BailoutKind kind, bool resumeAfter, RecoverOffset offset);
     void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
 #ifdef TRACK_SNAPSHOTS
-    void trackFrame(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
-                                     uint32_t lirOpcode, uint32_t lirId);
+    void trackLocation(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
+                       uint32_t lirOpcode, uint32_t lirId);
 #endif
     void endFrame();
 

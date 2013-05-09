@@ -46,6 +46,7 @@ class SnapshotReader
     uint32_t lirOpcode_;
     uint32_t lirId_;
   public:
+    void readLocation();
     void spewBailingFrom() const;
 #endif
 

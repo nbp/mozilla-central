@@ -274,6 +274,28 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (offset %u, Recover offset: %u)",
             (void *)snapshot, offset, recover->offset());
 
+#ifdef TRACK_SNAPSHOTS
+    LInstruction *ins = instruction();
+
+    uint32_t pcOpcode = 0;
+    uint32_t lirOpcode = 0;
+    uint32_t lirId = 0;
+    uint32_t mirOpcode = 0;
+    uint32_t mirId = 0;
+
+    if (ins) {
+        lirOpcode = ins->op();
+        lirId = ins->id();
+        if (ins->mirRaw()) {
+            mirOpcode = ins->mirRaw()->op();
+            mirId = ins->mirRaw()->id();
+            if (ins->mirRaw()->trackedPc())
+                pcOpcode = *ins->mirRaw()->trackedPc();
+        }
+    }
+    snapshots_.trackLocation(pcOpcode, mirOpcode, mirId, lirOpcode, lirId);
+#endif
+
     uint32_t startIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MResumePoint *mir = (*it)->mir->toResumePoint();
@@ -295,28 +317,6 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         // will have the real arguments in the slots and not be 4.
         JS_ASSERT_IF(GetIonContext()->cx && JSOp(*bailPC) != JSOP_FUNAPPLY,
                      exprStack == js_ReconstructStackDepth(GetIonContext()->cx, script, bailPC));
-
-#ifdef TRACK_SNAPSHOTS
-        LInstruction *ins = instruction();
-
-        uint32_t pcOpcode = 0;
-        uint32_t lirOpcode = 0;
-        uint32_t lirId = 0;
-        uint32_t mirOpcode = 0;
-        uint32_t mirId = 0;
-
-        if (ins) {
-            lirOpcode = ins->op();
-            lirId = ins->id();
-            if (ins->mirRaw()) {
-                mirOpcode = ins->mirRaw()->op();
-                mirId = ins->mirRaw()->id();
-                if (ins->mirRaw()->trackedPc())
-                    pcOpcode = *ins->mirRaw()->trackedPc();
-            }
-        }
-        snapshots_.trackFrame(pcOpcode, mirOpcode, mirId, lirOpcode, lirId);
-#endif
 
         JS_ASSERT((*it)->operands[0].index == startIndex);
         if (!encodeSlots(snapshot, mir, &startIndex))

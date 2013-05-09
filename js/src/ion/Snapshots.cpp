@@ -125,7 +125,23 @@ SnapshotReader::readSnapshotHeader()
     IonSpew(IonSpew_Snapshots,
             "Read snapshot header with bailout kind %u (ra: %d), recover offset %u",
             bailoutKind_, resumeAfter_, recoverOffset_);
+
+#ifdef TRACK_SNAPSHOTS
+    readLocation();
+#endif
 }
+
+#ifdef TRACK_SNAPSHOTS
+void
+SnapshotReader::readLocation()
+{
+    pcOpcode_  = reader_.readUnsigned();
+    mirOpcode_ = reader_.readUnsigned();
+    mirId_     = reader_.readUnsigned();
+    lirOpcode_ = reader_.readUnsigned();
+    lirId_     = reader_.readUnsigned();
+}
+#endif
 
 void
 SnapshotReader::readFrameHeader()
@@ -134,14 +150,6 @@ SnapshotReader::readFrameHeader()
 
     slotCount_ = reader_.readUnsigned();
     IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", 0 /*pcOffset_*/, slotCount_);
-
-#ifdef TRACK_SNAPSHOTS
-    pcOpcode_  = reader_.readUnsigned();
-    mirOpcode_ = reader_.readUnsigned();
-    mirId_     = reader_.readUnsigned();
-    lirOpcode_ = reader_.readUnsigned();
-    lirId_     = reader_.readUnsigned();
-#endif
 
     framesRead_++;
     slotsRead_ = 0;
@@ -314,8 +322,8 @@ SnapshotWriter::startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, ui
 
 #ifdef TRACK_SNAPSHOTS
 void
-SnapshotWriter::trackFrame(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
-                                            uint32_t lirOpcode, uint32_t lirId)
+SnapshotWriter::trackLocation(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
+                              uint32_t lirOpcode, uint32_t lirId)
 {
     writer_.writeUnsigned(pcOpcode);
     writer_.writeUnsigned(mirOpcode);
