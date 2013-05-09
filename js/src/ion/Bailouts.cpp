@@ -85,7 +85,6 @@ GetBailedJSScript(JSContext *cx)
 void
 StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp)
 {
-    JS_ASSERT(iter.slots() == rp->numOperands());
     uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
 
 #ifdef TRACK_SNAPSHOTS

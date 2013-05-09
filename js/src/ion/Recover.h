@@ -36,6 +36,9 @@ struct RInstruction
     RResumePoint *toResumePoint() {
         return reinterpret_cast<RResumePoint *>(this);
     }
+    const RResumePoint *toResumePoint() const {
+        return reinterpret_cast<const RResumePoint *>(this);
+    }
 };
 
 struct RResumePoint : public RInstruction

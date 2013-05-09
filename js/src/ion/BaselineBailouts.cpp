@@ -448,7 +448,6 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 bool invalidate, BaselineStackBuilder &builder,
                 MutableHandleFunction nextCallee, jsbytecode **callPC)
 {
-    JS_ASSERT(iter.slots() == rp->numOperands());
     uint32_t exprStackSlots = rp->numOperands() - (script->nfixed + CountArgSlots(script, fun));
 
     builder.resetFramePushed();

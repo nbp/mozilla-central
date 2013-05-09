@@ -121,8 +121,8 @@ InlineFrameIteratorMaybeGC<allowGC>::forEachCanonicalActualArg(
 
         // Skip over all slots untill we get to the last slots (= arguments slots of callee)
         // the +2 is for [this] and [scopechain], and maybe +1 for [argsObj]
-        JS_ASSERT(parent_s.slots() >= nactual + 2 + argsObjAdj);
-        unsigned skip = parent_s.slots() - nactual - 2 - argsObjAdj;
+        JS_ASSERT(it.numSlots() >= nactual + 2 + argsObjAdj);
+        unsigned skip = it.numSlots() - nactual - 2 - argsObjAdj;
         for (unsigned j = 0; j < skip; j++)
             parent_s.skip();
 

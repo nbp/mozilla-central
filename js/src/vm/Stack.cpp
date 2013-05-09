@@ -2138,7 +2138,7 @@ StackIter::numFrameSlots() const
      case ION: {
 #ifdef JS_ION
         if (data_.ionFrames_.isOptimizedJS())
-            return ionInlineFrames_.snapshotIterator().slots() - ionInlineFrames_.script()->nfixed;
+            return ionInlineFrames_.numSlots() - ionInlineFrames_.script()->nfixed;
         ion::BaselineFrame *frame = data_.ionFrames_.baselineFrame();
         return frame->numValueSlots() - data_.ionFrames_.script()->nfixed;
 #else

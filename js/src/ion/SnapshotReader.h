@@ -201,9 +201,6 @@ class SnapshotReader
     RecoverOffset recoverOffset() const {
         return recoverOffset_;
     }
-    uint32_t slots() const {
-        return slotCount_;
-    }
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
@@ -281,6 +278,9 @@ class RecoverReader
     }
 
     RInstruction *operation() {
+        return operation_;
+    }
+    const RInstruction *operation() const {
         return operation_;
     }
 

@@ -310,6 +310,7 @@ class InlineFrameIteratorMaybeGC
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const IonBailoutIterator *iter);
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
 
+    size_t numSlots() const;
     bool more() const {
         return frame_ && framesRead_ < ri_.frameCount();
     }

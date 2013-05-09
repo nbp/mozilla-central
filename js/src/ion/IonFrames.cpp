@@ -1241,6 +1241,15 @@ template void InlineFrameIteratorMaybeGC<NoGC>::findNextFrame();
 template void InlineFrameIteratorMaybeGC<CanGC>::findNextFrame();
 
 template <AllowGC allowGC>
+size_t
+InlineFrameIteratorMaybeGC<allowGC>::numSlots() const
+{
+    return ri_.operation()->toResumePoint()->numOperands();
+}
+template size_t InlineFrameIteratorMaybeGC<NoGC>::numSlots() const;
+template size_t InlineFrameIteratorMaybeGC<CanGC>::numSlots() const;
+
+template <AllowGC allowGC>
 bool
 InlineFrameIteratorMaybeGC<allowGC>::isFunctionFrame() const
 {
@@ -1446,8 +1455,8 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
     }
 
     SnapshotIterator si = snapshotIterator();
-    fprintf(stderr, "  slots: %u\n", si.slots() - 1);
-    for (unsigned i = 0; i < si.slots() - 1; i++) {
+    fprintf(stderr, "  slots: %u\n", unsigned(numSlots() - 1));
+    for (unsigned i = 0; i < numSlots() - 1; i++) {
         if (isFunction) {
             if (i == 0)
                 fprintf(stderr, "  scope chain: ");
