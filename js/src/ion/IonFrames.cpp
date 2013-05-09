@@ -1176,6 +1176,7 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 
     if (iter) {
         start_ = SnapshotIterator(*iter);
+        ri_ = RecoverReader(frame_->ionScript(), start_);
         findNextFrame();
     }
 }
@@ -1189,8 +1190,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     JS_ASSERT(more());
 
     si_ = start_;
-    ri_ = RecoverReader(frame_->ionScript()->recovers() + start_.recoverOffset(),
-                        frame_->ionScript()->recovers() + frame_->ionScript()->recoversSize());
+    ri_ = RecoverReader(frame_->ionScript(), start_);
     if (!ri_.isFrame())
         ri_.settleOnNextFrame();
     RResumePoint *rp = ri_.operation()->toResumePoint();

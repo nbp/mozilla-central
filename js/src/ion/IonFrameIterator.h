@@ -311,7 +311,7 @@ class InlineFrameIteratorMaybeGC
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
 
     bool more() const {
-        return frame_ && framesRead_ < start_.frameCount();
+        return frame_ && framesRead_ < ri_.frameCount();
     }
     JSFunction *callee() const {
         JS_ASSERT(callee_);

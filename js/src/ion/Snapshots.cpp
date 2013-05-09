@@ -7,6 +7,7 @@
 #include "MIRGenerator.h"
 #include "IonFrames.h"
 #include "jsscript.h"
+#include "IonCode.h"
 #include "IonLinker.h"
 #include "IonSpewer.h"
 #include "SnapshotReader.h"
@@ -98,7 +99,6 @@ using namespace js::ion;
 SnapshotReader::SnapshotReader(const uint8_t *buffer, const uint8_t *end)
   : reader_(buffer, end),
     slotCount_(0),
-    frameCount_(0),
     slotsRead_(0)
 {
     if (!buffer)
@@ -111,8 +111,6 @@ SnapshotReader::SnapshotReader(const uint8_t *buffer, const uint8_t *end)
 static const uint32_t BAILOUT_KIND_SHIFT = 0;
 static const uint32_t BAILOUT_KIND_MASK = (1 << BAILOUT_KIND_BITS) - 1;
 static const uint32_t BAILOUT_RESUME_SHIFT = BAILOUT_KIND_SHIFT + BAILOUT_KIND_BITS;
-static const uint32_t BAILOUT_FRAMECOUNT_SHIFT = BAILOUT_KIND_BITS + BAILOUT_RESUME_BITS;
-static const uint32_t BAILOUT_FRAMECOUNT_BITS = (8 * sizeof(uint32_t)) - BAILOUT_FRAMECOUNT_SHIFT;
 
 void
 SnapshotReader::readSnapshotHeader()
@@ -120,21 +118,18 @@ SnapshotReader::readSnapshotHeader()
     uint32_t bits = reader_.readUnsigned();
     recoverOffset_ = reader_.readUnsigned();
 
-    frameCount_ = bits >> BAILOUT_FRAMECOUNT_SHIFT;
-    JS_ASSERT(frameCount_ > 0);
     bailoutKind_ = BailoutKind((bits >> BAILOUT_KIND_SHIFT) & BAILOUT_KIND_MASK);
     resumeAfter_ = !!(bits & (1 << BAILOUT_RESUME_SHIFT));
     framesRead_ = 0;
 
     IonSpew(IonSpew_Snapshots,
-            "Read snapshot header with frameCount %u, bailout kind %u (ra: %d), recover offset %u",
-            frameCount_, bailoutKind_, resumeAfter_, recoverOffset_);
+            "Read snapshot header with bailout kind %u (ra: %d), recover offset %u",
+            bailoutKind_, resumeAfter_, recoverOffset_);
 }
 
 void
 SnapshotReader::readFrameHeader()
 {
-    JS_ASSERT(moreFrames());
     JS_ASSERT(slotsRead_ == slotCount_);
 
     slotCount_ = reader_.readUnsigned();
@@ -276,23 +271,18 @@ SnapshotReader::readSlot()
 }
 
 SnapshotOffset
-SnapshotWriter::startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter,
-                              RecoverOffset offset)
+SnapshotWriter::startSnapshot(BailoutKind kind, bool resumeAfter, RecoverOffset offset)
 {
-    nframes_ = frameCount;
     framesWritten_ = 0;
 
     lastStart_ = writer_.length();
 
     IonSpew(IonSpew_Snapshots,
-            "starting snapshot with frameCount %u, bailout kind %u, recover offset %u",
-            frameCount, kind, offset);
-    JS_ASSERT(frameCount > 0);
-    JS_ASSERT(frameCount < (1 << BAILOUT_FRAMECOUNT_BITS));
+            "starting snapshot bailout kind %u, recover offset %u",
+            kind, offset);
     JS_ASSERT(uint32_t(kind) < (1 << BAILOUT_KIND_BITS));
 
-    uint32_t bits = (uint32_t(kind) << BAILOUT_KIND_SHIFT) |
-                  (frameCount << BAILOUT_FRAMECOUNT_SHIFT);
+    uint32_t bits = (uint32_t(kind) << BAILOUT_KIND_SHIFT);
     if (resumeAfter)
         bits |= (1 << BAILOUT_RESUME_SHIFT);
 
@@ -491,8 +481,6 @@ SnapshotWriter::addNullSlot()
 void
 SnapshotWriter::endSnapshot()
 {
-    JS_ASSERT(nframes_ == framesWritten_);
-
     // Place a sentinel for asserting on the other end.
 #ifdef DEBUG
     writer_.writeSigned(-1);
@@ -544,6 +532,7 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 
 RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
   : reader_(buffer, end),
+    begin_(buffer),
     operationCount_(0),
     operandCount_(0),
     operationRead_(0),
@@ -551,6 +540,20 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
 {
     if (!buffer)
         return;
+    readRecoverHeader();
+    JS_ASSERT(operationCount_);
+    readOperationHeader();
+}
+
+RecoverReader::RecoverReader(const IonScript *ion, SnapshotReader &snapshot)
+  : reader_(ion->recovers() + snapshot.recoverOffset(),
+            ion->recovers() + ion->recoversSize()),
+    begin_(ion->recovers() + snapshot.recoverOffset()),
+    operationCount_(0),
+    operandCount_(0),
+    operationRead_(0),
+    operandRead_(0)
+{
     readRecoverHeader();
     JS_ASSERT(operationCount_);
     readOperationHeader();
@@ -604,6 +607,7 @@ RecoverWriter::startRecover(uint32_t frameCount, uint32_t operationCount)
     IonSpew(IonSpew_Snapshots, "starting recover with operationCount %u",
             operationCount);
 
+    JS_ASSERT(frameCount > 0);
     writer_.writeUnsigned(frameCount);
     writer_.writeUnsigned(operationCount);
     return start;

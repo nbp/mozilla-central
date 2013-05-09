@@ -83,7 +83,7 @@ GetBailedJSScript(JSContext *cx)
 }
 
 void
-StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp)
+StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp, bool lastFrame)
 {
     JS_ASSERT(iter.slots() == rp->numOperands());
     uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
@@ -165,7 +165,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         // If coming from an invalidation bailout, and this is the topmost
         // value, and a value override has been specified, don't read from the
         // iterator. Otherwise, we risk using a garbage value.
-        if (!iter.moreFrames() && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride())
+        if (lastFrame && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride())
             v = iter.skip();
         else
             v = iter.read();
@@ -176,7 +176,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
     unsigned pcOff = rp->pcOffset();
     regs.pc = script()->code + pcOff;
 
-    if (iter.resumeAfter())
+    if (lastFrame && rp->resumeAfter())
         regs.pc = GetNextPc(regs.pc);
 
     IonSpew(IonSpew_Bailouts, " new PC is offset %u within script %p (line %d)",
@@ -294,17 +294,16 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         fp->setConstructing();
 
     SnapshotIterator iter(it);
-    RecoverReader ri(it.ionScript()->recovers() + iter.recoverOffset(),
-                     it.ionScript()->recovers() + it.ionScript()->recoversSize());
+    RecoverReader ri(it.ionScript(), iter);
 
     while (true) {
         if (ri.isFrame()) {
             RResumePoint *rp = ri.operation()->toResumePoint();
             IonSpew(IonSpew_Bailouts, " restoring frame");
-            fp->initFromBailout(cx, iter, rp);
+            bool lastFrame = !ri.moreOperation();
+            fp->initFromBailout(cx, iter, rp, lastFrame);
 
-            JS_ASSERT_IF(!ri.moreOperation(), !iter.moreFrames());
-            if (!ri.moreOperation())
+            if (lastFrame)
                 break;
             iter.nextFrame();
 

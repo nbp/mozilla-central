@@ -137,10 +137,10 @@ CodeGeneratorShared::encode(LRecover *recover)
 
     size_t nbFrames = recover->mir()->frameCount();
     size_t nbOperations = recover->end() - recover->begin();
-    IonSpew(IonSpew_Snapshots, "Encoding LRecover %p (Nb Operations: %u)",
-            (void *)recover, nbOperations);
-
     RecoverOffset offset = recovers_.startRecover(nbFrames, nbOperations);
+
+    IonSpew(IonSpew_Snapshots, "Encoding LRecover %p (offset %u): %u Frames, %u Operations)",
+            (void *)recover, offset, nbFrames, nbOperations - nbFrames);
 
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
@@ -260,11 +260,6 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     if (snapshot->snapshotOffset() != INVALID_SNAPSHOT_OFFSET)
         return true;
 
-    uint32_t frameCount = snapshot->mir()->frameCount();
-
-    IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (frameCount %u)",
-            (void *)snapshot, frameCount);
-
     LRecover *recover = snapshot->recover();
     if (!encode(recover))
         return false;
@@ -273,8 +268,11 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
-    SnapshotOffset offset = snapshots_.startSnapshot(frameCount, snapshot->bailoutKind(),
+    SnapshotOffset offset = snapshots_.startSnapshot(snapshot->bailoutKind(),
                                                      resumeAfter, recover->offset());
+
+    IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (offset %u, Recover offset: %u)",
+            (void *)snapshot, offset, recover->offset());
 
     uint32_t startIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {

@@ -444,7 +444,7 @@ struct BaselineStackBuilder
 static bool
 InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 HandleFunction fun, HandleScript script,
-                SnapshotIterator &iter, RResumePoint *rp,
+                SnapshotIterator &iter, RResumePoint *rp, bool lastFrame,
                 bool invalidate, BaselineStackBuilder &builder,
                 MutableHandleFunction nextCallee, jsbytecode **callPC)
 {
@@ -615,7 +615,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
         // If coming from an invalidation bailout, and this is the topmost
         // value, and a value override has been specified, don't read from the
         // iterator. Otherwise, we risk using a garbage value.
-        if (!iter.moreFrames() && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride()) {
+        if (lastFrame && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride()) {
             JS_ASSERT(invalidate);
             iter.skip();
             IonSpew(IonSpew_BaselineBailouts, "      [Return Override]");
@@ -659,7 +659,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
 #ifdef DEBUG
     uint32_t expectedDepth = js_ReconstructStackDepth(cx, script,
                                                       resumeAfter ? GetNextPc(pc) : pc);
-    JS_ASSERT_IF(op != JSOP_FUNAPPLY || !iter.moreFrames() || resumeAfter,
+    JS_ASSERT_IF(op != JSOP_FUNAPPLY || lastFrame || resumeAfter,
                  exprStackSlots == expectedDepth);
 
     IonSpew(IonSpew_BaselineBailouts, "      Resuming %s pc offset %d (op %s) (line %d) of %s:%d",
@@ -670,7 +670,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
 #endif
 
     // If this was the last inline frame, then unpacking is almost done.
-    if (!iter.moreFrames()) {
+    if (lastFrame) {
         // Last frame, so PC for call to next frame is set to NULL.
         *callPC = NULL;
 
@@ -1056,8 +1056,7 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
     IonSpew(IonSpew_BaselineBailouts, "  Incoming frame ptr = %p", builder.startFrame());
 
     SnapshotIterator snapIter(iter);
-    RecoverReader ri(iter.ionScript()->recovers() + snapIter.recoverOffset(),
-                     iter.ionScript()->recovers() + iter.ionScript()->recoversSize());
+    RecoverReader ri(iter.ionScript(), snapIter);
 
     RootedFunction callee(cx, iter.maybeCallee());
     if (callee) {
@@ -1088,13 +1087,14 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
             IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
             jsbytecode *callPC = NULL;
             RootedFunction nextCallee(cx, NULL);
-            if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, rp, invalidate, builder,
+            bool lastFrame = !ri.moreOperation();
+            if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, rp, lastFrame, invalidate, builder,
                                  &nextCallee, &callPC))
             {
                 return BAILOUT_RETURN_FATAL_ERROR;
             }
 
-            if (!snapIter.moreFrames()) {
+            if (lastFrame) {
                 JS_ASSERT(!callPC);
                 break;
             }

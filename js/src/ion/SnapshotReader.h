@@ -17,6 +17,8 @@
 namespace js {
 namespace ion {
 
+class IonScript;
+
 #ifdef TRACK_SNAPSHOTS
 class LInstruction;
 #endif
@@ -31,7 +33,6 @@ class SnapshotReader
     RecoverOffset recoverOffset_;           // Offset from script->code.
 
     uint32_t slotCount_;          // Number of slots.
-    uint32_t frameCount_;
     BailoutKind bailoutKind_;
     uint32_t framesRead_;         // Number of frame headers that have been read.
     uint32_t slotsRead_;          // Number of slots that have been read.
@@ -205,15 +206,6 @@ class SnapshotReader
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    bool resumeAfter() const {
-        if (moreFrames())
-            return false;
-        return resumeAfter_;
-    }
-    bool moreFrames() const {
-        // :TODO: remove this.
-        return framesRead_ < frameCount_;
-    }
     void nextFrame() {
         // :TODO: remove this.
         readFrameHeader();
@@ -228,10 +220,6 @@ class SnapshotReader
     bool moreSlots() const {
         return slotsRead_ < slotCount_;
     }
-    uint32_t frameCount() const {
-        // :TODO: remove this.
-        return frameCount_;
-    }
 };
 
 class RInstruction;
@@ -239,6 +227,7 @@ class RInstruction;
 class RecoverReader
 {
     CompactBufferReader reader_;
+    const uint8_t *begin_;
 
     uint32_t frameCount_;
 
@@ -261,6 +250,7 @@ class RecoverReader
 
   public:
     RecoverReader(const uint8_t *buffer, const uint8_t *end);
+    RecoverReader(const IonScript *ion, SnapshotReader &snapshot);
 
     void readOperand();
     void skipOperand() {
