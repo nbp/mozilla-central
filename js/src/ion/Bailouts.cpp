@@ -83,7 +83,7 @@ GetBailedJSScript(JSContext *cx)
 }
 
 void
-StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp, bool lastFrame)
+StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp)
 {
     JS_ASSERT(iter.slots() == rp->numOperands());
     uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
@@ -165,7 +165,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         // If coming from an invalidation bailout, and this is the topmost
         // value, and a value override has been specified, don't read from the
         // iterator. Otherwise, we risk using a garbage value.
-        if (lastFrame && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride())
+        if (rp->isLastFrame() && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride())
             v = iter.skip();
         else
             v = iter.read();
@@ -176,7 +176,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
     unsigned pcOff = rp->pcOffset();
     regs.pc = script()->code + pcOff;
 
-    if (lastFrame && rp->resumeAfter())
+    if (rp->isLastFrame() && rp->resumeAfter())
         regs.pc = GetNextPc(regs.pc);
 
     IonSpew(IonSpew_Bailouts, " new PC is offset %u within script %p (line %d)",
@@ -300,10 +300,9 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         if (ri.isFrame()) {
             RResumePoint *rp = ri.operation()->toResumePoint();
             IonSpew(IonSpew_Bailouts, " restoring frame");
-            bool lastFrame = !ri.moreOperation();
-            fp->initFromBailout(cx, iter, rp, lastFrame);
+            fp->initFromBailout(cx, iter, rp);
 
-            if (lastFrame)
+            if (rp->isLastFrame())
                 break;
             iter.nextFrame();
 

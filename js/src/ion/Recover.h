@@ -59,10 +59,18 @@ struct RResumePoint : public RInstruction
         return resumeAfter_;
     }
 
+    void setLastFrame() {
+        lastFrame_ = true;
+    }
+    bool isLastFrame() const {
+        return lastFrame_;
+    }
+
     // Offset from script->code.
     uint32_t pcOffset_;
     uint32_t numOperands_;
     bool resumeAfter_;
+    bool lastFrame_;
 };
 
 } // namespace ion

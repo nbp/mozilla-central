@@ -575,6 +575,11 @@ RecoverReader::readOperationHeader()
     operandCount_ = operation_->numOperands();
     operationRead_++;
     operandRead_ = 0;
+
+    // The last operation should be a resume point, and in this case this is
+    // also the last frame.
+    if (!moreOperation())
+        operation_->toResumePoint()->setLastFrame();
 }
 
 void
