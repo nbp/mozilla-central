@@ -6,6 +6,7 @@
 
 #include "Recover.h"
 
+#include "IonSpewer.h"
 #include "MIR.h"
 #include "MIRGraph.h"
 
@@ -47,4 +48,7 @@ RResumePoint::read(CompactBufferReader &reader)
     resumeAfter_ = bits & 1;
     pcOffset_ = bits >> 1;
     numOperands_ = reader.readUnsigned();
+
+    IonSpew(IonSpew_Snapshots, "RResumePoint: pc offset %u, nslots %u",
+            pcOffset_, numOperands_);
 }

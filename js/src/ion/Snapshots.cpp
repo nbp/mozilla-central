@@ -149,7 +149,6 @@ SnapshotReader::readFrameHeader()
     JS_ASSERT(slotsRead_ == slotCount_);
 
     slotCount_ = reader_.readUnsigned();
-    IonSpew(IonSpew_Snapshots, "Read pc offset %u, nslots %u", 0 /*pcOffset_*/, slotCount_);
 
     framesRead_++;
     slotsRead_ = 0;
