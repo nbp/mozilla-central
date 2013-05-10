@@ -707,7 +707,7 @@ nsChildView::GetCGContextForTitlebarDrawing(NSSize aSize)
 void
 nsChildView::WillPaint()
 {
-  [mView maybeDrawInTitlebar];
+  [(ChildView*)mView maybeDrawInTitlebar];
 }
 
 void
@@ -2249,6 +2249,11 @@ NSEvent* gLastDragMouseDownEvent = nil;
                                            selector:@selector(systemMetricsChanged)
                                                name:NSSystemColorsDidChangeNotification
                                              object:nil];
+  // TODO: replace the string with the constant once we build with the 10.7 SDK
+  [[NSNotificationCenter defaultCenter] addObserver:self
+                                           selector:@selector(systemMetricsChanged)
+                                               name:@"NSPreferredScrollerStyleDidChangeNotification"
+                                             object:nil];
   [[NSDistributedNotificationCenter defaultCenter] addObserver:self
                                                       selector:@selector(systemMetricsChanged)
                                                           name:@"AppleAquaScrollBarVariantChanged"
@@ -2676,11 +2681,12 @@ NSEvent* gLastDragMouseDownEvent = nil;
   if (!mGeckoChild) {
     return;
   }
-  ToolbarWindow* win = [self window];
+  NSWindow* win = [self window];
   if (!win || ![win isKindOfClass:[ToolbarWindow class]]) {
     return;
   }
-  if (![win drawsContentsIntoWindowFrame]) {
+  ToolbarWindow* toolbarWin = (ToolbarWindow*)win;
+  if (![toolbarWin drawsContentsIntoWindowFrame]) {
     return;
   }
 
@@ -2690,8 +2696,8 @@ NSEvent* gLastDragMouseDownEvent = nil;
   // "unified toolbar".  Our ChildView ('self') is the same size as the frame
   // view and covers it.  Our ChildView has a flipped coordinate system, but
   // the frame view doesn't.
-  NSRect titlebarRect = [win titlebarRect];
-  NSView* frameView = [[win contentView] superview];
+  NSRect titlebarRect = [toolbarWin titlebarRect];
+  NSView* frameView = [[toolbarWin contentView] superview];
   NSRect dirtyRect = NSIntersectionRect([frameView _dirtyRect], titlebarRect);
   // Flip dirtyRect's coordinate system.
   dirtyRect.origin.y = [frameView bounds].size.height -

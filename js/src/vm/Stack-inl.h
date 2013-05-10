@@ -562,7 +562,7 @@ ContextStack::currentScriptedScopeChain() const
 
 template <class Op>
 inline void
-StackIter::ionForEachCanonicalActualArg(JSContext *cx, Op op)
+ScriptFrameIter::ionForEachCanonicalActualArg(JSContext *cx, Op op)
 {
     JS_ASSERT(isIon());
 #ifdef JS_ION
@@ -624,6 +624,19 @@ AbstractFramePtr::setReturnValue(const Value &rval) const
     asBaselineFrame()->setReturnValue(rval);
 #else
     JS_NOT_REACHED("Invalid frame");
+#endif
+}
+
+inline bool
+AbstractFramePtr::hasPushedSPSFrame() const
+{
+    if (isStackFrame())
+        return asStackFrame()->hasPushedSPSFrame();
+#ifdef JS_ION
+    return asBaselineFrame()->hasPushedSPSFrame();
+#else
+    JS_NOT_REACHED("Invalid frame");
+    return false;
 #endif
 }
 

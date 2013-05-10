@@ -151,6 +151,7 @@ pref("media.volume_scale", "1.0");
 
 #ifdef MOZ_WMF
 pref("media.windows-media-foundation.enabled", true);
+pref("media.windows-media-foundation.use-dxva", true);
 #endif
 #ifdef MOZ_RAW
 pref("media.raw.enabled", true);
@@ -736,9 +737,6 @@ pref("dom.min_timeout_value", 4);
 // And for background windows
 pref("dom.min_background_timeout_value", 1000);
 
-// Run content XBL in a separate scope.
-pref("dom.xbl_scopes", true);
-
 // Stop defining the Components object in content.
 pref("dom.omit_components_in_content", true);
 
@@ -784,11 +782,7 @@ pref("javascript.options.methodjit.chrome",  false);
 pref("javascript.options.baselinejit.content", true);
 pref("javascript.options.baselinejit.chrome",  true);
 pref("javascript.options.ion.content",      true);
-#ifdef RELEASE_BUILD
-pref("javascript.options.experimental_asmjs", false);
-#else
-pref("javascript.options.experimental_asmjs", true);
-#endif
+pref("javascript.options.asmjs",            true);
 pref("javascript.options.ion.parallel_compilation", true);
 pref("javascript.options.pccounts.content", false);
 pref("javascript.options.pccounts.chrome",  false);
@@ -1017,13 +1011,7 @@ pref("network.http.spdy.send-buffer-size", 131072);
 
 pref("network.http.diagnostics", false);
 
-#ifdef RELEASE_BUILD
-pref("network.http.pacing.requests.enabled", false);
-pref("network.http.pacing.requests.abtest", false);
-#else
 pref("network.http.pacing.requests.enabled", true);
-pref("network.http.pacing.requests.abtest", true);
-#endif
 pref("network.http.pacing.requests.min-parallelism", 6);
 pref("network.http.pacing.requests.hz", 100);
 pref("network.http.pacing.requests.burst", 32);
@@ -3965,6 +3953,8 @@ pref("layers.acceleration.force-enabled", false);
 
 pref("layers.acceleration.draw-fps", false);
 
+pref("layers.draw-borders", false);
+
 pref("layers.offmainthreadcomposition.enabled", false);
 // same effect as layers.offmainthreadcomposition.enabled, but specifically for
 // use with tests.
@@ -4068,6 +4058,7 @@ pref("dom.sms.enabled", false);
 // Enable Latin characters replacement with corresponding ones in GSM SMS
 // 7-bit default alphabet.
 pref("dom.sms.strict7BitEncoding", false);
+pref("dom.sms.requestStatusReport", true);
 
 // WebContacts
 pref("dom.mozContacts.enabled", false);
@@ -4186,6 +4177,9 @@ pref("dom.mms.sendRetryInterval", 300000);
 
 pref("dom.mms.retrievalRetryCount", 4);
 pref("dom.mms.retrievalRetryIntervals", "60000,300000,600000,1800000");
+
+// Debug enabler for MMS.
+pref("mms.debugging.enabled", false);
 
 // If the user puts a finger down on an element and we think the user
 // might be executing a pan gesture, how long do we wait before

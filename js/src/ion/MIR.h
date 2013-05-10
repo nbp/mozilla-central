@@ -1376,11 +1376,14 @@ class MCall
     // Original value of argc from the bytecode.
     uint32_t numActualArgs_;
 
+    bool needsArgCheck_;
+
     MCall(JSFunction *target, uint32_t numActualArgs, bool construct)
       : construct_(construct),
         target_(target),
         targetScript_(NULL),
-        numActualArgs_(numActualArgs)
+        numActualArgs_(numActualArgs),
+        needsArgCheck_(true)
     {
         setResultType(MIRType_Value);
     }
@@ -1396,6 +1399,14 @@ class MCall
     void initFunction(MDefinition *func) {
         JS_ASSERT(!func->isPassArg());
         return setOperand(FunctionOperandIndex, func);
+    }
+
+    bool needsArgCheck() const {
+        return needsArgCheck_;
+    }
+
+    void disableArgCheck() {
+        needsArgCheck_ = false;
     }
 
     MPrepareCall *getPrepareCall() {
@@ -1846,6 +1857,11 @@ class MCompare
     void infer(JSContext *cx, BaselineInspector *inspector, jsbytecode *pc);
     CompareType compareType() const {
         return compareType_;
+    }
+    bool isDoubleComparison() const {
+        return compareType() == Compare_Double ||
+               compareType() == Compare_DoubleMaybeCoerceLHS ||
+               compareType() == Compare_DoubleMaybeCoerceRHS;
     }
     void setCompareType(CompareType type) {
         compareType_ = type;
@@ -2748,7 +2764,7 @@ class MBitXor : public MBinaryBitwiseInstruction
         return this;
     }
     MDefinition *foldIfEqual() {
-        return MConstant::New(Int32Value(0));
+        return this;
     }
 };
 

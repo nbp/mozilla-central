@@ -105,9 +105,9 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
 
     // Parallel intrinsics.
     if (native == intrinsic_ShouldForceSequential)
-        return inlineShouldForceSequentialOrInParallelSection(callInfo);
+        return inlineForceSequentialOrInParallelSection(callInfo);
     if (native == testingFunc_inParallelSection)
-        return inlineShouldForceSequentialOrInParallelSection(callInfo);
+        return inlineForceSequentialOrInParallelSection(callInfo);
     if (native == intrinsic_NewParallelArray)
         return inlineNewParallelArray(callInfo);
     if (native == ParallelArrayObject::construct)
@@ -119,7 +119,7 @@ IonBuilder::inlineNativeCall(CallInfo &callInfo, JSNative native)
 types::StackTypeSet *
 IonBuilder::getInlineReturnTypeSet()
 {
-    return script()->analysis()->bytecodeTypes(pc);
+    return types::TypeScript::BytecodeTypes(script(), pc);
 }
 
 MIRType
@@ -1062,7 +1062,7 @@ IonBuilder::inlineUnsafeSetTypedArrayElement(CallInfo &callInfo,
 }
 
 IonBuilder::InliningStatus
-IonBuilder::inlineShouldForceSequentialOrInParallelSection(CallInfo &callInfo)
+IonBuilder::inlineForceSequentialOrInParallelSection(CallInfo &callInfo)
 {
     if (callInfo.constructing())
         return InliningStatus_NotInlined;
@@ -1342,6 +1342,29 @@ IonBuilder::inlineIsCallable(CallInfo &callInfo)
         return InliningStatus_NotInlined;
     if (callInfo.getArg(0)->type() != MIRType_Object)
         return InliningStatus_NotInlined;
+
+    // Try inlining with constant true/false: only objects may be callable at
+    // all, and if we know the class check if it is callable.
+    bool isCallableKnown = false;
+    bool isCallableConstant;
+    if (callInfo.getArg(0)->type() != MIRType_Object) {
+        isCallableKnown = true;
+        isCallableConstant = false;
+    } else {
+        types::StackTypeSet *types = callInfo.getArg(0)->resultTypeSet();
+        Class *clasp = types ? types->getKnownClass() : NULL;
+        if (clasp) {
+            isCallableKnown = true;
+            isCallableConstant = clasp->isCallable();
+        }
+    }
+
+    if (isCallableKnown) {
+        MConstant *constant = MConstant::New(BooleanValue(isCallableConstant));
+        current->add(constant);
+        current->push(constant);
+        return InliningStatus_Inlined;
+    }
 
     callInfo.unwrapArgs();
 

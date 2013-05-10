@@ -26,8 +26,6 @@
 #include "Recover.h"
 #include "VMFunctions.h"
 
-#include "vm/ParallelDo.h"
-
 namespace js {
 namespace ion {
 
@@ -91,21 +89,17 @@ IonFrameIterator::calleeToken() const
 JSFunction *
 IonFrameIterator::callee() const
 {
-    if (isScripted()) {
-        JS_ASSERT(isFunctionFrame() || isParallelFunctionFrame());
-        if (isFunctionFrame())
-            return CalleeTokenToFunction(calleeToken());
-        return CalleeTokenToParallelFunction(calleeToken());
-    }
-
-    JS_ASSERT(isNative());
-    return exitFrame()->nativeExit()->vp()[0].toObject().toFunction();
+    JS_ASSERT(isScripted());
+    JS_ASSERT(isFunctionFrame() || isParallelFunctionFrame());
+    if (isFunctionFrame())
+        return CalleeTokenToFunction(calleeToken());
+    return CalleeTokenToParallelFunction(calleeToken());
 }
 
 JSFunction *
 IonFrameIterator::maybeCallee() const
 {
-    if ((isScripted() && (isFunctionFrame() || isParallelFunctionFrame())) || isNative())
+    if (isScripted() && (isFunctionFrame() || isParallelFunctionFrame()))
         return callee();
     return NULL;
 }
@@ -436,6 +430,9 @@ HandleException(JSContext *cx, const IonFrameIterator &frame, ResumeFromExceptio
             break;
           }
 
+          case JSTRY_LOOP:
+            break;
+
           default:
             JS_NOT_REACHED("Invalid try note");
         }
@@ -496,8 +493,12 @@ HandleException(ResumeFromException *rfe)
 
             // Unwind profiler pseudo-stack
             JSScript *script = iter.script();
-            Probes::exitScript(cx, script, script->function(), NULL);
-
+            Probes::exitScript(cx, script, script->function(), iter.baselineFrame());
+            // After this point, any pushed SPS frame would have been popped if it needed
+            // to be.  Unset the flag here so that if we call DebugEpilogue below,
+            // it doesn't try to pop the SPS frame again.
+            iter.baselineFrame()->unsetPushedSPSFrame();
+ 
             if (cx->compartment->debugMode() && !calledDebugEpilogue) {
                 // If DebugEpilogue returns |true|, we have to perform a forced
                 // return, e.g. return frame->returnValue() to the caller.
@@ -519,8 +520,8 @@ HandleException(ResumeFromException *rfe)
         if (current) {
             // Unwind the frame by updating ionTop. This is necessary so that
             // (1) debugger exception unwind and leave frame hooks don't see this
-            // frame when they use StackIter, and (2) StackIter does not crash
-            // when accessing an IonScript that's destroyed by the
+            // frame when they use ScriptFrameIter, and (2) ScriptFrameIter does
+            // not crash when accessing an IonScript that's destroyed by the
             // ionScript->decref call.
             EnsureExitFrame(current);
             cx->mainThread().ionTop = (uint8_t *)current;

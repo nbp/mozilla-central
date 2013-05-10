@@ -78,6 +78,9 @@ GTEST_CPPSRCS = \
         $(NULL)
 
 ifeq ($(MOZ_WIDGET_TOOLKIT),windows)
+CPPSRCS += \
+        D3D9SurfaceImage.cpp \
+        $(NULL)
 ifdef MOZ_ENABLE_D3D9_LAYER
 CPPSRCS += \
         LayerManagerD3D9.cpp \
@@ -175,6 +178,8 @@ LOCAL_INCLUDES += \
         -I$(topsrcdir)/content/events/src \
         -I$(ANDROID_SOURCE)/frameworks/base/include/media/stagefright \
         -I$(ANDROID_SOURCE)/frameworks/base/include/media/stagefright/openmax \
+        -I$(ANDROID_SOURCE)/frameworks/av/include/media/stagefright \
+        -I$(ANDROID_SOURCE)/frameworks/native/include/media/openmax \
         $(NULL)
 
 CXXFLAGS += $(MOZ_CAIRO_CFLAGS) $(MOZ_PIXMAN_CFLAGS) $(TK_CFLAGS)
