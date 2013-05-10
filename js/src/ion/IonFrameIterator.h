@@ -343,9 +343,7 @@ template <AllowGC allowGC=CanGC>
 class InlineFrameIteratorMaybeGC
 {
     const IonFrameIterator *frame_;
-    // SnapshotIterator start_;
     SnapshotIterator si_;
-    // RecoverReader ri_;
     unsigned framesRead_;
     typename MaybeRooted<JSFunction*, allowGC>::RootType callee_;
     typename MaybeRooted<JSScript*, allowGC>::RootType script_;

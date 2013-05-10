@@ -69,13 +69,11 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
         JSContext *cx,
         const InlineFrameIteratorMaybeGC<allowGC> *iter)
   : frame_(iter ? iter->frame_ : NULL),
-    // ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
 {
     if (frame_) {
-        // start_ = SnapshotIterator(*frame_);
         si_ = SnapshotIterator(*frame_);
         // findNextFrame will iterate to the next frame and init. everything.
         // Therefore to settle on the same frame, we report one frame less readed.

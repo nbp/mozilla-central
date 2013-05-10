@@ -1209,7 +1209,6 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 
     if (iter) {
         si_ = SnapshotIterator(*iter);
-        // ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
         findNextFrame();
     }
 }
@@ -1223,7 +1222,6 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     JS_ASSERT(more());
 
     si_.restart();
-    // ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
     if (!si_.isFrame())
         si_.settleOnNextFrame();
     RResumePoint *rp = si_.operation()->toResumePoint();
@@ -1231,7 +1229,6 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-    // pc_ = script_->code + rp->pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif
@@ -1240,38 +1237,13 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // before reading inner ones.
     unsigned remaining = si_.frameCount() - framesRead_ - 1;
     for (unsigned i = 0; i < remaining; i++) {
-        /*
-        JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
-
-        // Recover the number of actual arguments from the script.
-        if (JSOp(*pc_) != JSOP_FUNAPPLY)
-            numActualArgs_ = GET_ARGC(pc_);
-
-        JS_ASSERT(numActualArgs_ != 0xbadbad);
-
-        // Skip over non-argument slots, as well as |this|.
-        unsigned skipCount = (rp->numOperands() - 1) - numActualArgs_ - 1;
-        unsigned j = 0;
-        for (j = 0; j < skipCount; j++)
-            si_.nextSlot();
-
-        j++;
-        Value funval = si_.read();
-        si_.nextSlot();
-
-        // Skip extra slots.
-        while (j++ < rp->numOperands())
-            si_.nextSlot();
-        */
         Value funval = rp->recoverCallee(si_, script_, &numActualArgs_);
 
-        // ri_.settleOnNextFrame();
         si_.settleOnNextFrame();
         rp = si_.operation()->toResumePoint();
 
         callee_ = funval.toObject().toFunction();
         script_ = callee_->nonLazyScript();
-        // pc_ = script_->code + rp->pcOffset();
     }
 
     pc_ = script_->code + rp->pcOffset();
