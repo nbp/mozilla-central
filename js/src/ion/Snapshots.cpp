@@ -172,7 +172,12 @@ static const uint32_t MIN_REG_FIELD_ESC    = 30;
 SnapshotReader::Slot
 SnapshotReader::readSlot()
 {
-    JS_ASSERT(slotsRead_ < slotCount_);
+    if (slotsRead_ >= slotCount_) {
+        JS_ASSERT_IF(slotsRead_ == slotCount_, reader_.readSigned() == -1);
+        slotsRead_++;
+        return Slot(INVALID_SLOT);
+    }
+
     IonSpew(IonSpew_Snapshots, "Reading slot %u", slotsRead_);
     slotsRead_++;
 
@@ -535,10 +540,9 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
     readOperationHeader();
 }
 
-RecoverReader::RecoverReader(const IonScript *ion, SnapshotReader &snapshot)
-  : reader_(ion->recovers() + snapshot.recoverOffset(),
-            ion->recovers() + ion->recoversSize()),
-    begin_(ion->recovers() + snapshot.recoverOffset()),
+RecoverReader::RecoverReader(const IonScript *ion, RecoverOffset offset)
+  : reader_(ion->recovers() + offset, ion->recovers() + ion->recoversSize()),
+    begin_(ion->recovers() + offset),
     operationCount_(0),
     operandCount_(0),
     operationRead_(0),

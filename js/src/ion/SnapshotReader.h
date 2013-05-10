@@ -44,8 +44,10 @@ class SnapshotReader
     uint32_t mirId_;
     uint32_t lirOpcode_;
     uint32_t lirId_;
-  public:
+
     void readLocation();
+
+  public:
     void spewBailingFrom() const;
 #endif
 
@@ -66,7 +68,9 @@ class SnapshotReader
         UNTYPED,            // Type is not known.
         JS_UNDEFINED,       // UndefinedValue()
         JS_NULL,            // NullValue()
-        JS_INT32            // Int32Value(n)
+        JS_INT32,           // Int32Value(n)
+
+        INVALID_SLOT        // Value read after the last slots.
     };
 
     class Location
@@ -192,6 +196,9 @@ class SnapshotReader
             return unknown_type_.value;
         }
 #endif
+        bool isInvalid() const {
+            return mode() == INVALID_SLOT;
+        }
     };
 
   public:
@@ -204,10 +211,15 @@ class SnapshotReader
         return bailoutKind_;
     }
     Slot readSlot();
+    static Slot invalidSlot() {
+        return Slot(SnapshotReader::INVALID_SLOT);
+    }
 
-    Value skip() {
-        readSlot();
-        return UndefinedValue();
+    size_t index() const {
+        return slotsRead_ - 1;
+    }
+    size_t numSlots() const {
+        return slotCount_;
     }
 };
 
@@ -239,7 +251,7 @@ class RecoverReader
 
   public:
     RecoverReader(const uint8_t *buffer, const uint8_t *end);
-    RecoverReader(const IonScript *ion, SnapshotReader &snapshot);
+    RecoverReader(const IonScript *ion, RecoverOffset offset);
 
     void readOperand();
     void skipOperand() {

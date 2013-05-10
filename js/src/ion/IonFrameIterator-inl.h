@@ -16,36 +16,34 @@ namespace js {
 namespace ion {
 
 template <class Op>
-inline void
-SnapshotIterator::readFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
-                                unsigned start, unsigned formalEnd, unsigned iterEnd,
-                                JSScript *script)
+static void
+ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
+              unsigned start, unsigned formalEnd, unsigned iterEnd,
+              JSScript *script, SnapshotIterator &s)
 {
     if (scopeChain)
-        *scopeChain = read();
-    else
-        skip();
+        *scopeChain = s.read();
+    s.nextSlot();
 
     if (thisv)
-        *thisv = read();
-    else
-        skip();
+        *thisv = s.read();
+    s.nextSlot();
 
     // Skip slot for arguments object.
     if (script->argumentsHasVarBinding())
-        skip();
+        s.nextSlot();
 
     unsigned i = 0;
     if (formalEnd < start)
         i = start;
 
     for (; i < start; i++)
-        skip();
+        s.nextSlot();
     for (; i < formalEnd && i < iterEnd; i++) {
         // We are not always able to read values from the snapshots, some values
         // such as non-gc things may still be live in registers and cause an
         // error while reading the machine state.
-        Value v = maybeRead();
+        Value v = s.maybeRead();
         op(v);
     }
     if (iterEnd >= formalEnd) {
@@ -58,7 +56,7 @@ template <AllowGC allowGC>
 inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                 JSContext *cx, const IonFrameIterator *iter)
-  : ri_(NULL, NULL),
+  : ri_(static_cast<uint8_t *>(NULL), NULL),
     callee_(cx),
     script_(cx)
 {
@@ -71,7 +69,7 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
         JSContext *cx,
         const InlineFrameIteratorMaybeGC<allowGC> *iter)
   : frame_(iter ? iter->frame_ : NULL),
-    ri_(NULL, NULL),
+    ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
@@ -110,7 +108,7 @@ InlineFrameIteratorMaybeGC<allowGC>::forEachCanonicalActualArg(
         // Get the non overflown arguments
         unsigned formal_end = (end < nformal) ? end : nformal;
         SnapshotIterator s(si_);
-        s.readFrameArgs(op, NULL, NULL, NULL, start, nformal, formal_end, script());
+        ReadFrameArgs(op, NULL, NULL, NULL, start, nformal, formal_end, script(), s);
 
         // The overflown arguments are not available in current frame.
         // They are the last pushed arguments in the parent frame of this inlined frame.
@@ -124,17 +122,17 @@ InlineFrameIteratorMaybeGC<allowGC>::forEachCanonicalActualArg(
         JS_ASSERT(it.numSlots() >= nactual + 2 + argsObjAdj);
         unsigned skip = it.numSlots() - nactual - 2 - argsObjAdj;
         for (unsigned j = 0; j < skip; j++)
-            parent_s.skip();
+            parent_s.nextSlot();
 
         // Get the overflown arguments
-        parent_s.readFrameArgs(op, NULL, NULL, NULL, nformal, nactual, end, it.script());
+        ReadFrameArgs(op, NULL, NULL, NULL, nformal, nactual, end, it.script(), parent_s);
     } else {
         SnapshotIterator s(si_);
         Value *argv = frame_->actualArgs();
-        s.readFrameArgs(op, argv, NULL, NULL, start, nformal, end, script());
+        ReadFrameArgs(op, argv, NULL, NULL, start, nformal, end, script(), s);
     }
 }
- 
+
 template <AllowGC allowGC>
 inline JSObject *
 InlineFrameIteratorMaybeGC<allowGC>::scopeChain() const
@@ -159,7 +157,7 @@ InlineFrameIteratorMaybeGC<allowGC>::thisObject() const
     SnapshotIterator s(si_);
 
     // scopeChain
-    s.skip();
+    s.nextSlot();
 
     // In strict modes, |this| may not be an object and thus may not be
     // readable which can either segv in read or trigger the assertion.
@@ -188,7 +186,7 @@ inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                                 JSContext *cx, const IonBailoutIterator *iter)
   : frame_(iter),
-    ri_(NULL, NULL),
+    ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)

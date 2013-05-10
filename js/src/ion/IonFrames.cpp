@@ -303,9 +303,10 @@ CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t loca
     uint32_t skipSlots = base + localSlot - 1;
 
     for (unsigned i = 0; i < skipSlots; i++)
-        si.skip();
+        si.nextSlot();
 
     Value v = si.read();
+    si.nextSlot();
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1007,29 +1008,45 @@ OsiIndex::returnPointDisplacement() const
 
 SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
                                    IonJSFrameLayout *fp, const MachineState &machine)
-  : SnapshotReader(ionScript->snapshots() + snapshotOffset,
-                   ionScript->snapshots() + ionScript->snapshotsSize()),
-    fp_(fp),
+  : reader_(ionScript->snapshots() + snapshotOffset,
+            ionScript->snapshots() + ionScript->snapshotsSize()),
+    slot_(SnapshotReader::invalidSlot()),
     machine_(machine),
-    ionScript_(ionScript)
+    fp_(fp),
+    ionScript_(ionScript),
+    offset_(snapshotOffset)
 {
     JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
+    init();
 }
 
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
-  : SnapshotReader(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
-                   iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
-    fp_(iter.jsFrame()),
+  : reader_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
+            iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+    slot_(SnapshotReader::invalidSlot()),
     machine_(iter.machineState()),
-    ionScript_(iter.ionScript())
+    fp_(iter.jsFrame()),
+    ionScript_(iter.ionScript()),
+    offset_(iter.osiIndex()->snapshotOffset())
 {
+    init();
 }
 
 SnapshotIterator::SnapshotIterator()
-  : SnapshotReader(NULL, NULL),
+  : reader_(NULL, NULL),
+    slot_(SnapshotReader::invalidSlot()),
+    machine_(),
     fp_(NULL),
-    ionScript_(NULL)
+    ionScript_(NULL),
+    offset_(0)
 {
+}
+
+void
+SnapshotIterator::init()
+{
+    slot_ = reader_.readSlot();
+    index_ = 0;
 }
 
 bool
@@ -1065,8 +1082,9 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
 }
 
 bool
-SnapshotIterator::slotReadable(const Slot &slot)
+SnapshotIterator::slotReadable(const SnapshotReader::Slot &slot)
 {
+    JS_ASSERT(!slot_.isInvalid());
     switch (slot.mode()) {
       case SnapshotReader::DOUBLE_REG:
         return machine_.has(slot.floatReg());
@@ -1087,8 +1105,9 @@ SnapshotIterator::slotReadable(const Slot &slot)
 }
 
 Value
-SnapshotIterator::slotValue(const Slot &slot)
+SnapshotIterator::slotValue(const SnapshotReader::Slot &slot)
 {
+    JS_ASSERT(!slot_.isInvalid());
     switch (slot.mode()) {
       case SnapshotReader::DOUBLE_REG:
         return DoubleValue(machine_.read(slot.floatReg()));
@@ -1177,7 +1196,7 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 
     if (iter) {
         start_ = SnapshotIterator(*iter);
-        ri_ = RecoverReader(frame_->ionScript(), start_);
+        ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
         findNextFrame();
     }
 }
@@ -1191,7 +1210,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     JS_ASSERT(more());
 
     si_ = start_;
-    ri_ = RecoverReader(frame_->ionScript(), start_);
+    ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
     if (!ri_.isFrame())
         ri_.settleOnNextFrame();
     RResumePoint *rp = ri_.operation()->toResumePoint();
@@ -1220,14 +1239,15 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         unsigned skipCount = (rp->numOperands() - 1) - numActualArgs_ - 1;
         unsigned j = 0;
         for (j = 0; j < skipCount; j++)
-            si_.skip();
+            si_.nextSlot();
 
         j++;
         Value funval = si_.read();
+        si_.nextSlot();
 
         // Skip extra slots.
         while (j++ < rp->numOperands())
-            si_.skip();
+            si_.nextSlot();
 
         ri_.settleOnNextFrame();
         rp = ri_.operation()->toResumePoint();
@@ -1259,7 +1279,7 @@ InlineFrameIteratorMaybeGC<allowGC>::maybeReadSlotByIndex(size_t index) const
     SnapshotIterator s(snapshotIterator());
 
     while (index--)
-        s.skip();
+        s.nextSlot();
 
     Value val = s.maybeRead(true);
     return val;

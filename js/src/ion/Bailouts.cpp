@@ -39,12 +39,16 @@ using namespace js::ion;
 // bailed out frame.
 
 SnapshotIterator::SnapshotIterator(const IonBailoutIterator &iter)
-  : SnapshotReader(iter.ionScript()->snapshots() + iter.snapshotOffset(),
-                   iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
-    fp_(iter.jsFrame()),
+  : reader_(iter.ionScript()->snapshots() + iter.snapshotOffset(),
+            iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+    slot_(SnapshotReader::invalidSlot()),
+    index_(-1),
     machine_(iter.machineState()),
-    ionScript_(iter.ionScript())
+    fp_(iter.jsFrame()),
+    ionScript_(iter.ionScript()),
+    offset_(iter.snapshotOffset())
 {
+    init();
 }
 
 void
@@ -98,16 +102,17 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         // bogus (we can fail before the scope chain slot is set). Strip the
         // hasScopeChain flag.  If a call object is needed, it will get handled later
         // by |ThunkToInterpreter| which call |EnsureHasScopeObjects|.
-        iter.skip();
+        iter.nextSlot();
         flags_ &= ~StackFrame::HAS_SCOPECHAIN;
 
         // If the script binds arguments, then skip the snapshot slot reserved to hold
         // its value.
         if (script()->argumentsHasVarBinding())
-            iter.skip();
+            iter.nextSlot();
         flags_ &= ~StackFrame::HAS_ARGS_OBJ;
     } else {
         Value scopeChain = iter.read();
+        iter.nextSlot();
         JS_ASSERT(scopeChain.isObject() || scopeChain.isUndefined());
         if (scopeChain.isObject()) {
             scopeChain_ = &scopeChain.toObject();
@@ -119,6 +124,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         // The second slot will be an arguments object if the script needs one.
         if (script()->argumentsHasVarBinding()) {
             Value argsObj = iter.read();
+            iter.nextSlot();
             JS_ASSERT(argsObj.isObject() || argsObj.isUndefined());
             if (argsObj.isObject())
                 initArgsObj(argsObj.toObject().asArguments());
@@ -133,6 +139,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
 
     if (isFunctionFrame()) {
         Value thisv = iter.read();
+        iter.nextSlot();
         formals()[-1] = thisv;
 
         // The new |this| must have already been constructed prior to an Ion
@@ -146,6 +153,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
 
         for (uint32_t i = 0; i < fun()->nargs; i++) {
             Value arg = iter.read();
+            iter.nextSlot();
             formals()[i] = arg;
         }
     }
@@ -153,21 +161,21 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
 
     for (uint32_t i = 0; i < script()->nfixed; i++) {
         Value slot = iter.read();
+        iter.nextSlot();
         slots()[i] = slot;
     }
 
     IonSpew(IonSpew_Bailouts, " pushing %u expression stack slots", exprStackSlots);
     FrameRegs &regs = cx->regs();
     for (uint32_t i = 0; i < exprStackSlots; i++) {
-        Value v;
+        Value v = UndefinedValue();
 
         // If coming from an invalidation bailout, and this is the topmost
         // value, and a value override has been specified, don't read from the
         // iterator. Otherwise, we risk using a garbage value.
-        if (rp->isLastFrame() && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride())
-            v = iter.skip();
-        else
+        if (!rp->isLastFrame() || i != exprStackSlots - 1 || !cx->runtime->hasIonReturnOverride())
             v = iter.read();
+        iter.nextSlot();
 
         *regs.sp++ = v;
     }
@@ -293,7 +301,7 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         fp->setConstructing();
 
     SnapshotIterator iter(it);
-    RecoverReader ri(it.ionScript(), iter);
+    RecoverReader ri(it.ionScript(), iter.recoverOffset());
 
     while (true) {
         if (ri.isFrame()) {

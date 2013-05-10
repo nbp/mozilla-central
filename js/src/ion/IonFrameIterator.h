@@ -233,20 +233,28 @@ class IonBailoutIterator;
 
 // Reads frame information in snapshot-encoding order (that is, outermost frame
 // to innermost frame).
-class SnapshotIterator : public SnapshotReader
+class SnapshotIterator
 {
-    IonJSFrameLayout *fp_;
+    // :TODO: Include a RecoverReader and rename this class to make it
+    // correspond to what we can call a ResumeIterator.
+    SnapshotReader reader_;
+    SnapshotReader::Slot slot_;
+    size_t index_;
     MachineState machine_;
+    IonJSFrameLayout *fp_;
     IonScript *ionScript_;
+    SnapshotOffset offset_;
 
   private:
     bool hasLocation(const SnapshotReader::Location &loc);
     uintptr_t fromLocation(const SnapshotReader::Location &loc);
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
-    Value slotValue(const Slot &slot);
-    bool slotReadable(const Slot &slot);
+    Value slotValue(const SnapshotReader::Slot &slot);
+    bool slotReadable(const SnapshotReader::Slot &slot);
     void warnUnreadableSlot();
+
+    void init();
 
   public:
     SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
@@ -255,22 +263,44 @@ class SnapshotIterator : public SnapshotReader
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
 
-    Value read() {
-        return slotValue(readSlot());
+    void nextSlot() {
+        JS_ASSERT(!slot_.isInvalid());
+        slot_ = reader_.readSlot();
     }
+
+    Value read() {
+        return slotValue(slot_);
+    }
+
+    size_t index() const {
+        JS_ASSERT(!slot_.isInvalid());
+        return reader_.index();
+    }
+
+    bool isOptimizedOut() {
+        return !slotReadable(slot_);
+    }
+
     Value maybeRead(bool silentFailure = false) {
-        Slot s = readSlot();
-        if (slotReadable(s))
-            return slotValue(s);
+        if (slotReadable(slot_))
+            return slotValue(slot_);
         if (!silentFailure)
             warnUnreadableSlot();
         return UndefinedValue();
     }
 
-    template <class Op>
-    inline void readFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
-                              unsigned start, unsigned formalEnd, unsigned iterEnd,
-                              JSScript *script);
+    // Data extractted from the snapshot, should probably be part of the frame iterator.
+    BailoutKind bailoutKind() const {
+        return reader_.bailoutKind();
+    }
+    RecoverOffset recoverOffset() const {
+        return reader_.recoverOffset();
+    }
+#ifdef TRACK_SNAPSHOTS
+    void spewBailingFrom() const {
+        return reader_.spewBailingFrom();
+    }
+#endif
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -339,6 +369,12 @@ class InlineFrameIteratorMaybeGC
 };
 typedef InlineFrameIteratorMaybeGC<CanGC> InlineFrameIterator;
 typedef InlineFrameIteratorMaybeGC<NoGC> InlineFrameIteratorNoGC;
+
+template <class Op>
+static void
+ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
+              unsigned start, unsigned formalEnd, unsigned iterEnd,
+              JSScript *script, SnapshotIterator &s);
 
 } // namespace ion
 } // namespace js
