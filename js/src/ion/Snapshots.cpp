@@ -103,6 +103,14 @@ SnapshotReader::SnapshotReader(const uint8_t *buffer, const uint8_t *end)
     readSnapshotHeader();
 }
 
+void
+SnapshotReader::restart()
+{
+    slotsRead_ = 0;
+    reader_.restart();
+    readSnapshotHeader();
+}
+
 static const uint32_t BAILOUT_KIND_SHIFT = 0;
 static const uint32_t BAILOUT_KIND_MASK = (1 << BAILOUT_KIND_BITS) - 1;
 static const uint32_t BAILOUT_RESUME_SHIFT = BAILOUT_KIND_SHIFT + BAILOUT_KIND_BITS;
@@ -169,13 +177,15 @@ static const uint32_t ESC_REG_FIELD_INDEX  = 31;
 static const uint32_t ESC_REG_FIELD_CONST  = 30;
 static const uint32_t MIN_REG_FIELD_ESC    = 30;
 
-SnapshotReader::Slot
+Slot
 SnapshotReader::readSlot()
 {
+    typedef Slot::Location Location;
+
     if (slotsRead_ >= slotCount_) {
         JS_ASSERT_IF(slotsRead_ == slotCount_, reader_.readSigned() == -1);
         slotsRead_++;
-        return Slot(INVALID_SLOT);
+        return Slot(Slot::INVALID_SLOT);
     }
 
     IonSpew(IonSpew_Snapshots, "Reading slot %u", slotsRead_);
@@ -191,30 +201,30 @@ SnapshotReader::readSlot()
         if (code < MIN_REG_FIELD_ESC)
             return Slot(FloatRegister::FromCode(code));
         JS_ASSERT(code == ESC_REG_FIELD_INDEX);
-        return Slot(TYPED_STACK, type, Location::From(reader_.readSigned()));
+        return Slot(Slot::TYPED_STACK, type, Location::From(reader_.readSigned()));
 
       case JSVAL_TYPE_INT32:
       case JSVAL_TYPE_STRING:
       case JSVAL_TYPE_OBJECT:
       case JSVAL_TYPE_BOOLEAN:
         if (code < MIN_REG_FIELD_ESC)
-            return Slot(TYPED_REG, type, Location::From(Register::FromCode(code)));
+            return Slot(Slot::TYPED_REG, type, Location::From(Register::FromCode(code)));
         JS_ASSERT(code == ESC_REG_FIELD_INDEX);
-        return Slot(TYPED_STACK, type, Location::From(reader_.readSigned()));
+        return Slot(Slot::TYPED_STACK, type, Location::From(reader_.readSigned()));
 
       case JSVAL_TYPE_NULL:
         if (code == ESC_REG_FIELD_CONST)
-            return Slot(JS_NULL);
+            return Slot(Slot::JS_NULL);
         if (code == ESC_REG_FIELD_INDEX)
-            return Slot(JS_INT32, reader_.readSigned());
-        return Slot(JS_INT32, code);
+            return Slot(Slot::JS_INT32, reader_.readSigned());
+        return Slot(Slot::JS_INT32, code);
 
       case JSVAL_TYPE_UNDEFINED:
         if (code == ESC_REG_FIELD_CONST)
-            return Slot(JS_UNDEFINED);
+            return Slot(Slot::JS_UNDEFINED);
         if (code == ESC_REG_FIELD_INDEX)
-            return Slot(CONSTANT, reader_.readUnsigned());
-        return Slot(CONSTANT, code);
+            return Slot(Slot::CONSTANT, reader_.readUnsigned());
+        return Slot(Slot::CONSTANT, code);
 
       default:
       {
@@ -227,10 +237,10 @@ SnapshotReader::readSlot()
                 loc = Location::From(Register::FromCode(reg2));
             else
                 loc = Location::From(reader_.readSigned());
-            return Slot(TYPED_REG, type, loc);
+            return Slot(Slot::TYPED_REG, type, loc);
         }
 
-        Slot slot(UNTYPED);
+        Slot slot(Slot::UNTYPED);
 #ifdef JS_NUNBOX32
         switch (code) {
           case NUNBOX32_STACK_STACK:
@@ -264,7 +274,7 @@ SnapshotReader::readSlot()
     }
 
     JS_NOT_REACHED("huh?");
-    return Slot(JS_UNDEFINED);
+    return Slot(Slot::JS_UNDEFINED);
 }
 
 SnapshotOffset
@@ -527,7 +537,6 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 
 RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
   : reader_(buffer, end),
-    begin_(buffer),
     operationCount_(0),
     operandCount_(0),
     operationRead_(0),
@@ -542,12 +551,22 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
 
 RecoverReader::RecoverReader(const IonScript *ion, RecoverOffset offset)
   : reader_(ion->recovers() + offset, ion->recovers() + ion->recoversSize()),
-    begin_(ion->recovers() + offset),
     operationCount_(0),
     operandCount_(0),
     operationRead_(0),
     operandRead_(0)
 {
+    readRecoverHeader();
+    JS_ASSERT(operationCount_);
+    readOperationHeader();
+}
+
+void
+RecoverReader::restart()
+{
+    operandRead_ = 0;
+    operationRead_ = 0;
+    reader_.restart();
     readRecoverHeader();
     JS_ASSERT(operationCount_);
     readOperationHeader();
@@ -577,10 +596,12 @@ RecoverReader::readOperationHeader()
 }
 
 void
-RecoverReader::readOperand()
+RecoverReader::readOperand(bool *isSlot, size_t *index)
 {
     JS_ASSERT(moreOperand());
-    reader_.readUnsigned();
+    uint32_t bits = reader_.readUnsigned();
+    *isSlot = bits & 1;
+    *index = bits >> 1;
     operandRead_++;
 }
 

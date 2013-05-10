@@ -9,6 +9,7 @@
 
 #include "jstypes.h"
 #include "IonCode.h"
+#include "Slots.h"
 #include "SnapshotReader.h"
 
 class JSFunction;
@@ -231,27 +232,33 @@ class IonActivationIterator
 class IonJSFrameLayout;
 class IonBailoutIterator;
 
+class RInstruction;
+class RResumePoint;
+
 // Reads frame information in snapshot-encoding order (that is, outermost frame
 // to innermost frame).
 class SnapshotIterator
 {
-    // :TODO: Include a RecoverReader and rename this class to make it
-    // correspond to what we can call a ResumeIterator.
-    SnapshotReader reader_;
-    SnapshotReader::Slot slot_;
-    size_t index_;
-    MachineState machine_;
+    friend class RInstruction;
+    friend class RResumePoint;
+
+    SnapshotReader snapshot_;    // Read allocations.
+
+    RecoverReader recover_;      // Read operations.
+    Slot slot_; // :TODO: remove ?
+
+    MachineState machine_;       // Read data from allocations.
     IonJSFrameLayout *fp_;
-    IonScript *ionScript_;
-    SnapshotOffset offset_;
+
+    IonScript *ionScript_;       // Read from the constant pool.
 
   private:
-    bool hasLocation(const SnapshotReader::Location &loc);
-    uintptr_t fromLocation(const SnapshotReader::Location &loc);
+    bool hasLocation(const Slot::Location &loc);
+    uintptr_t fromLocation(const Slot::Location &loc);
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
-    Value slotValue(const SnapshotReader::Slot &slot);
-    bool slotReadable(const SnapshotReader::Slot &slot);
+    Value slotValue(const Slot &slot);
+    bool slotReadable(const Slot &slot);
     void warnUnreadableSlot();
 
     void init();
@@ -265,7 +272,18 @@ class SnapshotIterator
 
     void nextSlot() {
         JS_ASSERT(!slot_.isInvalid());
-        slot_ = reader_.readSlot();
+        slot_ = snapshot_.readSlot();
+    }
+
+    void nextOperation() {
+        recover_.nextOperation();
+    }
+
+    RInstruction *operation() {
+        return recover_.operation();
+    }
+    const RInstruction *operation() const {
+        return recover_.operation();
     }
 
     Value read() {
@@ -274,7 +292,7 @@ class SnapshotIterator
 
     size_t index() const {
         JS_ASSERT(!slot_.isInvalid());
-        return reader_.index();
+        return snapshot_.index() - 1;
     }
 
     bool isOptimizedOut() {
@@ -289,18 +307,34 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
+    void restart();
+
     // Data extractted from the snapshot, should probably be part of the frame iterator.
     BailoutKind bailoutKind() const {
-        return reader_.bailoutKind();
+        return snapshot_.bailoutKind();
     }
     RecoverOffset recoverOffset() const {
-        return reader_.recoverOffset();
+        return snapshot_.recoverOffset();
     }
 #ifdef TRACK_SNAPSHOTS
     void spewBailingFrom() const {
-        return reader_.spewBailingFrom();
+        return snapshot_.spewBailingFrom();
     }
 #endif
+
+    bool isFrame() const {
+        return recover_.isFrame();
+    }
+    size_t frameCount() const {
+        return recover_.frameCount();
+    }
+    void settleOnNextFrame() {
+        recover_.settleOnNextFrame();
+    }
+
+    static Slot invalidSlot() {
+        return Slot(Slot::INVALID_SLOT);
+    }
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -309,9 +343,9 @@ template <AllowGC allowGC=CanGC>
 class InlineFrameIteratorMaybeGC
 {
     const IonFrameIterator *frame_;
-    SnapshotIterator start_;
+    // SnapshotIterator start_;
     SnapshotIterator si_;
-    RecoverReader ri_;
+    // RecoverReader ri_;
     unsigned framesRead_;
     typename MaybeRooted<JSFunction*, allowGC>::RootType callee_;
     typename MaybeRooted<JSScript*, allowGC>::RootType script_;
@@ -330,7 +364,7 @@ class InlineFrameIteratorMaybeGC
     Value maybeReadSlotByIndex(size_t index) const;
 
     bool more() const {
-        return frame_ && framesRead_ < ri_.frameCount();
+        return frame_ && framesRead_ < si_.frameCount();
     }
     JSFunction *callee() const {
         JS_ASSERT(callee_);

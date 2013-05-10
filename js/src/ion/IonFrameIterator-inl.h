@@ -56,7 +56,7 @@ template <AllowGC allowGC>
 inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                 JSContext *cx, const IonFrameIterator *iter)
-  : ri_(static_cast<uint8_t *>(NULL), NULL),
+  : //ri_(static_cast<uint8_t *>(NULL), NULL),
     callee_(cx),
     script_(cx)
 {
@@ -69,13 +69,14 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
         JSContext *cx,
         const InlineFrameIteratorMaybeGC<allowGC> *iter)
   : frame_(iter ? iter->frame_ : NULL),
-    ri_(static_cast<uint8_t *>(NULL), NULL),
+    // ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
 {
     if (frame_) {
-        start_ = SnapshotIterator(*frame_);
+        // start_ = SnapshotIterator(*frame_);
+        si_ = SnapshotIterator(*frame_);
         // findNextFrame will iterate to the next frame and init. everything.
         // Therefore to settle on the same frame, we report one frame less readed.
         framesRead_ = iter->framesRead_ - 1;
@@ -186,13 +187,14 @@ inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                                 JSContext *cx, const IonBailoutIterator *iter)
   : frame_(iter),
-    ri_(static_cast<uint8_t *>(NULL), NULL),
+    // ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
 {
     if (iter) {
-        start_ = SnapshotIterator(*iter);
+        // start_ = SnapshotIterator(*iter);
+        si_ = SnapshotIterator(*iter);
         findNextFrame();
     }
 }

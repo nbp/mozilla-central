@@ -1008,55 +1008,62 @@ OsiIndex::returnPointDisplacement() const
 
 SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
                                    IonJSFrameLayout *fp, const MachineState &machine)
-  : reader_(ionScript->snapshots() + snapshotOffset,
-            ionScript->snapshots() + ionScript->snapshotsSize()),
-    slot_(SnapshotReader::invalidSlot()),
+  : snapshot_(ionScript->snapshots() + snapshotOffset,
+              ionScript->snapshots() + ionScript->snapshotsSize()),
+    recover_(ionScript, snapshot_.recoverOffset()),
+    slot_(Slot::INVALID_SLOT),
     machine_(machine),
     fp_(fp),
-    ionScript_(ionScript),
-    offset_(snapshotOffset)
+    ionScript_(ionScript)
 {
     JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
     init();
 }
 
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
-  : reader_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
-            iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
-    slot_(SnapshotReader::invalidSlot()),
+  : snapshot_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
+              iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+    recover_(iter.ionScript(), snapshot_.recoverOffset()),
+    slot_(Slot::INVALID_SLOT),
     machine_(iter.machineState()),
     fp_(iter.jsFrame()),
-    ionScript_(iter.ionScript()),
-    offset_(iter.osiIndex()->snapshotOffset())
+    ionScript_(iter.ionScript())
 {
     init();
 }
 
 SnapshotIterator::SnapshotIterator()
-  : reader_(NULL, NULL),
-    slot_(SnapshotReader::invalidSlot()),
+  : snapshot_(NULL, NULL),
+    recover_(),
+    slot_(Slot::INVALID_SLOT),
     machine_(),
     fp_(NULL),
-    ionScript_(NULL),
-    offset_(0)
+    ionScript_(NULL)
 {
 }
 
 void
 SnapshotIterator::init()
 {
-    slot_ = reader_.readSlot();
-    index_ = 0;
+    slot_ = snapshot_.readSlot();
+}
+
+void
+SnapshotIterator::restart()
+{
+    snapshot_.restart();
+    recover_.restart();
+    init();
 }
 
 bool
-SnapshotIterator::hasLocation(const SnapshotReader::Location &loc)
+SnapshotIterator::hasLocation(const Slot::Location &loc)
 {
     return loc.isStackSlot() || machine_.has(loc.reg());
 }
 
 uintptr_t
-SnapshotIterator::fromLocation(const SnapshotReader::Location &loc)
+SnapshotIterator::fromLocation(const Slot::Location &loc)
 {
     if (loc.isStackSlot())
         return ReadFrameSlot(fp_, loc.stackSlot());
@@ -1082,22 +1089,24 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
 }
 
 bool
-SnapshotIterator::slotReadable(const SnapshotReader::Slot &slot)
+SnapshotIterator::slotReadable(const Slot &slot)
 {
     JS_ASSERT(!slot_.isInvalid());
     switch (slot.mode()) {
-      case SnapshotReader::DOUBLE_REG:
+      case Slot::DOUBLE_REG:
         return machine_.has(slot.floatReg());
 
-      case SnapshotReader::TYPED_REG:
+      case Slot::TYPED_REG:
         return machine_.has(slot.reg());
 
-      case SnapshotReader::UNTYPED:
+      case Slot::UNTYPED:
 #if defined(JS_NUNBOX32)
           return hasLocation(slot.type()) && hasLocation(slot.payload());
 #elif defined(JS_PUNBOX64)
           return hasLocation(slot.value());
 #endif
+
+      case Slot::RESUME_OPERATION:
 
       default:
         return true;
@@ -1105,17 +1114,17 @@ SnapshotIterator::slotReadable(const SnapshotReader::Slot &slot)
 }
 
 Value
-SnapshotIterator::slotValue(const SnapshotReader::Slot &slot)
+SnapshotIterator::slotValue(const Slot &slot)
 {
     JS_ASSERT(!slot_.isInvalid());
     switch (slot.mode()) {
-      case SnapshotReader::DOUBLE_REG:
+      case Slot::DOUBLE_REG:
         return DoubleValue(machine_.read(slot.floatReg()));
 
-      case SnapshotReader::TYPED_REG:
+      case Slot::TYPED_REG:
         return FromTypedPayload(slot.knownType(), machine_.read(slot.reg()));
 
-      case SnapshotReader::TYPED_STACK:
+      case Slot::TYPED_STACK:
       {
         JSValueType type = slot.knownType();
         if (type == JSVAL_TYPE_DOUBLE)
@@ -1123,7 +1132,7 @@ SnapshotIterator::slotValue(const SnapshotReader::Slot &slot)
         return FromTypedPayload(type, ReadFrameSlot(fp_, slot.stackSlot()));
       }
 
-      case SnapshotReader::UNTYPED:
+      case Slot::UNTYPED:
       {
           jsval_layout layout;
 #if defined(JS_NUNBOX32)
@@ -1135,17 +1144,21 @@ SnapshotIterator::slotValue(const SnapshotReader::Slot &slot)
           return IMPL_TO_JSVAL(layout);
       }
 
-      case SnapshotReader::JS_UNDEFINED:
+      case Slot::JS_UNDEFINED:
         return UndefinedValue();
 
-      case SnapshotReader::JS_NULL:
+      case Slot::JS_NULL:
         return NullValue();
 
-      case SnapshotReader::JS_INT32:
+      case Slot::JS_INT32:
         return Int32Value(slot.int32Value());
 
-      case SnapshotReader::CONSTANT:
+      case Slot::CONSTANT:
         return ionScript_->getConstant(slot.constantIndex());
+
+      case Slot::RESUME_OPERATION:
+        JS_NOT_REACHED(":TODO: ... we need something here!");
+        return UndefinedValue();
 
       default:
         JS_NOT_REACHED("huh?");
@@ -1195,8 +1208,8 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
     framesRead_ = 0;
 
     if (iter) {
-        start_ = SnapshotIterator(*iter);
-        ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
+        si_ = SnapshotIterator(*iter);
+        // ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
         findNextFrame();
     }
 }
@@ -1209,24 +1222,25 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 {
     JS_ASSERT(more());
 
-    si_ = start_;
-    ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
-    if (!ri_.isFrame())
-        ri_.settleOnNextFrame();
-    RResumePoint *rp = ri_.operation()->toResumePoint();
+    si_.restart();
+    // ri_ = RecoverReader(frame_->ionScript(), start_.recoverOffset());
+    if (!si_.isFrame())
+        si_.settleOnNextFrame();
+    RResumePoint *rp = si_.operation()->toResumePoint();
 
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-    pc_ = script_->code + rp->pcOffset();
+    // pc_ = script_->code + rp->pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif
 
     // This unfortunately is O(n*m), because we must skip over outer frames
     // before reading inner ones.
-    unsigned remaining = ri_.frameCount() - framesRead_ - 1;
+    unsigned remaining = si_.frameCount() - framesRead_ - 1;
     for (unsigned i = 0; i < remaining; i++) {
+        /*
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 
         // Recover the number of actual arguments from the script.
@@ -1248,15 +1262,19 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         // Skip extra slots.
         while (j++ < rp->numOperands())
             si_.nextSlot();
+        */
+        Value funval = rp->recoverCallee(si_, script_, &numActualArgs_);
 
-        ri_.settleOnNextFrame();
-        rp = ri_.operation()->toResumePoint();
+        // ri_.settleOnNextFrame();
+        si_.settleOnNextFrame();
+        rp = si_.operation()->toResumePoint();
 
         callee_ = funval.toObject().toFunction();
         script_ = callee_->nonLazyScript();
-        pc_ = script_->code + rp->pcOffset();
+        // pc_ = script_->code + rp->pcOffset();
     }
 
+    pc_ = script_->code + rp->pcOffset();
     framesRead_++;
 }
 template void InlineFrameIteratorMaybeGC<NoGC>::findNextFrame();
@@ -1266,7 +1284,7 @@ template <AllowGC allowGC>
 size_t
 InlineFrameIteratorMaybeGC<allowGC>::numSlots() const
 {
-    return ri_.operation()->toResumePoint()->numOperands();
+    return si_.operation()->toResumePoint()->numOperands();
 }
 template size_t InlineFrameIteratorMaybeGC<NoGC>::numSlots() const;
 template size_t InlineFrameIteratorMaybeGC<CanGC>::numSlots() const;

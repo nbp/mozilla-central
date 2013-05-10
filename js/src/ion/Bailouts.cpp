@@ -39,14 +39,13 @@ using namespace js::ion;
 // bailed out frame.
 
 SnapshotIterator::SnapshotIterator(const IonBailoutIterator &iter)
-  : reader_(iter.ionScript()->snapshots() + iter.snapshotOffset(),
-            iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
-    slot_(SnapshotReader::invalidSlot()),
-    index_(-1),
+  : snapshot_(iter.ionScript()->snapshots() + iter.snapshotOffset(),
+              iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+    recover_(iter.ionScript(), snapshot_.recoverOffset()),
+    slot_(Slot::INVALID_SLOT),
     machine_(iter.machineState()),
     fp_(iter.jsFrame()),
-    ionScript_(iter.ionScript()),
-    offset_(iter.snapshotOffset())
+    ionScript_(iter.ionScript())
 {
     init();
 }

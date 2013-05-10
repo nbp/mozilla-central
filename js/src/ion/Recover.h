@@ -8,6 +8,7 @@
 #define jsion_recover_h__
 
 #include "CompactBuffer.h"
+#include "Slots.h"
 
 namespace js {
 namespace ion {
@@ -19,15 +20,19 @@ enum RecoverKind
 };
 
 class MNode;
-typedef void (*RWriter)(CompactBufferWriter &writer_, MNode *ins);
+class SnapshotIterator;
 
 struct RResumePoint;
 
 struct RInstruction
 {
     virtual void read(CompactBufferReader &reader) = 0;
+    virtual void fillOperands(SnapshotIterator &iterator) = 0;
     virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
+
+    Slot recoverSlot(SnapshotIterator &it);
+    Value recoverValue(SnapshotIterator &it, Slot &slot);
 
     virtual bool isResumePoint() const {
         return false;
@@ -45,6 +50,8 @@ struct RResumePoint : public RInstruction
 {
     static void write(CompactBufferWriter &writer, MNode *ins);
     void read(CompactBufferReader &reader);
+    void fillOperands(SnapshotIterator &it);
+    Value recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *numActualArgs);
 
     bool isResumePoint() const {
         return true;
@@ -74,6 +81,9 @@ struct RResumePoint : public RInstruction
     uint32_t numOperands_;
     bool resumeAfter_;
     bool lastFrame_;
+
+    Slot thisSlot_;
+    Slot scopeChainSlot_;
 };
 
 } // namespace ion

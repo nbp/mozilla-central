@@ -9,8 +9,8 @@
 
 #include "IonTypes.h"
 #include "IonCode.h"
-#include "Registers.h"
 #include "CompactBuffer.h"
+#include "Slots.h"
 
 #include "mozilla/Util.h"
 
@@ -52,154 +52,8 @@ class SnapshotReader
 #endif
 
   private:
-
     void readSnapshotHeader();
     void readFrameHeader();
-
-    template <typename T> inline T readVariableLength();
-
-  public:
-    enum SlotMode
-    {
-        CONSTANT,           // An index into the constant pool.
-        DOUBLE_REG,         // Type is double, payload is in a register.
-        TYPED_REG,          // Type is constant, payload is in a register.
-        TYPED_STACK,        // Type is constant, payload is on the stack.
-        UNTYPED,            // Type is not known.
-        JS_UNDEFINED,       // UndefinedValue()
-        JS_NULL,            // NullValue()
-        JS_INT32,           // Int32Value(n)
-
-        INVALID_SLOT        // Value read after the last slots.
-    };
-
-    class Location
-    {
-        friend class SnapshotReader;
-
-        Register::Code reg_;
-        int32_t stackSlot_;
-
-        static Location From(const Register &reg) {
-            Location loc;
-            loc.reg_ = reg.code();
-            loc.stackSlot_ = INVALID_STACK_SLOT;
-            return loc;
-        }
-        static Location From(int32_t stackSlot) {
-            Location loc;
-            loc.reg_ = Register::Code(0);      // Quell compiler warnings.
-            loc.stackSlot_ = stackSlot;
-            return loc;
-        }
-
-      public:
-        Register reg() const {
-            JS_ASSERT(!isStackSlot());
-            return Register::FromCode(reg_);
-        }
-        int32_t stackSlot() const {
-            JS_ASSERT(isStackSlot());
-            return stackSlot_;
-        }
-        bool isStackSlot() const {
-            return stackSlot_ != INVALID_STACK_SLOT;
-        }
-    };
-
-    class Slot
-    {
-        friend class SnapshotReader;
-
-        SlotMode mode_;
-
-        union {
-            FloatRegister::Code fpu_;
-            struct {
-                JSValueType type;
-                Location payload;
-            } known_type_;
-#if defined(JS_NUNBOX32)
-            struct {
-                Location type;
-                Location payload;
-            } unknown_type_;
-#elif defined(JS_PUNBOX64)
-            struct {
-                Location value;
-            } unknown_type_;
-#endif
-            int32_t value_;
-        };
-
-        Slot(SlotMode mode, JSValueType type, const Location &loc)
-          : mode_(mode)
-        {
-            known_type_.type = type;
-            known_type_.payload = loc;
-        }
-        Slot(const FloatRegister &reg)
-          : mode_(DOUBLE_REG)
-        {
-            fpu_ = reg.code();
-        }
-        Slot(SlotMode mode)
-          : mode_(mode)
-        { }
-        Slot(SlotMode mode, uint32_t index)
-          : mode_(mode)
-        {
-            JS_ASSERT(mode == CONSTANT || mode == JS_INT32);
-            value_ = index;
-        }
-
-      public:
-        SlotMode mode() const {
-            return mode_;
-        }
-        uint32_t constantIndex() const {
-            JS_ASSERT(mode() == CONSTANT);
-            return value_;
-        }
-        int32_t int32Value() const {
-            JS_ASSERT(mode() == JS_INT32);
-            return value_;
-        }
-        JSValueType knownType() const {
-            JS_ASSERT(mode() == TYPED_REG || mode() == TYPED_STACK);
-            return known_type_.type;
-        }
-        Register reg() const {
-            JS_ASSERT(mode() == TYPED_REG && knownType() != JSVAL_TYPE_DOUBLE);
-            return known_type_.payload.reg();
-        }
-        FloatRegister floatReg() const {
-            JS_ASSERT(mode() == DOUBLE_REG);
-            return FloatRegister::FromCode(fpu_);
-        }
-        int32_t stackSlot() const {
-            JS_ASSERT(mode() == TYPED_STACK);
-            return known_type_.payload.stackSlot();
-        }
-#if defined(JS_NUNBOX32)
-        Location payload() const {
-            JS_ASSERT(mode() == UNTYPED);
-            return unknown_type_.payload;
-        }
-        Location type() const {
-            JS_ASSERT(mode() == UNTYPED);
-            return unknown_type_.type;
-        }
-#elif defined(JS_PUNBOX64)
-        Location value() const {
-            JS_ASSERT(mode() == UNTYPED);
-            return unknown_type_.value;
-        }
-#endif
-        bool isInvalid() const {
-            return mode() == INVALID_SLOT;
-        }
-    };
 
   public:
     SnapshotReader(const uint8_t *buffer, const uint8_t *end);
@@ -211,16 +65,15 @@ class SnapshotReader
         return bailoutKind_;
     }
     Slot readSlot();
-    static Slot invalidSlot() {
-        return Slot(SnapshotReader::INVALID_SLOT);
-    }
 
     size_t index() const {
-        return slotsRead_ - 1;
+        return slotsRead_;
     }
     size_t numSlots() const {
         return slotCount_;
     }
+
+    void restart();
 };
 
 class RInstruction;
@@ -228,7 +81,6 @@ class RInstruction;
 class RecoverReader
 {
     CompactBufferReader reader_;
-    const uint8_t *begin_;
 
     uint32_t frameCount_;
 
@@ -250,12 +102,17 @@ class RecoverReader
     void readOperationHeader();
 
   public:
-    RecoverReader(const uint8_t *buffer, const uint8_t *end);
+    RecoverReader(const uint8_t *buffer = NULL, const uint8_t *end = NULL);
     RecoverReader(const IonScript *ion, RecoverOffset offset);
 
-    void readOperand();
+    void readOperand(bool *isSlot, size_t *index);
     void skipOperand() {
-        readOperand();
+        bool isSlot = false;
+        size_t index = 0;
+        readOperand(&isSlot, &index);
+    }
+    size_t operandIndex() const {
+        return operandRead_;
     }
     bool moreOperand() const {
         return operandRead_ < operandCount_;
@@ -293,6 +150,8 @@ class RecoverReader
 
     bool isFrame() const;
     void settleOnNextFrame();
+
+    void restart();
 };
 
 }
