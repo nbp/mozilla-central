@@ -88,7 +88,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
 {
     RResumePoint *rp = iter.operation()->toResumePoint();
     uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
-    rp->fillOperands(iter, script(), isFunctionFrame());
+    rp->readFrameHeader(iter, script(), isFunctionFrame());
 
 #ifdef TRACK_SNAPSHOTS
     iter.spewBailingFrom();

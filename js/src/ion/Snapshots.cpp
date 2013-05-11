@@ -605,21 +605,6 @@ RecoverReader::readOperand(bool *isSlot, size_t *index)
     operandRead_++;
 }
 
-bool
-RecoverReader::isFrame() const
-{
-    return operation_->isResumePoint();
-}
-
-void
-RecoverReader::settleOnNextFrame()
-{
-    do {
-        JS_ASSERT(moreOperation());
-        nextOperation();
-    } while (!operation()->isResumePoint());
-}
-
 RecoverOffset
 RecoverWriter::startRecover(uint32_t frameCount, uint32_t operationCount)
 {

@@ -90,10 +90,6 @@ class RecoverReader
     uint32_t operationRead_;
     uint32_t operandRead_;
 
-    // Operand data
-    bool isSlot_;
-    uint32_t index_;
-
     // Operation
     RInstruction *operation_;
     mozilla::AlignedStorage<RMaxSize> opStorage_;
@@ -118,16 +114,6 @@ class RecoverReader
         return operandRead_ < operandCount_;
     }
 
-    bool isSlotIndex() {
-        return isSlot_;
-    }
-    bool isOperationIndex() {
-        return !isSlot_;
-    }
-    uint32_t index() {
-        return index_;
-    }
-
     bool moreOperation() const {
         return operationRead_ < operationCount_;
     }
@@ -147,9 +133,6 @@ class RecoverReader
     size_t frameCount() const {
         return frameCount_;
     }
-
-    bool isFrame() const;
-    void settleOnNextFrame();
 
     void restart();
 };

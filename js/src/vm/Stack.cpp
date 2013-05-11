@@ -1086,7 +1086,7 @@ ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, 
     iag->setCallee(ObjectValue(*fun));
 
     ion::RResumePoint *rp = s.operation()->toResumePoint();
-    rp->fillOperands(s, it.script(), fun);
+    rp->readFrameHeader(s, it.script(), fun);
 
     CopyTo dst(iag->array());
     Value *src = it.actualArgs();

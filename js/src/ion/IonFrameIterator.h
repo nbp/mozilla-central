@@ -271,6 +271,9 @@ class SnapshotIterator
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
 
+    // Start iterating again from the beginning of the snapshot.
+    void restart();
+
     // Iterate on all operations contained in the recover structure.
     bool moreOperation() const {
         return recover_.moreOperation();
@@ -293,17 +296,14 @@ class SnapshotIterator
 
     // Convenience functions for iterations which do not need to visit all
     // operations.
-    bool isFrame() const {
-        return recover_.isFrame();
-    }
+    bool isFrame() const;
+    void settleOnNextFrame();
     size_t frameCount() const {
         return recover_.frameCount();
     }
-    void settleOnNextFrame() {
-        recover_.settleOnNextFrame();
-    }
 
-
+    // Check if the slot are accessbile and provide accessors to read the slot
+    // value out-of the different location in which the value can be stored.
     bool isOptimizedOut(const Slot &slot) {
         return !slotReadable(slot);
     }
@@ -318,8 +318,6 @@ class SnapshotIterator
             warnUnreadableSlot();
         return UndefinedValue();
     }
-
-    void restart();
 
     // Data extracted from the snapshot, should probably be part of the frame
     // iterator.

@@ -1157,6 +1157,21 @@ SnapshotIterator::readOperand()
     return s;
 }
 
+bool
+SnapshotIterator::isFrame() const
+{
+    return operation()->isResumePoint();
+}
+
+void
+SnapshotIterator::settleOnNextFrame()
+{
+    do {
+        JS_ASSERT(moreOperation());
+        nextOperation();
+    } while (!isFrame());
+}
+
 IonScript *
 IonFrameIterator::ionScript() const
 {
@@ -1252,7 +1267,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-    rp->fillOperands(si_, script_, callee_);
+    rp->readFrameHeader(si_, script_, callee_);
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif
@@ -1268,7 +1283,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         callee_ = funval.toObject().toFunction();
         script_ = callee_->nonLazyScript();
-        rp->fillOperands(si_, script_, callee_);
+        rp->readFrameHeader(si_, script_, callee_);
     }
 
     pc_ = script_->code + rp->pcOffset();

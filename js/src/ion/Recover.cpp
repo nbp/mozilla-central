@@ -75,7 +75,7 @@ RResumePoint::read(CompactBufferReader &reader)
 }
 
 void
-RResumePoint::fillOperands(SnapshotIterator &it, JSScript *script, bool isFunction)
+RResumePoint::readFrameHeader(SnapshotIterator &it, JSScript *script, bool isFunction)
 {
     scopeChainSlot_ = recoverSlot(it);
 

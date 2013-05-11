@@ -449,7 +449,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
 {
     RResumePoint *rp = iter.operation()->toResumePoint();
     uint32_t exprStackSlots = rp->numOperands() - (script->nfixed + CountArgSlots(script, fun));
-    rp->fillOperands(iter, script, fun);
+    rp->readFrameHeader(iter, script, fun);
 
     builder.resetFramePushed();
 

@@ -50,8 +50,7 @@ struct RResumePoint : public RInstruction
 {
     static void write(CompactBufferWriter &writer, MNode *ins);
     void read(CompactBufferReader &reader);
-    void fillOperands(SnapshotIterator &it, JSScript *script, bool isFunction);
-    Value recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *numActualArgs);
+    void readFrameHeader(SnapshotIterator &it, JSScript *script, bool isFunction);
 
     bool isResumePoint() const {
         return true;
@@ -69,6 +68,9 @@ struct RResumePoint : public RInstruction
         return resumeAfter_;
     }
 
+    // Information set by the recover reader, and use to determine that we
+    // are on the last frame. This is needed for checking from where to
+    // extract the return value in case of an invalidation.
     void setLastFrame() {
         lastFrame_ = true;
     }
@@ -76,6 +78,7 @@ struct RResumePoint : public RInstruction
         return lastFrame_;
     }
 
+    // Recover the slot of resume point headers.
     const Slot &scopeChainSlot() const {
         return scopeChainSlot_;
     }
@@ -86,10 +89,12 @@ struct RResumePoint : public RInstruction
         return thisSlot_;
     }
 
+    // Recover any slots outside the header of the resume point.
     Slot readAnySlot(SnapshotIterator &it) const {
         return recoverSlot(it);
     }
 
+    // Recover the value of any slot, mostly used for bailouts.
     Value readFormalArg(SnapshotIterator &it) const {
         return recoverValue(it, recoverSlot(it));
     }
@@ -101,6 +106,15 @@ struct RResumePoint : public RInstruction
     Value maybeReadFormalArg(SnapshotIterator &it) const {
         return recoverValue(it, recoverSlot(it));
     }
+
+    // If this frame is doing a JS call, then we can find the callee among
+    // the slots which are always recoverable. The number of argument is
+    // expected to be the number of arguments of the current frame as we
+    // might inline a call to fun.apply(self, arguments) where we cannot
+    // extract this the byte code.
+    Value recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *numActualArgs);
+
+    // Read one argument of the callee at-a-time.
     Value readCalleeArg(SnapshotIterator &it) const {
         return recoverValue(it, recoverSlot(it));
     }
