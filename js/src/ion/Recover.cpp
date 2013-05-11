@@ -31,7 +31,7 @@ RInstruction::dispatch(void *mem, CompactBufferReader &reader)
 }
 
 Slot
-RInstruction::recoverSlot(SnapshotIterator &it)
+RInstruction::recoverSlot(SnapshotIterator &it) const
 {
     bool isSlot = false;
     size_t index = 0;
@@ -85,16 +85,15 @@ RResumePoint::read(CompactBufferReader &reader)
 }
 
 void
-RResumePoint::fillOperands(SnapshotIterator &it, JSScript *script, JSFunction *fun)
+RResumePoint::fillOperands(SnapshotIterator &it, JSScript *script, bool isFunction)
 {
     scopeChainSlot_ = recoverSlot(it);
 
-    if (fun)
-        thisSlot_ = recoverSlot(it);
+    if (script->argumentsHasVarBinding())
+        argObjSlot_ = recoverSlot(it);
 
-    if (script->argumentsHasVarBinding()) {
-        // do something here.
-    }
+    if (isFunction)
+        thisSlot_ = recoverSlot(it);
 }
 
 Value
@@ -122,4 +121,21 @@ RResumePoint::recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *nu
         recoverSlot(it);
 
     return it.slotValue(recoverSlot(it));
+}
+
+Value
+RResumePoint::readStackSlot(JSContext *cx, SnapshotIterator &it) const
+{
+    Slot slot = recoverSlot(it);
+
+    // If coming from an invalidation bailout, and this is the topmost value,
+    // and a value override has been specified, don't read from the
+    // iterator. Otherwise, we risk using a garbage value.
+    if (it.operandIndex() == numOperands() && isLastFrame() &&
+        cx->runtime->hasIonReturnOverride())
+    {
+        return cx->runtime->takeIonReturnOverride();
+    }
+
+    return recoverValue(it, slot);
 }

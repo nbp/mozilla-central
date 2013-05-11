@@ -128,13 +128,13 @@ class RecoverReader
         return index_;
     }
 
+    bool moreOperation() const {
+        return operationRead_ < operationCount_;
+    }
     void nextOperation() {
         while (moreOperand())
             skipOperand();
         readOperationHeader();
-    }
-    bool moreOperation() const {
-        return operationRead_ < operationCount_;
     }
 
     RInstruction *operation() {

@@ -30,7 +30,7 @@ struct RInstruction
     virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
-    Slot recoverSlot(SnapshotIterator &it);
+    Slot recoverSlot(SnapshotIterator &it) const;
     Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
 
     virtual bool isResumePoint() const {
@@ -49,7 +49,7 @@ struct RResumePoint : public RInstruction
 {
     static void write(CompactBufferWriter &writer, MNode *ins);
     void read(CompactBufferReader &reader);
-    void fillOperands(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+    void fillOperands(SnapshotIterator &it, JSScript *script, bool isFunction);
     Value recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *numActualArgs);
 
     bool isResumePoint() const {
@@ -75,13 +75,32 @@ struct RResumePoint : public RInstruction
         return lastFrame_;
     }
 
+    const Slot &scopeChainSlot() const {
+        return scopeChainSlot_;
+    }
+    const Slot &argObjSlot() const {
+        return argObjSlot_;
+    }
+    const Slot &thisSlot() const {
+        return thisSlot_;
+    }
+
+    // TODO: remove ?
+    Value scopeChainValue(const SnapshotIterator &it) const {
+        return recoverValue(it, scopeChainSlot_);
+    }
     Value thisValue(const SnapshotIterator &it) const {
         return recoverValue(it, thisSlot_);
     }
 
-    Value scopeChainValue(const SnapshotIterator &it) const {
-        return recoverValue(it, scopeChainSlot_);
+    Value readFormalArg(SnapshotIterator &it) const {
+        return recoverValue(it, recoverSlot(it));
     }
+    Value readFixedSlot(SnapshotIterator &it) const {
+        return recoverValue(it, recoverSlot(it));
+    }
+    Value readStackSlot(JSContext *cx, SnapshotIterator &it) const;
+
 
     // Offset from script->code.
     uint32_t pcOffset_;
@@ -89,8 +108,9 @@ struct RResumePoint : public RInstruction
     bool resumeAfter_;
     bool lastFrame_;
 
-    Slot thisSlot_;
     Slot scopeChainSlot_;
+    Slot argObjSlot_;
+    Slot thisSlot_;
 };
 
 } // namespace ion

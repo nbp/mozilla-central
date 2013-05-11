@@ -21,7 +21,7 @@ typedef uint32_t RecoverOffset;
 static const RecoverOffset INVALID_RECOVER_OFFSET = uint32_t(-1);
 
 // Maximal size of an RInstruction.
-static const size_t RMaxSize = 64;
+static const size_t RMaxSize = 128;
 
 typedef uint32_t SnapshotOffset;
 static const SnapshotOffset INVALID_SNAPSHOT_OFFSET = uint32_t(-1);

@@ -453,7 +453,7 @@ class StackFrame
     bool jitStrictEvalPrologue(JSContext *cx);
 
     /* Called from IonMonkey to transition from bailouts. */
-    void initFromBailout(JSContext *cx, ion::SnapshotIterator &iter, ion::RResumePoint *rp);
+    void initFromBailout(JSContext *cx, ion::SnapshotIterator &iter);
     bool initFunctionScopeObjects(JSContext *cx);
 
     /* Initialize local variables of newly-pushed frame. */

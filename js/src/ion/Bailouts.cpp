@@ -86,9 +86,11 @@ GetBailedJSScript(JSContext *cx)
 }
 
 void
-StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint *rp)
+StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter)
 {
+    RResumePoint *rp = iter.operation()->toResumePoint();
     uint32_t exprStackSlots = rp->numOperands() - script()->nfixed;
+    rp->fillOperands(iter, script(), isFunctionFrame());
 
 #ifdef TRACK_SNAPSHOTS
     iter.spewBailingFrom();
@@ -101,17 +103,13 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         // bogus (we can fail before the scope chain slot is set). Strip the
         // hasScopeChain flag.  If a call object is needed, it will get handled later
         // by |ThunkToInterpreter| which call |EnsureHasScopeObjects|.
-        iter.nextSlot();
         flags_ &= ~StackFrame::HAS_SCOPECHAIN;
 
         // If the script binds arguments, then skip the snapshot slot reserved to hold
         // its value.
-        if (script()->argumentsHasVarBinding())
-            iter.nextSlot();
         flags_ &= ~StackFrame::HAS_ARGS_OBJ;
     } else {
-        Value scopeChain = iter.read();
-        iter.nextSlot();
+        Value scopeChain = iter.readFromSlot(rp->scopeChainSlot());
         JS_ASSERT(scopeChain.isObject() || scopeChain.isUndefined());
         if (scopeChain.isObject()) {
             scopeChain_ = &scopeChain.toObject();
@@ -121,9 +119,8 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         }
 
         // The second slot will be an arguments object if the script needs one.
-        if (script()->argumentsHasVarBinding()) {
-            Value argsObj = iter.read();
-            iter.nextSlot();
+        if (!rp->argObjSlot().isInvalid()) {
+            Value argsObj = iter.readFromSlot(rp->argObjSlot());
             JS_ASSERT(argsObj.isObject() || argsObj.isUndefined());
             if (argsObj.isObject())
                 initArgsObj(argsObj.toObject().asArguments());
@@ -137,8 +134,7 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
         setPushedSPSFrame();
 
     if (isFunctionFrame()) {
-        Value thisv = iter.read();
-        iter.nextSlot();
+        Value thisv = iter.readFromSlot(rp->thisSlot());
         formals()[-1] = thisv;
 
         // The new |this| must have already been constructed prior to an Ion
@@ -151,31 +147,21 @@ StackFrame::initFromBailout(JSContext *cx, SnapshotIterator &iter, RResumePoint 
                 rp->numOperands(), fun()->nargs, script()->nfixed);
 
         for (uint32_t i = 0; i < fun()->nargs; i++) {
-            Value arg = iter.read();
-            iter.nextSlot();
+            Value arg = rp->readFormalArg(iter);
             formals()[i] = arg;
         }
     }
     exprStackSlots -= CountArgSlots(script(), maybeFun());
 
     for (uint32_t i = 0; i < script()->nfixed; i++) {
-        Value slot = iter.read();
-        iter.nextSlot();
+        Value slot = rp->readFixedSlot(iter);
         slots()[i] = slot;
     }
 
     IonSpew(IonSpew_Bailouts, " pushing %u expression stack slots", exprStackSlots);
     FrameRegs &regs = cx->regs();
     for (uint32_t i = 0; i < exprStackSlots; i++) {
-        Value v = UndefinedValue();
-
-        // If coming from an invalidation bailout, and this is the topmost
-        // value, and a value override has been specified, don't read from the
-        // iterator. Otherwise, we risk using a garbage value.
-        if (!rp->isLastFrame() || i != exprStackSlots - 1 || !cx->runtime->hasIonReturnOverride())
-            v = iter.read();
-        iter.nextSlot();
-
+        Value v = rp->readStackSlot(cx, iter);
         *regs.sp++ = v;
     }
 
@@ -303,10 +289,10 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     RecoverReader ri(it.ionScript(), iter.recoverOffset());
 
     while (true) {
-        if (ri.isFrame()) {
-            RResumePoint *rp = ri.operation()->toResumePoint();
+        if (iter.isFrame()) {
+            RResumePoint *rp = iter.operation()->toResumePoint();
             IonSpew(IonSpew_Bailouts, " restoring frame");
-            fp->initFromBailout(cx, iter, rp);
+            fp->initFromBailout(cx, iter);
 
             if (rp->isLastFrame())
                 break;
@@ -316,13 +302,13 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
                 return BAILOUT_RETURN_OVERRECURSED;
         }
 
-        JS_ASSERT(ri.moreOperation());
-        ri.nextOperation();
+        JS_ASSERT(iter.moreOperation());
+        iter.nextOperation();
     }
 
     fp->clearRunningInIon();
 
-    RResumePoint *rp = ri.operation()->toResumePoint();
+    RResumePoint *rp = iter.operation()->toResumePoint();
     jsbytecode *bailoutPc = fp->script()->code + rp->pcOffset();
     br->setBailoutPc(bailoutPc);
 
@@ -452,10 +438,6 @@ ion::InvalidationBailout(InvalidationBailoutStack *sp, size_t *frameSizeOut,
         IonSpew(IonSpew_Invalidate, "   new  ra %p", (void *) frame->returnAddress());
 
         iter.ionScript()->decref(cx->runtime->defaultFreeOp());
-
-        // Only need to take ion return override if resuming to interpreter.
-        if (cx->runtime->hasIonReturnOverride())
-            cx->regs().sp[-1] = cx->runtime->takeIonReturnOverride();
 
         if (retval != BAILOUT_RETURN_FATAL_ERROR) {
             // If invalidation was triggered inside a stub call, we may still have to
