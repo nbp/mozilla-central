@@ -15,48 +15,11 @@
 namespace js {
 namespace ion {
 
-template <class Op>
-static void
-ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
-              unsigned start, unsigned formalEnd, unsigned iterEnd,
-              JSScript *script, SnapshotIterator &s)
-{
-    if (scopeChain)
-        *scopeChain = s.scopeChainValue();
-
-    if (thisv)
-        *thisv = s.thisValue();
-
-    // Skip slot for arguments object.
-    if (script->argumentsHasVarBinding())
-        s.nextSlot();
-
-    unsigned i = 0;
-    if (formalEnd < start)
-        i = start;
-
-    for (; i < start; i++)
-        s.nextSlot();
-    for (; i < formalEnd && i < iterEnd; i++) {
-        // We are not always able to read values from the snapshots, some values
-        // such as non-gc things may still be live in registers and cause an
-        // error while reading the machine state.
-        Value v = s.maybeRead();
-        op(v);
-        s.nextSlot();
-    }
-    if (iterEnd >= formalEnd) {
-        for (; i < iterEnd; i++)
-            op(argv[i]);
-    }
-}
-
 template <AllowGC allowGC>
 inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                 JSContext *cx, const IonFrameIterator *iter)
-  : //ri_(static_cast<uint8_t *>(NULL), NULL),
-    callee_(cx),
+  : callee_(cx),
     script_(cx)
 {
     resetOn(iter);
@@ -78,56 +41,6 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
         // Therefore to settle on the same frame, we report one frame less readed.
         framesRead_ = iter->framesRead_ - 1;
         findNextFrame();
-    }
-}
-
-template <AllowGC allowGC>
-template <class Op>
-inline void
-InlineFrameIteratorMaybeGC<allowGC>::forEachCanonicalActualArg(
-                JSContext *cx, Op op, unsigned start, unsigned count) const
-{
-    unsigned nactual = numActualArgs();
-    if (count == unsigned(-1))
-        count = nactual - start;
-
-    unsigned end = start + count;
-    unsigned nformal = callee()->nargs;
-
-    JS_ASSERT(start <= end && end <= nactual);
-
-    if (more()) {
-        // There is still a parent frame of this inlined frame.
-        // The not overflown arguments are taken from the inlined frame,
-        // because it will have the updated value when JSOP_SETARG is done.
-        // All arguments (also the overflown) are the last pushed values in the parent frame.
-        // To get the overflown arguments, we need to take them from there.
-
-        // Get the non overflown arguments
-        unsigned formal_end = (end < nformal) ? end : nformal;
-        SnapshotIterator s(si_);
-        ReadFrameArgs(op, NULL, NULL, NULL, start, nformal, formal_end, script(), s);
-
-        // The overflown arguments are not available in current frame.
-        // They are the last pushed arguments in the parent frame of this inlined frame.
-        InlineFrameIteratorMaybeGC it(cx, this);
-        ++it;
-        unsigned argsObjAdj = it.script()->argumentsHasVarBinding() ? 1 : 0;
-        SnapshotIterator parent_s(it.snapshotIterator());
-
-        // Skip over all slots untill we get to the last slots (= arguments slots of callee)
-        // the +2 is for [this] and [scopechain], and maybe +1 for [argsObj]
-        JS_ASSERT(it.numSlots() >= nactual + 2 + argsObjAdj);
-        unsigned skip = it.numSlots() - nactual - 2 - argsObjAdj;
-        for (unsigned j = 0; j < skip; j++)
-            parent_s.nextSlot();
-
-        // Get the overflown arguments
-        ReadFrameArgs(op, NULL, NULL, NULL, nformal, nactual, end, it.script(), parent_s);
-    } else {
-        SnapshotIterator s(si_);
-        Value *argv = frame_->actualArgs();
-        ReadFrameArgs(op, argv, NULL, NULL, start, nformal, end, script(), s);
     }
 }
 
@@ -177,13 +90,11 @@ inline
 InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
                                                 JSContext *cx, const IonBailoutIterator *iter)
   : frame_(iter),
-    // ri_(static_cast<uint8_t *>(NULL), NULL),
     framesRead_(0),
     callee_(cx),
     script_(cx)
 {
     if (iter) {
-        // start_ = SnapshotIterator(*iter);
         si_ = SnapshotIterator(*iter);
         findNextFrame();
     }

@@ -32,6 +32,7 @@ struct RInstruction
 
     Slot recoverSlot(SnapshotIterator &it) const;
     Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
+    Value maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const;
 
     virtual bool isResumePoint() const {
         return false;
@@ -93,6 +94,10 @@ struct RResumePoint : public RInstruction
         return recoverValue(it, thisSlot_);
     }
 
+    Slot readAnySlot(SnapshotIterator &it) const {
+        return recoverSlot(it);
+    }
+
     Value readFormalArg(SnapshotIterator &it) const {
         return recoverValue(it, recoverSlot(it));
     }
@@ -101,6 +106,12 @@ struct RResumePoint : public RInstruction
     }
     Value readStackSlot(JSContext *cx, SnapshotIterator &it) const;
 
+    Value maybeReadFormalArg(SnapshotIterator &it) const {
+        return recoverValue(it, recoverSlot(it));
+    }
+    Value readCalleeArg(SnapshotIterator &it) const {
+        return recoverValue(it, recoverSlot(it));
+    }
 
     // Offset from script->code.
     uint32_t pcOffset_;

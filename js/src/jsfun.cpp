@@ -942,7 +942,8 @@ js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
                     args.setThis(vp[2]);
 
                     /* Steps 7-8. */
-                    iter.forEachCanonicalActualArg(cx, CopyTo(args.array()), 0, -1);
+                    CopyTo dest(args.array());
+                    iter.forEachCanonicalActualArg(cx, dest, 0, -1);
                 } else {
                     JS_ASSERT(frame.isBaselineStub());
 

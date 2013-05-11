@@ -33,29 +33,19 @@ RInstruction::dispatch(void *mem, CompactBufferReader &reader)
 Slot
 RInstruction::recoverSlot(SnapshotIterator &it) const
 {
-    bool isSlot = false;
-    size_t index = 0;
-    it.recover_.readOperand(&isSlot, &index);
-
-    // The slot refers to the result of an operation.
-    if (!isSlot)
-        return Slot(Slot::RESUME_OPERATION, index);
-
-    // Ensure we read in the right order.
-    JS_ASSERT(it.index() <= index);
-
-    // Skip un-read slot of the snapshot.
-    while (it.index() < index)
-        it.nextSlot();
-    Slot s(it.slot_);
-    it.nextSlot();
-    return s;
+    return it.readOperand();
 }
 
 Value
 RInstruction::recoverValue(const SnapshotIterator &it, const Slot &slot) const
 {
     return it.slotValue(slot);
+}
+
+Value
+RInstruction::maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const
+{
+    return it.maybeReadFromSlot(slot);
 }
 
 void

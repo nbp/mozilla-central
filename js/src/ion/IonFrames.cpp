@@ -298,7 +298,7 @@ CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t loca
 {
     uint32_t base = CountArgSlots(frame.script(), frame.maybeCallee()) + frame.script()->nfixed;
     uint32_t iteratorIndex = base + localSlot - 1;
-    Value v = frame.readSlotByIndex(iteratorIndex);
+    Value v = frame.maybeReadOperandByIndex(iteratorIndex, false);
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1158,6 +1158,33 @@ SnapshotIterator::slotValue(const Slot &slot) const
     }
 }
 
+Slot
+SnapshotIterator::readOperand()
+{
+    bool isSlot = false;
+    size_t opIndex = 0;
+    recover_.readOperand(&isSlot, &opIndex);
+
+    // The slot refers to the result of an operation.
+    if (!isSlot)
+        return Slot(Slot::RESUME_OPERATION, opIndex);
+
+    // Ensure we read in the right order.
+    JS_ASSERT(index() <= opIndex);
+
+    // Skip un-read slot of the snapshot.
+    while (index() < opIndex) {
+        JS_ASSERT(!slot_.isInvalid());
+        slot_ = snapshot_.readSlot();
+    }
+    Slot s = slot_;
+    {
+        JS_ASSERT(!slot_.isInvalid());
+        slot_ = snapshot_.readSlot();
+    }
+    return s;
+}
+
 Value
 SnapshotIterator::scopeChainValue() const
 {
@@ -1269,39 +1296,24 @@ template size_t InlineFrameIteratorMaybeGC<CanGC>::numSlots() const;
 
 template <AllowGC allowGC>
 Value
-InlineFrameIteratorMaybeGC<allowGC>::maybeReadSlotByIndex(size_t index) const
+InlineFrameIteratorMaybeGC<allowGC>::maybeReadOperandByIndex(size_t index, bool fallible) const
 {
     JS_ASSERT(index < numSlots());
-    JS_ASSERT(index >= si_.operandIndex());
+    JS_ASSERT(index >= snapshotIterator().operandIndex());
     SnapshotIterator s(snapshotIterator());
+    RResumePoint *rp = s.operation()->toResumePoint();
 
-    index -= si_.operandIndex();
+    index -= s.operandIndex();
     while (index--)
-        s.nextSlot();
+        rp->readAnySlot(s);
 
-    Value val = s.maybeRead(true);
-    return val;
+    Slot slot = rp->readAnySlot(s);
+    return s.maybeReadFromSlot(slot, fallible);
 }
-template Value InlineFrameIteratorMaybeGC<NoGC>::maybeReadSlotByIndex(size_t index) const;
-template Value InlineFrameIteratorMaybeGC<CanGC>::maybeReadSlotByIndex(size_t index) const;
-
-template <AllowGC allowGC>
-Value
-InlineFrameIteratorMaybeGC<allowGC>::readSlotByIndex(size_t index) const
-{
-    JS_ASSERT(index < numSlots());
-    JS_ASSERT(index >= si_.operandIndex());
-    SnapshotIterator s(snapshotIterator());
-
-    index -= si_.operandIndex();
-    while (index--)
-        s.nextSlot();
-
-    Value val = s.read();
-    return val;
-}
-template Value InlineFrameIteratorMaybeGC<NoGC>::readSlotByIndex(size_t index) const;
-template Value InlineFrameIteratorMaybeGC<CanGC>::readSlotByIndex(size_t index) const;
+template Value
+InlineFrameIteratorMaybeGC<NoGC>::maybeReadOperandByIndex(size_t index, bool fallible) const;
+template Value
+InlineFrameIteratorMaybeGC<CanGC>::maybeReadOperandByIndex(size_t index, bool fallible) const;
 
 template <AllowGC allowGC>
 bool
@@ -1413,12 +1425,87 @@ IonFrameIterator::numActualArgs() const
 }
 
 void
-SnapshotIterator::warnUnreadableSlot()
+ReadFrameArgs(AbstractPush &op, const Value *argv,
+              unsigned formalEnd, unsigned actualEnd,
+              SnapshotIterator &s)
+{
+    RResumePoint *rp = s.operation()->toResumePoint();
+    unsigned i = 0;
+
+    for (; i < formalEnd && i < actualEnd; i++) {
+        // We are not always able to read values from the snapshots, some values
+        // such as non-gc things may still be live in registers and cause an
+        // error while reading the machine state.
+        op(rp->maybeReadFormalArg(s));
+    }
+    if (actualEnd >= formalEnd) {
+        for (; i < actualEnd; i++)
+            op(argv[i]);
+    }
+}
+
+template <AllowGC allowGC>
+void
+InlineFrameIteratorMaybeGC<allowGC>::forEachCanonicalActualArg(
+                JSContext *cx, AbstractPush &op, unsigned start, unsigned count) const
+{
+    // There is no other use case.
+    JS_ASSERT(start == 0 && count == unsigned(-1));
+
+    unsigned nactual = numActualArgs();
+    unsigned nformal = callee()->nargs;
+
+    if (more()) {
+        // There is still a parent frame of this inlined frame.
+        // The not overflown arguments are taken from the inlined frame,
+        // because it will have the updated value when JSOP_SETARG is done.
+        // All arguments (also the overflown) are the last pushed values in the parent frame.
+        // To get the overflown arguments, we need to take them from there.
+
+        // Get the formal arguments
+        unsigned formal_end = (nactual < nformal) ? nactual : nformal;
+        SnapshotIterator s(si_);
+        ReadFrameArgs(op, NULL, nformal, formal_end, s);
+
+        // Get the rest of arguments (actual - formal) from the parent frame.
+        InlineFrameIteratorMaybeGC it(cx, this);
+        ++it;
+
+        SnapshotIterator parent_s(it.snapshotIterator());
+        RResumePoint *parent_rp = parent_s.operation()->toResumePoint();
+        uint32_t nactual_tmp = nactual;
+
+        parent_rp->recoverCallee(parent_s, it.script(), &nactual_tmp); // settle on |fun|
+        parent_rp->readCalleeArg(parent_s); // skip |this|
+        unsigned i = 0;
+
+        // skip formals
+        for (; i < formal_end; i++)
+            parent_rp->readCalleeArg(parent_s);
+
+        // read rest (actual - formal)
+        for (; i < nactual; i++)
+            op(parent_rp->readCalleeArg(parent_s));
+
+    } else {
+        SnapshotIterator s(si_);
+        Value *argv = frame_->actualArgs();
+        ReadFrameArgs(op, argv, nformal, nactual, s);
+    }
+}
+template void InlineFrameIteratorMaybeGC<NoGC>::forEachCanonicalActualArg(
+                JSContext *cx, AbstractPush &op, unsigned start, unsigned count) const;
+template void InlineFrameIteratorMaybeGC<CanGC>::forEachCanonicalActualArg(
+                JSContext *cx, AbstractPush &op, unsigned start, unsigned count) const;
+
+void
+SnapshotIterator::warnUnreadableSlot() const
 {
     fprintf(stderr, "Warning! Tried to access unreadable IonMonkey slot (possible f.arguments).\n");
 }
 
-struct DumpOp {
+struct DumpOp : public AbstractPush
+{
     DumpOp(unsigned int i) : i_(i) {}
 
     unsigned int i_;
@@ -1508,7 +1595,6 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
         numActualArgs();
     }
 
-    SnapshotIterator si = snapshotIterator();
     fprintf(stderr, "  slots: %u\n", unsigned(numSlots() - 1));
     for (unsigned i = 0; i < numSlots() - 1; i++) {
         if (isFunction) {
@@ -1519,18 +1605,19 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
             else if (i - 2 < callee()->nargs)
                 fprintf(stderr, "  formal (arg %d): ", i - 2);
             else {
+                /*
                 if (i - 2 == callee()->nargs && numActualArgs() > callee()->nargs) {
                     DumpOp d(callee()->nargs);
                     forEachCanonicalActualArg(GetIonContext()->cx, d, d.i_, numActualArgs() - d.i_);
                 }
+                */
 
                 fprintf(stderr, "  slot %d: ", i - 2 - callee()->nargs);
             }
         } else
             fprintf(stderr, "  slot %u: ", i);
 #ifdef DEBUG
-        js_DumpValue(si.maybeRead());
-        si.nextSlot();
+        js_DumpValue(maybeReadOperandByIndex(i, true));
 #else
         fprintf(stderr, "?\n");
 #endif

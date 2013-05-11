@@ -62,6 +62,13 @@ enum FrameType
     IonFrame_Osr
 };
 
+// Define that to avoid including Recover.h into all header which are iterating
+// over the arguments of Ion frames.
+struct AbstractPush
+{
+    virtual void operator()(const Value &src) = 0;
+};
+
 class IonCommonFrameLayout;
 class IonJSFrameLayout;
 class IonExitFrameLayout;
@@ -259,8 +266,10 @@ class SnapshotIterator
 
     Value slotValue(const Slot &slot) const;
     bool slotReadable(const Slot &slot) const;
-    void warnUnreadableSlot();
 
+    Slot readOperand();
+
+    void warnUnreadableSlot() const;
     void init();
 
   public:
@@ -269,11 +278,6 @@ class SnapshotIterator
     SnapshotIterator(const IonFrameIterator &iter);
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
-
-    void nextSlot() {
-        JS_ASSERT(!slot_.isInvalid());
-        slot_ = snapshot_.readSlot();
-    }
 
     bool moreOperation() const {
         return recover_.moreOperation();
@@ -289,9 +293,6 @@ class SnapshotIterator
         return recover_.operation();
     }
 
-    Value read() const {
-        return slotValue(slot_);
-    }
     Value readFromSlot(const Slot &slot) const {
         return slotValue(slot);
     }
@@ -305,13 +306,13 @@ class SnapshotIterator
         return recover_.operandIndex();
     }
 
-    bool isOptimizedOut() {
-        return !slotReadable(slot_);
+    bool isOptimizedOut(const Slot &slot) {
+        return !slotReadable(slot);
     }
 
-    Value maybeRead(bool silentFailure = false) {
-        if (slotReadable(slot_))
-            return slotValue(slot_);
+    Value maybeReadFromSlot(const Slot &slot, bool silentFailure = false) const {
+        if (slotReadable(slot))
+            return slotValue(slot);
         if (!silentFailure)
             warnUnreadableSlot();
         return UndefinedValue();
@@ -343,10 +344,6 @@ class SnapshotIterator
     }
     Value scopeChainValue() const;
     Value thisValue() const;
-
-    static Slot invalidSlot() {
-        return Slot(Slot::INVALID_SLOT);
-    }
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -371,8 +368,6 @@ class InlineFrameIteratorMaybeGC
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
 
     size_t numSlots() const;
-    Value readSlotByIndex(size_t index) const;
-    Value maybeReadSlotByIndex(size_t index) const;
 
     bool more() const {
         return frame_ && framesRead_ < si_.frameCount();
@@ -386,8 +381,7 @@ class InlineFrameIteratorMaybeGC
     }
     inline unsigned numActualArgs() const;
 
-    template <class Op>
-    inline void forEachCanonicalActualArg(JSContext *cx, Op op, unsigned start, unsigned count) const;
+    void forEachCanonicalActualArg(JSContext *cx, AbstractPush &op, unsigned start, unsigned count) const;
 
     JSScript *script() const {
         return script_;
@@ -404,6 +398,7 @@ class InlineFrameIteratorMaybeGC
     inline JSObject *thisObject() const;
     inline InlineFrameIteratorMaybeGC &operator++();
 
+    Value maybeReadOperandByIndex(size_t index, bool fallible = true) const;
     void dump() const;
 
     void resetOn(const IonFrameIterator *iter);
@@ -415,11 +410,10 @@ class InlineFrameIteratorMaybeGC
 typedef InlineFrameIteratorMaybeGC<CanGC> InlineFrameIterator;
 typedef InlineFrameIteratorMaybeGC<NoGC> InlineFrameIteratorNoGC;
 
-template <class Op>
-static void
-ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
-              unsigned start, unsigned formalEnd, unsigned iterEnd,
-              JSScript *script, SnapshotIterator &s);
+void
+ReadFrameArgs(AbstractPush &op, const Value *argv,
+              unsigned formalEnd, unsigned iterEnd,
+              SnapshotIterator &s);
 
 } // namespace ion
 } // namespace js

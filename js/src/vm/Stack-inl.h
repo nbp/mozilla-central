@@ -268,14 +268,26 @@ StackFrame::forEachUnaliasedActual(Op op)
     }
 }
 
-struct CopyTo
+// This structure is defined in IonFrameIterator.h to avoid exposing extra
+// headers.
+#ifndef JS_ION
+namespace ion {
+
+struct AbstractPush
+{
+};
+
+}
+#endif
+
+struct CopyTo : public ion::AbstractPush
 {
     Value *dst;
     CopyTo(Value *dst) : dst(dst) {}
     void operator()(const Value &src) { *dst++ = src; }
 };
 
-struct CopyToHeap
+struct CopyToHeap : public ion::AbstractPush
 {
     HeapValue *dst;
     CopyToHeap(HeapValue *dst) : dst(dst) {}

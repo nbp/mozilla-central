@@ -1085,11 +1085,14 @@ ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, 
     JSFunction *fun = it.callee();
     iag->setCallee(ObjectValue(*fun));
 
+    ion::RResumePoint *rp = s.operation()->toResumePoint();
+    rp->fillOperands(s, it.script(), fun);
+
     CopyTo dst(iag->array());
     Value *src = it.actualArgs();
-    Value thisv = iag->thisv();
-    s.operation()->toResumePoint()->fillOperands(s, it.script(), fun);
-    ReadFrameArgs(dst, src, NULL, &thisv, 0, fun->nargs, argc, it.script(), s);
+    Value thisv = rp->thisValue(s);
+
+    ReadFrameArgs(dst, src, fun->nargs, argc, s);
     return true;
 }
 
@@ -2025,7 +2028,7 @@ ScriptFrameIter::frameSlotValue(size_t index) const
 #ifdef JS_ION
         if (data_.ionFrames_.isOptimizedJS()) {
             index += ionInlineFrames_.script()->nfixed;
-            return ionInlineFrames_.maybeReadSlotByIndex(index);
+            return ionInlineFrames_.maybeReadOperandByIndex(index);
         }
 
         index += data_.ionFrames_.script()->nfixed;
