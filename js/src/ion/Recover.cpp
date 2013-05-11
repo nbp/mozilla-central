@@ -105,12 +105,12 @@ RResumePoint::recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *nu
     unsigned calleeArgs = *numActualArgs + 2;
 
     // Skip over not-yet consumed operands.
-    JS_ASSERT(it.recover_.operandIndex() + calleeArgs <= numOperands());
-    unsigned skipCount = numOperands() - calleeArgs - it.recover_.operandIndex();
+    JS_ASSERT(it.operandIndex() + calleeArgs <= numOperands());
+    unsigned skipCount = numOperands() - calleeArgs - it.operandIndex();
     for (unsigned j = 0; j < skipCount; j++)
         recoverSlot(it);
 
-    return it.slotValue(recoverSlot(it));
+    return recoverValue(it, recoverSlot(it));
 }
 
 Value

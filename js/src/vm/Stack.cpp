@@ -1090,7 +1090,7 @@ ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, 
 
     CopyTo dst(iag->array());
     Value *src = it.actualArgs();
-    Value thisv = rp->thisValue(s);
+    Value thisv = s.readFromSlot(rp->thisSlot());
 
     ReadFrameArgs(dst, src, fun->nargs, argc, s);
     return true;

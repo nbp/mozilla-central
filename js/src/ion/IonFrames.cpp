@@ -998,18 +998,6 @@ OsiIndex::returnPointDisplacement() const
     return callPointDisplacement_ + Assembler::patchWrite_NearCallSize();
 }
 
-SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
-                                   IonJSFrameLayout *fp, const MachineState &machine)
-  : snapshot_(ionScript->snapshots() + snapshotOffset,
-              ionScript->snapshots() + ionScript->snapshotsSize()),
-    recover_(ionScript, snapshot_.recoverOffset()),
-    machine_(machine),
-    fp_(fp),
-    ionScript_(ionScript)
-{
-    JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
-}
-
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
   : snapshot_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
@@ -1169,18 +1157,6 @@ SnapshotIterator::readOperand()
     return s;
 }
 
-Value
-SnapshotIterator::scopeChainValue() const
-{
-    return operation()->toResumePoint()->scopeChainValue(*this);
-}
-
-Value
-SnapshotIterator::thisValue() const
-{
-    return operation()->toResumePoint()->thisValue(*this);
-}
-
 IonScript *
 IonFrameIterator::ionScript() const
 {
@@ -1214,6 +1190,38 @@ IonFrameIterator::osiIndex() const
     SafepointReader reader(ionScript(), safepoint());
     return ionScript()->getOsiIndex(reader.osiReturnPointOffset());
 }
+
+template <AllowGC allowGC>
+inline JSObject *
+InlineFrameIteratorMaybeGC<allowGC>::scopeChain() const
+{
+    const RResumePoint *rp = si_.operation()->toResumePoint();
+    Value v = si_.readFromSlot(rp->scopeChainSlot());
+    if (v.isObject()) {
+        JS_ASSERT_IF(script()->hasAnalysis(), script()->analysis()->usesScopeChain());
+        return &v.toObject();
+    }
+
+    return callee()->environment();
+}
+template JSObject *InlineFrameIteratorMaybeGC<NoGC>::scopeChain() const;
+template JSObject *InlineFrameIteratorMaybeGC<CanGC>::scopeChain() const;
+
+template <AllowGC allowGC>
+JSObject *
+InlineFrameIteratorMaybeGC<allowGC>::thisObject() const
+{
+    // JS_ASSERT(isConstructing(...));
+
+    // In strict modes, |this| might not be an object and thus might not be
+    // readable which can either segv in read or trigger the assertion.
+    const RResumePoint *rp = si_.operation()->toResumePoint();
+    Value v = si_.readFromSlot(rp->thisSlot());
+    JS_ASSERT(v.isObject());
+    return &v.toObject();
+}
+template JSObject *InlineFrameIteratorMaybeGC<NoGC>::thisObject() const;
+template JSObject *InlineFrameIteratorMaybeGC<CanGC>::thisObject() const;
 
 template <AllowGC allowGC>
 void

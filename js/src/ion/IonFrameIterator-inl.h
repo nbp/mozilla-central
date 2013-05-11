@@ -45,32 +45,6 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
 }
 
 template <AllowGC allowGC>
-inline JSObject *
-InlineFrameIteratorMaybeGC<allowGC>::scopeChain() const
-{
-    Value v = si_.scopeChainValue();
-    if (v.isObject()) {
-        JS_ASSERT_IF(script()->hasAnalysis(), script()->analysis()->usesScopeChain());
-        return &v.toObject();
-    }
-
-    return callee()->environment();
-}
-
-template <AllowGC allowGC>
-inline JSObject *
-InlineFrameIteratorMaybeGC<allowGC>::thisObject() const
-{
-    // JS_ASSERT(isConstructing(...));
-
-    // In strict modes, |this| might not be an object and thus might not be
-    // readable which can either segv in read or trigger the assertion.
-    Value v = si_.thisValue();
-    JS_ASSERT(v.isObject());
-    return &v.toObject();
-}
-
-template <AllowGC allowGC>
 inline unsigned
 InlineFrameIteratorMaybeGC<allowGC>::numActualArgs() const
 {

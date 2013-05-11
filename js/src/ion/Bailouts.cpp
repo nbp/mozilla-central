@@ -284,7 +284,6 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
         fp->setConstructing();
 
     SnapshotIterator iter(it);
-    RecoverReader ri(it.ionScript(), iter.recoverOffset());
 
     while (true) {
         if (iter.isFrame()) {

@@ -86,14 +86,6 @@ struct RResumePoint : public RInstruction
         return thisSlot_;
     }
 
-    // TODO: remove ?
-    Value scopeChainValue(const SnapshotIterator &it) const {
-        return recoverValue(it, scopeChainSlot_);
-    }
-    Value thisValue(const SnapshotIterator &it) const {
-        return recoverValue(it, thisSlot_);
-    }
-
     Slot readAnySlot(SnapshotIterator &it) const {
         return recoverSlot(it);
     }

@@ -247,7 +247,6 @@ class RResumePoint;
 class SnapshotIterator
 {
     friend class RInstruction;
-    friend class RResumePoint;
 
     SnapshotReader snapshot_;    // Read allocations.
     RecoverReader recover_;      // Read operations.
@@ -268,12 +267,11 @@ class SnapshotIterator
     void warnUnreadableSlot() const;
 
   public:
-    SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
-                     IonJSFrameLayout *fp, const MachineState &machine);
     SnapshotIterator(const IonFrameIterator &iter);
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
 
+    // Iterate on all operations contained in the recover structure.
     bool moreOperation() const {
         return recover_.moreOperation();
     }
@@ -281,6 +279,7 @@ class SnapshotIterator
         recover_.nextOperation();
     }
 
+    // Get the current operation.
     RInstruction *operation() {
         return recover_.operation();
     }
@@ -288,18 +287,30 @@ class SnapshotIterator
         return recover_.operation();
     }
 
-    Value readFromSlot(const Slot &slot) const {
-        return slotValue(slot);
-    }
-
     size_t operandIndex() const {
         return recover_.operandIndex();
     }
+
+    // Convenience functions for iterations which do not need to visit all
+    // operations.
+    bool isFrame() const {
+        return recover_.isFrame();
+    }
+    size_t frameCount() const {
+        return recover_.frameCount();
+    }
+    void settleOnNextFrame() {
+        recover_.settleOnNextFrame();
+    }
+
 
     bool isOptimizedOut(const Slot &slot) {
         return !slotReadable(slot);
     }
 
+    Value readFromSlot(const Slot &slot) const {
+        return slotValue(slot);
+    }
     Value maybeReadFromSlot(const Slot &slot, bool silentFailure = false) const {
         if (slotReadable(slot))
             return slotValue(slot);
@@ -310,30 +321,16 @@ class SnapshotIterator
 
     void restart();
 
-    // Data extractted from the snapshot, should probably be part of the frame iterator.
+    // Data extracted from the snapshot, should probably be part of the frame
+    // iterator.
     BailoutKind bailoutKind() const {
         return snapshot_.bailoutKind();
-    }
-    RecoverOffset recoverOffset() const {
-        return snapshot_.recoverOffset();
     }
 #ifdef TRACK_SNAPSHOTS
     void spewBailingFrom() const {
         return snapshot_.spewBailingFrom();
     }
 #endif
-
-    bool isFrame() const {
-        return recover_.isFrame();
-    }
-    size_t frameCount() const {
-        return recover_.frameCount();
-    }
-    void settleOnNextFrame() {
-        recover_.settleOnNextFrame();
-    }
-    Value scopeChainValue() const;
-    Value thisValue() const;
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -384,8 +381,8 @@ class InlineFrameIteratorMaybeGC
     }
     bool isFunctionFrame() const;
     bool isConstructing() const;
-    inline JSObject *scopeChain() const;
-    inline JSObject *thisObject() const;
+    JSObject *scopeChain() const;
+    JSObject *thisObject() const;
     inline InlineFrameIteratorMaybeGC &operator++();
 
     Value maybeReadOperandByIndex(size_t index, bool fallible = true) const;
