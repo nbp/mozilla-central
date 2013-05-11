@@ -47,7 +47,15 @@ RInstruction::recoverSlot(SnapshotIterator &it)
     // Skip un-read slot of the snapshot.
     while (it.index() < index)
         it.nextSlot();
-    return it.slot_;
+    Slot s(it.slot_);
+    it.nextSlot();
+    return s;
+}
+
+Value
+RInstruction::recoverValue(const SnapshotIterator &it, const Slot &slot) const
+{
+    return it.slotValue(slot);
 }
 
 void
@@ -77,10 +85,16 @@ RResumePoint::read(CompactBufferReader &reader)
 }
 
 void
-RResumePoint::fillOperands(SnapshotIterator &it)
+RResumePoint::fillOperands(SnapshotIterator &it, JSScript *script, JSFunction *fun)
 {
     scopeChainSlot_ = recoverSlot(it);
-    thisSlot_ = recoverSlot(it);
+
+    if (fun)
+        thisSlot_ = recoverSlot(it);
+
+    if (script->argumentsHasVarBinding()) {
+        // do something here.
+    }
 }
 
 Value

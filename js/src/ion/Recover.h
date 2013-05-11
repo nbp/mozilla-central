@@ -27,12 +27,11 @@ struct RResumePoint;
 struct RInstruction
 {
     virtual void read(CompactBufferReader &reader) = 0;
-    virtual void fillOperands(SnapshotIterator &iterator) = 0;
     virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
     Slot recoverSlot(SnapshotIterator &it);
-    Value recoverValue(SnapshotIterator &it, Slot &slot);
+    Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
 
     virtual bool isResumePoint() const {
         return false;
@@ -50,7 +49,7 @@ struct RResumePoint : public RInstruction
 {
     static void write(CompactBufferWriter &writer, MNode *ins);
     void read(CompactBufferReader &reader);
-    void fillOperands(SnapshotIterator &it);
+    void fillOperands(SnapshotIterator &it, JSScript *script, JSFunction *fun);
     Value recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *numActualArgs);
 
     bool isResumePoint() const {
@@ -74,6 +73,14 @@ struct RResumePoint : public RInstruction
     }
     bool isLastFrame() const {
         return lastFrame_;
+    }
+
+    Value thisValue(const SnapshotIterator &it) const {
+        return recoverValue(it, thisSlot_);
+    }
+
+    Value scopeChainValue(const SnapshotIterator &it) const {
+        return recoverValue(it, scopeChainSlot_);
     }
 
     // Offset from script->code.

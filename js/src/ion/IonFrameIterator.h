@@ -253,12 +253,12 @@ class SnapshotIterator
     IonScript *ionScript_;       // Read from the constant pool.
 
   private:
-    bool hasLocation(const Slot::Location &loc);
-    uintptr_t fromLocation(const Slot::Location &loc);
+    bool hasLocation(const Slot::Location &loc) const;
+    uintptr_t fromLocation(const Slot::Location &loc) const;
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
-    Value slotValue(const Slot &slot);
-    bool slotReadable(const Slot &slot);
+    Value slotValue(const Slot &slot) const;
+    bool slotReadable(const Slot &slot) const;
     void warnUnreadableSlot();
 
     void init();
@@ -293,6 +293,10 @@ class SnapshotIterator
     size_t index() const {
         JS_ASSERT(!slot_.isInvalid());
         return snapshot_.index() - 1;
+    }
+
+    size_t operandIndex() const {
+        return recover_.operandIndex();
     }
 
     bool isOptimizedOut() {
@@ -331,6 +335,8 @@ class SnapshotIterator
     void settleOnNextFrame() {
         recover_.settleOnNextFrame();
     }
+    Value scopeChainValue() const;
+    Value thisValue() const;
 
     static Slot invalidSlot() {
         return Slot(Slot::INVALID_SLOT);
@@ -359,6 +365,7 @@ class InlineFrameIteratorMaybeGC
     inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
 
     size_t numSlots() const;
+    Value readSlotByIndex(size_t index) const;
     Value maybeReadSlotByIndex(size_t index) const;
 
     bool more() const {

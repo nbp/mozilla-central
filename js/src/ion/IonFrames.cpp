@@ -296,17 +296,9 @@ IonFrameIterator::machineState() const
 static void
 CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t localSlot)
 {
-    SnapshotIterator si = frame.snapshotIterator();
-
-    // Skip stack slots until we reach the iterator object.
     uint32_t base = CountArgSlots(frame.script(), frame.maybeCallee()) + frame.script()->nfixed;
-    uint32_t skipSlots = base + localSlot - 1;
-
-    for (unsigned i = 0; i < skipSlots; i++)
-        si.nextSlot();
-
-    Value v = si.read();
-    si.nextSlot();
+    uint32_t iteratorIndex = base + localSlot - 1;
+    Value v = frame.readSlotByIndex(iteratorIndex);
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1057,13 +1049,13 @@ SnapshotIterator::restart()
 }
 
 bool
-SnapshotIterator::hasLocation(const Slot::Location &loc)
+SnapshotIterator::hasLocation(const Slot::Location &loc) const
 {
     return loc.isStackSlot() || machine_.has(loc.reg());
 }
 
 uintptr_t
-SnapshotIterator::fromLocation(const Slot::Location &loc)
+SnapshotIterator::fromLocation(const Slot::Location &loc) const
 {
     if (loc.isStackSlot())
         return ReadFrameSlot(fp_, loc.stackSlot());
@@ -1089,9 +1081,9 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
 }
 
 bool
-SnapshotIterator::slotReadable(const Slot &slot)
+SnapshotIterator::slotReadable(const Slot &slot) const
 {
-    JS_ASSERT(!slot_.isInvalid());
+    JS_ASSERT(!slot.isInvalid());
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
         return machine_.has(slot.floatReg());
@@ -1114,9 +1106,9 @@ SnapshotIterator::slotReadable(const Slot &slot)
 }
 
 Value
-SnapshotIterator::slotValue(const Slot &slot)
+SnapshotIterator::slotValue(const Slot &slot) const
 {
-    JS_ASSERT(!slot_.isInvalid());
+    JS_ASSERT(!slot.isInvalid());
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
         return DoubleValue(machine_.read(slot.floatReg()));
@@ -1164,6 +1156,18 @@ SnapshotIterator::slotValue(const Slot &slot)
         JS_NOT_REACHED("huh?");
         return UndefinedValue();
     }
+}
+
+Value
+SnapshotIterator::scopeChainValue() const
+{
+    return operation()->toResumePoint()->scopeChainValue(*this);
+}
+
+Value
+SnapshotIterator::thisValue() const
+{
+    return operation()->toResumePoint()->thisValue(*this);
 }
 
 IonScript *
@@ -1229,6 +1233,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
+    rp->fillOperands(si_, script_, callee_);
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif
@@ -1244,6 +1249,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         callee_ = funval.toObject().toFunction();
         script_ = callee_->nonLazyScript();
+        rp->fillOperands(si_, script_, callee_);
     }
 
     pc_ = script_->code + rp->pcOffset();
@@ -1266,8 +1272,10 @@ Value
 InlineFrameIteratorMaybeGC<allowGC>::maybeReadSlotByIndex(size_t index) const
 {
     JS_ASSERT(index < numSlots());
+    JS_ASSERT(index >= si_.operandIndex());
     SnapshotIterator s(snapshotIterator());
 
+    index -= si_.operandIndex();
     while (index--)
         s.nextSlot();
 
@@ -1276,6 +1284,24 @@ InlineFrameIteratorMaybeGC<allowGC>::maybeReadSlotByIndex(size_t index) const
 }
 template Value InlineFrameIteratorMaybeGC<NoGC>::maybeReadSlotByIndex(size_t index) const;
 template Value InlineFrameIteratorMaybeGC<CanGC>::maybeReadSlotByIndex(size_t index) const;
+
+template <AllowGC allowGC>
+Value
+InlineFrameIteratorMaybeGC<allowGC>::readSlotByIndex(size_t index) const
+{
+    JS_ASSERT(index < numSlots());
+    JS_ASSERT(index >= si_.operandIndex());
+    SnapshotIterator s(snapshotIterator());
+
+    index -= si_.operandIndex();
+    while (index--)
+        s.nextSlot();
+
+    Value val = s.read();
+    return val;
+}
+template Value InlineFrameIteratorMaybeGC<NoGC>::readSlotByIndex(size_t index) const;
+template Value InlineFrameIteratorMaybeGC<CanGC>::readSlotByIndex(size_t index) const;
 
 template <AllowGC allowGC>
 bool
@@ -1504,6 +1530,7 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
             fprintf(stderr, "  slot %u: ", i);
 #ifdef DEBUG
         js_DumpValue(si.maybeRead());
+        si.nextSlot();
 #else
         fprintf(stderr, "?\n");
 #endif

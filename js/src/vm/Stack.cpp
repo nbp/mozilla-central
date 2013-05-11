@@ -15,6 +15,7 @@
 #include "ion/IonFrames.h"
 #include "ion/IonCompartment.h"
 #include "ion/Bailouts.h"
+#include "ion/Recover.h"
 #endif
 #include "Stack.h"
 #include "ForkJoin.h"
@@ -1087,6 +1088,7 @@ ContextStack::pushBailoutArgs(JSContext *cx, const ion::IonBailoutIterator &it, 
     CopyTo dst(iag->array());
     Value *src = it.actualArgs();
     Value thisv = iag->thisv();
+    s.operation()->toResumePoint()->fillOperands(s, it.script(), fun);
     ReadFrameArgs(dst, src, NULL, &thisv, 0, fun->nargs, argc, it.script(), s);
     return true;
 }

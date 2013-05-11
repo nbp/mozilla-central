@@ -22,12 +22,10 @@ ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
               JSScript *script, SnapshotIterator &s)
 {
     if (scopeChain)
-        *scopeChain = s.read();
-    s.nextSlot();
+        *scopeChain = s.scopeChainValue();
 
     if (thisv)
-        *thisv = s.read();
-    s.nextSlot();
+        *thisv = s.thisValue();
 
     // Skip slot for arguments object.
     if (script->argumentsHasVarBinding())
@@ -45,6 +43,7 @@ ReadFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
         // error while reading the machine state.
         Value v = s.maybeRead();
         op(v);
+        s.nextSlot();
     }
     if (iterEnd >= formalEnd) {
         for (; i < iterEnd; i++)
@@ -136,10 +135,7 @@ template <AllowGC allowGC>
 inline JSObject *
 InlineFrameIteratorMaybeGC<allowGC>::scopeChain() const
 {
-    SnapshotIterator s(si_);
-
-    // scopeChain
-    Value v = s.read();
+    Value v = si_.scopeChainValue();
     if (v.isObject()) {
         JS_ASSERT_IF(script()->hasAnalysis(), script()->analysis()->usesScopeChain());
         return &v.toObject();
@@ -153,14 +149,10 @@ inline JSObject *
 InlineFrameIteratorMaybeGC<allowGC>::thisObject() const
 {
     // JS_ASSERT(isConstructing(...));
-    SnapshotIterator s(si_);
 
-    // scopeChain
-    s.nextSlot();
-
-    // In strict modes, |this| may not be an object and thus may not be
+    // In strict modes, |this| might not be an object and thus might not be
     // readable which can either segv in read or trigger the assertion.
-    Value v = s.read();
+    Value v = si_.thisValue();
     JS_ASSERT(v.isObject());
     return &v.toObject();
 }
