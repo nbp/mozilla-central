@@ -360,7 +360,7 @@ ion::Bailout(BailoutStack *sp, BaselineBailoutInfo **bailoutInfo)
     uint32_t retval;
     if (IsBaselineEnabled(cx)) {
         *bailoutInfo = NULL;
-        retval = BailoutIonToBaseline(cx, activation, iter, false, bailoutInfo);
+        retval = BailoutIonToBaseline(cx, activation, iter, bailoutInfo);
         JS_ASSERT(retval == BAILOUT_RETURN_BASELINE ||
                   retval == BAILOUT_RETURN_FATAL_ERROR ||
                   retval == BAILOUT_RETURN_OVERRECURSED);
@@ -397,7 +397,7 @@ ion::InvalidationBailout(InvalidationBailoutStack *sp, size_t *frameSizeOut,
     uint32_t retval;
     if (IsBaselineEnabled(cx)) {
         *bailoutInfo = NULL;
-        retval = BailoutIonToBaseline(cx, activation, iter, true, bailoutInfo);
+        retval = BailoutIonToBaseline(cx, activation, iter, bailoutInfo);
         JS_ASSERT(retval == BAILOUT_RETURN_BASELINE ||
                   retval == BAILOUT_RETURN_FATAL_ERROR ||
                   retval == BAILOUT_RETURN_OVERRECURSED);

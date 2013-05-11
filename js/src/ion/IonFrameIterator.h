@@ -276,7 +276,7 @@ class SnapshotIterator
     }
 
     bool moreOperation() const {
-        return moreOperation();
+        return recover_.moreOperation();
     }
     void nextOperation() {
         recover_.nextOperation();
@@ -293,7 +293,7 @@ class SnapshotIterator
         return slotValue(slot_);
     }
     Value readFromSlot(const Slot &slot) const {
-        return slotValue(slot_);
+        return slotValue(slot);
     }
 
     size_t index() const {

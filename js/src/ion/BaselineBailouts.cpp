@@ -443,12 +443,13 @@ struct BaselineStackBuilder
 //
 static bool
 InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
-                HandleFunction fun, HandleScript script,
-                SnapshotIterator &iter, RResumePoint *rp,
-                bool invalidate, BaselineStackBuilder &builder,
+                HandleFunction fun, HandleScript script, SnapshotIterator &iter,
+                BaselineStackBuilder &builder,
                 MutableHandleFunction nextCallee, jsbytecode **callPC)
 {
+    RResumePoint *rp = iter.operation()->toResumePoint();
     uint32_t exprStackSlots = rp->numOperands() - (script->nfixed + CountArgSlots(script, fun));
+    rp->fillOperands(iter, script, fun);
 
     builder.resetFramePushed();
 
@@ -519,18 +520,15 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
         // hasScopeChain flag and this will be fixed up later in |FinishBailoutToBaseline|,
         // which calls |EnsureHasScopeObjects|.
         IonSpew(IonSpew_BaselineBailouts, "      Bailout_ArgumentCheck! (no valid scopeChain)");
-        iter.nextSlot();
 
         // Scripts with |argumentsHasVarBinding| have an extra slot.
         if (script->argumentsHasVarBinding()) {
             IonSpew(IonSpew_BaselineBailouts,
                     "      Bailout_ArgumentCheck for script with argumentsHasVarBinding!"
                     "Using empty arguments object");
-            iter.nextSlot();
         }
     } else {
-        Value v = iter.read();
-        iter.nextSlot();
+        Value v = iter.readFromSlot(rp->scopeChainSlot());
         if (v.isObject()) {
             scopeChain = &v.toObject();
             if (fun && fun->isHeavyweight())
@@ -559,8 +557,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
 
         // If script maybe has an arguments object, the second slot will hold it.
         if (script->argumentsHasVarBinding()) {
-            v = iter.read();
-            iter.nextSlot();
+            v = iter.readFromSlot(rp->argObjSlot());
             JS_ASSERT(v.isObject() || v.isUndefined());
             if (v.isObject())
                 argsObj = &v.toObject().asArguments();
@@ -582,8 +579,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     if (fun) {
         // The unpacked thisv and arguments should overwrite the pushed args present
         // in the calling frame.
-        Value thisv = iter.read();
-        iter.nextSlot();
+        Value thisv = iter.readFromSlot(rp->thisSlot());
         IonSpew(IonSpew_BaselineBailouts, "      Is function!");
         IonSpew(IonSpew_BaselineBailouts, "      thisv=%016llx", *((uint64_t *) &thisv));
 
@@ -595,8 +591,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 rp->numOperands(), fun->nargs, script->nfixed);
 
         for (uint32_t i = 0; i < fun->nargs; i++) {
-            Value arg = iter.read();
-            iter.nextSlot();
+            Value arg = rp->readFormalArg(iter);
             IonSpew(IonSpew_BaselineBailouts, "      arg %d = %016llx",
                         (int) i, *((uint64_t *) &arg));
             size_t argOffset = builder.framePushed() + IonJSFrameLayout::offsetOfActualArg(i);
@@ -605,8 +600,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     }
 
     for (uint32_t i = 0; i < script->nfixed; i++) {
-        Value slot = iter.read();
-        iter.nextSlot();
+        Value slot = rp->readFixedSlot(iter);
         if (!builder.writeValue(slot, "FixedValue"))
             return false;
     }
@@ -614,20 +608,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     IonSpew(IonSpew_BaselineBailouts, "      pushing %d expression stack slots",
                                       (int) exprStackSlots);
     for (uint32_t i = 0; i < exprStackSlots; i++) {
-        Value v;
-
-        // If coming from an invalidation bailout, and this is the topmost
-        // value, and a value override has been specified, don't read from the
-        // iterator. Otherwise, we risk using a garbage value.
-        if (rp->isLastFrame() && i == exprStackSlots - 1 && cx->runtime->hasIonReturnOverride()) {
-            JS_ASSERT(invalidate);
-            iter.nextSlot();
-            IonSpew(IonSpew_BaselineBailouts, "      [Return Override]");
-            v = cx->runtime->takeIonReturnOverride();
-        } else {
-            v = iter.read();
-            iter.nextSlot();
-        }
+        Value v = rp->readStackSlot(cx, iter);
         if (!builder.writeValue(v, "StackValue"))
             return false;
     }
@@ -1005,7 +986,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
 
 uint32_t
 ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIterator &iter,
-                          bool invalidate, BaselineBailoutInfo **bailoutInfo)
+                          BaselineBailoutInfo **bailoutInfo)
 {
     JS_ASSERT(bailoutInfo != NULL);
     JS_ASSERT(*bailoutInfo == NULL);
@@ -1061,7 +1042,6 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
     IonSpew(IonSpew_BaselineBailouts, "  Incoming frame ptr = %p", builder.startFrame());
 
     SnapshotIterator snapIter(iter);
-    RecoverReader ri(iter.ionScript(), snapIter.recoverOffset());
 
     RootedFunction callee(cx, iter.maybeCallee());
     if (callee) {
@@ -1086,13 +1066,13 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
     RootedScript scr(cx, iter.script());
 
     while (true) {
-        if (ri.isFrame()) {
-            RResumePoint *rp = ri.operation()->toResumePoint();
+        if (snapIter.isFrame()) {
+            RResumePoint *rp = snapIter.operation()->toResumePoint();
 
             IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
             jsbytecode *callPC = NULL;
             RootedFunction nextCallee(cx, NULL);
-            if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, rp, invalidate, builder,
+            if (!InitFromBailout(cx, caller, callerPC, fun, scr, snapIter, builder,
                                  &nextCallee, &callPC))
             {
                 return BAILOUT_RETURN_FATAL_ERROR;
@@ -1113,8 +1093,8 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
             frameNo++;
         }
 
-        JS_ASSERT(ri.moreOperation());
-        ri.nextOperation();
+        JS_ASSERT(snapIter.moreOperation());
+        snapIter.nextOperation();
     }
 
     IonSpew(IonSpew_BaselineBailouts, "  Done restoring frames");
