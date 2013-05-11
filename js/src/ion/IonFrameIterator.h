@@ -250,14 +250,10 @@ class SnapshotIterator
     friend class RResumePoint;
 
     SnapshotReader snapshot_;    // Read allocations.
-
     RecoverReader recover_;      // Read operations.
-    Slot slot_; // :TODO: remove ?
-
-    MachineState machine_;       // Read data from allocations.
-    IonJSFrameLayout *fp_;
-
-    IonScript *ionScript_;       // Read from the constant pool.
+    MachineState machine_;       // Read data from registers.
+    IonJSFrameLayout *fp_;       // Read data from stack slots.
+    IonScript *ionScript_;       // Read data from the constant pool.
 
   private:
     bool hasLocation(const Slot::Location &loc) const;
@@ -270,7 +266,6 @@ class SnapshotIterator
     Slot readOperand();
 
     void warnUnreadableSlot() const;
-    void init();
 
   public:
     SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
@@ -295,11 +290,6 @@ class SnapshotIterator
 
     Value readFromSlot(const Slot &slot) const {
         return slotValue(slot);
-    }
-
-    size_t index() const {
-        JS_ASSERT(!slot_.isInvalid());
-        return snapshot_.index() - 1;
     }
 
     size_t operandIndex() const {

@@ -42,12 +42,10 @@ SnapshotIterator::SnapshotIterator(const IonBailoutIterator &iter)
   : snapshot_(iter.ionScript()->snapshots() + iter.snapshotOffset(),
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
     recover_(iter.ionScript(), snapshot_.recoverOffset()),
-    slot_(Slot::INVALID_SLOT),
     machine_(iter.machineState()),
     fp_(iter.jsFrame()),
     ionScript_(iter.ionScript())
 {
-    init();
 }
 
 void

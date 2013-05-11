@@ -1003,31 +1003,26 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
   : snapshot_(ionScript->snapshots() + snapshotOffset,
               ionScript->snapshots() + ionScript->snapshotsSize()),
     recover_(ionScript, snapshot_.recoverOffset()),
-    slot_(Slot::INVALID_SLOT),
     machine_(machine),
     fp_(fp),
     ionScript_(ionScript)
 {
     JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
-    init();
 }
 
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
   : snapshot_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
     recover_(iter.ionScript(), snapshot_.recoverOffset()),
-    slot_(Slot::INVALID_SLOT),
     machine_(iter.machineState()),
     fp_(iter.jsFrame()),
     ionScript_(iter.ionScript())
 {
-    init();
 }
 
 SnapshotIterator::SnapshotIterator()
   : snapshot_(NULL, NULL),
     recover_(),
-    slot_(Slot::INVALID_SLOT),
     machine_(),
     fp_(NULL),
     ionScript_(NULL)
@@ -1035,17 +1030,10 @@ SnapshotIterator::SnapshotIterator()
 }
 
 void
-SnapshotIterator::init()
-{
-    slot_ = snapshot_.readSlot();
-}
-
-void
 SnapshotIterator::restart()
 {
     snapshot_.restart();
     recover_.restart();
-    init();
 }
 
 bool
@@ -1170,18 +1158,14 @@ SnapshotIterator::readOperand()
         return Slot(Slot::RESUME_OPERATION, opIndex);
 
     // Ensure we read in the right order.
-    JS_ASSERT(index() <= opIndex);
+    JS_ASSERT(snapshot_.index() <= opIndex);
 
     // Skip un-read slot of the snapshot.
-    while (index() < opIndex) {
-        JS_ASSERT(!slot_.isInvalid());
-        slot_ = snapshot_.readSlot();
-    }
-    Slot s = slot_;
-    {
-        JS_ASSERT(!slot_.isInvalid());
-        slot_ = snapshot_.readSlot();
-    }
+    while (snapshot_.index() < opIndex)
+        snapshot_.readSlot();
+
+    Slot s = snapshot_.readSlot();
+    JS_ASSERT(!s.isInvalid());
     return s;
 }
 
