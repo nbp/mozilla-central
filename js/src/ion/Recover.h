@@ -31,6 +31,8 @@ struct RInstruction
     virtual size_t numOperands() const = 0;
     virtual bool resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const = 0;
 
+  protected:
+    void storeResumedValue(SnapshotIterator &it, Value result) const;
     Slot recoverSlot(SnapshotIterator &it) const;
     Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
     Value maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const;
