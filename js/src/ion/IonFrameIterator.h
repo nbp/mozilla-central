@@ -248,11 +248,14 @@ class SnapshotIterator
 {
     friend class RInstruction;
 
-    SnapshotReader snapshot_;    // Read allocations.
-    RecoverReader recover_;      // Read operations.
-    MachineState machine_;       // Read data from registers.
-    IonJSFrameLayout *fp_;       // Read data from stack slots.
-    IonScript *ionScript_;       // Read data from the constant pool.
+  private:
+    SnapshotReader snapshot_;  // Read allocations.
+    RecoverReader recover_;    // Read operations.
+    MachineState machine_;     // Read data from registers.
+    IonJSFrameLayout *fp_;     // Read data from stack slots.
+    IonScript *ionScript_;     // Read data from the constant pool.
+    AutoValueVector *resumed_; // Read data from the result of recover
+                               // instructions.
 
   private:
     bool hasLocation(const Slot::Location &loc) const;
@@ -273,6 +276,7 @@ class SnapshotIterator
 
     // Start iterating again from the beginning of the snapshot.
     void restart();
+    void initResumedResults(AutoValueVector *);
 
     // Iterate on all operations contained in the recover structure.
     bool moreOperation() const {

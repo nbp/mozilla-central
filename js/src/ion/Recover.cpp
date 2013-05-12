@@ -18,16 +18,21 @@ using namespace js::ion;
 RInstruction *
 RInstruction::dispatch(void *mem, CompactBufferReader &reader)
 {
-    RInstruction *ins = NULL;
-    RecoverKind type = RecoverKind(reader.readUnsigned());
+    Kind type = Kind(reader.readUnsigned());
     switch (type) {
-      case Recover_ResumePoint:
-        ins = new (mem) RResumePoint();
+#define RECOVER_PLACEMENT_NEW(ins)              \
+      case Recover_##ins:                       \
+        return new (mem) R##ins(reader);
+
+    RECOVER_KIND_LIST(RECOVER_PLACEMENT_NEW)
+#undef RECOVER_PLACEMENT_NEW
+
+      default:
         break;
     }
 
-    ins->read(reader);
-    return ins;
+    JS_NOT_REACHED("Forgot to read/write an operand?");
+    return NULL;
 }
 
 Slot
@@ -51,7 +56,7 @@ RInstruction::maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) co
 void
 MResumePoint::writeRInstruction(CompactBufferWriter &writer) const
 {
-    writer.writeUnsigned(Recover_ResumePoint);
+    writer.writeUnsigned(RInstruction::Recover_ResumePoint);
 
     uint32_t bits = 0;
     bits = pc() - block()->info().script()->code;
@@ -61,10 +66,24 @@ MResumePoint::writeRInstruction(CompactBufferWriter &writer) const
     writer.writeUnsigned(numOperands());
 }
 
-void
-RResumePoint::read(CompactBufferReader &reader)
+bool
+RResumePoint::resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const
+{
+    JS_NOT_REACHED("Resuming a resume point? Have a look at bailouts.");
+    return false;
+}
+
+RResumePoint::RResumePoint(CompactBufferReader &reader)
+  : pcOffset_(0),
+    numOperands_(0),
+    resumeAfter_(false),
+    lastFrame_(false),
+    scopeChainSlot_(),
+    argObjSlot_(),
+    thisSlot_()
 {
     JS_STATIC_ASSERT(sizeof(*this) <= RMaxSize);
+
     uint32_t bits = reader.readUnsigned();
     resumeAfter_ = bits & 1;
     pcOffset_ = bits >> 1;

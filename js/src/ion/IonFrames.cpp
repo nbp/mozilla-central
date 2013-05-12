@@ -1004,7 +1004,8 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
     recover_(iter.ionScript(), snapshot_.recoverOffset()),
     machine_(iter.machineState()),
     fp_(iter.jsFrame()),
-    ionScript_(iter.ionScript())
+    ionScript_(iter.ionScript()),
+    resumed_(NULL)
 {
 }
 
@@ -1013,7 +1014,8 @@ SnapshotIterator::SnapshotIterator()
     recover_(),
     machine_(),
     fp_(NULL),
-    ionScript_(NULL)
+    ionScript_(NULL),
+    resumed_(NULL)
 {
 }
 
@@ -1022,6 +1024,14 @@ SnapshotIterator::restart()
 {
     snapshot_.restart();
     recover_.restart();
+}
+
+void
+SnapshotIterator::initResumedResults(AutoValueVector *resumed)
+{
+    JS_ASSERT(resumed->empty());
+    resumed->resize(recover_.numOperations());
+    resumed_ = resumed;
 }
 
 bool
@@ -1075,6 +1085,7 @@ SnapshotIterator::slotReadable(const Slot &slot) const
 #endif
 
       case Slot::RESUME_OPERATION:
+        return resumed_ && slot.operationIndex() < resumed_->length();
 
       default:
         return true;
@@ -1084,7 +1095,7 @@ SnapshotIterator::slotReadable(const Slot &slot) const
 Value
 SnapshotIterator::slotValue(const Slot &slot) const
 {
-    JS_ASSERT(!slot.isInvalid());
+    JS_ASSERT(slotReadable(slot));
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
         return DoubleValue(machine_.read(slot.floatReg()));
@@ -1125,8 +1136,7 @@ SnapshotIterator::slotValue(const Slot &slot) const
         return ionScript_->getConstant(slot.constantIndex());
 
       case Slot::RESUME_OPERATION:
-        JS_NOT_REACHED(":TODO: ... we need something here!");
-        return UndefinedValue();
+        return (*resumed_)[slot.operationIndex()];
 
       default:
         JS_NOT_REACHED("huh?");

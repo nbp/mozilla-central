@@ -128,6 +128,10 @@ class Slot
         JS_ASSERT(mode() == CONSTANT);
         return value_;
     }
+    uint32_t operationIndex() const {
+        JS_ASSERT(mode() == RESUME_OPERATION);
+        return value_;
+    }
     int32_t int32Value() const {
         JS_ASSERT(mode() == JS_INT32);
         return value_;

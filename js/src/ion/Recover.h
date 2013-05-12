@@ -13,48 +13,67 @@
 namespace js {
 namespace ion {
 
-enum RecoverKind
-{
-    // Logic used to recover one frame.
-    Recover_ResumePoint
-};
-
 class MNode;
 class SnapshotIterator;
 
-struct RResumePoint;
+#define RECOVER_KIND_LIST(_)                    \
+    _(ResumePoint)
+
+// Forward declarations of Cache kinds.
+#define FORWARD_DECLARE(kind) class R##kind;
+    RECOVER_KIND_LIST(FORWARD_DECLARE)
+#undef FORWARD_DECLARE
 
 struct RInstruction
 {
-    virtual void read(CompactBufferReader &reader) = 0;
-    virtual size_t numOperands() const = 0;
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
+
+    virtual size_t numOperands() const = 0;
+    virtual bool resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const = 0;
 
     Slot recoverSlot(SnapshotIterator &it) const;
     Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
     Value maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const;
 
-    virtual bool isResumePoint() const {
-        return false;
-    }
+  public:
+    enum Kind {
+#   define DEFINE_RECOVER_KIND(op) Recover_##op,
+        RECOVER_KIND_LIST(DEFINE_RECOVER_KIND)
+#   undef DEFINE_RECOVER_KIND
+        Recover_Invalid
+    };
 
-    RResumePoint *toResumePoint() {
-        return reinterpret_cast<RResumePoint *>(this);
-    }
-    const RResumePoint *toResumePoint() const {
-        return reinterpret_cast<const RResumePoint *>(this);
-    }
+    virtual Kind kind() const = 0;
+    virtual const char *recoverName() const = 0;
+
+#   define RECOVER_CASTS(ins)                   \
+    inline bool is##ins() const {               \
+        return kind() == Recover_##ins;         \
+    }                                           \
+                                                \
+    inline R##ins *to##ins();                   \
+    inline const R##ins *to##ins() const;
+
+    RECOVER_KIND_LIST(RECOVER_CASTS)
+#   undef RECOVER_CASTS
 };
+
+#define RECOVER_HEADER(ins)                     \
+    R##ins(CompactBufferReader &reader);        \
+    Kind kind() const {                         \
+        return RInstruction::Recover_##ins;     \
+    }                                           \
+    const char *recoverName() const {           \
+        return #ins;                            \
+    }
 
 struct RResumePoint : public RInstruction
 {
-    static void write(CompactBufferWriter &writer, MNode *ins);
-    void read(CompactBufferReader &reader);
+    RECOVER_HEADER(ResumePoint)
+
     void readFrameHeader(SnapshotIterator &it, JSScript *script, bool isFunction);
 
-    bool isResumePoint() const {
-        return true;
-    }
+    bool resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const;
 
     size_t numOperands() const {
         return numOperands_;
@@ -119,16 +138,33 @@ struct RResumePoint : public RInstruction
         return recoverValue(it, recoverSlot(it));
     }
 
+  private:
     // Offset from script->code.
     uint32_t pcOffset_;
     uint32_t numOperands_;
     bool resumeAfter_;
     bool lastFrame_;
 
+    // Header of the frame, part of the first operands.
     Slot scopeChainSlot_;
     Slot argObjSlot_;
     Slot thisSlot_;
 };
+
+#undef RECOVER_HEADER
+
+#define RECOVER_CASTS(ins)                              \
+    R##ins *RInstruction::to##ins() {                   \
+        JS_ASSERT(is##ins());                           \
+        return static_cast<R##ins *>(this);             \
+    }                                                   \
+    const R##ins *RInstruction::to##ins() const {       \
+        JS_ASSERT(is##ins());                           \
+        return static_cast<const R##ins *>(this);       \
+    }
+
+    RECOVER_KIND_LIST(RECOVER_CASTS)
+#undef RECOVER_CASTS
 
 } // namespace ion
 } // namespace js
