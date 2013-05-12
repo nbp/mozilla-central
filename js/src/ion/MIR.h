@@ -3222,6 +3222,9 @@ class MAdd : public MBinaryArithInstruction
         }
         return add;
     }
+
+    MAdd *clone() const;
+
     void analyzeTruncateBackward();
 
     double getIdentity() {

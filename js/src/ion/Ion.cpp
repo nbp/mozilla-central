@@ -1021,6 +1021,13 @@ OptimizeMIR(MIRGenerator *mir)
 
         if (mir->shouldCancel("Eliminate dead resume point operands"))
             return false;
+
+        // Move instructions closer to their only use.
+        if (!DelayInstructions(mir, graph))
+            return false;
+
+        if (mir->shouldCancel("Delay instruction execution"))
+            return false;
     }
 
     if (js_IonOptions.gvn) {

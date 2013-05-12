@@ -1153,6 +1153,16 @@ MMod::fallible()
     return !isTruncated();
 }
 
+MAdd *
+MAdd::clone() const
+{
+    MAdd *res = MAdd::New(lhs(), rhs());
+    res->specialization_ = specialization();
+    res->setResultType(type());
+    res->setTruncated(isTruncated());
+    return res;
+}
+
 bool
 MAdd::fallible()
 {

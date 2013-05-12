@@ -1392,6 +1392,77 @@ LinearSum::multiply(int32_t scale)
 }
 
 bool
+ion::DelayInstructions(MIRGenerator *mir, MIRGraph &graph)
+{
+    for (PostorderIterator block = graph.poBegin(); block != graph.poEnd(); block++) {
+        if (mir->shouldCancel("Delay instructions"))
+            return false;
+
+        // Move instruction close to there only use case.  Replace other uses by
+        // a resume instruction.
+        for (MInstructionReverseIterator inst = block->rbegin(); inst != block->rend(); ) {
+
+            MAdd *math = NULL;
+            if (inst->isAdd())
+                math = inst->toAdd();
+
+            inst++;
+            if (!math || math->isEffectful())
+                continue;
+
+            // filter for only non-phi uses in another block.
+            size_t nbUse = 0;
+            bool doOptim = true;
+            for (MUseDefIterator use(math); doOptim && nbUse <= 1 && use; use++) {
+                if (use.def()->isResumeOperation())
+                    continue;
+
+                if (use.def()->block() == *block || use.def()->isPhi())
+                    doOptim = false;
+
+                if (block->loopDepth() < use.def()->block()->loopDepth())
+                    doOptim = false;
+
+                nbUse++;
+            }
+
+            if (!doOptim || nbUse > 1)
+                continue;
+
+            for (MUseDefIterator use(math); use; use++) {
+                if (use.def()->isResumeOperation())
+                    continue;
+
+                // Clone the instruction.
+                MAdd *clone = math->clone();
+                if (!clone)
+                    return false;
+
+                // Insert it at the top of the basic block of the instruction
+                // which is using it.
+                MBasicBlock *dest = use.def()->block();
+                dest->insertBefore(*dest->begin(), clone);
+
+                // Replace all uses which are dependent on this one.
+                for (MUseIterator i(math->usesBegin()); i != math->usesEnd(); ) {
+                    if (dest->dominates(i->consumer()->block()))
+                        i = i->consumer()->replaceOperand(i, clone);
+                    else
+                        i++;
+                }
+
+                // Reset the interator as we removed a bunch of uses.
+                use = MUseDefIterator(math);
+            }
+
+            math->setResumeOperation();
+        }
+    }
+
+    return true;
+}
+
+bool
 LinearSum::add(const LinearSum &other)
 {
     for (size_t i = 0; i < other.terms_.length(); i++) {
