@@ -1444,8 +1444,9 @@ ion::DelayInstructions(MIRGenerator *mir, MIRGraph &graph)
                 dest->insertBefore(*dest->begin(), clone);
 
                 // Replace all uses which are dependent on this one.
+                MResumePoint *rp = dest->entryResumePoint();
                 for (MUseIterator i(math->usesBegin()); i != math->usesEnd(); ) {
-                    if (dest->dominates(i->consumer()->block()))
+                    if (dest->dominates(i->consumer()->block()) && i->consumer() != rp)
                         i = i->consumer()->replaceOperand(i, clone);
                     else
                         i++;
