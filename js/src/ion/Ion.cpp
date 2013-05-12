@@ -1026,6 +1026,7 @@ OptimizeMIR(MIRGenerator *mir)
         if (!DelayInstructions(mir, graph))
             return false;
 
+        IonSpewPass("Delay-Add");
         if (mir->shouldCancel("Delay instruction execution"))
             return false;
     }
