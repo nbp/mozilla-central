@@ -1,5 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug XXXXXX - IonMonkey: Add Resume operations
+Subject: Test recover instructions.
 
-Enable resume operation to delay instructions after their normal point of
-execution.
