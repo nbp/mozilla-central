@@ -332,11 +332,6 @@ SnapshotWriter::trackLocation(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mi
 #endif
 
 void
-SnapshotWriter::endFrame()
-{
-}
-
-void
 SnapshotWriter::writeSlotHeader(JSValueType type, uint32_t regCode)
 {
     JS_ASSERT(uint32_t(type) <= MAX_TYPE_FIELD_VALUE);
