@@ -41,6 +41,7 @@ class LIRGeneratorShared : public MInstructionVisitorWithDefaults
         graph(graph),
         lirGraph_(lirGraph),
         lastResumePoint_(NULL),
+        lastRecover_(NULL),
         osiPoint_(NULL)
     { }
 
