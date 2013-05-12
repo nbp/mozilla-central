@@ -161,14 +161,26 @@ CodeGeneratorShared::encode(LRecover *recover)
 }
 
 bool
-CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
-                                 uint32_t *startIndex)
+CodeGeneratorShared::encodeOperation(LSnapshot *snapshot, LRecoverOperation *operation,
+                                     uint32_t *startIndex)
 {
-    IonSpew(IonSpew_Codegen, "Encoding %u of resume point %p's operands starting from %u",
-            resumePoint->numOperands(), (void *) resumePoint, *startIndex);
-    for (uint32_t slotno = 0; slotno < resumePoint->numOperands(); slotno++) {
-        uint32_t i = slotno + *startIndex;
-        MDefinition *mir = resumePoint->getOperand(slotno);
+    MNode *recover = operation->mir;
+    IonSpew(IonSpew_Codegen, " Encoding %u operands of '%s'",
+            recover->numOperands(),
+            (recover->isResumePoint() ? "ResumePoint" : recover->toDefinition()->opName()),
+            *startIndex);
+
+    uint32_t nbSlots = 0;
+    for (uint32_t op = 0; op < recover->numOperands(); op++) {
+        MDefinition *mir = recover->getOperand(op);
+
+        JS_ASSERT(mir->isResumeOperation() == !operation->operands[op].isSlot);
+        if (mir->isResumeOperation())
+            continue;
+
+        size_t slotIndex = *startIndex + nbSlots;
+        JS_ASSERT(operation->operands[op].index == slotIndex);
+        nbSlots++;
 
         if (mir->isPassArg())
             mir = mir->toPassArg()->getArgument();
@@ -191,7 +203,7 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
           case MIRType_Boolean:
           case MIRType_Double:
           {
-            LAllocation *payload = snapshot->payloadOfSlot(i);
+            LAllocation *payload = snapshot->payloadOfSlot(slotIndex);
             JSValueType type = ValueTypeFromMIRType(mir->type());
             if (payload->isMemory()) {
                 snapshots_.addSlot(type, ToStackIndex(payload));
@@ -226,9 +238,9 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
           default:
           {
             JS_ASSERT(mir->type() == MIRType_Value);
-            LAllocation *payload = snapshot->payloadOfSlot(i);
+            LAllocation *payload = snapshot->payloadOfSlot(slotIndex);
 #ifdef JS_NUNBOX32
-            LAllocation *type = snapshot->typeOfSlot(i);
+            LAllocation *type = snapshot->typeOfSlot(slotIndex);
             if (type->isRegister()) {
                 if (payload->isRegister())
                     snapshots_.addSlot(ToRegister(type), ToRegister(payload));
@@ -248,10 +260,11 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
 #endif
             break;
           }
-      }
+        }
+
     }
 
-    *startIndex += resumePoint->numOperands();
+    *startIndex += nbSlots;
     return true;
 }
 
@@ -301,30 +314,33 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
 
     uint32_t startIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
-        MResumePoint *mir = (*it)->mir->toResumePoint();
-        MBasicBlock *block = mir->block();
-        JSFunction *fun = block->info().fun();
-        JSScript *script = block->info().script();
-        jsbytecode *pc = mir->pc();
-        uint32_t exprStack = mir->stackDepth() - block->info().ninvoke();
-        snapshots_.startFrame(fun, script, pc, exprStack);
+#ifdef DEBUG
+        if ((*it)->mir->isResumePoint()) {
+            JSContext *cx = GetIonContext()->cx;
+            MResumePoint *mir = (*it)->mir->toResumePoint();
+            MBasicBlock *block = mir->block();
+            JSFunction *fun = block->info().fun();
+            JSScript *script = block->info().script();
+            jsbytecode *pc = mir->pc();
+            uint32_t exprStack = mir->stackDepth() - block->info().ninvoke();
+            snapshots_.startFrame(fun, script, pc, exprStack);
 
-        // Ensure that all snapshot which are encoded can safely be used for
-        // bailouts.
-        DebugOnly<jsbytecode *> bailPC = pc;
-        if (mir->mode() == MResumePoint::ResumeAfter)
-            bailPC = GetNextPc(pc);
+            // Ensure that all snapshot which are encoded can safely be used for
+            // bailouts.
+            jsbytecode *bailPC = pc;
+            if (mir->mode() == MResumePoint::ResumeAfter)
+                bailPC = GetNextPc(pc);
 
-        // For fun.apply({}, arguments) the reconstructStackDepth will have stackdepth 4,
-        // but it could be that we inlined the funapply. In that case exprStackSlots,
-        // will have the real arguments in the slots and not be 4.
-        JS_ASSERT_IF(GetIonContext()->cx && JSOp(*bailPC) != JSOP_FUNAPPLY,
-                     exprStack == js_ReconstructStackDepth(GetIonContext()->cx, script, bailPC));
+            // For fun.apply({}, arguments) the reconstructStackDepth will have stackdepth 4,
+            // but it could be that we inlined the funapply. In that case exprStackSlots,
+            // will have the real arguments in the slots and not be 4.
+            JS_ASSERT_IF(cx && JSOp(*bailPC) != JSOP_FUNAPPLY,
+                         exprStack == js_ReconstructStackDepth(cx, script, bailPC));
+        }
+#endif
 
-        JS_ASSERT((*it)->operands[0].index == startIndex);
-        if (!encodeSlots(snapshot, mir, &startIndex))
+        if (!encodeOperation(snapshot, *it, &startIndex))
             return false;
-        snapshots_.endFrame();
     }
 
     snapshots_.endSnapshot();

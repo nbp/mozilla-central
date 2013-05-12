@@ -36,7 +36,6 @@ class SnapshotWriter
     void trackLocation(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
                        uint32_t lirOpcode, uint32_t lirId);
 #endif
-    void endFrame();
 
     void addSlot(const FloatRegister &reg);
     void addSlot(JSValueType type, const Register &reg);
