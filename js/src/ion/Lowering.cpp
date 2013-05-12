@@ -2696,6 +2696,8 @@ SpewResumePoint(MBasicBlock *block, MInstruction *ins, MResumePoint *resumePoint
 bool
 LIRGenerator::visitInstruction(MInstruction *ins)
 {
+    if (ins->isResumeOperation())
+        return true;
     if (!gen->ensureBallast())
         return false;
     if (!ins->accept(this))
