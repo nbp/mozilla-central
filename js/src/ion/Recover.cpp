@@ -35,6 +35,12 @@ RInstruction::dispatch(void *mem, CompactBufferReader &reader)
     return NULL;
 }
 
+void
+RInstruction::storeResumedValue(SnapshotIterator &it, Value result) const
+{
+    (*it.resumed_)[it.recover_.operationIndex()] = result;
+}
+
 Slot
 RInstruction::recoverSlot(SnapshotIterator &it) const
 {
