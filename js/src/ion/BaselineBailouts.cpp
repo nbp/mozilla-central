@@ -1041,7 +1041,9 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
         return BAILOUT_RETURN_FATAL_ERROR;
     IonSpew(IonSpew_BaselineBailouts, "  Incoming frame ptr = %p", builder.startFrame());
 
+    AutoValueVector resumed(cx);
     SnapshotIterator snapIter(iter);
+    snapIter.initResumedResults(&resumed);
 
     RootedFunction callee(cx, iter.maybeCallee());
     if (callee) {
@@ -1091,6 +1093,11 @@ ion::BailoutIonToBaseline(JSContext *cx, IonActivation *activation, IonBailoutIt
             scr = fun->nonLazyScript();
 
             frameNo++;
+        } else {
+            // We need to resume the execution of this instruction as it is
+            // needed to fully read the content of the next resume point.
+            if (!snapIter.operation()->resume(cx, scr, snapIter))
+                return BAILOUT_RETURN_FATAL_ERROR;
         }
 
         JS_ASSERT(snapIter.moreOperation());

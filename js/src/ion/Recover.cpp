@@ -66,13 +66,6 @@ MResumePoint::writeRInstruction(CompactBufferWriter &writer) const
     writer.writeUnsigned(numOperands());
 }
 
-bool
-RResumePoint::resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const
-{
-    JS_NOT_REACHED("Resuming a resume point? Have a look at bailouts.");
-    return false;
-}
-
 RResumePoint::RResumePoint(CompactBufferReader &reader)
   : pcOffset_(0),
     numOperands_(0),
@@ -147,4 +140,11 @@ RResumePoint::readStackSlot(JSContext *cx, SnapshotIterator &it) const
     }
 
     return recoverValue(it, slot);
+}
+
+bool
+RResumePoint::resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const
+{
+    JS_NOT_REACHED("Resuming a resume point? Have a look at bailouts.");
+    return false;
 }

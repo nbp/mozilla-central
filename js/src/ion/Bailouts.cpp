@@ -284,7 +284,11 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
     if (it.isConstructing())
         fp->setConstructing();
 
+    AutoValueVector resumed(cx);
     SnapshotIterator iter(it);
+    iter.initResumedResults(&resumed);
+
+    RootedScript script(cx, fp->script());
 
     while (true) {
         if (iter.isFrame()) {
@@ -298,6 +302,12 @@ ConvertFrames(JSContext *cx, IonActivation *activation, IonBailoutIterator &it)
             fp = PushInlinedFrame(cx, fp);
             if (!fp)
                 return BAILOUT_RETURN_OVERRECURSED;
+        } else {
+            // We need to resume the execution of this instruction as it is
+            // needed to fully read the content of the next resume point.
+            script = fp->script();
+            if (!iter.operation()->resume(cx, script, iter))
+                return BAILOUT_RETURN_FATAL_ERROR;
         }
 
         JS_ASSERT(iter.moreOperation());

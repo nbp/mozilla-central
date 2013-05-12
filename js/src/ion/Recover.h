@@ -29,7 +29,7 @@ struct RInstruction
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
     virtual size_t numOperands() const = 0;
-    virtual bool resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const = 0;
+    virtual bool resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const = 0;
 
     Slot recoverSlot(SnapshotIterator &it) const;
     Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
@@ -73,7 +73,7 @@ struct RResumePoint : public RInstruction
 
     void readFrameHeader(SnapshotIterator &it, JSScript *script, bool isFunction);
 
-    bool resume(JSContext *cx, JSScript *script, SnapshotIterator &it) const;
+    bool resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const;
 
     size_t numOperands() const {
         return numOperands_;
