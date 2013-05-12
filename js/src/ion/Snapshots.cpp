@@ -10,12 +10,12 @@
 #include "IonCode.h"
 #include "IonLinker.h"
 #include "IonSpewer.h"
+#include "MIR.h"
 #include "SnapshotReader.h"
 #include "SnapshotWriter.h"
 #include "Recover.h"
 
 #ifdef TRACK_SNAPSHOTS
-#include "MIR.h"
 #include "LIR.h"
 #endif
 
