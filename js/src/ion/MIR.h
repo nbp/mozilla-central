@@ -347,6 +347,9 @@ class MDefinition : public MNode
     }
 
     virtual HashNumber valueHash() const;
+    inline HashNumber flagHash() const {
+        return isResumeOperation() ? (*(uint32_t *) "RINS") : 0;
+    }
     virtual bool congruentTo(MDefinition* const &ins) const {
         return false;
     }
@@ -1637,7 +1640,7 @@ class MBinaryInstruction : public MAryInstruction<2>
         MDefinition *lhs = getOperand(0);
         MDefinition *rhs = getOperand(1);
 
-        return op() ^ lhs->valueNumber() ^ rhs->valueNumber();
+        return op() ^ lhs->valueNumber() ^ rhs->valueNumber() ^ flagHash();
     }
     void swapOperands() {
         MDefinition *temp = getOperand(0);
@@ -1696,7 +1699,7 @@ class MTernaryInstruction : public MAryInstruction<3>
         MDefinition *second = getOperand(1);
         MDefinition *third = getOperand(2);
 
-        return op() ^ first->valueNumber() ^ second->valueNumber() ^ third->valueNumber();
+        return op() ^ first->valueNumber() ^ second->valueNumber() ^ third->valueNumber() ^ flagHash();
     }
 
     bool congruentTo(MDefinition *const &ins) const
@@ -1744,7 +1747,8 @@ class MQuaternaryInstruction : public MAryInstruction<4>
         MDefinition *fourth = getOperand(3);
 
         return op() ^ first->valueNumber() ^ second->valueNumber() ^
-                      third->valueNumber() ^ fourth->valueNumber();
+                      third->valueNumber() ^ fourth->valueNumber() ^
+                      flagHash();
     }
 
     bool congruentTo(MDefinition *const &ins) const

@@ -139,7 +139,7 @@ MDefinition::valueHash() const
         uint32_t valueNumber = getOperand(i)->valueNumber();
         out = valueNumber + (out << 6) + (out << 16) - out;
     }
-    return out;
+    return out ^ flagHash();
 }
 
 bool
