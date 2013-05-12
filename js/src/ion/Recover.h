@@ -17,7 +17,8 @@ class MNode;
 class SnapshotIterator;
 
 #define RECOVER_KIND_LIST(_)                    \
-    _(ResumePoint)
+    _(ResumePoint)                              \
+    _(Add)
 
 // Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class R##kind;
@@ -151,6 +152,21 @@ struct RResumePoint : public RInstruction
     Slot scopeChainSlot_;
     Slot argObjSlot_;
     Slot thisSlot_;
+};
+
+struct RAdd : public RInstruction
+{
+    RECOVER_HEADER(Add)
+
+    bool resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const;
+
+    size_t numOperands() const {
+        return 2;
+    }
+
+  private:
+    // Offset of the instruction, as we need to monitor the overflow.
+    uint32_t pcOffset_;
 };
 
 #undef RECOVER_HEADER

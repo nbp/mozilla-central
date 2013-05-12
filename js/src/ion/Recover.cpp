@@ -11,6 +11,7 @@
 #include "MIRGraph.h"
 #include "Slots.h"
 #include "IonFrameIterator.h"
+#include "jsinterp.h"
 
 using namespace js;
 using namespace js::ion;
@@ -153,4 +154,37 @@ RResumePoint::resume(JSContext *cx, HandleScript script, SnapshotIterator &it) c
 {
     JS_NOT_REACHED("Resuming a resume point? Have a look at bailouts.");
     return false;
+}
+
+void
+MAdd::writeRInstruction(CompactBufferWriter &writer) const
+{
+    writer.writeUnsigned(RInstruction::Recover_Add);
+
+    writer.writeUnsigned(trackedPc() - block()->info().script()->code);
+}
+
+RAdd::RAdd(CompactBufferReader &reader)
+  : pcOffset_(0)
+{
+    JS_STATIC_ASSERT(sizeof(*this) <= RMaxSize);
+
+    pcOffset_ = reader.readUnsigned();
+
+    IonSpew(IonSpew_Snapshots, "RAdd: pc offset %u", pcOffset_);
+}
+
+bool
+RAdd::resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const
+{
+    jsbytecode *pc = script->code + pcOffset_;
+    RootedValue lhs(cx, recoverValue(it, recoverSlot(it)));
+    RootedValue rhs(cx, recoverValue(it, recoverSlot(it)));
+
+    Value result = UndefinedValue();
+    if (!AddValues(cx, script, pc, &lhs, &rhs, &result))
+        return false;
+
+    storeResumedValue(it, result);
+    return true;
 }

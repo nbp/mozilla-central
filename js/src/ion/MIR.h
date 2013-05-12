@@ -335,7 +335,7 @@ class MDefinition : public MNode
         trackedPc_ = pc;
     }
 
-    jsbytecode *trackedPc() {
+    jsbytecode *trackedPc() const {
         return trackedPc_;
     }
 
@@ -3232,6 +3232,8 @@ class MAdd : public MBinaryArithInstruction
     void computeRange();
     bool truncate();
     bool isOperandTruncated(size_t index) const;
+
+    void writeRInstruction(CompactBufferWriter &writer) const;
 };
 
 class MSub : public MBinaryArithInstruction
