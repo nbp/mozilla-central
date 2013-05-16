@@ -798,7 +798,6 @@ ion::BuildDominatorTree(MIRGraph &graph)
 }
 
 // A Simple, Fast Dominance Algorithm by Cooper et al.
-// Modified to support empty intersections for OSR, and in RPO.
 static MBasicBlock *
 IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
 {
@@ -824,7 +823,7 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
             finger1 = ipdom;
         }
 
-        while (finger2->id() > finger1->id()) {
+        while (finger2->pid() > finger1->pid()) {
             MBasicBlock *ipdom = finger2->immediatePDominator();
             if (ipdom == finger2)
                 return NULL; // Empty intersection.
