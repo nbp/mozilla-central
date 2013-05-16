@@ -81,6 +81,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
                                       MResumePoint *resumePoint);
 
     bool dominates(MBasicBlock *other);
+    bool pdominates(MBasicBlock *other);
 
     void setId(uint32_t id) {
         id_ = id;
@@ -250,13 +251,16 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     uint32_t nslots() const {
         return slots_.length();
     }
-    uint32_t id() const {
-        return id_;
-    }
     uint32_t numPredecessors() const {
         return predecessors_.length();
     }
+    MBasicBlock *getPredecessor(uint32_t i) const {
+        return predecessors_[i];
+    }
 
+    uint32_t id() const {
+        return id_;
+    }
     uint32_t domIndex() const {
         JS_ASSERT(!isDead());
         return domIndex_;
@@ -265,9 +269,20 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         domIndex_ = d;
     }
 
-    MBasicBlock *getPredecessor(uint32_t i) const {
-        return predecessors_[i];
+    uint32_t pid() const {
+        // for IntersectPDominator, we need to consider loop-header as if it was
+        // as the bottom of the loop, such as it would be both the dominator and
+        // the post dominator.
+        return (isLoopHeader() ? backedge()->id() + 1 : id()) - loopDepth();
     }
+    uint32_t pdomIndex() const {
+        JS_ASSERT(!isDead());
+        return domIndex_;
+    }
+    void setPDomIndex(uint32_t d) {
+        domIndex_ = d;
+    }
+
     MControlInstruction *lastIns() const {
         return lastIns_;
     }
@@ -367,6 +382,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return start_;
     }
 
+    // Dominator
     MBasicBlock *immediateDominator() const {
         return immediateDominator_;
     }
@@ -402,6 +418,35 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
 
     bool addImmediatelyDominatedBlock(MBasicBlock *child);
+
+    // Post-Dominator
+    MBasicBlock *immediatePDominator() const {
+        return immediateDominator_;
+    }
+
+    void setImmediatePDominator(MBasicBlock *dom) {
+        immediateDominator_ = dom;
+    }
+
+    MTest *immediatePDominatorBranch(BranchDirection *pdirection);
+
+    size_t numImmediatelyPDominatedBlocks() const {
+        return immediatelyDominated_.length();
+    }
+
+    MBasicBlock *getImmediatelyPDominatedBlock(size_t i) const {
+        return immediatelyDominated_[i];
+    }
+
+    size_t numPDominated() const {
+        return numDominated_;
+    }
+
+    void addNumPDominated(size_t n) {
+        numDominated_ += n;
+    }
+
+    bool addImmediatelyPDominatedBlock(MBasicBlock *child);
 
     // This function retrieves the internal instruction associated with a
     // slot, and should not be used for normal stack operations. It is an
@@ -490,10 +535,11 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     InlineForwardList<MResumePoint> resumePoints_;
     FixedList<MDefinition *> slots_;
     uint32_t stackPosition_;
+    uint32_t id_;
     MControlInstruction *lastIns_;
     jsbytecode *pc_;
-    uint32_t id_;
     uint32_t domIndex_; // Index in the dominator tree.
+    uint32_t pdomIndex_; // Index in the post-dominator tree.
     LBlock *lir_;
     MStart *start_;
     MResumePoint *entryResumePoint_;
@@ -508,6 +554,10 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     Vector<MBasicBlock *, 1, IonAllocPolicy> immediatelyDominated_;
     MBasicBlock *immediateDominator_;
     size_t numDominated_;
+    Vector<MBasicBlock *, 1, IonAllocPolicy> immediatelyPDominated_;
+    MBasicBlock *immediatePDominator_;
+    size_t numPDominated_;
+
     MBasicBlock *loopHeader_;
 
     jsbytecode *trackedPc_;

@@ -797,6 +797,154 @@ ion::BuildDominatorTree(MIRGraph &graph)
     return true;
 }
 
+// A Simple, Fast Dominance Algorithm by Cooper et al.
+// Modified to support empty intersections for OSR, and in RPO.
+static MBasicBlock *
+IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
+{
+    MBasicBlock *finger1 = block1;
+    MBasicBlock *finger2 = block2;
+
+    JS_ASSERT(finger1);
+    JS_ASSERT(finger2);
+
+    // In the original paper, the block ID comparisons are on the postorder index.
+    // This implementation iterates in RPO, so the comparisons are reversed.
+
+    // For this function to be called, the block must have multiple predecessors.
+    // If a finger is then found to be self-dominating, it must therefore be
+    // reachable from multiple roots through non-intersecting control flow.
+    // NULL is returned in this case, to denote an empty intersection.
+
+    while (finger1->pid() != finger2->pid()) {
+        while (finger1->pid() > finger2->pid()) {
+            MBasicBlock *ipdom = finger1->immediatePDominator();
+            if (ipdom == finger1)
+                return NULL; // Empty intersection.
+            finger1 = ipdom;
+        }
+
+        while (finger2->id() > finger1->id()) {
+            MBasicBlock *ipdom = finger2->immediatePDominator();
+            if (ipdom == finger2)
+                return NULL; // Empty intersection.
+            finger2 = ipdom;
+        }
+    }
+    return finger1;
+}
+
+static void
+ComputeImmediatePDominators(MIRGraph &graph)
+{
+    // All exit blocks are a root and therefore only self-dominates.
+    MIRGraphExits &exits = *graph.exitAccumulator();
+    for (MBasicBlock **block = exits.begin(); block != exits.end(); block++) {
+        (*block)->setImmediateDominator(*block);
+    }
+
+    bool changed = true;
+
+    while (changed) {
+        changed = false;
+
+        PostorderIterator block = graph.poBegin();
+
+        // For each block in RPO, intersect all dominators.
+        for (; block != graph.poEnd(); block++) {
+            // If a node has once been found to have no exclusive dominator,
+            // it will never have an exclusive dominator, so it may be skipped.
+            if (block->immediatePDominator() == *block)
+                continue;
+
+            MBasicBlock *newIPdom = block->getSuccessor(0);
+
+            // Find the first common dominator.
+            for (size_t i = 1; i < block->numSuccessors(); i++) {
+                MBasicBlock *succ = block->getSuccessor(i);
+                if (succ->immediateDominator() != NULL)
+                    newIPdom = IntersectPDominators(succ, newIPdom);
+
+                // If there is no common dominator, the block self-dominates.
+                if (newIPdom == NULL) {
+                    block->setImmediatePDominator(*block);
+                    changed = true;
+                    break;
+                }
+            }
+
+            if (newIPdom && block->immediatePDominator() != newIPdom) {
+                block->setImmediatePDominator(newIPdom);
+                changed = true;
+            }
+        }
+    }
+
+#ifdef DEBUG
+    // Assert that all blocks have dominator information.
+    for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
+        JS_ASSERT(block->immediatePDominator() != NULL);
+    }
+#endif
+}
+
+bool
+ion::BuildPostDominatorTree(MIRGraph &graph)
+{
+    ComputeImmediatePDominators(graph);
+
+    // Traversing through the graph in post-order means that every use
+    // of a definition is visited before the def itself. Since a def
+    // dominates its uses, by the time we reach a particular
+    // block, we have processed all of its dominated children, so
+    // block->numDominated() is accurate.
+    for (ReversePostorderIterator i(graph.rpoBegin()); i != graph.rpoEnd(); i++) {
+        MBasicBlock *child = *i;
+        MBasicBlock *parent = child->immediatePDominator();
+
+        // If the block only self-dominates, it has no definite parent.
+        if (child == parent)
+            continue;
+
+        if (!parent->addImmediatelyPDominatedBlock(child))
+            return false;
+
+        // An additional +1 for the child block.
+        parent->addNumPDominated(child->numPDominated() + 1);
+    }
+
+    // Now, iterate through the dominator tree and annotate every
+    // block with its index in the pre-order traversal of the
+    // dominator tree.
+    Vector<MBasicBlock *, 1, IonAllocPolicy> worklist;
+
+    // The index of the current block in the CFG traversal.
+    size_t index = 0;
+
+    // Add all self-dominating blocks to the worklist.
+    // This includes all roots. Order does not matter.
+    for (MBasicBlockIterator i(graph.begin()); i != graph.end(); i++) {
+        MBasicBlock *block = *i;
+        if (block->immediatePDominator() == block) {
+            if (!worklist.append(block))
+                return false;
+        }
+    }
+    // Starting from each self-dominating block, traverse the CFG in pre-order.
+    while (!worklist.empty()) {
+        MBasicBlock *block = worklist.popCopy();
+        block->setPDomIndex(index);
+
+        for (size_t i = 0; i < block->numImmediatelyPDominatedBlocks(); i++) {
+            if (!worklist.append(block->getImmediatelyPDominatedBlock(i)))
+                return false;
+        }
+        index++;
+    }
+
+    return true;
+}
+
 bool
 ion::BuildPhiReverseMapping(MIRGraph &graph)
 {

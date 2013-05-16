@@ -45,6 +45,9 @@ bool
 BuildDominatorTree(MIRGraph &graph);
 
 bool
+BuildPostDominatorTree(MIRGraph &graph);
+
+bool
 BuildPhiReverseMapping(MIRGraph &graph);
 
 void

@@ -833,6 +833,12 @@ MBasicBlock::addImmediatelyDominatedBlock(MBasicBlock *child)
     return immediatelyDominated_.append(child);
 }
 
+bool
+MBasicBlock::addImmediatelyPDominatedBlock(MBasicBlock *child)
+{
+    return immediatelyPDominated_.append(child);
+}
+
 void
 MBasicBlock::assertUsesAreNotWithin(MUseIterator use, MUseIterator end)
 {
@@ -980,6 +986,9 @@ MBasicBlock::clearDominatorInfo()
     setImmediateDominator(NULL);
     immediatelyDominated_.clear();
     numDominated_ = 0;
+    setImmediatePDominator(NULL);
+    immediatelyPDominated_.clear();
+    numPDominated_ = 0;
 }
 
 void
