@@ -65,6 +65,7 @@ struct CrossCompartmentKey
         ObjectWrapper,
         StringWrapper,
         DebuggerScript,
+        DebuggerSource,
         DebuggerObject,
         DebuggerEnvironment
     };
@@ -409,12 +410,6 @@ inline bool
 JSContext::typeInferenceEnabled() const
 {
     return compartment->zone()->types.inferenceEnabled;
-}
-
-inline bool
-JSContext::jaegerCompilationAllowed() const
-{
-    return compartment->zone()->types.jaegerCompilationAllowed;
 }
 
 inline js::Handle<js::GlobalObject*>

@@ -29,6 +29,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsComponentManagerUtils.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsEmbedCID.h"
 #include "nsEventListenerManager.h"
 #include <algorithm>
@@ -1417,26 +1418,26 @@ void
 TabChild::DispatchMessageManagerMessage(const nsAString& aMessageName,
                                         const nsACString& aJSONData)
 {
-    JSAutoRequest ar(mCx);
-    JS::Rooted<JS::Value> json(mCx, JSVAL_NULL);
+    AutoSafeJSContext cx;
+    JS::Rooted<JS::Value> json(cx, JSVAL_NULL);
     StructuredCloneData cloneData;
     JSAutoStructuredCloneBuffer buffer;
-    if (JS_ParseJSON(mCx,
+    if (JS_ParseJSON(cx,
                       static_cast<const jschar*>(NS_ConvertUTF8toUTF16(aJSONData).get()),
                       aJSONData.Length(),
                       json.address())) {
-        WriteStructuredClone(mCx, json, buffer, cloneData.mClosure);
+        WriteStructuredClone(cx, json, buffer, cloneData.mClosure);
         cloneData.mData = buffer.data();
         cloneData.mDataLength = buffer.nbytes();
     }
 
-    nsFrameScriptCx cx(static_cast<nsIWebBrowserChrome*>(this), this);
+    nsFrameScriptCx frameScriptCx(static_cast<nsIWebBrowserChrome*>(this), this);
     // Let the BrowserElementScrolling helper (if it exists) for this
     // content manipulate the frame state.
     nsRefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
     mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal),
-                       aMessageName, false, &cloneData, nullptr, nullptr);
+                       aMessageName, false, &cloneData, JS::NullPtr(), nullptr);
 }
 
 static void
@@ -1974,7 +1975,7 @@ TabChild::RecvAsyncMessage(const nsString& aMessage,
     nsRefPtr<nsFrameMessageManager> mm =
       static_cast<nsFrameMessageManager*>(mTabChildGlobal->mMessageManager.get());
     mm->ReceiveMessage(static_cast<EventTarget*>(mTabChildGlobal),
-                       aMessage, false, &cloneData, nullptr, nullptr);
+                       aMessage, false, &cloneData, JS::NullPtr(), nullptr);
   }
   return true;
 }

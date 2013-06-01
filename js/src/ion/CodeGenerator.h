@@ -33,6 +33,7 @@ class OutOfLineTypeOfV;
 class OutOfLineLoadTypedArray;
 class OutOfLineParNewGCThing;
 class OutOfLineUpdateCache;
+class OutOfLineCallPostWriteBarrier;
 
 class CodeGenerator : public CodeGeneratorSpecific
 {
@@ -87,6 +88,9 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitConvertElementsToDoubles(LConvertElementsToDoubles *lir);
     bool visitTypeBarrier(LTypeBarrier *lir);
     bool visitMonitorTypes(LMonitorTypes *lir);
+    bool visitPostWriteBarrierO(LPostWriteBarrierO *lir);
+    bool visitPostWriteBarrierV(LPostWriteBarrierV *lir);
+    bool visitOutOfLineCallPostWriteBarrier(OutOfLineCallPostWriteBarrier *ool);
     bool visitCallNative(LCallNative *call);
     bool emitCallInvokeFunction(LInstruction *call, Register callereg,
                                 uint32_t argc, uint32_t unusedStack);
@@ -211,6 +215,11 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool visitIteratorEnd(LIteratorEnd *lir);
     bool visitArgumentsLength(LArgumentsLength *lir);
     bool visitGetArgument(LGetArgument *lir);
+    bool emitRest(LInstruction *lir, Register array, Register numActuals,
+                  Register temp0, Register temp1, unsigned numFormals,
+                  JSObject *templateObject, const VMFunction &f);
+    bool visitRest(LRest *lir);
+    bool visitParRest(LParRest *lir);
     bool visitCallSetProperty(LCallSetProperty *ins);
     bool visitCallDeleteProperty(LCallDeleteProperty *lir);
     bool visitBitNotV(LBitNotV *lir);
@@ -248,6 +257,9 @@ class CodeGenerator : public CodeGeneratorSpecific
 
     bool visitOutOfLineParNewGCThing(OutOfLineParNewGCThing *ool);
     bool visitOutOfLineParallelAbort(OutOfLineParallelAbort *ool);
+    bool visitOutOfLinePropagateParallelAbort(OutOfLinePropagateParallelAbort *ool);
+    void loadJSScriptForBlock(MBasicBlock *block, Register reg);
+    void loadOutermostJSScript(Register reg);
 
     // Inline caches visitors.
     bool visitOutOfLineCache(OutOfLineUpdateCache *ool);
@@ -281,17 +293,19 @@ class CodeGenerator : public CodeGeneratorSpecific
     bool addGetPropertyCache(LInstruction *ins, RegisterSet liveRegs, Register objReg,
                              PropertyName *name, TypedOrValueRegister output,
                              bool allowGetters);
+    bool checkForParallelBailout(LInstruction *lir);
 
-    bool checkForParallelBailout();
     bool generateBranchV(const ValueOperand &value, Label *ifTrue, Label *ifFalse, FloatRegister fr);
 
-    bool emitParAllocateGCThing(const Register &objReg,
+    bool emitParAllocateGCThing(LInstruction *lir,
+                                const Register &objReg,
                                 const Register &threadContextReg,
                                 const Register &tempReg1,
                                 const Register &tempReg2,
                                 JSObject *templateObj);
 
-    bool emitParCallToUncompiledScript(Register calleeReg);
+    bool emitParCallToUncompiledScript(LInstruction *lir,
+                                       Register calleeReg);
 
     void emitLambdaInit(const Register &resultReg,
                         const Register &scopeChainReg,

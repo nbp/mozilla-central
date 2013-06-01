@@ -192,6 +192,16 @@ nsChangeHint nsStyleFont::CalcFontDifference(const nsFont& aFont1, const nsFont&
       (aFont1.weight == aFont2.weight) &&
       (aFont1.stretch == aFont2.stretch) &&
       (aFont1.name == aFont2.name) &&
+      (aFont1.kerning == aFont2.kerning) &&
+      (aFont1.synthesis == aFont2.synthesis) &&
+      (aFont1.variantAlternates == aFont2.variantAlternates) &&
+      (aFont1.alternateValues == aFont2.alternateValues) &&
+      (aFont1.featureValueLookup == aFont2.featureValueLookup) &&
+      (aFont1.variantCaps == aFont2.variantCaps) &&
+      (aFont1.variantEastAsian == aFont2.variantEastAsian) &&
+      (aFont1.variantLigatures == aFont2.variantLigatures) &&
+      (aFont1.variantNumeric == aFont2.variantNumeric) &&
+      (aFont1.variantPosition == aFont2.variantPosition) &&
       (aFont1.fontFeatureSettings == aFont2.fontFeatureSettings) &&
       (aFont1.languageOverride == aFont2.languageOverride)) {
     if ((aFont1.decorations == aFont2.decorations)) {
@@ -1082,11 +1092,8 @@ nsStylePosition::nsStylePosition(void)
   mHeight.SetAutoValue();
   mMinHeight.SetCoordValue(0);
   mMaxHeight.SetNoneValue();
-#ifdef MOZ_FLEXBOX
   mFlexBasis.SetAutoValue();
-#endif // MOZ_FLEXBOX
   mBoxSizing = NS_STYLE_BOX_SIZING_CONTENT;
-#ifdef MOZ_FLEXBOX
   mAlignItems = NS_STYLE_ALIGN_ITEMS_INITIAL_VALUE;
   mAlignSelf = NS_STYLE_ALIGN_SELF_AUTO;
   mFlexDirection = NS_STYLE_FLEX_DIRECTION_ROW;
@@ -1094,7 +1101,6 @@ nsStylePosition::nsStylePosition(void)
   mOrder = NS_STYLE_ORDER_INITIAL;
   mFlexGrow = 0.0f;
   mFlexShrink = 1.0f;
-#endif // MOZ_FLEXBOX
   mZIndex.SetAutoValue();
 }
 
@@ -1119,7 +1125,6 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
     return NS_CombineHint(hint, nsChangeHint_AllReflowHints);
   }
 
-#ifdef MOZ_FLEXBOX
   // Properties that apply to flex items:
   // NOTE: Changes to "order" on a flex item may trigger some repositioning.
   // If we're in a multi-line flex container, it also may affect our size
@@ -1147,7 +1152,6 @@ nsChangeHint nsStylePosition::CalcDifference(const nsStylePosition& aOther) cons
   if (mJustifyContent != aOther.mJustifyContent) {
     NS_UpdateHint(hint, nsChangeHint_NeedReflow);
   }
-#endif // MOZ_FLEXBOX
 
   if (mHeight != aOther.mHeight ||
       mMinHeight != aOther.mMinHeight ||

@@ -54,7 +54,9 @@ class Build(MachCommandBase):
     @CommandArgument('-X', '--disable-extra-make-dependencies',
                      default=False, action='store_true',
                      help='Do not add extra make dependencies.')
-    def build(self, what=None, disable_extra_make_dependencies=None, jobs=0):
+    @CommandArgument('-v', '--verbose', action='store_true',
+        help='Verbose output for what commands the build is running.')
+    def build(self, what=None, disable_extra_make_dependencies=None, jobs=0, verbose=False):
         # This code is only meant to be temporary until the more robust tree
         # building code in bug 780329 lands.
         from mozbuild.compilation.warnings import WarningsCollector
@@ -128,14 +130,15 @@ class Build(MachCommandBase):
             for make_dir, make_target in target_pairs:
                 status = self._run_make(directory=make_dir, target=make_target,
                     line_handler=on_line, log=False, print_directory=False,
-                    ensure_exit_code=False, num_jobs=jobs)
+                    ensure_exit_code=False, num_jobs=jobs, silent=not verbose)
 
                 if status != 0:
                     break
         else:
             status = self._run_make(srcdir=True, filename='client.mk',
                 line_handler=on_line, log=False, print_directory=False,
-                allow_parallel=False, ensure_exit_code=False, num_jobs=jobs)
+                allow_parallel=False, ensure_exit_code=False, num_jobs=jobs,
+                silent=not verbose)
 
             self.log(logging.WARNING, 'warning_summary',
                 {'count': len(warnings_collector.database)},
@@ -229,7 +232,7 @@ class Build(MachCommandBase):
 
 
     @Command('configure', category='build',
-        description='Configure the tree (run configure and config.status')
+        description='Configure the tree (run configure and config.status).')
     def configure(self):
         def on_line(line):
             self.log(logging.INFO, 'build_output', {'line': line}, '{line}')
@@ -466,14 +469,18 @@ class RunProgram(MachCommandBase):
         description='Run the compiled program.')
     @CommandArgument('params', default=None, nargs='...',
         help='Command-line arguments to pass to the program.')
-    def run(self, params):
+    @CommandArgument('+remote', '+r', action='store_true',
+        help='Do not pass the -no-remote argument by default.')
+    def run(self, params, remote):
         try:
-            args = [self.get_binary_path('app'), '-no-remote']
+            args = [self.get_binary_path('app')]
         except Exception as e:
             print("It looks like your program isn't built.",
                 "You can run |mach build| to build it.")
             print(e)
             return 1
+        if not remote:
+            args.append('-no-remote')
         if params:
             args.extend(params)
         return self.run_process(args=args, ensure_exit_code=False,
@@ -487,7 +494,9 @@ class DebugProgram(MachCommandBase):
         description='Debug the compiled program.')
     @CommandArgument('params', default=None, nargs='...',
         help='Command-line arguments to pass to the program.')
-    def debug(self, params):
+    @CommandArgument('+remote', '+r', action='store_true',
+        help='Do not pass the -no-remote argument by default')
+    def debug(self, params, remote):
         import which
         try:
             debugger = which.which('gdb')
@@ -496,12 +505,14 @@ class DebugProgram(MachCommandBase):
             print(e)
             return 1
         try:
-            args = [debugger, '--args', self.get_binary_path('app'), '-no-remote']
+            args = [debugger, '--args', self.get_binary_path('app')]
         except Exception as e:
             print("It looks like your program isn't built.",
                 "You can run |mach build| to build it.")
             print(e)
             return 1
+        if not remote:
+            args.append('-no-remote')
         if params:
             args.extend(params)
         return self.run_process(args=args, ensure_exit_code=False,

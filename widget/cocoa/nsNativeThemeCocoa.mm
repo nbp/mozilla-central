@@ -2307,14 +2307,14 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
             macRect.size.width -= 4;
           }
         }
-        const BOOL isOnTopOfBrightBackground = YES; // TODO: detect this properly
+        const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
         CUIDraw([NSWindow coreUIRenderer], macRect, cgContext,
                 (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
                   @"kCUIWidgetOverlayScrollBar", @"widget",
                   @"regular", @"size",
                   (isRolledOver ? @"rollover" : @""), @"state",
                   (isHorizontal ? @"kCUIOrientHorizontal" : @"kCUIOrientVertical"), @"kCUIOrientationKey",
-                  (isOnTopOfBrightBackground ? @"" : @"kCUIVariantWhite"), @"kCUIVariantKey",
+                  (isOnTopOfDarkBackground ? @"kCUIVariantWhite" : @""), @"kCUIVariantKey",
                   [NSNumber numberWithBool:YES], @"indiconly",
                   [NSNumber numberWithBool:YES], @"kCUIThumbProportionKey",
                   [NSNumber numberWithBool:YES], @"is.flipped",
@@ -2342,13 +2342,13 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
             nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0 &&
           CheckBooleanAttr(GetParentScrollbarFrame(aFrame), nsGkAtoms::hover)) {
         BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_TRACK_HORIZONTAL);
-        const BOOL isOnTopOfBrightBackground = YES; // TODO: detect this properly
+        const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
         CUIDraw([NSWindow coreUIRenderer], macRect, cgContext,
                 (CFDictionaryRef)[NSDictionary dictionaryWithObjectsAndKeys:
                   @"kCUIWidgetOverlayScrollBar", @"widget",
                   @"regular", @"size",
                   (isHorizontal ? @"kCUIOrientHorizontal" : @"kCUIOrientVertical"), @"kCUIOrientationKey",
-                  (isOnTopOfBrightBackground ? @"" : @"kCUIVariantWhite"), @"kCUIVariantKey",
+                  (isOnTopOfDarkBackground ? @"kCUIVariantWhite" : @""), @"kCUIVariantKey",
                   [NSNumber numberWithBool:YES], @"noindicator",
                   [NSNumber numberWithBool:YES], @"kCUIThumbProportionKey",
                   [NSNumber numberWithBool:YES], @"is.flipped",
@@ -2551,9 +2551,9 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
       if (nsLookAndFeel::GetInt(
             nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
         if (isHorizontal) {
-          aResult->SizeTo(1, 2, 1, 1);
-        } else {
           aResult->SizeTo(2, 1, 1, 1);
+        } else {
+          aResult->SizeTo(1, 1, 1, 2);
         }
       }
 
@@ -3068,7 +3068,7 @@ nsNativeThemeCocoa::WidgetIsContainer(uint8_t aWidgetType)
 }
 
 bool
-nsNativeThemeCocoa::ThemeDrawsFocusForWidget(nsPresContext* aPresContext, nsIFrame* aFrame, uint8_t aWidgetType)
+nsNativeThemeCocoa::ThemeDrawsFocusForWidget(uint8_t aWidgetType)
 {
   if (aWidgetType == NS_THEME_DROPDOWN ||
       aWidgetType == NS_THEME_DROPDOWN_TEXTFIELD ||

@@ -1187,7 +1187,7 @@ HTMLInputElement::ConvertStringToNumber(nsAString& aValue,
         }
 
         double date = JS::MakeDate(year, month - 1, day);
-        if (MOZ_DOUBLE_IS_NaN(date)) {
+        if (IsNaN(date)) {
           return false;
         }
 
@@ -1361,9 +1361,7 @@ HTMLInputElement::ConvertNumberToString(Decimal aValue,
         double month = JS::MonthFromTime(aValue.toDouble());
         double day = JS::DayFromTime(aValue.toDouble());
 
-        if (MOZ_DOUBLE_IS_NaN(year) ||
-            MOZ_DOUBLE_IS_NaN(month) ||
-            MOZ_DOUBLE_IS_NaN(day)) {
+        if (IsNaN(year) || IsNaN(month) || IsNaN(day)) {
           return false;
         }
 
@@ -1474,7 +1472,7 @@ HTMLInputElement::SetValueAsNumber(double aValueAsNumber, ErrorResult& aRv)
 {
   // TODO: return TypeError when HTMLInputElement is converted to WebIDL, see
   // bug 825197.
-  if (MOZ_DOUBLE_IS_INFINITE(aValueAsNumber)) {
+  if (IsInfinite(aValueAsNumber)) {
     aRv.Throw(NS_ERROR_INVALID_ARG);
     return;
   }
@@ -2602,6 +2600,17 @@ HTMLInputElement::PreHandleEvent(nsEventChainPreVisitor& aVisitor)
     FireChangeEventIfNeeded();
   }
 
+  if (mType == NS_FORM_INPUT_RANGE &&
+      (aVisitor.mEvent->message == NS_FOCUS_CONTENT ||
+       aVisitor.mEvent->message == NS_BLUR_CONTENT)) {
+    // Just as nsGenericHTMLFormElement::PreHandleEvent calls
+    // nsIFormControlFrame::SetFocus, we handle focus here.
+    nsIFrame* frame = GetPrimaryFrame();
+    if (frame) {
+      frame->InvalidateFrameSubtree();
+    }
+  }
+
   return nsGenericHTMLFormElement::PreHandleEvent(aVisitor);
 }
 
@@ -3443,7 +3452,7 @@ HTMLInputElement::SanitizeValue(nsAString& aValue)
       {
         nsresult ec;
         double val = PromiseFlatString(aValue).ToDouble(&ec);
-        if (NS_FAILED(ec) || !MOZ_DOUBLE_IS_FINITE(val)) {
+        if (NS_FAILED(ec) || !IsFinite(val)) {
           aValue.Truncate();
         }
       }
@@ -5019,8 +5028,6 @@ HTMLInputElement::GetStep() const
     step = GetDefaultStep();
   }
 
-  // TODO: This multiplication can lead to inexact results, we should use a
-  // type that supports a better precision than double. Bug 783607.
   return step * GetStepScaleFactor();
 }
 
@@ -5209,15 +5216,6 @@ HTMLInputElement::HasStepMismatch() const
   Decimal step = GetStep();
   if (step == kStepAny) {
     return false;
-  }
-
-  if (mType == NS_FORM_INPUT_DATE) {
-    // The multiplication by the stepScaleFactor for date can easily lead
-    // to precision loss, since in most use cases this value should be
-    // an integer (millisecond precision), we can get rid of the precision
-    // loss by rounding step. This will however lead to erroneous results
-    // when step was intented to have a precision superior to a millisecond.
-    step = step.round();
   }
 
   // Value has to be an integral multiple of step.

@@ -29,9 +29,7 @@
 #include "nsIOutputStream.h"
 #include "nsNetUtil.h"
 
-#define TARGET_ROOT   "/sdcard/"
-#define TARGET_SUBDIR "downloads/bluetooth/"
-#define TARGET_FOLDER TARGET_ROOT TARGET_SUBDIR
+#define TARGET_SUBDIR "Download/Bluetooth/"
 
 USING_BLUETOOTH_NAMESPACE
 using namespace mozilla;
@@ -88,7 +86,6 @@ static const uint32_t kUpdateProgressBase = 50 * 1024;
 static const uint32_t kPutRequestHeaderSize = 6;
 
 StaticAutoPtr<BluetoothOppManager> sInstance;
-StaticRefPtr<BluetoothOppManagerObserver> sOppObserver;
 
 /*
  * FIXME / Bug 806749
@@ -253,15 +250,26 @@ BluetoothOppManager::Get()
   return sInstance;
 }
 
-bool
-BluetoothOppManager::Connect(const nsAString& aDeviceObjectPath,
+void
+BluetoothOppManager::Connect(const nsAString& aDeviceAddress,
                              BluetoothReplyRunnable* aRunnable)
 {
   MOZ_ASSERT(NS_IsMainThread());
 
-  if (mSocket) {
-    NS_WARNING("BluetoothOppManager has been already connected");
-    return false;
+  NS_ENSURE_FALSE_VOID(mSocket);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE_VOID(bs);
+
+  mNeedsUpdatingSdpRecords = true;
+
+  nsString uuid;
+  BluetoothUuidHelper::GetString(BluetoothServiceClass::OBJECT_PUSH, uuid);
+
+  if (NS_FAILED(bs->GetServiceChannel(aDeviceAddress, uuid, this))) {
+    DispatchBluetoothReply(aRunnable, BluetoothValue(),
+                           NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
+    return;
   }
 
   // Stop listening because currently we only support one connection at a time.
@@ -275,25 +283,11 @@ BluetoothOppManager::Connect(const nsAString& aDeviceObjectPath,
     mL2capSocket = nullptr;
   }
 
-  BluetoothService* bs = BluetoothService::Get();
-  NS_ENSURE_TRUE(bs, false);
-
-  nsString uuid;
-  BluetoothUuidHelper::GetString(BluetoothServiceClass::OBJECT_PUSH, uuid);
+  MOZ_ASSERT(!mRunnable);
 
   mRunnable = aRunnable;
   mSocket =
     new BluetoothSocket(this, BluetoothSocketType::RFCOMM, true, true);
-
-  nsresult rv = bs->GetSocketViaService(aDeviceObjectPath,
-                                        uuid,
-                                        BluetoothSocketType::RFCOMM,
-                                        true,
-                                        true,
-                                        mSocket,
-                                        mRunnable);
-
-  return NS_FAILED(rv) ? false : true;
 }
 
 void
@@ -492,53 +486,13 @@ BluetoothOppManager::AfterOppDisconnected()
 void
 BluetoothOppManager::DeleteReceivedFile()
 {
-  nsString path;
-  path.AssignLiteral(TARGET_FOLDER);
-
-  nsCOMPtr<nsIFile> f;
-  nsresult rv = NS_NewLocalFile(path + sFileName, false, getter_AddRefs(f));
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Couldn't find received file, nothing to delete.");
-    return;
-  }
-
   if (mOutputStream) {
     mOutputStream->Close();
     mOutputStream = nullptr;
   }
 
-  f->Remove(false);
-}
-
-DeviceStorageFile*
-BluetoothOppManager::CreateDeviceStorageFile(nsIFile* aFile)
-{
-  nsString fullFilePath;
-  aFile->GetPath(fullFilePath);
-
-  MOZ_ASSERT(StringBeginsWith(fullFilePath, NS_LITERAL_STRING(TARGET_ROOT)));
-
-  nsDependentSubstring storagePath =
-    Substring(fullFilePath, strlen(TARGET_ROOT));
-
-  nsCOMPtr<nsIMIMEService> mimeSvc = do_GetService(NS_MIMESERVICE_CONTRACTID);
-  NS_ENSURE_TRUE(mimeSvc, nullptr);
-
-  nsCString mimeType;
-  nsresult rv = mimeSvc->GetTypeFromFile(aFile, mimeType);
-  if (NS_FAILED(rv)) {
-    return nullptr;
-  }
-
-  if (StringBeginsWith(mimeType, NS_LITERAL_CSTRING("image/"))) {
-    return new DeviceStorageFile(NS_LITERAL_STRING("pictures"), storagePath);
-  } else if (StringBeginsWith(mimeType, NS_LITERAL_CSTRING("video/"))) {
-    return new DeviceStorageFile(NS_LITERAL_STRING("videos"), storagePath);
-  } else if (StringBeginsWith(mimeType, NS_LITERAL_CSTRING("audio/"))) {
-    return new DeviceStorageFile(NS_LITERAL_STRING("music"), storagePath);
-  } else {
-    NS_WARNING("Couldn't recognize the mimetype of received file.");
-    return nullptr;
+  if (mDsFile && mDsFile->mFile) {
+    mDsFile->mFile->Remove(false);
   }
 }
 
@@ -548,30 +502,24 @@ BluetoothOppManager::CreateFile()
   MOZ_ASSERT(mPacketLeftLength == 0);
 
   nsString path;
-  path.AssignLiteral(TARGET_FOLDER);
+  path.AssignLiteral(TARGET_SUBDIR);
+  path.Append(sFileName);
 
-  nsCOMPtr<nsIFile> f;
-  nsresult rv;
-  rv = NS_NewLocalFile(path + sFileName, false, getter_AddRefs(f));
-  if (NS_FAILED(rv)) {
-    NS_WARNING("Couldn't new a local file");
-    return false;
-  }
-
-  rv = f->CreateUnique(nsIFile::NORMAL_FILE_TYPE, 00644);
-  if (NS_FAILED(rv)) {
+  mDsFile = DeviceStorageFile::CreateUnique(path, nsIFile::NORMAL_FILE_TYPE, 0644);
+  if (!mDsFile) {
     NS_WARNING("Couldn't create the file");
     return false;
   }
 
+  nsCOMPtr<nsIFile> f;
+  mDsFile->mFile->Clone(getter_AddRefs(f));
+  
   /*
    * The function CreateUnique() may create a file with a different file
    * name from the original sFileName. Therefore we have to retrieve
    * the file name again.
    */
   f->GetLeafName(sFileName);
-
-  mDsFile = CreateDeviceStorageFile(f);
 
   NS_NewLocalFileOutputStream(getter_AddRefs(mOutputStream), f);
   NS_ENSURE_TRUE(mOutputStream, false);
@@ -1424,7 +1372,7 @@ BluetoothOppManager::OnConnectSuccess(BluetoothSocket* aSocket)
     if (NS_FAILED(NS_DispatchToMainThread(mRunnable))) {
       NS_WARNING("Failed to dispatch to main thread!");
     }
-    mRunnable.forget();
+    mRunnable = nullptr;
   }
 
   // Cache device address since we can't get socket address when a remote
@@ -1436,14 +1384,9 @@ void
 BluetoothOppManager::OnConnectError(BluetoothSocket* aSocket)
 {
   if (mRunnable) {
-    nsString errorStr;
-    errorStr.AssignLiteral("Failed to connect with a bluetooth opp manager!");
-    BluetoothReply* reply = new BluetoothReply(BluetoothReplyError(errorStr));
-    mRunnable->SetReply(reply);
-    if (NS_FAILED(NS_DispatchToMainThread(mRunnable))) {
-      NS_WARNING("Failed to dispatch to main thread!");
-    }
-    mRunnable.forget();
+    DispatchBluetoothReply(mRunnable, BluetoothValue(),
+                           NS_LITERAL_STRING("OnConnectError:no runnable"));
+    mRunnable = nullptr;
   }
 
   mSocket = nullptr;
@@ -1484,3 +1427,62 @@ BluetoothOppManager::OnDisconnect(BluetoothSocket* aSocket)
   mSocket = nullptr;
   Listen();
 }
+
+void
+BluetoothOppManager::OnGetServiceChannel(const nsAString& aDeviceAddress,
+                                         const nsAString& aServiceUuid,
+                                         int aChannel)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!aDeviceAddress.IsEmpty());
+  MOZ_ASSERT(mRunnable);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE_VOID(bs);
+
+  if (aChannel < 0) {
+    if (mNeedsUpdatingSdpRecords) {
+      mNeedsUpdatingSdpRecords = false;
+      bs->UpdateSdpRecords(aDeviceAddress, this);
+    } else {
+      DispatchBluetoothReply(mRunnable, BluetoothValue(),
+                             NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
+      mRunnable = nullptr;
+      mSocket = nullptr;
+      Listen();
+    }
+
+    return;
+  }
+
+  if (!mSocket->Connect(NS_ConvertUTF16toUTF8(aDeviceAddress), aChannel)) {
+    DispatchBluetoothReply(mRunnable, BluetoothValue(),
+                           NS_LITERAL_STRING("SocketConnectionError"));
+    mRunnable = nullptr;
+    mSocket = nullptr;
+    Listen();
+  }
+}
+
+void
+BluetoothOppManager::OnUpdateSdpRecords(const nsAString& aDeviceAddress)
+{
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!aDeviceAddress.IsEmpty());
+  MOZ_ASSERT(mRunnable);
+
+  BluetoothService* bs = BluetoothService::Get();
+  NS_ENSURE_TRUE_VOID(bs);
+
+  nsString uuid;
+  BluetoothUuidHelper::GetString(BluetoothServiceClass::OBJECT_PUSH, uuid);
+
+  if (NS_FAILED(bs->GetServiceChannel(aDeviceAddress, uuid, this))) {
+    DispatchBluetoothReply(mRunnable, BluetoothValue(),
+                           NS_LITERAL_STRING(ERR_SERVICE_CHANNEL_NOT_FOUND));
+    mRunnable = nullptr;
+    mSocket = nullptr;
+    Listen();
+  }
+}
+

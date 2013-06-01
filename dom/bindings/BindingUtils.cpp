@@ -1734,14 +1734,14 @@ ReportLenientThisUnwrappingFailure(JSContext* cx, JS::Handle<JSObject*> obj)
 
 // Date implementation methods
 Date::Date() :
-  mMsecSinceEpoch(MOZ_DOUBLE_NaN())
+  mMsecSinceEpoch(UnspecifiedNaN())
 {
 }
 
 bool
 Date::IsUndefined() const
 {
-  return MOZ_DOUBLE_IS_NaN(mMsecSinceEpoch);
+  return IsNaN(mMsecSinceEpoch);
 }
 
 bool
@@ -1767,6 +1767,41 @@ Date::ToDateObject(JSContext* cx, JS::Value* vp) const
     return false;
   }
   *vp = JS::ObjectValue(*obj);
+  return true;
+}
+
+bool
+GetWindowForJSImplementedObject(JSContext* cx, JS::Handle<JSObject*> obj,
+                                nsPIDOMWindow** window)
+{
+  // Be very careful to not get tricked here.
+  MOZ_ASSERT(NS_IsMainThread());
+  if (!xpc::AccessCheck::isChrome(js::GetObjectCompartment(obj))) {
+    NS_RUNTIMEABORT("Should have a chrome object here");
+  }
+
+  // Look up the content-side object.
+  JS::Rooted<JS::Value> domImplVal(cx);
+  if (!JS_GetProperty(cx, obj, "__DOM_IMPL__", domImplVal.address())) {
+    return false;
+  }
+
+  if (!domImplVal.isObject()) {
+    ThrowErrorMessage(cx, MSG_NOT_OBJECT);
+    return false;
+  }
+
+  // Go ahead and get the global from it.  GlobalObject will handle
+  // doing unwrapping as needed.
+  GlobalObject global(cx, &domImplVal.toObject());
+  if (global.Failed()) {
+    return false;
+  }
+
+  // It's OK if we have null here: that just means the content-side
+  // object really wasn't associated with any window.
+  nsCOMPtr<nsPIDOMWindow> win(do_QueryInterface(global.Get()));
+  win.forget(window);
   return true;
 }
 

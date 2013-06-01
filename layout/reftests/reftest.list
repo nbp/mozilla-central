@@ -43,7 +43,7 @@ skip-if(B2G) include box-properties/reftest.list
 skip-if(Android||B2G) include box-shadow/reftest.list
 
 # bugs/
-skip-if(Android) include bugs/reftest.list
+include bugs/reftest.list
 
 # canvas 2D
 include canvas/reftest.list
@@ -282,11 +282,14 @@ skip-if(B2G) include text-indent/reftest.list
 # text-shadow/
 skip-if(Android||B2G) include text-shadow/reftest.list
 
-# theme (osx)
-skip-if(B2G) include ../../toolkit/themes/osx/reftests/reftest.list
+# text-svgglyphs/
+include text-svgglyphs/reftest.list
 
 # text-transform/
 skip-if(B2G) include text-transform/reftest.list
+
+# theme (osx)
+skip-if(B2G) include ../../toolkit/themes/osx/reftests/reftest.list
 
 # -moz-transform/
 include transform/reftest.list
@@ -321,6 +324,7 @@ skip-if(B2G) include z-index/reftest.list
 # reftest(s) to verify content bugfixes
 skip-if(B2G) include ../../content/html/document/reftests/reftests.list
 skip-if(B2G) include ../../content/html/content/reftests/reftest.list
+skip-if(B2G) include ../../dom/imptests/reftest.list
 
 # editor/
 skip-if(B2G) include ../../editor/reftests/reftest.list

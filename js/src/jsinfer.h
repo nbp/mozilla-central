@@ -101,10 +101,6 @@ class RootedBase<TaggedProto> : public TaggedProtoOperations<Rooted<TaggedProto>
 
 class CallObject;
 
-namespace mjit {
-    struct JITScript;
-}
-
 namespace ion {
     struct IonScript;
 }
@@ -451,6 +447,7 @@ class TypeSet
     bool unknownObject() const { return !!(flags & (TYPE_FLAG_UNKNOWN | TYPE_FLAG_ANYOBJECT)); }
 
     bool empty() const { return !baseFlags() && !baseObjectCount(); }
+    bool noConstraints() const { return constraintList == NULL; }
 
     bool hasAnyFlag(TypeFlags flags) const {
         JS_ASSERT((flags & TYPE_FLAG_BASE_MASK) == flags);
@@ -499,6 +496,7 @@ class TypeSet
     inline TypeObjectKey *getObject(unsigned i) const;
     inline JSObject *getSingleObject(unsigned i) const;
     inline TypeObject *getTypeObject(unsigned i) const;
+    inline TypeObject *getTypeOrSingleObject(JSContext *cx, unsigned i) const;
 
     void setOwnProperty(bool configurable) {
         flags |= TYPE_FLAG_OWN_PROPERTY;
@@ -1280,7 +1278,6 @@ typedef HashMap<AllocationSiteKey,ReadBarriered<TypeObject>,AllocationSiteKey,Sy
 struct CompilerOutput
 {
     enum Kind {
-        MethodJIT,
         Ion,
         ParallelIon
     };
@@ -1301,7 +1298,6 @@ struct CompilerOutput
     Kind kind() const { return static_cast<Kind>(kindInt); }
     void setKind(Kind k) { kindInt = k; }
 
-    mjit::JITScript *mjit() const;
     ion::IonScript *ion() const;
 
     bool isValid() const;
@@ -1474,13 +1470,6 @@ struct TypeZone
 
     /* Whether type inference is enabled in this compartment. */
     bool                         inferenceEnabled;
-
-    /*
-     * JM compilation is allowed only if script analysis has been used to
-     * monitor the behavior of all scripts in this zone since its creation.
-     * OSR in JM requires this property.
-     */
-    bool jaegerCompilationAllowed;
 
     TypeZone(JS::Zone *zone);
     ~TypeZone();

@@ -608,13 +608,6 @@ class JS_PUBLIC_API(CustomAutoRooter) : private AutoGCRooter
     /* Supplied by derived class to trace roots. */
     virtual void trace(JSTracer *trc) = 0;
 
-    /* Methods for trace() to call to mark roots, for external clients. */
-    static void traceObject(JSTracer *trc, JSObject **thingp, const char *name);
-    static void traceScript(JSTracer *trc, JSScript **thingp, const char *name);
-    static void traceString(JSTracer *trc, JSString **thingp, const char *name);
-    static void traceId(JSTracer *trc, jsid *thingp, const char *name);
-    static void traceValue(JSTracer *trc, JS::Value *thingp, const char *name);
-
   private:
     MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
 };
@@ -1164,7 +1157,7 @@ JS_NumberValue(double d)
 {
     int32_t i;
     d = JS_CANONICALIZE_NAN(d);
-    if (MOZ_DOUBLE_IS_INT32(d, &i))
+    if (mozilla::DoubleIsInt32(d, &i))
         return INT_TO_JSVAL(i);
     return DOUBLE_TO_JSVAL(d);
 }
@@ -1543,7 +1536,7 @@ ToBoolean(const Value &v)
         return false;
     if (v.isDouble()) {
         double d = v.toDouble();
-        return !MOZ_DOUBLE_IS_NaN(d) && d != 0;
+        return !mozilla::IsNaN(d) && d != 0;
     }
 
     /* The slow path handles strings and objects. */
@@ -1947,31 +1940,25 @@ JS_StringToVersion(const char *string);
                                                    will be passed to each call
                                                    to JS_ExecuteScript. */
 #define JSOPTION_UNROOTED_GLOBAL JS_BIT(13)     /* The GC will not root the
-                                                   contexts' global objects
-                                                   (see JS_GetGlobalObject),
-                                                   leaving that up to the
+                                                   contexts' default compartment
+                                                   object, leaving that up to the
                                                    embedding. */
 
-#define JSOPTION_METHODJIT      JS_BIT(14)      /* Whole-method JIT. */
+#define JSOPTION_BASELINE       JS_BIT(14)      /* Baseline compiler. */
 
-#define JSOPTION_BASELINE       JS_BIT(15)      /* Baseline compiler. */
+#define JSOPTION_PCCOUNT        JS_BIT(15)      /* Collect per-op execution counts */
 
-#define JSOPTION_METHODJIT_ALWAYS \
-                                JS_BIT(16)      /* Always whole-method JIT,
-                                                   don't tune at run-time. */
-#define JSOPTION_PCCOUNT        JS_BIT(17)      /* Collect per-op execution counts */
-
-#define JSOPTION_TYPE_INFERENCE JS_BIT(18)      /* Perform type inference. */
-#define JSOPTION_STRICT_MODE    JS_BIT(19)      /* Provides a way to force
+#define JSOPTION_TYPE_INFERENCE JS_BIT(16)      /* Perform type inference. */
+#define JSOPTION_STRICT_MODE    JS_BIT(17)      /* Provides a way to force
                                                    strict mode for all code
                                                    without requiring
                                                    "use strict" annotations. */
 
-#define JSOPTION_ION            JS_BIT(20)      /* IonMonkey */
+#define JSOPTION_ION            JS_BIT(18)      /* IonMonkey */
 
-#define JSOPTION_ASMJS          JS_BIT(21)      /* optimizingasm.js compiler */
+#define JSOPTION_ASMJS          JS_BIT(19)      /* optimizingasm.js compiler */
 
-#define JSOPTION_MASK           JS_BITMASK(22)
+#define JSOPTION_MASK           JS_BITMASK(20)
 
 extern JS_PUBLIC_API(uint32_t)
 JS_GetOptions(JSContext *cx);
@@ -2091,9 +2078,6 @@ extern JS_PUBLIC_API(void)
 JS_IterateCompartments(JSRuntime *rt, void *data,
                        JSIterateCompartmentCallback compartmentCallback);
 
-extern JS_PUBLIC_API(JSObject *)
-JS_GetGlobalObject(JSContext *cx);
-
 extern JS_PUBLIC_API(void)
 JS_SetGlobalObject(JSContext *cx, JSObject *obj);
 
@@ -2158,6 +2142,13 @@ JS_GetFunctionPrototype(JSContext *cx, JSObject *forObj);
  */
 extern JS_PUBLIC_API(JSObject *)
 JS_GetObjectPrototype(JSContext *cx, JSObject *forObj);
+
+/*
+ * Returns the original value of |Array.prototype| from the global object in
+ * which |forObj| was created.
+ */
+extern JS_PUBLIC_API(JSObject *)
+JS_GetArrayPrototype(JSContext *cx, JSObject *forObj);
 
 extern JS_PUBLIC_API(JSObject *)
 JS_GetGlobalForObject(JSContext *cx, JSObject *obj);
@@ -3604,12 +3595,19 @@ JS_StealArrayBufferContents(JSContext *cx, JSObject *obj, void **contents,
  * required. The pointer to pass to JS_NewArrayBufferWithContents is returned
  * in |contents|. The pointer to the |nbytes| of usable memory is returned in
  * |data|. (*|contents| will contain a header before |data|.) The only legal
- * operations on *|contents| is to free it or pass it to
- * JS_NewArrayBufferWithContents.
+ * operations on *|contents| is to free it, or pass it to
+ * JS_NewArrayBufferWithContents or JS_ReallocateArrayBufferContents.
  */
 extern JS_PUBLIC_API(JSBool)
 JS_AllocateArrayBufferContents(JSContext *cx, uint32_t nbytes, void **contents, uint8_t **data);
 
+/*
+ * Reallocate memory allocated by JS_AllocateArrayBufferContents, growing or shrinking it
+ * as appropriate.  The new data pointer will be returned in data.  If *contents is NULL,
+ * behaves like JS_AllocateArrayBufferContents.
+ */
+extern JS_PUBLIC_API(JSBool)
+JS_ReallocateArrayBufferContents(JSContext *cx, uint32_t nbytes, void **contents, uint8_t **data);
 
 extern JS_PUBLIC_API(JSIdArray *)
 JS_Enumerate(JSContext *cx, JSObject *obj);
@@ -3880,7 +3878,6 @@ struct JS_PUBLIC_API(CompileOptions) {
     bool forEval;
     bool noScriptRval;
     bool selfHostingMode;
-    bool userBit;
     enum SourcePolicy {
         NO_SOURCE,
         LAZY_SOURCE,
@@ -3899,7 +3896,6 @@ struct JS_PUBLIC_API(CompileOptions) {
     CompileOptions &setForEval(bool eval) { forEval = eval; return *this; }
     CompileOptions &setNoScriptRval(bool nsr) { noScriptRval = nsr; return *this; }
     CompileOptions &setSelfHostingMode(bool shm) { selfHostingMode = shm; return *this; }
-    CompileOptions &setUserBit(bool bit) { userBit = bit; return *this; }
     CompileOptions &setSourcePolicy(SourcePolicy sp) { sourcePolicy = sp; return *this; }
 };
 

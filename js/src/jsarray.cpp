@@ -24,8 +24,6 @@
 #include "jstypes.h"
 #include "jsutil.h"
 #include "ds/Sort.h"
-#include "methodjit/MethodJIT.h"
-#include "methodjit/StubCalls-inl.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/ForkJoin.h"
 #include "vm/NumericConversions.h"
@@ -47,6 +45,7 @@ using namespace js::types;
 
 using mozilla::ArrayLength;
 using mozilla::DebugOnly;
+using mozilla::IsNaN;
 using mozilla::PointerRangeSize;
 
 JSBool
@@ -1471,7 +1470,7 @@ SortComparatorFunction::operator()(const Value &a, const Value &b, bool *lessOrE
      * 'consistent compare functions' that don't return NaN, but is silent
      * about what the result should be. So we currently ignore it.
      */
-    *lessOrEqualp = (MOZ_DOUBLE_IS_NaN(cmp) || cmp <= 0);
+    *lessOrEqualp = (IsNaN(cmp) || cmp <= 0);
     return true;
 }
 
@@ -2005,15 +2004,6 @@ js::ArrayShiftMoveElements(JSObject *obj)
     obj->moveDenseElementsUnbarriered(0, 1, initlen);
 }
 
-#ifdef JS_METHODJIT
-void JS_FASTCALL
-mjit::stubs::ArrayShift(VMFrame &f)
-{
-    JSObject *obj = &f.regs.sp[-1].toObject();
-    ArrayShiftMoveElements(obj);
-}
-#endif /* JS_METHODJIT */
-
 /* ES5 15.4.4.9 */
 JSBool
 js::array_shift(JSContext *cx, unsigned argc, Value *vp)
@@ -2436,7 +2426,7 @@ array_splice(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-#ifdef JS_METHODJIT
+#ifdef JS_ION
 bool
 js::array_concat_dense(JSContext *cx, HandleObject obj1, HandleObject obj2, HandleObject result)
 {
@@ -2459,22 +2449,10 @@ js::array_concat_dense(JSContext *cx, HandleObject obj1, HandleObject obj2, Hand
 
     result->initDenseElements(0, obj1->getDenseElements(), initlen1);
     result->initDenseElements(initlen1, obj2->getDenseElements(), initlen2);
-
     result->setArrayLengthInt32(len);
     return true;
 }
-
-void JS_FASTCALL
-mjit::stubs::ArrayConcatTwoArrays(VMFrame &f)
-{
-    RootedObject result(f.cx, &f.regs.sp[-3].toObject());
-    RootedObject obj1(f.cx, &f.regs.sp[-2].toObject());
-    RootedObject obj2(f.cx, &f.regs.sp[-1].toObject());
-
-    if (!array_concat_dense(f.cx, obj1, obj2, result))
-        THROW();
-}
-#endif /* JS_METHODJIT */
+#endif /* JS_ION */
 
 /*
  * Python-esque sequence operations.
@@ -2990,18 +2968,6 @@ js::NewDenseUnallocatedArray(JSContext *cx, uint32_t length, JSObject *proto /* 
 {
     return NewArray<false>(cx, length, proto, newKind);
 }
-
-#ifdef JS_METHODJIT
-JSObject * JS_FASTCALL
-mjit::stubs::NewDenseUnallocatedArray(VMFrame &f, uint32_t length)
-{
-    JSObject *obj = NewArray<false>(f.cx, length, (JSObject *)f.scratch);
-    if (!obj)
-        THROWV(NULL);
-
-    return obj;
-}
-#endif
 
 JSObject *
 js::NewDenseCopiedArray(JSContext *cx, uint32_t length, HandleObject src, uint32_t elementOffset,

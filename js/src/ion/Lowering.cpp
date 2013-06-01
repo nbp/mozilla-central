@@ -118,7 +118,7 @@ LIRGenerator::visitParCheckOverRecursed(MParCheckOverRecursed *ins)
     LParCheckOverRecursed *lir = new LParCheckOverRecursed(
         useRegister(ins->parSlice()),
         temp());
-    if (!add(lir))
+    if (!add(lir, ins))
         return false;
     if (!assignSafepoint(lir, ins))
         return false;
@@ -293,8 +293,7 @@ LIRGenerator::visitPassArg(MPassArg *arg)
 
     // Known types can move constant types and/or payloads.
     LStackArgT *stack = new LStackArgT(argslot, useRegisterOrConstant(opd));
-    stack->setMir(arg);
-    return add(stack);
+    return add(stack, arg);
 }
 
 bool
@@ -427,8 +426,6 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
 {
     JS_ASSERT(apply->getFunction()->type() == MIRType_Object);
 
-    JSFunction *target = apply->getSingleTarget();
-
     // Assert if we cannot build a rectifier frame.
     JS_ASSERT(CallTempReg0 != ArgumentsRectifierReg);
     JS_ASSERT(CallTempReg1 != ArgumentsRectifierReg);
@@ -448,7 +445,7 @@ LIRGenerator::visitApplyArgs(MApplyArgs *apply)
         return false;
 
     // Bailout is only needed in the case of possible non-JSFunction callee.
-    if (!target && !assignSnapshot(lir))
+    if (!apply->getSingleTarget() && !assignSnapshot(lir))
         return false;
 
     if (!defineReturn(lir, apply))
@@ -486,7 +483,7 @@ LIRGenerator::visitFilterArguments(MFilterArguments *ins)
                                                  tempFixed(CallTempReg1),
                                                  tempFixed(CallTempReg2));
 
-    return assignSnapshot(lir) && add(lir, ins);
+    return assignSnapshot(lir) && add(lir, ins) && assignSafepoint(lir, ins);
 }
 
 bool
@@ -1023,14 +1020,15 @@ LIRGenerator::visitMinMax(MMinMax *ins)
     MDefinition *first = ins->getOperand(0);
     MDefinition *second = ins->getOperand(1);
 
+    ReorderCommutative(&first, &second);
+
     if (ins->specialization() == MIRType_Int32) {
-        ReorderCommutative(&first, &second);
         LMinMaxI *lir = new LMinMaxI(useRegisterAtStart(first), useRegisterOrConstant(second));
         return defineReuseInput(lir, ins, 0);
-    } else {
-        LMinMaxD *lir = new LMinMaxD(useRegisterAtStart(first), useRegister(second));
-        return defineReuseInput(lir, ins, 0);
     }
+
+    LMinMaxD *lir = new LMinMaxD(useRegisterAtStart(first), useRegister(second));
+    return defineReuseInput(lir, ins, 0);
 }
 
 bool
@@ -1208,6 +1206,7 @@ LIRGenerator::visitMul(MMul *ins)
     }
     if (ins->specialization() == MIRType_Double) {
         JS_ASSERT(lhs->type() == MIRType_Double);
+        ReorderCommutative(&lhs, &rhs);
 
         // If our LHS is a constant -1.0, we can optimize to an LNegD.
         if (lhs->isConstant() && lhs->toConstant()->value() == DoubleValue(-1.0))
@@ -1640,9 +1639,11 @@ LIRGenerator::visitParSlice(MParSlice *ins)
 bool
 LIRGenerator::visitParWriteGuard(MParWriteGuard *ins)
 {
-    return add(new LParWriteGuard(useFixed(ins->parSlice(), CallTempReg0),
-                                  useFixed(ins->object(), CallTempReg1),
-                                  tempFixed(CallTempReg2)));
+    LParWriteGuard *lir = new LParWriteGuard(useFixed(ins->parSlice(), CallTempReg0),
+                                             useFixed(ins->object(), CallTempReg1),
+                                             tempFixed(CallTempReg2));
+    lir->setMir(ins);
+    return add(lir, ins);
 }
 
 bool
@@ -1651,7 +1652,7 @@ LIRGenerator::visitParCheckInterrupt(MParCheckInterrupt *ins)
     LParCheckInterrupt *lir = new LParCheckInterrupt(
         useRegister(ins->parSlice()),
         temp());
-    if (!add(lir))
+    if (!add(lir, ins))
         return false;
     if (!assignSafepoint(lir, ins))
         return false;
@@ -1731,6 +1732,32 @@ LIRGenerator::visitMonitorTypes(MMonitorTypes *ins)
     if (!useBox(lir, LMonitorTypes::Input, ins->input()))
         return false;
     return assignSnapshot(lir, Bailout_Normal) && add(lir, ins);
+}
+
+bool
+LIRGenerator::visitPostWriteBarrier(MPostWriteBarrier *ins)
+{
+#ifdef JSGC_GENERATIONAL
+    switch (ins->value()->type()) {
+      case MIRType_Object: {
+        LPostWriteBarrierO *lir = new LPostWriteBarrierO(useRegisterOrConstant(ins->object()),
+                                                         useRegister(ins->value()));
+        return add(lir, ins) && assignSafepoint(lir, ins);
+      }
+      case MIRType_Value: {
+        LPostWriteBarrierV *lir =
+            new LPostWriteBarrierV(useRegisterOrConstant(ins->object()), temp());
+        if (!useBox(lir, LPostWriteBarrierV::Input, ins->value()))
+            return false;
+        return add(lir, ins) && assignSafepoint(lir, ins);
+      }
+      default:
+        // Currently, only objects can be in the nursery. Other instruction
+        // types cannot hold nursery pointers.
+        return true;
+    }
+#endif // JSGC_GENERATIONAL
+    return true;
 }
 
 bool
@@ -2446,6 +2473,31 @@ LIRGenerator::visitGetArgument(MGetArgument *ins)
 }
 
 bool
+LIRGenerator::visitRest(MRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LRest *lir = new LRest(useFixed(ins->numActuals(), CallTempReg0),
+                           tempFixed(CallTempReg1),
+                           tempFixed(CallTempReg2),
+                           tempFixed(CallTempReg3));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
+LIRGenerator::visitParRest(MParRest *ins)
+{
+    JS_ASSERT(ins->numActuals()->type() == MIRType_Int32);
+
+    LParRest *lir = new LParRest(useFixed(ins->parSlice(), CallTempReg0),
+                                 useFixed(ins->numActuals(), CallTempReg1),
+                                 tempFixed(CallTempReg2),
+                                 tempFixed(CallTempReg3),
+                                 tempFixed(CallTempReg4));
+    return defineReturn(lir, ins) && assignSafepoint(lir, ins);
+}
+
+bool
 LIRGenerator::visitThrow(MThrow *ins)
 {
     MDefinition *value = ins->getOperand(0);
@@ -2610,8 +2662,7 @@ LIRGenerator::visitAsmJSCall(MAsmJSCall *ins)
 
     LInstruction *lir = new LAsmJSCall(args, ins->numOperands());
     if (ins->type() == MIRType_None) {
-        lir->setMir(ins);
-        return add(lir);
+        return add(lir, ins);
     }
     return defineReturn(lir, ins);
 }
@@ -2744,7 +2795,7 @@ void
 LIRGenerator::updateResumeState(MInstruction *ins)
 {
     lastResumePoint_ = ins->resumePoint();
-    if (IonSpewEnabled(IonSpew_Snapshots))
+    if (IonSpewEnabled(IonSpew_Snapshots) && lastResumePoint_)
         SpewResumePoint(NULL, ins, lastResumePoint_);
 }
 

@@ -4,6 +4,7 @@
 
 // Original author: ekr@rtfm.com
 
+#include "logging.h"
 #include "MediaPipeline.h"
 
 #ifndef USE_FAKE_MEDIA_STREAMS
@@ -13,7 +14,6 @@
 #include <math.h>
 
 #include "nspr.h"
-#include <prlog.h>
 #include "srtp.h"
 
 #ifdef MOZILLA_INTERNAL_API
@@ -27,7 +27,6 @@
 #endif
 #endif
 
-#include "logging.h"
 #include "nsError.h"
 #include "AudioSegment.h"
 #include "MediaSegment.h"
@@ -36,7 +35,6 @@
 #include "transportlayer.h"
 #include "transportlayerdtls.h"
 #include "transportlayerice.h"
-
 #include "runnable_utils.h"
 
 using namespace mozilla;
@@ -48,13 +46,17 @@ using namespace mozilla;
 #define MP_LOG_INFO PR_LOG_DEBUG
 #endif
 
-
 // Logging context
 MOZ_MTLOG_MODULE("mediapipeline")
 
 namespace mozilla {
 
 static char kDTLSExporterLabel[] = "EXTRACTOR-dtls_srtp";
+
+MediaPipeline::~MediaPipeline() {
+  MOZ_ASSERT(!stream_);  // Check that we have shut down already.
+  MOZ_MTLOG(PR_LOG_DEBUG, "Destroying MediaPipeline: " << description_);
+}
 
 nsresult MediaPipeline::Init() {
   ASSERT_ON_THREAD(main_thread_);
@@ -112,10 +114,12 @@ nsresult MediaPipeline::Init_s() {
 }
 
 
-// Disconnect us from the transport so that we can cleanly destruct
-// the pipeline on the main thread.
+// Disconnect us from the transport so that we can cleanly destruct the
+// pipeline on the main thread.  ShutdownMedia_m() must have already been
+// called
 void MediaPipeline::ShutdownTransport_s() {
   ASSERT_ON_THREAD(sts_thread_);
+  MOZ_ASSERT(!stream_); // verifies that ShutdownMedia_m() has run
 
   disconnect_all();
   transport_->Detach();
@@ -1020,6 +1024,7 @@ nsresult MediaPipelineReceiveVideo::Init() {
   listener_->AddSelf(new VideoSegment());
 #endif
 
+  // Always happens before we can DetachMediaStream()
   static_cast<VideoSessionConduit *>(conduit_.get())->
       AttachRenderer(renderer_);
 

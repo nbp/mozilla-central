@@ -433,8 +433,7 @@ XULDocument::StartDocumentLoad(const char* aCommand, nsIChannel* aChannel,
         NS_GetFinalChannelURI(aChannel, getter_AddRefs(mDocumentURI));
     NS_ENSURE_SUCCESS(rv, rv);
     
-    rv = ResetStylesheetsToURI(mDocumentURI);
-    if (NS_FAILED(rv)) return rv;
+    ResetStylesheetsToURI(mDocumentURI);
 
     RetrieveRelevantHeaders(aChannel);
 
@@ -3645,7 +3644,8 @@ XULDocument::OnStreamComplete(nsIStreamLoader* aLoader,
 
 
 nsresult
-XULDocument::ExecuteScript(nsIScriptContext * aContext, JSScript* aScriptObject)
+XULDocument::ExecuteScript(nsIScriptContext * aContext,
+                           JS::Handle<JSScript*> aScriptObject)
 {
     NS_PRECONDITION(aScriptObject != nullptr && aContext != nullptr, "null ptr");
     if (! aScriptObject || ! aContext)

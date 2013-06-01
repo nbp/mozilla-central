@@ -8,6 +8,7 @@
 
 #include "mozilla/dom/ArchiveRequestBinding.h"
 #include "nsContentUtils.h"
+#include "nsCxPusher.h"
 #include "nsLayoutStatics.h"
 #include "nsEventDispatcher.h"
 #include "nsDOMClassInfoID.h"
@@ -130,7 +131,6 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
     return NS_OK;
   }
 
-  JS::Value result;
   nsresult rv;
 
   nsIScriptContext* sc = GetContextForEventHandlers(&rv);
@@ -142,20 +142,20 @@ ArchiveRequest::ReaderReady(nsTArray<nsCOMPtr<nsIDOMFile> >& aFileList,
   JS::Rooted<JSObject*> global(cx, sc->GetNativeGlobal());
   NS_ASSERTION(global, "Failed to get global object!");
 
-  JSAutoRequest ar(cx);
   JSAutoCompartment ac(cx, global);
 
+  JS::Rooted<JS::Value> result(cx);
   switch (mOperation) {
     case GetFilenames:
-      rv = GetFilenamesResult(cx, &result, aFileList);
+      rv = GetFilenamesResult(cx, result.address(), aFileList);
       break;
 
     case GetFile:
-      rv = GetFileResult(cx, &result, aFileList);
+      rv = GetFileResult(cx, result.address(), aFileList);
       break;
 
       case GetFiles:
-        rv = GetFilesResult(cx, &result, aFileList);
+        rv = GetFilesResult(cx, result.address(), aFileList);
         break;
   }
 

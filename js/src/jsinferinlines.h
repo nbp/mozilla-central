@@ -91,31 +91,19 @@ namespace types {
 inline
 CompilerOutput::CompilerOutput()
   : script(NULL),
-    kindInt(MethodJIT),
+    kindInt(Ion),
     constructing(false),
     barriers(false),
     chunkIndex(false)
 {
 }
 
-inline mjit::JITScript *
-CompilerOutput::mjit() const
-{
-#ifdef JS_METHODJIT
-    JS_ASSERT(kind() == MethodJIT && isValid());
-    return script->getJIT(constructing, barriers);
-#else
-    return NULL;
-#endif
-}
-
 inline ion::IonScript *
 CompilerOutput::ion() const
 {
 #ifdef JS_ION
-    JS_ASSERT(kind() != MethodJIT && isValid());
+    JS_ASSERT(isValid());
     switch (kind()) {
-      case MethodJIT: break;
       case Ion: return script->ionScript();
       case ParallelIon: return script->parallelIonScript();
     }
@@ -130,24 +118,11 @@ CompilerOutput::isValid() const
     if (!script)
         return false;
 
-#if defined(DEBUG) && (defined(JS_METHODJIT) || defined(JS_ION))
+#if defined(DEBUG) && defined(JS_ION)
     TypeCompartment &types = script->compartment()->types;
 #endif
 
     switch (kind()) {
-      case MethodJIT: {
-#ifdef JS_METHODJIT
-        mjit::JITScript *jit = script->getJIT(constructing, barriers);
-        if (!jit)
-            return false;
-        mjit::JITChunk *chunk = jit->chunkDescriptor(chunkIndex).chunk;
-        if (!chunk)
-            return false;
-        JS_ASSERT(this == chunk->recompileInfo.compilerOutput(types));
-        return true;
-#endif
-      }
-
       case Ion:
 #ifdef JS_ION
         if (script->hasIonScript()) {
@@ -1097,18 +1072,12 @@ TypeScript::SetThis(JSContext *cx, JSScript *script, Type type)
         return;
     JS_ASSERT(script->types);
 
-    /* Analyze the script regardless if -a was used. */
-    bool analyze = cx->hasOption(JSOPTION_METHODJIT_ALWAYS);
-
-    if (!ThisTypes(script)->hasType(type) || analyze) {
+    if (!ThisTypes(script)->hasType(type)) {
         AutoEnterAnalysis enter(cx);
 
         InferSpew(ISpewOps, "externalType: setThis #%u: %s",
                   script->id(), TypeString(type));
         ThisTypes(script)->addType(cx, type);
-
-        if (analyze)
-            script->ensureRanInference(cx);
     }
 }
 
@@ -1589,6 +1558,22 @@ TypeSet::getTypeObject(unsigned i) const
 {
     TypeObjectKey *key = getObject(i);
     return (key && !(uintptr_t(key) & 1)) ? (TypeObject *) key : NULL;
+}
+
+inline TypeObject *
+TypeSet::getTypeOrSingleObject(JSContext *cx, unsigned i) const
+{
+    JS_ASSERT(cx->compartment->activeAnalysis);
+    TypeObject *type = getTypeObject(i);
+    if (!type) {
+        JSObject *singleton = getSingleObject(i);
+        if (!singleton)
+            return NULL;
+        type = singleton->getType(cx);
+        if (!type)
+            cx->compartment->types.setPendingNukeTypes(cx);
+    }
+    return type;
 }
 
 /////////////////////////////////////////////////////////////////////

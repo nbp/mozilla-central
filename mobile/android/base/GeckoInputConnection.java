@@ -6,6 +6,7 @@
 package org.mozilla.gecko;
 
 import org.mozilla.gecko.gfx.InputConnectionHandler;
+import org.mozilla.gecko.util.GamepadUtils;
 import org.mozilla.gecko.util.ThreadUtils;
 
 import android.R;
@@ -684,6 +685,17 @@ class GeckoInputConnection
     }
 
     @Override
+    public boolean setSelection(int start, int end) {
+        if (start < 0 || end < 0) {
+            // Some keyboards (e.g. Samsung) can call setSelection with
+            // negative offsets. In that case we ignore the call, similar to how
+            // BaseInputConnection.setSelection ignores offsets that go past the length.
+            return true;
+        }
+        return super.setSelection(start, end);
+    }
+
+    @Override
     public boolean sendKeyEvent(KeyEvent event) {
         // BaseInputConnection.sendKeyEvent() dispatches the key event to the main thread.
         // In order to ensure events are processed in the proper order, we must block the
@@ -758,6 +770,11 @@ class GeckoInputConnection
     }
 
     private boolean processKey(int keyCode, KeyEvent event, boolean down) {
+        if (GamepadUtils.isSonyXperiaGamepadKeyEvent(event)) {
+            event = GamepadUtils.translateSonyXperiaGamepadKeys(keyCode, event);
+            keyCode = event.getKeyCode();
+        }
+
         if (keyCode > KeyEvent.getMaxKeyCode() ||
             !shouldProcessKey(keyCode, event)) {
             return false;

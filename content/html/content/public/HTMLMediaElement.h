@@ -28,6 +28,8 @@
 #include "MediaMetadataManager.h"
 #include "AudioChannelAgent.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/TextTrack.h"
+#include "mozilla/dom/TextTrackList.h"
 #include "mozilla/ErrorResult.h"
 
 // Define to output information on decoding and painting framerate
@@ -121,7 +123,7 @@ public:
    * Call this to reevaluate whether we should start/stop due to our owner
    * document being active, inactive, visible or hidden.
    */
-  void NotifyOwnerDocumentActivityChanged();
+  virtual void NotifyOwnerDocumentActivityChanged();
 
   // Called by the video decoder object, on the main thread,
   // when it has read the metadata containing video dimensions,
@@ -448,7 +450,7 @@ public:
 
   bool Muted() const
   {
-    return mMuted;
+    return mMuted & MUTED_BY_CONTENT;
   }
 
   // XPCOM SetMuted() is OK
@@ -509,6 +511,16 @@ public:
     SetHTMLAttr(nsGkAtoms::mozaudiochannel, aValue, aRv);
   }
 
+  TextTrackList* TextTracks() const;
+
+  already_AddRefed<TextTrack> AddTextTrack(TextTrackKind aKind,
+                                           const nsAString& aLabel,
+                                           const nsAString& aLanguage);
+
+  void AddTextTrack(TextTrack* aTextTrack) {
+    mTextTracks->AddTextTrack(aTextTrack);
+  }
+
 protected:
   class MediaLoadListener;
   class StreamListener;
@@ -536,9 +548,15 @@ protected:
     bool mValue;
     bool mCanPlay;
     HTMLMediaElement* mOuter;
-
-    nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
   };
+
+  /**
+   * These two methods are called by the WakeLockBoolWrapper when the wakelock
+   * has to be created or released.
+   */
+  virtual void WakeLockCreate();
+  virtual void WakeLockRelease();
+  nsCOMPtr<nsIDOMMozWakeLock> mWakeLock;
 
   /**
    * Logs a warning message to the web console to report various failures.
@@ -623,11 +641,6 @@ protected:
    * created.
    */
   void AbortExistingLoads();
-
-  /**
-   * Create a URI for the given aURISpec string.
-   */
-  nsresult NewURIFromString(const nsAutoString& aURISpec, nsIURI** aURI);
 
   /**
    * Called when all potential resources are exhausted. Changes network
@@ -780,9 +793,9 @@ protected:
   void ProcessMediaFragmentURI();
 
   /**
-   * Mute or unmute the audio, without changing the value that |muted| reports.
+   * Mute or unmute the audio and change the value that the |muted| map.
    */
-  void SetMutedInternal(bool aMuted);
+  void SetMutedInternal(uint32_t aMuted);
 
   /**
    * Suspend (if aPauseForInactiveDocument) or resume element playback and
@@ -1003,8 +1016,13 @@ protected:
   // 'Pause' method, or playback not yet having started.
   WakeLockBoolWrapper mPaused;
 
-  // True if the sound is muted.
-  bool mMuted;
+  enum MutedReasons {
+    MUTED_BY_CONTENT               = 0x01,
+    MUTED_BY_INVALID_PLAYBACK_RATE = 0x02,
+    MUTED_BY_AUDIO_CHANNEL         = 0x04
+  };
+
+  uint32_t mMuted;
 
   // True if the sound is being captured.
   bool mAudioCaptured;
@@ -1087,14 +1105,14 @@ protected:
   // Audio Channel Type.
   AudioChannelType mAudioChannelType;
 
-  // The audiochannel has been suspended.
-  bool mChannelSuspended;
-
   // Is this media element playing?
   bool mPlayingThroughTheAudioChannel;
 
   // An agent used to join audio channel service.
   nsCOMPtr<nsIAudioChannelAgent> mAudioChannelAgent;
+
+  // List of our attached text track objects.
+  nsRefPtr<TextTrackList> mTextTracks;
 };
 
 } // namespace dom
