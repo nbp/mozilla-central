@@ -80,7 +80,9 @@ class TreeMetadataEmitter(object):
         varmap = dict(
             # Makefile.in : moz.build
             ASFILES='ASFILES',
+            CPPSRCS='CPP_SOURCES',
             CSRCS='CSRCS',
+            DEFINES='DEFINES',
             MODULE='MODULE',
             SIMPLE_PROGRAMS='SIMPLE_PROGRAMS',
             XPIDL_FLAGS='XPIDL_FLAGS',

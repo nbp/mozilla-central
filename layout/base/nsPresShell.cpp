@@ -123,7 +123,9 @@
 #include "nsSVGEffects.h"
 #include "SVGFragmentIdentifier.h"
 
+#include "nsPerformance.h"
 #include "nsRefreshDriver.h"
+#include "nsDOMNavigationTiming.h"
 
 // Drag & Drop, Clipboard
 #include "nsWidgetsCID.h"
@@ -687,6 +689,7 @@ nsIPresShell::FrameSelection()
 //----------------------------------------------------------------------
 
 static bool sSynthMouseMove = true;
+static uint32_t sNextPresShellId;
 
 PresShell::PresShell()
   : mMouseLocation(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE)
@@ -713,6 +716,7 @@ PresShell::PresShell()
 #else
   mIsFirstPaint = true;
 #endif
+  mPresShellId = sNextPresShellId++;
   mFrozen = false;
 #ifdef DEBUG
   mPresArenaAllocCount = 0;
@@ -5576,9 +5580,6 @@ PresShell::Paint(nsView*        aViewToPaint,
   if (!(aFlags & PAINT_COMPOSITE)) {
     flags |= nsLayoutUtils::PAINT_NO_COMPOSITE;
   }
-  if (aViewToPaint->InAlternatePaint()) {
-    flags |= nsLayoutUtils::PAINT_NO_CLEAR_INVALIDATIONS;
-  }
 
   if (frame) {
     // Defer invalidates that are triggered during painting, and discard
@@ -7652,6 +7653,8 @@ PresShell::WillDoReflow()
   mPresContext->FlushUserFontSet();
 
   mFrameConstructor->BeginUpdate();
+
+  mLastReflowStart = GetPerformanceNow();
 }
 
 void
@@ -7660,6 +7663,16 @@ PresShell::DidDoReflow(bool aInterruptible, bool aWasInterrupted)
   mFrameConstructor->EndUpdate();
   
   HandlePostedReflowCallbacks(aInterruptible);
+
+  nsCOMPtr<nsISupports> container = mPresContext->GetContainer();
+  if (container) {
+    nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(container);
+    if (docShell) {
+      DOMHighResTimeStamp now = GetPerformanceNow();
+      docShell->NotifyReflowObservers(aInterruptible, mLastReflowStart, now);
+    }
+  }
+
   if (sSynthMouseMove) {
     SynthesizeMouseMove(false);
   }
@@ -7673,6 +7686,23 @@ PresShell::DidDoReflow(bool aInterruptible, bool aWasInterrupted)
   if (!aWasInterrupted) {
     ClearReflowOnZoomPending();
   }
+}
+
+DOMHighResTimeStamp
+PresShell::GetPerformanceNow()
+{
+  DOMHighResTimeStamp now = 0;
+  nsPIDOMWindow* window = mDocument->GetInnerWindow();
+
+  if (window) {
+    nsPerformance* perf = window->GetPerformance();
+
+    if (perf) {
+      now = perf->Now();
+    }
+  }
+
+  return now;
 }
 
 static PLDHashOperator

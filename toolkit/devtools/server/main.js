@@ -178,12 +178,14 @@ var DebuggerServer = {
    */
   addBrowserActors: function DS_addBrowserActors() {
     this.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
+    this.addGlobalActor(this.ChromeDebuggerActor, "chromeDebugger");
     this.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
     this.addActors("resource://gre/modules/devtools/server/actors/gcli.js");
     if ("nsIProfiler" in Ci)
       this.addActors("resource://gre/modules/devtools/server/actors/profiler.js");
 
     this.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
   },
 
   /**
@@ -330,7 +332,11 @@ var DebuggerServer = {
    * 'actor', since that would break the protocol.
    *
    * @param aFunction function
-   *        The constructor function for this request type.
+   *        The constructor function for this request type. This expects to be
+   *        called as a constructor (i.e. with 'new'), and passed two
+   *        arguments: the DebuggerServerConnection, and the BrowserTabActor
+   *        with which it will be associated.
+   *
    * @param aName string [optional]
    *        The name of the new request type. If this is not present, the
    *        actorPrefix property of the constructor prototype is used.
@@ -371,7 +377,11 @@ var DebuggerServer = {
    * protocol.
    *
    * @param aFunction function
-   *        The constructor function for this request type.
+   *        The constructor function for this request type. This expects to be
+   *        called as a constructor (i.e. with 'new'), and passed two
+   *        arguments: the DebuggerServerConnection, and the BrowserRootActor
+   *        with which it will be associated.
+   *
    * @param aName string [optional]
    *        The name of the new request type. If this is not present, the
    *        actorPrefix property of the constructor prototype is used.

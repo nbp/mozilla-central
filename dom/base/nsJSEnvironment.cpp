@@ -1319,7 +1319,8 @@ nsJSContext::CompileScript(const PRUnichar* aText,
 
   NS_ENSURE_ARG_POINTER(aPrincipal);
 
-  AutoPushJSContext cx(mContext);
+  JSContext* cx = mContext;
+  JSAutoRequest ar(cx);
   JS::Rooted<JSObject*> scopeObject(mContext, GetNativeGlobal());
   xpc_UnmarkGrayObject(scopeObject);
 
@@ -1394,8 +1395,8 @@ nsJSContext::ExecuteScript(JSScript* aScriptObject_,
     // The result of evaluation, used only if there were no errors. This need
     // not be a GC root currently, provided we run the GC only from the
     // operation callback or from ScriptEvaluated.
-    JS::Value val;
-    if (!JS_ExecuteScript(mContext, aScopeObject, aScriptObject, &val)) {
+    JS::Rooted<JS::Value> val(mContext);
+    if (!JS_ExecuteScript(mContext, aScopeObject, aScriptObject, val.address())) {
       ReportPendingException();
     }
     --mExecuteDepth;
@@ -1516,7 +1517,8 @@ nsJSContext::BindCompiledEventHandler(nsISupports* aTarget,
 
 // serialization
 nsresult
-nsJSContext::Serialize(nsIObjectOutputStream* aStream, JSScript* aScriptObject)
+nsJSContext::Serialize(nsIObjectOutputStream* aStream,
+                       JS::Handle<JSScript*> aScriptObject)
 {
   if (!aScriptObject)
     return NS_ERROR_FAILURE;
@@ -3581,14 +3583,10 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsJSArgArray)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(nsJSArgArray)
-  JS::Value *argv = tmp->mArgv;
-  if (argv) {
-    JS::Value *end;
-    for (end = argv + tmp->mArgc; argv < end; ++argv) {
-      if (JSVAL_IS_GCTHING(*argv))
-        NS_IMPL_CYCLE_COLLECTION_TRACE_JS_CALLBACK(JSVAL_TO_GCTHING(*argv),
-                                                   "mArgv[i]")
-    }
+  if (tmp->mArgv) {
+    for (uint32_t i = 0; i < tmp->mArgc; ++i) {
+      NS_IMPL_CYCLE_COLLECTION_TRACE_JSVAL_MEMBER_CALLBACK(mArgv[i])
+      }
   }
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 

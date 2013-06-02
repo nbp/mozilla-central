@@ -1283,7 +1283,7 @@ MBinaryArithInstruction::infer(BaselineInspector *inspector,
 
     // If the operation will always overflow on its constant operands, use a
     // double specialization so that it can be constant folded later.
-    if (isMul() || isDiv()) {
+    if ((isMul() || isDiv()) && lhs == MIRType_Int32 && rhs == MIRType_Int32) {
         bool typeChange = false;
         EvaluateConstantOperands(this, &typeChange);
         if (typeChange)
@@ -2576,7 +2576,7 @@ ion::AddObjectsForPropertyRead(JSContext *cx, MDefinition *obj, PropertyName *na
             return;
         }
 
-        types::HeapTypeSet *property = object->getProperty(cx, JSID_VOID, false);
+        types::HeapTypeSet *property = object->getProperty(cx, id, false);
         if (property->unknownObject()) {
             observed->addType(cx, types::Type::AnyObjectType());
             return;

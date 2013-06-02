@@ -72,6 +72,12 @@ VARIABLES = {
         This variable contains a list of C source files to compile.
         """),
 
+    'DEFINES': (StrictOrderingOnAppendList, list, [],
+        """Compiler defines to declare.
+
+        Command line -D flags passed to the compiler.
+        """),
+
     'DIRS': (list, list, [],
         """Child directories to descend into looking for build frontend files.
 
@@ -194,6 +200,13 @@ VARIABLES = {
         If the configuration token 'BIN_SUFFIX' is set, its value will be
         automatically appended to PROGRAM. If PROGRAM already ends with
         BIN_SUFFIX, PROGRAM will remain unchanged.
+        """),
+
+    'CPP_SOURCES': (list, list, [],
+        """C++ source file list.
+
+        This is a list of C++ files to be compiled. Entries must be files that
+        exist. These generally have .cpp, .cc, or .cxx extensions.
         """),
 
     # IDL Generation.
