@@ -13,7 +13,6 @@
 #include "ion/BaselineFrame.h"
 #include "ion/IonFrames.h"
 #include "ion/IonCompartment.h"
-#include "ion/Recover.h"
 #endif
 #include "Stack.h"
 #include "ForkJoin.h"
