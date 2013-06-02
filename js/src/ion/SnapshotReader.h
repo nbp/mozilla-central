@@ -30,7 +30,7 @@ class SnapshotReader
 {
     CompactBufferReader reader_;
 
-    RecoverOffset recoverOffset_;           // Offset from script->code.
+    RecoverOffset recoverOffset_; // Offset from script->code.
 
     uint32_t slotCount_;          // Number of slots.
     uint32_t slotsRead_;          // Number of slots that have been read.

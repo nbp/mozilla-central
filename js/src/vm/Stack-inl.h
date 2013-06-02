@@ -168,7 +168,7 @@ StackFrame::forEachUnaliasedActual(Op op)
         op(*p);
 }
 
-// This structure is defined in IonFrameIterator.h to avoid exposing extra
+// This structure is defined in IonFrameIterator.h to avoid including extra
 // headers.
 #ifndef JS_ION
 namespace ion {

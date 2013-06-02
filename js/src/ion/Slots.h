@@ -16,6 +16,9 @@ class SnapshotReader;
 class RInstruction;
 class SnapshotIterator;
 
+// A Slot represent a the location and the encoding of a Value in multiple
+// locations, such as the pool of constant of an IonScript, a register, a stack
+// location, or even the index of a resume instruction.
 class Slot
 {
     friend class SnapshotReader;

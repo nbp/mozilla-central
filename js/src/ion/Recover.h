@@ -24,20 +24,29 @@ class SnapshotIterator;
     RECOVER_KIND_LIST(FORWARD_DECLARE)
 #undef FORWARD_DECLARE
 
-struct RInstruction
+// A Recover instruction is an instruction which is only executed when we need
+// to explore / restore the stack as it is expected to be by slower execution
+// mode.
+//
+// Recover instructions are encoded with the MIR function writeRInstruction and
+// extracted from the recover buffer with the RInstruction::dispatch function.
+// The dispatch function do a placement new on the memory given as argument with
+// the data read from the recover buffer. The constructor of each RInstruction
+// is in charge of reading its meta data.
+//
+// A recover instruction must provide a resume function which is in charge to
+// read its operands and to store the resumed value.  A recover instruction
+// should only be resumed once.  Each RInstruction must provide a numOperands
+// function which should match the number of operands encoded by the
+// writeRInstructio method.
+class RInstruction
 {
+  public:
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
     virtual size_t numOperands() const = 0;
     virtual bool resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const = 0;
 
-  protected:
-    void storeResumedValue(SnapshotIterator &it, Value result) const;
-    Slot recoverSlot(SnapshotIterator &it) const;
-    Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
-    Value maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const;
-
-  public:
     enum Kind {
 #   define DEFINE_RECOVER_KIND(op) Recover_##op,
         RECOVER_KIND_LIST(DEFINE_RECOVER_KIND)
@@ -58,6 +67,20 @@ struct RInstruction
 
     RECOVER_KIND_LIST(RECOVER_CASTS)
 #   undef RECOVER_CASTS
+
+  protected:
+    // Store the resumed value in the resume vector of the snapshot iterator.
+    void storeResumedValue(SnapshotIterator &it, Value result) const;
+
+    // Read a slot from the snapshot iterator.
+    Slot recoverSlot(SnapshotIterator &it) const;
+
+    // Read a Value from the snapshot iterator.
+    Value recoverValue(const SnapshotIterator &it, const Slot &slot) const;
+
+    // Read a Value from the snapshot iterator if the snapshot iterator is able
+    // to do so.
+    Value maybeRecoverValue(const SnapshotIterator &it, const Slot &slot) const;
 };
 
 #define RECOVER_HEADER(ins)                     \
@@ -69,8 +92,9 @@ struct RInstruction
         return #ins;                            \
     }
 
-struct RResumePoint : public RInstruction
+class RResumePoint : public RInstruction
 {
+  public:
     RECOVER_HEADER(ResumePoint)
 
     void readFrameHeader(SnapshotIterator &it, JSScript *script, bool isFunction);
