@@ -41,6 +41,7 @@ namespace mozilla {
 namespace net {
 class ATokenBucketEvent;
 class EventTokenBucket;
+class Tickler;
 }
 }
 
@@ -97,7 +98,6 @@ public:
     bool           IsSpdyV2Enabled() { return mSpdyV2; }
     bool           IsSpdyV3Enabled() { return mSpdyV3; }
     bool           CoalesceSpdy() { return mCoalesceSpdy; }
-    bool           UseAlternateProtocol() { return mUseAlternateProtocol; }
     bool           UseSpdyPersistentSettings() { return mSpdyPersistentSettings; }
     uint32_t       SpdySendingChunkSize() { return mSpdySendingChunkSize; }
     uint32_t       SpdySendBufferSize()      { return mSpdySendBufferSize; }
@@ -182,9 +182,11 @@ public:
     }
 
     nsresult SpeculativeConnect(nsHttpConnectionInfo *ci,
-                                nsIInterfaceRequestor *callbacks)
+                                nsIInterfaceRequestor *callbacks,
+                                uint32_t caps = 0)
     {
-        return mConnMgr->SpeculativeConnect(ci, callbacks);
+        TickleWifi(callbacks);
+        return mConnMgr->SpeculativeConnect(ci, callbacks, caps);
     }
 
     //
@@ -416,7 +418,6 @@ private:
     bool           mSpdyV2;
     bool           mSpdyV3;
     bool           mCoalesceSpdy;
-    bool           mUseAlternateProtocol;
     bool           mSpdyPersistentSettings;
     bool           mAllowSpdyPush;
     uint32_t       mSpdySendingChunkSize;
@@ -473,6 +474,10 @@ public:
     {
         mRequestTokenBucket = aTokenBucket;
     }
+
+private:
+    nsRefPtr<mozilla::net::Tickler> mWifiTickler;
+    void TickleWifi(nsIInterfaceRequestor *cb);
 };
 
 extern nsHttpHandler *gHttpHandler;

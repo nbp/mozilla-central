@@ -24,7 +24,6 @@ nsDOMNotifyPaintEvent::nsDOMNotifyPaintEvent(mozilla::dom::EventTarget* aOwner,
   if (aInvalidateRequests) {
     mInvalidateRequests.MoveElementsFrom(aInvalidateRequests->mRequests);
   }
-  SetIsDOMBinding();
 }
 
 NS_INTERFACE_MAP_BEGIN(nsDOMNotifyPaintEvent)
@@ -93,7 +92,7 @@ nsDOMNotifyPaintEvent::ClientRects()
 }
 
 NS_IMETHODIMP
-nsDOMNotifyPaintEvent::GetPaintRequests(nsIDOMPaintRequestList** aResult)
+nsDOMNotifyPaintEvent::GetPaintRequests(nsISupports** aResult)
 {
   nsRefPtr<nsPaintRequestList> requests = PaintRequests();
   requests.forget(aResult);

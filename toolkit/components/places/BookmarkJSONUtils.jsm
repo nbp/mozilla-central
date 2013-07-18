@@ -84,11 +84,41 @@ this.BookmarkJSONUtils = Object.freeze({
    */
   importJSONNode: function BJU_importJSONNode(aData, aContainer, aIndex,
                                               aGrandParentId) {
+    let importer = new BookmarkImporter();
+    // Can't make importJSONNode a task until we have made the
+    // runInBatchMode in BI_importFromJSON to run asynchronously. Bug 890203
+    return Promise.resolve(importer.importJSONNode(aData, aContainer, aIndex, aGrandParentId));
+  },
+
+  /**
+   * Serializes the given node (and all its descendents) as JSON
+   * and writes the serialization to the given output stream.
+   *
+   * @param   aNode
+   *          An nsINavHistoryResultNode
+   * @param   aStream
+   *          An nsIOutputStream. NOTE: it only uses the write(str, len)
+   *          method of nsIOutputStream. The caller is responsible for
+   *          closing the stream.
+   * @param   aIsUICommand
+   *          Boolean - If true, modifies serialization so that each node self-contained.
+   *          For Example, tags are serialized inline with each bookmark.
+   * @param   aResolveShortcuts
+   *          Converts folder shortcuts into actual folders.
+   * @param   aExcludeItems
+   *          An array of item ids that should not be written to the backup.
+   * @return {Promise}
+   * @resolves When node have been serialized and wrote to output stream.
+   * @rejects JavaScript exception.
+   */
+  serializeNodeAsJSONToOutputStream: function BJU_serializeNodeAsJSONToOutputStream(
+    aNode, aStream, aIsUICommand, aResolveShortcuts, aExcludeItems) {
     let deferred = Promise.defer();
     Services.tm.mainThread.dispatch(function() {
       try {
-        let importer = new BookmarkImporter();
-        deferred.resolve(importer.importJSONNode(aData, aContainer, aIndex, aGrandParentId));
+        BookmarkNode.serializeAsJSONToOutputStream(
+          aNode, aStream, aIsUICommand, aResolveShortcuts, aExcludeItems);
+        deferred.resolve();
       } catch (ex) {
         deferred.reject(ex);
       }
@@ -240,9 +270,9 @@ BookmarkImporter.prototype = {
           let searchIds = [];
           let folderIdMap = [];
 
-          batch.nodes.forEach(function(node) {
+          for (let node of batch.nodes) {
             if (!node.children || node.children.length == 0)
-              return; // Nothing to restore for this root
+              continue; // Nothing to restore for this root
 
             if (node.root) {
               let container = PlacesUtils.placesRootId; // Default to places root
@@ -262,7 +292,7 @@ BookmarkImporter.prototype = {
               }
 
               // Insert the data into the db
-              node.children.forEach(function(child) {
+              for (let child of node.children) {
                 let index = child.index;
                 let [folders, searches] =
                   this.importJSONNode(child, container, index, 0);
@@ -271,12 +301,12 @@ BookmarkImporter.prototype = {
                     folderIdMap[i] = folders[i];
                 }
                 searchIds = searchIds.concat(searches);
-              }.bind(this));
+              }
             } else {
               this.importJSONNode(
                 node, PlacesUtils.placesRootId, node.index, 0);
             }
-          }.bind(this));
+          }
 
           // Fixup imported place: uris that contain folders
           searchIds.forEach(function(aId) {
@@ -287,15 +317,12 @@ BookmarkImporter.prototype = {
             }
           });
 
-          Services.tm.mainThread.dispatch(function() {
-            deferred.resolve();
-          }, Ci.nsIThread.DISPATCH_NORMAL);
+          deferred.resolve();
         }.bind(this)
       };
 
       PlacesUtils.bookmarks.runInBatchMode(batch, null);
     }
-
     return deferred.promise;
   },
 
@@ -368,20 +395,21 @@ BookmarkImporter.prototype = {
             });
           }
         } else {
-          id =
-            PlacesUtils.bookmarks.createFolder(aContainer, aData.title, aIndex);
+          id = PlacesUtils.bookmarks.createFolder(
+                 aContainer, aData.title, aIndex);
           folderIdMap[aData.id] = id;
           // Process children
           if (aData.children) {
-            aData.children.forEach(function(aChild, aIndex) {
+            for (let i = 0; i < aData.children.length; i++) {
+              let child = aData.children[i];
               let [folders, searches] =
-                this.importJSONNode(aChild, id, aIndex, aContainer);
-              for (let i = 0; i < folders.length; i++) {
-                if (folders[i])
-                  folderIdMap[i] = folders[i];
+                this.importJSONNode(child, id, i, aContainer);
+              for (let j = 0; j < folders.length; j++) {
+                if (folders[j])
+                  folderIdMap[j] = folders[j];
               }
               searchIds = searchIds.concat(searches);
-            }.bind(this));
+            }
           }
         }
         break;
@@ -396,8 +424,9 @@ BookmarkImporter.prototype = {
             PlacesUtils.tagging.tagURI(NetUtil.newURI(aData.uri), tags);
         }
         if (aData.charset) {
-          PlacesUtils.history.setCharsetForURI(
-            NetUtil.newURI(aData.uri), aData.charset);
+          PlacesUtils.annotations.setPageAnnotation(
+            NetUtil.newURI(aData.uri), PlacesUtils.CHARSET_ANNO, aData.charset,
+            0, Ci.nsIAnnotationService.EXPIRE_NEVER);
         }
         if (aData.uri.substr(0, 6) == "place:")
           searchIds.push(id);

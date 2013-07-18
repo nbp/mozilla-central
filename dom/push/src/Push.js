@@ -34,7 +34,8 @@ Push.prototype = {
 
   classID : PUSH_CID,
 
-  QueryInterface : XPCOMUtils.generateQI([Ci.nsIDOMGlobalPropertyInitializer]),
+  QueryInterface : XPCOMUtils.generateQI([Ci.nsIDOMGlobalPropertyInitializer,
+                                          Ci.nsISupportsWeakReference]),
 
   init: function(aWindow) {
     debug("init()");
@@ -58,9 +59,7 @@ Push.prototype = {
     if (perm != Ci.nsIPermissionManager.ALLOW_ACTION)
       return null;
 
-    this.initHelper(aWindow, []);
-
-    this.initMessageListener([
+    this.initDOMRequestHelper(aWindow, [
       "PushService:Register:OK",
       "PushService:Register:KO",
       "PushService:Unregister:OK",
@@ -121,6 +120,13 @@ Push.prototype = {
   register: function() {
     debug("register()");
     var req = this.createRequest();
+    if (!Services.prefs.getBoolPref("services.push.connection.enabled")) {
+      // If push socket is disabled by the user, immediately error rather than
+      // timing out.
+      Services.DOMRequest.fireErrorAsync(req, "NetworkError");
+      return req;
+    }
+
     this._cpmm.sendAsyncMessage("Push:Register", {
                                   pageURL: this._pageURL.spec,
                                   manifestURL: this._manifestURL,

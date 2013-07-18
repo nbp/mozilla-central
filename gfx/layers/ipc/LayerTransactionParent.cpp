@@ -299,6 +299,8 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
 
         static_cast<ColorLayer*>(layer)->SetColor(
           specific.get_ColorLayerAttributes().color().value());
+        static_cast<ColorLayer*>(layer)->SetBounds(
+          specific.get_ColorLayerAttributes().bounds());
         break;
 
       case Specific::TCanvasLayerAttributes:
@@ -343,7 +345,7 @@ LayerTransactionParent::RecvUpdate(const InfallibleTArray<Edit>& cset,
     case Edit::TOpSetRoot: {
       MOZ_LAYERS_LOG(("[ParentSide] SetRoot"));
 
-      mRoot = AsLayerComposite(edit.get_OpSetRoot())->AsContainer();
+      mRoot = AsLayerComposite(edit.get_OpSetRoot())->AsLayer();
       break;
     }
     case Edit::TOpInsertAfter: {
@@ -491,14 +493,13 @@ LayerTransactionParent::Attach(ShadowLayerParent* aLayerParent, CompositablePare
 {
   LayerComposite* layer = aLayerParent->AsLayer()->AsLayerComposite();
   MOZ_ASSERT(layer);
-  LayerComposite* layerComposite = aLayerParent->AsLayer()->AsLayerComposite();
 
   Compositor* compositor
     = static_cast<LayerManagerComposite*>(aLayerParent->AsLayer()->Manager())->GetCompositor();
 
   CompositableHost* compositable = aCompositable->GetCompositableHost();
   MOZ_ASSERT(compositable);
-  layerComposite->SetCompositableHost(compositable);
+  layer->SetCompositableHost(compositable);
   compositable->Attach(aLayerParent->AsLayer(), compositor);
 }
 
@@ -515,12 +516,13 @@ LayerTransactionParent::RecvClearCachedResources()
 }
 
 PGrallocBufferParent*
-LayerTransactionParent::AllocPGrallocBuffer(const gfxIntSize& aSize,
-                                            const gfxContentType& aContent,
+LayerTransactionParent::AllocPGrallocBufferParent(const gfxIntSize& aSize,
+                                            const uint32_t& aFormat,
+                                            const uint32_t& aUsage,
                                             MaybeMagicGrallocBufferHandle* aOutHandle)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
-  return GrallocBufferActor::Create(aSize, aContent, aOutHandle);
+  return GrallocBufferActor::Create(aSize, aFormat, aUsage, aOutHandle);
 #else
   NS_RUNTIMEABORT("No gralloc buffers for you");
   return nullptr;
@@ -528,7 +530,7 @@ LayerTransactionParent::AllocPGrallocBuffer(const gfxIntSize& aSize,
 }
 
 bool
-LayerTransactionParent::DeallocPGrallocBuffer(PGrallocBufferParent* actor)
+LayerTransactionParent::DeallocPGrallocBufferParent(PGrallocBufferParent* actor)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   delete actor;
@@ -540,26 +542,26 @@ LayerTransactionParent::DeallocPGrallocBuffer(PGrallocBufferParent* actor)
 }
 
 PLayerParent*
-LayerTransactionParent::AllocPLayer()
+LayerTransactionParent::AllocPLayerParent()
 {
   return new ShadowLayerParent();
 }
 
 bool
-LayerTransactionParent::DeallocPLayer(PLayerParent* actor)
+LayerTransactionParent::DeallocPLayerParent(PLayerParent* actor)
 {
   delete actor;
   return true;
 }
 
 PCompositableParent*
-LayerTransactionParent::AllocPCompositable(const TextureInfo& aInfo)
+LayerTransactionParent::AllocPCompositableParent(const TextureInfo& aInfo)
 {
   return new CompositableParent(this, aInfo);
 }
 
 bool
-LayerTransactionParent::DeallocPCompositable(PCompositableParent* actor)
+LayerTransactionParent::DeallocPCompositableParent(PCompositableParent* actor)
 {
   delete actor;
   return true;

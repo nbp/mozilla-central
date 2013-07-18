@@ -4,17 +4,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_frames_h__
-#define jsion_frames_h__
+#ifndef ion_IonFrames_h
+#define ion_IonFrames_h
+
+#ifdef JS_ION
 
 #include "mozilla/DebugOnly.h"
 
+#include "jscntxt.h"
 #include "jsfun.h"
 #include "jstypes.h"
 #include "jsutil.h"
-#include "Registers.h"
-#include "IonCode.h"
-#include "IonFrameIterator.h"
+#include "ion/Registers.h"
+#include "ion/IonCode.h"
+#include "ion/IonFrameIterator.h"
 
 class JSFunction;
 class JSScript;
@@ -88,8 +91,7 @@ ScriptFromCalleeToken(CalleeToken token)
       case CalleeToken_ParallelFunction:
         return CalleeTokenToParallelFunction(token)->nonLazyScript();
     }
-    JS_NOT_REACHED("invalid callee token tag");
-    return NULL;
+    MOZ_ASSUME_UNREACHABLE("invalid callee token tag");
 }
 
 // In between every two frames lies a small header describing both frames. This
@@ -257,12 +259,16 @@ struct ResumeFromException
 {
     static const uint32_t RESUME_ENTRY_FRAME = 0;
     static const uint32_t RESUME_CATCH = 1;
-    static const uint32_t RESUME_FORCED_RETURN = 2;
+    static const uint32_t RESUME_FINALLY = 2;
+    static const uint32_t RESUME_FORCED_RETURN = 3;
 
     uint8_t *framePointer;
     uint8_t *stackPointer;
     uint8_t *target;
     uint32_t kind;
+
+    // Value to push when resuming into a |finally| block.
+    Value exception;
 };
 
 void HandleException(ResumeFromException *rfe);
@@ -270,13 +276,44 @@ void HandleParallelFailure(ResumeFromException *rfe);
 
 void EnsureExitFrame(IonCommonFrameLayout *frame);
 
-void MarkIonActivations(JSRuntime *rt, JSTracer *trc);
+void MarkJitActivations(JSRuntime *rt, JSTracer *trc);
 void MarkIonCompilerRoots(JSTracer *trc);
 
 static inline uint32_t
 MakeFrameDescriptor(uint32_t frameSize, FrameType type)
 {
     return (frameSize << FRAMESIZE_SHIFT) | type;
+}
+
+// Returns the JSScript associated with the topmost Ion frame.
+inline JSScript *
+GetTopIonJSScript(PerThreadData *pt, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
+{
+    IonFrameIterator iter(pt->ionTop);
+    JS_ASSERT(iter.type() == IonFrame_Exit);
+    ++iter;
+
+    // If needed, grab the safepoint index.
+    if (safepointIndexOut)
+        *safepointIndexOut = iter.safepoint();
+
+    JS_ASSERT(iter.returnAddressToFp() != NULL);
+    if (returnAddrOut)
+        *returnAddrOut = (void *) iter.returnAddressToFp();
+
+    if (iter.isBaselineStub()) {
+        ++iter;
+        JS_ASSERT(iter.isBaselineJS());
+    }
+
+    JS_ASSERT(iter.isScripted());
+    return iter.script();
+}
+
+inline JSScript *
+GetTopIonJSScript(JSContext *cx, const SafepointIndex **safepointIndexOut, void **returnAddrOut)
+{
+    return GetTopIonJSScript(&cx->mainThread(), safepointIndexOut, returnAddrOut);
 }
 
 } // namespace ion
@@ -330,5 +367,6 @@ MarkCalleeToken(JSTracer *trc, CalleeToken token);
 } /* namespace ion */
 } /* namespace js */
 
-#endif // jsion_frames_h__
+#endif // JS_ION
 
+#endif /* ion_IonFrames_h */

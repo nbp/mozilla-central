@@ -17,6 +17,7 @@
 XPIDL_SOURCES += [
     'nsIAudioManager.idl',
     'nsINavigatorAudioChannelManager.idl',
+    'nsINetworkInterfaceListService.idl',
     'nsINetworkManager.idl',
     'nsIRadioInterfaceLayer.idl',
     'nsISystemWorkerManager.idl',
@@ -51,6 +52,7 @@ if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gonk':
         'nsVolumeMountLock.cpp',
         'nsVolumeService.cpp',
         'nsVolumeStat.cpp',
+        'OpenFileFinder.cpp',
         'TimeZoneSettingObserver.cpp',
         'Volume.cpp',
         'VolumeCommand.cpp',
@@ -65,3 +67,11 @@ if CONFIG['ENABLE_TESTS']:
 CPP_SOURCES += [
     'SystemWorkerManager.cpp',
 ]
+
+EXTRA_JS_MODULES += [
+    'net_worker.js',
+    'ril_consts.js',
+    'ril_worker.js',
+    'systemlibs.js',
+]
+

@@ -583,14 +583,18 @@ BrowserElementChild.prototype = {
   _getSystemCtxMenuData: function(elem) {
     if ((elem instanceof Ci.nsIDOMHTMLAnchorElement && elem.href) ||
         (elem instanceof Ci.nsIDOMHTMLAreaElement && elem.href)) {
-      return elem.href;
+      return {uri: elem.href};
     }
     if (elem instanceof Ci.nsIImageLoadingContent && elem.currentURI) {
-      return elem.currentURI.spec;
+      return {uri: elem.currentURI.spec};
     }
-    if ((elem instanceof Ci.nsIDOMHTMLMediaElement) ||
-        (elem instanceof Ci.nsIDOMHTMLImageElement)) {
-      return elem.currentSrc || elem.src;
+    if (elem instanceof Ci.nsIDOMHTMLImageElement) {
+      return {uri: elem.src};
+    }
+    if (elem instanceof Ci.nsIDOMHTMLMediaElement) {
+      let hasVideo = !(elem.readyState >= elem.HAVE_METADATA &&
+                       (elem.videoWidth == 0 || elem.videoHeight == 0));
+      return {uri: elem.currentSrc || elem.src, hasVideo: hasVideo};
     }
     return false;
   },
@@ -887,7 +891,12 @@ BrowserElementChild.prototype = {
       }
 
       if (stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
-        sendAsyncMsg('loadend');
+        let bgColor = 'transparent';
+        try {
+          bgColor = content.getComputedStyle(content.document.body)
+                           .getPropertyValue('background-color');
+        } catch (e) {}
+        sendAsyncMsg('loadend', {backgroundColor: bgColor});
 
         // Ignoring NS_BINDING_ABORTED, which is set when loading page is
         // stopped.

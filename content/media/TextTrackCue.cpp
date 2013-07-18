@@ -6,15 +6,22 @@
 #include "mozilla/dom/HTMLTrackElement.h"
 #include "mozilla/dom/TextTrackCue.h"
 #include "mozilla/dom/TextTrackCueBinding.h"
-#include "webvtt/cue.h"
+#include "mozilla/dom/ProcessingInstruction.h"
+#include "nsIFrame.h"
+#include "nsTextNode.h"
+#include "nsVideoFrame.h"
+
+// Alternate value for the 'auto' keyword.
+#define WEBVTT_AUTO -1
 
 namespace mozilla {
 namespace dom {
 
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_3(TextTrackCue,
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_4(TextTrackCue,
                                         mGlobal,
                                         mTrack,
-                                        mTrackElement)
+                                        mTrackElement,
+                                        mDisplayState)
 
 NS_IMPL_ADDREF_INHERITED(TextTrackCue, nsDOMEventTargetHelper)
 NS_IMPL_RELEASE_INHERITED(TextTrackCue, nsDOMEventTargetHelper)
@@ -43,6 +50,7 @@ TextTrackCue::TextTrackCue(nsISupports* aGlobal,
   , mStartTime(aStartTime)
   , mEndTime(aEndTime)
   , mHead(nullptr)
+  , mReset(false)
 {
   SetDefaultCueSettings();
   MOZ_ASSERT(aGlobal);
@@ -61,9 +69,9 @@ TextTrackCue::TextTrackCue(nsISupports* aGlobal,
   , mEndTime(aEndTime)
   , mTrackElement(aTrackElement)
   , mHead(head)
+  , mReset(false)
 {
-  // Use the webvtt library's reference counting.
-  webvtt_ref_node(mHead);
+  // Ref mHead here.
   SetDefaultCueSettings();
   MOZ_ASSERT(aGlobal);
   SetIsDOMBinding();
@@ -72,17 +80,141 @@ TextTrackCue::TextTrackCue(nsISupports* aGlobal,
 TextTrackCue::~TextTrackCue()
 {
   if (mHead) {
-    // Release our reference and null mHead.
-    webvtt_release_node(&mHead);
+    // Release mHead here.
   }
 }
 
 void
-TextTrackCue::DisplayCue()
+TextTrackCue::CreateCueOverlay()
 {
-  if (mTrackElement) {
-    mTrackElement->DisplayCueText(mHead);
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mGlobal));
+  if(!window) {
+    return;
   }
+  nsIDocument* document = window->GetDoc();
+  if(!document) {
+    return;
+  }
+  document->CreateElem(NS_LITERAL_STRING("div"), nullptr,
+                       kNameSpaceID_XHTML,
+                       getter_AddRefs(mDisplayState));
+  nsGenericHTMLElement* cueDiv =
+    static_cast<nsGenericHTMLElement*>(mDisplayState.get());
+  cueDiv->SetClassName(NS_LITERAL_STRING("caption-text"));
+}
+
+void
+TextTrackCue::RenderCue()
+{
+  nsRefPtr<DocumentFragment> frag = GetCueAsHTML();
+  if (!frag || !mTrackElement) {
+    return;
+  }
+
+  if (!mDisplayState) {
+    CreateCueOverlay();
+  }
+
+  HTMLMediaElement* parent = mTrackElement->mMediaParent;
+  if (!parent) {
+    return;
+  }
+
+  nsIFrame* frame = parent->GetPrimaryFrame();
+  if (!frame) {
+    return;
+  }
+
+  nsVideoFrame* videoFrame = do_QueryFrame(frame);
+  if (!videoFrame) {
+    return;
+  }
+
+  nsIContent* overlay =  videoFrame->GetCaptionOverlay();
+  if (!overlay) {
+    return;
+  }
+
+  ErrorResult rv;
+  nsContentUtils::SetNodeTextContent(overlay, EmptyString(), true);
+  nsContentUtils::SetNodeTextContent(mDisplayState, EmptyString(), true);
+
+  mDisplayState->AppendChild(*frag, rv);
+  overlay->AppendChild(*mDisplayState, rv);
+}
+
+already_AddRefed<DocumentFragment>
+TextTrackCue::GetCueAsHTML()
+{
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mGlobal));
+  if(!window) {
+    return nullptr;
+  }
+  nsIDocument* document = window->GetDoc();
+  if(!document){
+    return nullptr;
+  }
+  nsRefPtr<DocumentFragment> frag =
+    document->CreateDocumentFragment();
+
+  ConvertNodeTreeToDOMTree(frag);
+
+  return frag.forget();
+}
+
+struct WebVTTNodeParentPair
+{
+  webvtt_node* mNode;
+  nsIContent* mParent;
+
+  WebVTTNodeParentPair(webvtt_node* aNode, nsIContent* aParent)
+    : mNode(aNode)
+    , mParent(aParent)
+  {}
+};
+
+void
+TextTrackCue::ConvertNodeTreeToDOMTree(nsIContent* aParentContent)
+{
+  nsTArray<WebVTTNodeParentPair> nodeParentPairStack;
+
+  // mHead should actually be the head of a node tree.
+  // Seed the stack for traversal.
+}
+
+already_AddRefed<nsIContent>
+TextTrackCue::ConvertInternalNodeToContent(const webvtt_node* aWebVTTNode)
+{
+  nsIAtom* atom = nsGkAtoms::span;
+
+  nsCOMPtr<nsIContent> cueTextContent;
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mGlobal));
+  if(!window) {
+    return nullptr;
+  }
+  nsIDocument* document = window->GetDoc();
+  if(!document){
+    return nullptr;
+  }
+  document->CreateElem(nsDependentAtomString(atom), nullptr,
+                       kNameSpaceID_XHTML,
+                       getter_AddRefs(cueTextContent));
+  return cueTextContent.forget();
+}
+
+already_AddRefed<nsIContent>
+TextTrackCue::ConvertLeafNodeToContent(const webvtt_node* aWebVTTNode)
+{
+  nsCOMPtr<nsIContent> cueTextContent;
+  nsCOMPtr<nsPIDOMWindow> window(do_QueryInterface(mGlobal));
+  if(!window) {
+    return nullptr;
+  }
+  nsIDocument* document = window->GetDoc();
+  if(!document) {
+    return nullptr;
+  }
+  return cueTextContent.forget();
 }
 
 JSObject*

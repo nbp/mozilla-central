@@ -10,7 +10,7 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-SIMPLE_PROGRAMS	= PrimitiveTest$(BIN_SUFFIX) SimpleTypeLib$(BIN_SUFFIX)
+DISABLED_SIMPLE_PROGRAMS = PrimitiveTest$(BIN_SUFFIX) SimpleTypeLib$(BIN_SUFFIX)
 
 CSRCS		= PrimitiveTest.c SimpleTypeLib.c
 
@@ -20,4 +20,4 @@ LIBS		= \
 
 include $(topsrcdir)/config/rules.mk
 
-DEFINES += -DEXPORT_XPT_API
+DEFINES += -DIMPL_LIBXUL

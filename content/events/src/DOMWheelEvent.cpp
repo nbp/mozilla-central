@@ -8,6 +8,7 @@
 #include "nsGUIEvent.h"
 #include "nsIContent.h"
 #include "nsContentUtils.h"
+#include "prtime.h"
 
 namespace mozilla {
 namespace dom {
@@ -28,7 +29,6 @@ DOMWheelEvent::DOMWheelEvent(EventTarget* aOwner,
     static_cast<widget::WheelEvent*>(mEvent)->inputSource =
       nsIDOMMouseEvent::MOZ_SOURCE_UNKNOWN;
   }
-  SetIsDOMBinding();
 }
 
 DOMWheelEvent::~DOMWheelEvent()

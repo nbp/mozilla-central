@@ -4,14 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsnum_h___
-#define jsnum_h___
+#ifndef jsnum_h
+#define jsnum_h
 
 #include "mozilla/FloatingPoint.h"
 
-#include <math.h>
-
-#include "jsobj.h"
+#include "jscntxt.h"
 
 #include "vm/NumericConversions.h"
 
@@ -51,13 +49,13 @@ class JSString;
  */
 template <js::AllowGC allowGC>
 extern JSString *
-js_NumberToString(JSContext *cx, double d);
+js_NumberToString(js::ThreadSafeContext *cx, double d);
 
 namespace js {
 
 template <AllowGC allowGC>
 extern JSFlatString *
-Int32ToString(JSContext *cx, int32_t i);
+Int32ToString(ThreadSafeContext *cx, int32_t i);
 
 /*
  * Convert an integer or double (contained in the given value) to a string and
@@ -130,28 +128,28 @@ ParseDecimalNumber(const JS::TwoByteChars chars);
  * *dp == 0 and *endp == start upon return.
  */
 extern bool
-GetPrefixInteger(JSContext *cx, const jschar *start, const jschar *end, int base,
+GetPrefixInteger(ExclusiveContext *cx, const jschar *start, const jschar *end, int base,
                  const jschar **endp, double *dp);
+
+extern bool
+StringToNumber(ExclusiveContext *cx, JSString *str, double *result);
 
 /* ES5 9.3 ToNumber, overwriting *vp with the appropriate number value. */
 JS_ALWAYS_INLINE bool
-ToNumber(JSContext *cx, Value *vp)
+ToNumber(JSContext *cx, JS::MutableHandleValue vp)
 {
 #ifdef DEBUG
-    {
-        SkipRoot skip(cx, vp);
-        MaybeCheckStackRoots(cx);
-    }
+    MaybeCheckStackRoots(cx);
 #endif
 
-    if (vp->isNumber())
+    if (vp.isNumber())
         return true;
     double d;
-    extern bool ToNumberSlow(JSContext *cx, js::Value v, double *dp);
-    if (!ToNumberSlow(cx, *vp, &d))
+    extern bool ToNumberSlow(JSContext *cx, Value v, double *dp);
+    if (!ToNumberSlow(cx, vp, &d))
         return false;
 
-    vp->setNumber(d);
+    vp.setNumber(d);
     return true;
 }
 
@@ -171,7 +169,7 @@ num_parseInt(JSContext *cx, unsigned argc, Value *vp);
  * Return false if out of memory.
  */
 extern JSBool
-js_strtod(JSContext *cx, const jschar *s, const jschar *send,
+js_strtod(js::ExclusiveContext *cx, const jschar *s, const jschar *send,
           const jschar **ep, double *dp);
 
 extern JSBool
@@ -217,7 +215,7 @@ IsDefinitelyIndex(const Value &v, uint32_t *indexp)
 
 /* ES5 9.4 ToInteger. */
 static inline bool
-ToInteger(JSContext *cx, const js::Value &v, double *dp)
+ToInteger(JSContext *cx, HandleValue v, double *dp)
 {
 #ifdef DEBUG
     {
@@ -265,6 +263,21 @@ SafeMul(int32_t one, int32_t two, int32_t *res)
     return ores == (int64_t)*res;
 }
 
+extern bool
+ToNumberSlow(ExclusiveContext *cx, Value v, double *dp);
+
+// Variant of ToNumber which takes an ExclusiveContext instead of a JSContext.
+// ToNumber is part of the API and can't use ExclusiveContext directly.
+JS_ALWAYS_INLINE bool
+ToNumber(ExclusiveContext *cx, const Value &v, double *out)
+{
+    if (v.isNumber()) {
+        *out = v.toNumber();
+        return true;
+    }
+    return ToNumberSlow(cx, v, out);
+}
+
 } /* namespace js */
 
-#endif /* jsnum_h___ */
+#endif /* jsnum_h */

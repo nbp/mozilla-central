@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef ForkJoin_h__
-#define ForkJoin_h__
+#ifndef vm_ForkJoin_h
+#define vm_ForkJoin_h
 
 #include "jscntxt.h"
 #include "vm/ThreadPool.h"
@@ -98,7 +98,7 @@
 //   get interesting.  In that case, the semantics of parallel
 //   execution guarantee us that no visible side effects have occurred
 //   (unless they were performed with the intrinsic
-//   |UnsafeSetElement()|, which can only be used in self-hosted
+//   |UnsafePutElements()|, which can only be used in self-hosted
 //   code).  We therefore reinvoke |func()| but with warmup set to
 //   true.  The idea here is that often parallel bailouts result from
 //   a failed type guard or other similar assumption, so rerunning the
@@ -200,7 +200,7 @@
 
 namespace js {
 
-struct ForkJoinSlice;
+class ForkJoinSlice;
 
 bool ForkJoin(JSContext *cx, CallArgs &args);
 
@@ -219,13 +219,6 @@ struct IonLIRTraceData {
     jsbytecode *pc;
 };
 #endif
-
-// Parallel operations in general can have one of three states.  They may
-// succeed, fail, or "bail", where bail indicates that the code encountered an
-// unexpected condition and should be re-run sequentially.
-// Different subcategories of the "bail" state are encoded as variants of
-// TP_RETRY_*.
-enum ParallelResult { TP_SUCCESS, TP_RETRY_SEQUENTIALLY, TP_RETRY_AFTER_GC, TP_FATAL };
 
 ///////////////////////////////////////////////////////////////////////////
 // Bailout tracking
@@ -258,6 +251,8 @@ enum ParallelBailoutCause {
     ParallelBailoutUnsupported,
     ParallelBailoutUnsupportedStringComparison,
     ParallelBailoutUnsupportedSparseArray,
+    ParallelBailoutRequestedGC,
+    ParallelBailoutRequestedZoneGC,
 };
 
 struct ParallelBailoutTrace {
@@ -288,22 +283,14 @@ struct ParallelBailoutRecord {
 
 struct ForkJoinShared;
 
-struct ForkJoinSlice
+class ForkJoinSlice : public ThreadSafeContext
 {
   public:
-    // PerThreadData corresponding to the current worker thread.
-    PerThreadData *perThreadData;
-
     // Which slice should you process? Ranges from 0 to |numSlices|.
     const uint32_t sliceId;
 
     // How many slices are there in total?
     const uint32_t numSlices;
-
-    // Allocator to use when allocating on this thread.  See
-    // |ion::ParFunctions::ParNewGCThing()|.  This should move into
-    // |perThreadData|.
-    Allocator *const allocator;
 
     // Bailout record used to record the reason this thread stopped executing
     ParallelBailoutRecord *const bailoutRecord;
@@ -314,11 +301,11 @@ struct ForkJoinSlice
 #endif
 
     ForkJoinSlice(PerThreadData *perThreadData, uint32_t sliceId, uint32_t numSlices,
-                  Allocator *arenaLists, ForkJoinShared *shared,
+                  Allocator *allocator, ForkJoinShared *shared,
                   ParallelBailoutRecord *bailoutRecord);
 
     // True if this is the main thread, false if it is one of the parallel workers.
-    bool isMainThread();
+    bool isMainThread() const;
 
     // When the code would normally trigger a GC, we don't trigger it
     // immediately but instead record that request here.  This will
@@ -352,6 +339,7 @@ struct ForkJoinSlice
     // Acquire and release the JSContext from the runtime.
     JSContext *acquireContext();
     void releaseContext();
+    bool hasAcquiredContext() const;
 
     // Check the current state of parallel execution.
     static inline ForkJoinSlice *Current();
@@ -370,6 +358,8 @@ struct ForkJoinSlice
 #endif
 
     ForkJoinShared *const shared;
+
+    bool acquiredContext_;
 };
 
 // Locks a JSContext for its scope. Be very careful, because locking a
@@ -418,6 +408,8 @@ InParallelSection()
     return false;
 #endif
 }
+
+bool InSequentialOrExclusiveParallelSection();
 
 bool ParallelTestsShouldPass(JSContext *cx);
 
@@ -493,4 +485,4 @@ js::ForkJoinSlice::Current()
 #endif
 }
 
-#endif // ForkJoin_h__
+#endif /* vm_ForkJoin_h */

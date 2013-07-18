@@ -84,11 +84,11 @@ private:
 namespace mozilla {
 namespace dom {
 
-class XULDocument : public XMLDocument,
-                    public nsIXULDocument,
-                    public nsIDOMXULDocument,
-                    public nsIStreamLoaderObserver,
-                    public nsICSSLoaderObserver
+class XULDocument MOZ_FINAL : public XMLDocument,
+                              public nsIXULDocument,
+                              public nsIDOMXULDocument,
+                              public nsIStreamLoaderObserver,
+                              public nsICSSLoaderObserver
 {
 public:
     XULDocument();
@@ -126,7 +126,6 @@ public:
     virtual void GetElementsForID(const nsAString& aID,
                                   nsCOMArray<nsIContent>& aElements) MOZ_OVERRIDE;
 
-    NS_IMETHOD GetScriptGlobalObjectOwner(nsIScriptGlobalObjectOwner** aGlobalOwner) MOZ_OVERRIDE;
     NS_IMETHOD AddSubtreeToDocument(nsIContent* aContent) MOZ_OVERRIDE;
     NS_IMETHOD RemoveSubtreeFromDocument(nsIContent* aContent) MOZ_OVERRIDE;
     NS_IMETHOD SetTemplateBuilderFor(nsIContent* aContent,

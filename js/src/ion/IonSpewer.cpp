@@ -6,10 +6,8 @@
 
 #ifdef DEBUG
 
-#include "Ion.h"
-#include "IonSpewer.h"
-
-#include "jsscriptinlines.h"
+#include "ion/Ion.h"
+#include "ion/IonSpewer.h"
 
 #ifndef ION_SPEW_DIR
 # if defined(_WIN32)
@@ -31,7 +29,7 @@ static bool LoggingChecked = false;
 static uint32_t LoggingBits = 0;
 static uint32_t filteredOutCompilations = 0;
 
-static const char *ChannelNames[] =
+static const char * const ChannelNames[] =
 {
 #define IONSPEW_CHANNEL(name) #name,
     IONSPEW_CHANNEL_LIST(IONSPEW_CHANNEL)
@@ -160,8 +158,6 @@ IonSpewer::spewPass(const char *pass)
 {
     if (!isSpewingFunction())
         return;
-    if (!GetIonContext()->cx)
-        return;
 
     c1Spewer.spewPass(pass);
     jsonSpewer.beginPass(pass);
@@ -174,8 +170,6 @@ void
 IonSpewer::spewPass(const char *pass, LinearScanAllocator *ra)
 {
     if (!isSpewingFunction())
-        return;
-    if (!GetIonContext()->cx)
         return;
 
     c1Spewer.spewPass(pass);

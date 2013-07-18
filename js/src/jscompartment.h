@@ -4,15 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jscompartment_h___
-#define jscompartment_h___
+#ifndef jscompartment_h
+#define jscompartment_h
 
-#include "mozilla/Attributes.h"
-#include "mozilla/GuardObjects.h"
+#include "mozilla/MemoryReporting.h"
 #include "mozilla/Util.h"
 
 #include "jscntxt.h"
-#include "jsfun.h"
 #include "jsgc.h"
 #include "jsobj.h"
 
@@ -117,12 +115,15 @@ struct TypeInferenceSizes;
 
 namespace js {
 class AutoDebugModeGC;
+class ArrayBufferObject;
 class DebugScopes;
+class WeakMapBase;
 }
 
 struct JSCompartment
 {
     JS::Zone                     *zone_;
+    JS::CompartmentOptions       options_;
 
     JSRuntime                    *rt;
     JSPrincipals                 *principals;
@@ -134,6 +135,7 @@ struct JSCompartment
   private:
     friend struct JSRuntime;
     friend struct JSContext;
+    friend class js::ExclusiveContext;
     js::ReadBarriered<js::GlobalObject> global_;
 
     unsigned                     enterCompartmentDepth;
@@ -144,6 +146,8 @@ struct JSCompartment
 
     JS::Zone *zone() { return zone_; }
     const JS::Zone *zone() const { return zone_; }
+    JS::CompartmentOptions &options() { return options_; }
+    const JS::CompartmentOptions &options() const { return options_; }
 
     /*
      * Nb: global_ might be NULL, if (a) it's the atoms compartment, or (b) the
@@ -194,10 +198,10 @@ struct JSCompartment
     js::RegExpCompartment        regExps;
 
   private:
-    void sizeOfTypeInferenceData(JS::TypeInferenceSizes *stats, JSMallocSizeOfFun mallocSizeOf);
+    void sizeOfTypeInferenceData(JS::TypeInferenceSizes *stats, mozilla::MallocSizeOf mallocSizeOf);
 
   public:
-    void sizeOfIncludingThis(JSMallocSizeOfFun mallocSizeOf, size_t *compartmentObject,
+    void sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf, size_t *compartmentObject,
                              JS::TypeInferenceSizes *tiSizes,
                              size_t *shapesCompartmentTables, size_t *crossCompartmentWrappers,
                              size_t *regexpCompartment, size_t *debuggeesSet,
@@ -222,9 +226,6 @@ struct JSCompartment
     js::types::TypeObjectSet     lazyTypeObjects;
     void sweepNewTypeObjectTable(js::types::TypeObjectSet &table);
 
-    js::types::TypeObject *getNewType(JSContext *cx, js::Class *clasp, js::TaggedProto proto,
-                                      JSFunction *fun = NULL);
-
     js::types::TypeObject *getLazyType(JSContext *cx, js::Class *clasp, js::TaggedProto proto);
 
     /*
@@ -248,7 +249,7 @@ struct JSCompartment
     JSObject                     *gcIncomingGrayPointers;
 
     /* Linked list of live array buffers with >1 view. */
-    JSObject                     *gcLiveArrayBuffers;
+    js::ArrayBufferObject        *gcLiveArrayBuffers;
 
     /* Linked list of live weakmaps in this compartment. */
     js::WeakMapBase              *gcWeakMapList;
@@ -259,7 +260,7 @@ struct JSCompartment
     unsigned                     debugModeBits;  // see debugMode() below
 
   public:
-    JSCompartment(JS::Zone *zone);
+    JSCompartment(JS::Zone *zone, const JS::CompartmentOptions &options);
     ~JSCompartment();
 
     bool init(JSContext *cx);
@@ -408,14 +409,20 @@ class js::AutoDebugModeGC
     }
 };
 
+namespace js {
+
 inline bool
-JSContext::typeInferenceEnabled() const
+ExclusiveContext::typeInferenceEnabled() const
 {
-    return compartment->zone()->types.inferenceEnabled;
+    // Type inference cannot be enabled in compartments which are accessed off
+    // the main thread by an ExclusiveContext. TI data is stored in per-zone
+    // allocators which could otherwise race with main thread operations.
+    JS_ASSERT_IF(!isJSContext(), !compartment_->zone()->types.inferenceEnabled);
+    return compartment_->zone()->types.inferenceEnabled;
 }
 
 inline js::Handle<js::GlobalObject*>
-JSContext::global() const
+ExclusiveContext::global() const
 {
     /*
      * It's safe to use |unsafeGet()| here because any compartment that is
@@ -423,23 +430,21 @@ JSContext::global() const
      * barrier on it. Once the compartment is popped, the handle is no longer
      * safe to use.
      */
-    return js::Handle<js::GlobalObject*>::fromMarkedLocation(compartment->global_.unsafeGet());
+    return Handle<GlobalObject*>::fromMarkedLocation(compartment_->global_.unsafeGet());
 }
-
-namespace js {
 
 class AssertCompartmentUnchanged
 {
   public:
     AssertCompartmentUnchanged(JSContext *cx
                                 MOZ_GUARD_OBJECT_NOTIFIER_PARAM)
-      : cx(cx), oldCompartment(cx->compartment)
+      : cx(cx), oldCompartment(cx->compartment())
     {
         MOZ_GUARD_OBJECT_NOTIFIER_INIT;
     }
 
     ~AssertCompartmentUnchanged() {
-        JS_ASSERT(cx->compartment == oldCompartment);
+        JS_ASSERT(cx->compartment() == oldCompartment);
     }
 
   protected:
@@ -561,5 +566,4 @@ class AutoWrapperRooter : private AutoGCRooter {
 
 } /* namespace js */
 
-#endif /* jscompartment_h___ */
-
+#endif /* jscompartment_h */

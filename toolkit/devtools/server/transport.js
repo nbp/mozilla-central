@@ -7,66 +7,12 @@
 "use strict";
 Components.utils.import("resource://gre/modules/NetUtil.jsm");
 
-/* Turn the error e into a string, without fail. */
-function safeErrorString(aError) {
-  try {
-    var s = aError.toString();
-    if (typeof s === "string")
-      return s;
-  } catch (ee) { }
-
-  return "<failed trying to find error description>";
-}
-
-/**
- * Given a handler function that may throw, return an infallible handler
- * function that calls the fallible handler, and logs any exceptions it
- * throws.
- *
- * @param aHandler function
- *      A handler function, which may throw.
- * @param aName string
- *      A name for aHandler, for use in error messages. If omitted, we use
- *      aHandler.name.
- *
- * (SpiderMonkey does generate good names for anonymous functions, but we
- * don't have a way to get at them from JavaScript at the moment.)
- */
-function makeInfallible(aHandler, aName) {
-  if (!aName)
-    aName = aHandler.name;
-
-  return function (/* arguments */) {
-    try {
-      return aHandler.apply(this, arguments);
-    } catch (ex) {
-      let msg = "Handler function ";
-      if (aName) {
-        msg += aName + " ";
-      }
-      msg += "threw an exception: " + safeErrorString(ex);
-      if (ex.stack) {
-        msg += "\nCall stack:\n" + ex.stack;
-      }
-
-      dump(msg + "\n");
-
-      if (Cu.reportError) {
-        /*
-         * Note that the xpcshell test harness registers an observer for
-         * console messages, so when we're running tests, this will cause
-         * the test to quit.
-         */
-        Cu.reportError(msg);
-      }
-    }
-  }
-}
-
 /**
  * An adapter that handles data transfers between the debugger client and
  * server. It can work with both nsIPipe and nsIServerSocket transports so
  * long as the properly created input and output streams are specified.
+ * (However, for intra-process connections, LocalDebuggerTransport, below,
+ * is more efficient than using an nsIPipe pair with DebuggerTransport.)
  *
  * @param aInput nsIInputStream
  *        The input stream.
@@ -76,12 +22,12 @@ function makeInfallible(aHandler, aName) {
  * Given a DebuggerTransport instance dt:
  * 1) Set dt.hooks to a packet handler object (described below).
  * 2) Call dt.ready() to begin watching for input packets.
- * 3) Send packets as you please, and handle incoming packets passed to 
- *    hook.onPacket.
+ * 3) Call dt.send() to send packets as you please, and handle incoming
+ *    packets passed to hook.onPacket.
  * 4) Call dt.close() to close the connection, and disengage from the event
  *    loop.
  *
- * A packet handler object is an object with two methods:
+ * A packet handler is an object with two methods:
  *
  * - onPacket(packet) - called when we have received a complete packet.
  *   |Packet| is the parsed form of the packet --- a JavaScript value, not
@@ -89,7 +35,7 @@ function makeInfallible(aHandler, aName) {
  *
  * - onClosed(status) - called when the connection is closed. |Status| is
  *   an nsresult, of the sort passed to nsIRequestObserver.
- * 
+ *
  * Data is transferred as a JSON packet serialized into a string, with the
  * string length prepended to the packet, followed by a colon
  * ([length]:[packet]). The contents of the JSON packet are specified in
@@ -148,7 +94,14 @@ DebuggerTransport.prototype = {
 
   onOutputStreamReady:
   makeInfallible(function DT_onOutputStreamReady(aStream) {
-    let written = aStream.write(this._outgoing, this._outgoing.length);
+    let written = 0;
+    try {
+      written = aStream.write(this._outgoing, this._outgoing.length);
+    } catch(e if e.result == Components.results.NS_BASE_STREAM_CLOSED) {
+      dumpn("Connection closed.");
+      this.close();
+      return;
+    }
     this._outgoing = this._outgoing.slice(written);
     this._flushOutgoing();
   }, "DebuggerTransport.prototype.onOutputStreamReady"),
@@ -173,7 +126,10 @@ DebuggerTransport.prototype = {
   onStopRequest:
   makeInfallible(function DT_onStopRequest(aRequest, aContext, aStatus) {
     this.close();
-    this.hooks.onClosed(aStatus);
+    if (this.hooks) {
+      this.hooks.onClosed(aStatus);
+      this.hooks = null;
+    }
   }, "DebuggerTransport.prototype.onStopRequest"),
 
   onDataAvailable:
@@ -272,13 +228,17 @@ LocalDebuggerTransport.prototype = {
     }
     this._deepFreeze(aPacket);
     let other = this.other;
-    Services.tm.currentThread.dispatch(makeInfallible(function() {
-      // Avoid the cost of JSON.stringify() when logging is disabled.
-      if (wantLogging) {
-        dumpn("Received packet " + serial + ": " + JSON.stringify(aPacket, null, 2));
-      }
-      other.hooks.onPacket(aPacket);
-    }, "LocalDebuggerTransport instance's this.other.hooks.onPacket"), 0);
+    if (other) {
+      Services.tm.currentThread.dispatch(makeInfallible(function() {
+        // Avoid the cost of JSON.stringify() when logging is disabled.
+        if (wantLogging) {
+          dumpn("Received packet " + serial + ": " + JSON.stringify(aPacket, null, 2));
+        }
+        if (other.hooks) {
+          other.hooks.onPacket(aPacket);
+        }
+      }, "LocalDebuggerTransport instance's this.other.hooks.onPacket"), 0);
+    }
   },
 
   /**
@@ -292,7 +252,10 @@ LocalDebuggerTransport.prototype = {
       delete this.other;
       other.close();
     }
-    this.hooks.onClosed();
+    if (this.hooks) {
+      this.hooks.onClosed();
+      this.hooks = null;
+    }
   },
 
   /**
@@ -315,5 +278,52 @@ LocalDebuggerTransport.prototype = {
         this._deepFreeze(o[prop]);
       }
     }
+  }
+};
+
+/**
+ * A transport for the debugging protocol that uses nsIMessageSenders to
+ * exchange packets with servers running in child processes.
+ *
+ * In the parent process, |aSender| should be the nsIMessageSender for the
+ * child process. In a child process, |aSender| should be the child process
+ * message manager, which sends packets to the parent.
+ *
+ * aPrefix is a string included in the message names, to distinguish
+ * multiple servers running in the same child process.
+ *
+ * This transport exchanges messages named 'debug:<prefix>:packet', where
+ * <prefix> is |aPrefix|, whose data is the protocol packet.
+ */
+function ChildDebuggerTransport(aSender, aPrefix) {
+  this._sender = aSender.QueryInterface(Components.interfaces.nsIMessageSender);
+  this._messageName = "debug:" + aPrefix + ":packet";
+}
+
+/*
+ * To avoid confusion, we use 'message' to mean something that
+ * nsIMessageSender conveys, and 'packet' to mean a remote debugging
+ * protocol packet.
+ */
+ChildDebuggerTransport.prototype = {
+  constructor: ChildDebuggerTransport,
+
+  hooks: null,
+
+  ready: function () {
+    this._sender.addMessageListener(this._messageName, this);
+  },
+
+  close: function () {
+    this._sender.removeMessageListener(this._messageName, this);
+    this.hooks.onClosed();
+  },
+
+  receiveMessage: function ({data}) {
+    this.hooks.onPacket(data);
+  },
+
+  send: function (packet) {
+    this._sender.sendAsyncMessage(this._messageName, packet);
   }
 };

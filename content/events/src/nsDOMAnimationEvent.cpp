@@ -5,6 +5,7 @@
 
 #include "nsDOMAnimationEvent.h"
 #include "nsGUIEvent.h"
+#include "prtime.h"
 
 nsDOMAnimationEvent::nsDOMAnimationEvent(mozilla::dom::EventTarget* aOwner,
                                          nsPresContext *aPresContext,
@@ -22,7 +23,6 @@ nsDOMAnimationEvent::nsDOMAnimationEvent(mozilla::dom::EventTarget* aOwner,
     mEventIsInternal = true;
     mEvent->time = PR_Now();
   }
-  SetIsDOMBinding();
 }
 
 nsDOMAnimationEvent::~nsDOMAnimationEvent()

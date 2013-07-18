@@ -29,7 +29,7 @@ function WebappsActor(aConnection) {
   Cu.import("resource://gre/modules/AppsUtils.jsm");
   Cu.import("resource://gre/modules/FileUtils.jsm");
   Cu.import('resource://gre/modules/Services.jsm');
-  Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+  let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
 }
 
 WebappsActor.prototype = {
@@ -54,12 +54,8 @@ WebappsActor.prototype = {
     reg._readManifests([{ id: aId }], function(aResult) {
       let manifest = aResult[0].manifest;
       aApp.name = manifest.name;
-      if ("_registerSystemMessages" in reg) {
-        reg._registerSystemMessages(manifest, aApp);
-      }
-      if ("_registerActivities" in reg) {
-        reg._registerActivities(manifest, aApp, true);
-      }
+      reg.updateAppHandlers(null, manifest, aApp);
+
       reg._saveApps(function() {
         aApp.manifest = manifest;
         reg.broadcastMessage("Webapps:AddApp", { id: aId, app: aApp });
@@ -107,7 +103,7 @@ WebappsActor.prototype = {
     return type;
   },
 
-  installHostedApp: function wa_actorInstallHosted(aDir, aId) {
+  installHostedApp: function wa_actorInstallHosted(aDir, aId, aReceipts) {
     debug("installHostedApp");
     let self = this;
 
@@ -158,7 +154,8 @@ WebappsActor.prototype = {
                 origin: origin,
                 installOrigin: aMetadata.installOrigin || origin,
                 manifestURL: manifestURL,
-                appStatus: appType
+                appStatus: appType,
+                receipts: aReceipts,
               };
 
               self._registerApp(app, aId, aDir);
@@ -175,7 +172,7 @@ WebappsActor.prototype = {
                                        Ci.nsIThread.DISPATCH_NORMAL);
   },
 
-  installPackagedApp: function wa_actorInstallPackaged(aDir, aId) {
+  installPackagedApp: function wa_actorInstallPackaged(aDir, aId, aReceipts) {
     debug("installPackagedApp");
     let self = this;
 
@@ -219,7 +216,8 @@ WebappsActor.prototype = {
               origin: origin,
               installOrigin: origin,
               manifestURL: origin + "/manifest.webapp",
-              appStatus: appType
+              appStatus: appType,
+              receipts: aReceipts,
             }
 
             self._registerApp(app, aId, aDir);
@@ -269,8 +267,12 @@ WebappsActor.prototype = {
     let testFile = appDir.clone();
     testFile.append("application.zip");
 
+    let receipts = (aRequest.receipts && Array.isArray(aRequest.receipts))
+                    ? aRequest.receipts
+                    : [];
+
     if (testFile.exists()) {
-      this.installPackagedApp(appDir, appId);
+      this.installPackagedApp(appDir, appId, receipts);
     } else {
       let missing =
         ["manifest.webapp", "metadata.json"]
@@ -288,7 +290,7 @@ WebappsActor.prototype = {
                  message: "hosted app file is missing" }
       }
 
-      this.installHostedApp(appDir, appId);
+      this.installHostedApp(appDir, appId, receipts);
     }
 
     return { appId: appId, path: appDir.path }
@@ -297,7 +299,7 @@ WebappsActor.prototype = {
   getAll: function wa_actorGetAll(aRequest) {
     debug("getAll");
 
-    let defer = Promise.defer();
+    let defer = promise.defer();
     let reg = DOMApplicationRegistry;
     reg.getAll(function onsuccess(apps) {
       defer.resolve({ apps: apps });
@@ -315,7 +317,7 @@ WebappsActor.prototype = {
                message: "missing parameter manifestURL" };
     }
 
-    let defer = Promise.defer();
+    let defer = promise.defer();
     let reg = DOMApplicationRegistry;
     reg.uninstall(
       manifestURL,
@@ -339,7 +341,7 @@ WebappsActor.prototype = {
                message: "missing parameter manifestURL" };
     }
 
-    let defer = Promise.defer();
+    let defer = promise.defer();
     let reg = DOMApplicationRegistry;
     reg.launch(
       aRequest.manifestURL,

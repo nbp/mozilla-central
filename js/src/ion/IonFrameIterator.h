@@ -4,16 +4,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_frame_iterator_h__
-#define jsion_frame_iterator_h__
+#ifndef ion_IonFrameIterator_h
+#define ion_IonFrameIterator_h
+
+#ifdef JS_ION
 
 #include "jstypes.h"
-#include "IonCode.h"
-#include "Slots.h"
-#include "SnapshotReader.h"
+#include "ion/IonCode.h"
+#include "ion/Slots.h"
+#include "ion/SnapshotReader.h"
 
 class JSFunction;
 class JSScript;
+
+namespace js {
+    class ActivationIterator;
+};
 
 namespace js {
 namespace ion {
@@ -53,7 +59,7 @@ enum FrameType
 
     // An exit frame is necessary for transitioning from a JS frame into C++.
     // From within C++, an exit frame is always the last frame in any
-    // IonActivation.
+    // JitActivation.
     IonFrame_Exit,
 
     // An OSR frame is added when performing OSR from within a bailout. It
@@ -73,10 +79,9 @@ class IonCommonFrameLayout;
 class IonJSFrameLayout;
 class IonExitFrameLayout;
 
-class IonActivation;
-class IonActivationIterator;
-
 class BaselineFrame;
+
+class JitActivation;
 
 class IonFrameIterator
 {
@@ -88,7 +93,7 @@ class IonFrameIterator
 
   private:
     mutable const SafepointIndex *cachedSafepointIndex_;
-    const IonActivation *activation_;
+    const JitActivation *activation_;
 
     void dumpBaseline() const;
 
@@ -102,7 +107,7 @@ class IonFrameIterator
         activation_(NULL)
     { }
 
-    IonFrameIterator(const IonActivationIterator &activations);
+    IonFrameIterator(const ActivationIterator &activations);
     IonFrameIterator(IonJSFrameLayout *fp);
 
     // Current frame information.
@@ -113,7 +118,10 @@ class IonFrameIterator
         return current_;
     }
 
-    inline IonCommonFrameLayout *current() const;
+    IonCommonFrameLayout *current() const {
+        return (IonCommonFrameLayout *)current_;
+    }
+
     inline uint8_t *returnAddress() const;
 
     IonJSFrameLayout *jsFrame() const {
@@ -180,7 +188,10 @@ class IonFrameIterator
 
     // Returns the stack space used by the current frame, in bytes. This does
     // not include the size of its fixed header.
-    inline size_t frameSize() const;
+    size_t frameSize() const {
+        JS_ASSERT(type_ != IonFrame_Exit);
+        return frameSize_;
+    }
 
     // Functions used to iterate on frames. When prevType is IonFrame_Entry,
     // the current frame is the last frame.
@@ -204,37 +215,24 @@ class IonFrameIterator
     MachineState machineState() const;
 
     template <class Op>
-    inline void forEachCanonicalActualArg(Op op, unsigned start, unsigned count) const;
+    void forEachCanonicalActualArg(Op op, unsigned start, unsigned count) const {
+        JS_ASSERT(isBaselineJS());
+
+        unsigned nactual = numActualArgs();
+        if (count == unsigned(-1))
+            count = nactual - start;
+
+        unsigned end = start + count;
+        JS_ASSERT(start <= end && end <= nactual);
+
+        Value *argv = actualArgs();
+        for (unsigned i = start; i < end; i++)
+            op(argv[i]);
+    }
 
     void dump() const;
 
     inline BaselineFrame *baselineFrame() const;
-};
-
-class IonActivationIterator
-{
-    uint8_t *top_;
-    IonActivation *activation_;
-
-  private:
-    void settle();
-
-  public:
-    IonActivationIterator(JSContext *cx);
-    IonActivationIterator(JSRuntime *rt);
-
-    IonActivationIterator &operator++();
-
-    IonActivation *activation() const {
-        return activation_;
-    }
-    uint8_t *top() const {
-        return top_;
-    }
-    bool more() const;
-
-    // Returns the bottom and top addresses of the current activation.
-    void ionStackRange(uintptr_t *&min, uintptr_t *&end);
 };
 
 class IonJSFrameLayout;
@@ -353,9 +351,29 @@ class InlineFrameIteratorMaybeGC
     void findNextFrame();
 
   public:
-    inline InlineFrameIteratorMaybeGC(JSContext *cx, const IonFrameIterator *iter);
-    inline InlineFrameIteratorMaybeGC(JSContext *cx, const IonBailoutIterator *iter);
-    inline InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter);
+    InlineFrameIteratorMaybeGC(JSContext *cx, const IonFrameIterator *iter)
+      : callee_(cx),
+        script_(cx)
+    {
+        resetOn(iter);
+    }
+
+    InlineFrameIteratorMaybeGC(JSContext *cx, const IonBailoutIterator *iter);
+
+    InlineFrameIteratorMaybeGC(JSContext *cx, const InlineFrameIteratorMaybeGC *iter)
+      : frame_(iter ? iter->frame_ : NULL),
+        framesRead_(0),
+        callee_(cx),
+        script_(cx)
+    {
+        if (frame_) {
+            si_ = SnapshotIterator(*frame_);
+            // findNextFrame will iterate to the next frame and init. everything.
+            // Therefore to settle on the same frame, we report one frame less readed.
+            framesRead_ = iter->framesRead_ - 1;
+            findNextFrame();
+        }
+    }
 
     size_t numSlots() const;
 
@@ -369,7 +387,18 @@ class InlineFrameIteratorMaybeGC
     JSFunction *maybeCallee() const {
         return callee_;
     }
-    inline unsigned numActualArgs() const;
+
+    unsigned numActualArgs() const {
+        // The number of actual arguments of inline frames is recovered by the
+        // iteration process. It is recovered from the bytecode because this
+        // property still hold since the for inlined frames. This property does not
+        // hold for the parent frame because it can have optimize a call to
+        // js_fun_call or js_fun_apply.
+        if (more())
+            return numActualArgs_;
+
+        return frame_->numActualArgs();
+    }
 
     void forEachCanonicalActualArg(JSContext *cx, AbstractPush &op, unsigned start, unsigned count) const;
 
@@ -386,7 +415,10 @@ class InlineFrameIteratorMaybeGC
     bool isConstructing() const;
     JSObject *scopeChain() const;
     JSObject *thisObject() const;
-    inline InlineFrameIteratorMaybeGC &operator++();
+    InlineFrameIteratorMaybeGC &operator++(){
+        findNextFrame();
+        return *this;
+    }
 
     Value maybeReadOperandByIndex(size_t index, bool fallible = true) const;
     void dump() const;
@@ -408,5 +440,6 @@ ReadFrameArgs(AbstractPush &op, const Value *argv,
 } // namespace ion
 } // namespace js
 
-#endif // jsion_frames_iterator_h__
+#endif // JS_ION
 
+#endif /* ion_IonFrameIterator_h */

@@ -27,8 +27,8 @@
  * 
  * ***** END LICENSE BLOCK ***** */
 
-#ifndef AssemblerBuffer_h
-#define AssemblerBuffer_h
+#ifndef assembler_assembler_AssemblerBuffer_h
+#define assembler_assembler_AssemblerBuffer_h
 
 #include "assembler/wtf/Platform.h"
 
@@ -64,9 +64,6 @@ namespace JSC {
             , m_capacity(inlineCapacity)
             , m_size(0)
             , m_oom(false)
-#if defined(DEBUG) && defined(JS_GC_ZEAL) && defined(JSGC_ROOT_ANALYSIS) && !defined(JS_THREADSAFE)
-            , m_skipInline(js::TlsPerThreadData.get(), &m_inlineBuffer)
-#endif
         {
         }
 
@@ -250,17 +247,6 @@ namespace JSC {
         int m_capacity;
         int m_size;
         bool m_oom;
-
-#if defined(DEBUG) && defined(JS_GC_ZEAL) && defined(JSGC_ROOT_ANALYSIS) && !defined(JS_THREADSAFE)
-        /*
-         * GC Pointers baked into the code can get stored on the stack here
-         * through the inline assembler buffer. We need to protect these from
-         * being poisoned by the rooting analysis, however, they do not need to
-         * actually be traced: the compiler is only allowed to bake in
-         * non-nursery-allocated pointers, such as Shapes.
-         */
-        js::SkipRoot m_skipInline;
-#endif
     };
 
     class GenericAssembler
@@ -336,4 +322,4 @@ namespace JSC {
 
 #endif // ENABLE(ASSEMBLER)
 
-#endif // AssemblerBuffer_h
+#endif /* assembler_assembler_AssemblerBuffer_h */

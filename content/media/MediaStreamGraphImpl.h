@@ -189,7 +189,7 @@ public:
    * Generate messages to the main thread to update it for all state changes.
    * mMonitor must be held.
    */
-  void PrepareUpdatesToMainThreadState();
+  void PrepareUpdatesToMainThreadState(bool aFinalUpdate);
   // The following methods are the various stages of RunThread processing.
   /**
    * Compute a new current time for the graph and advance all on-graph-thread
@@ -338,7 +338,7 @@ public:
    */
   bool IsEmpty() { return mStreams.IsEmpty() && mPortCount == 0; }
 
-  // For use by control messages
+  // For use by control messages, on graph thread only.
   /**
    * Identify which graph update index we are currently processing.
    */

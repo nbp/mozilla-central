@@ -451,6 +451,19 @@ nsSVGUtils::OuterSVGIsCallingReflowSVG(nsIFrame *aFrame)
   return GetOuterSVGFrame(aFrame)->IsCallingReflowSVG();
 }
 
+bool
+nsSVGUtils::AnyOuterSVGIsCallingReflowSVG(nsIFrame* aFrame)
+{
+  nsSVGOuterSVGFrame* outer = GetOuterSVGFrame(aFrame);
+  do {
+    if (outer->IsCallingReflowSVG()) {
+      return true;
+    }
+    outer = GetOuterSVGFrame(outer->GetParent());
+  } while (outer);
+  return false;
+}
+
 void
 nsSVGUtils::ScheduleReflowSVG(nsIFrame *aFrame)
 {
@@ -468,7 +481,7 @@ nsSVGUtils::ScheduleReflowSVG(nsIFrame *aFrame)
   // calls InvalidateBounds) or nsSVGDisplayContainerFrame::InsertFrames
   // (at which point the frame has no observers).
 
-  if (aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) {
+  if (aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY) {
     return;
   }
 
@@ -611,7 +624,7 @@ nsSVGUtils::GetOuterSVGFrameAndCoveredRegion(nsIFrame* aFrame, nsRect* aRect)
   nsISVGChildFrame* svg = do_QueryFrame(aFrame);
   if (!svg)
     return nullptr;
-  *aRect = (aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) ?
+  *aRect = (aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY) ?
              nsRect(0, 0, 0, 0) : svg->GetCoveredRegion();
   return GetOuterSVGFrame(aFrame);
 }
@@ -625,7 +638,7 @@ nsSVGUtils::GetCanvasTM(nsIFrame *aFrame, uint32_t aFor)
     return nsSVGIntegrationUtils::GetCSSPxToDevPxMatrix(aFrame);
   }
 
-  if (!(aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+  if (!(aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
     if ((aFor == nsISVGChildFrame::FOR_PAINTING &&
          NS_SVGDisplayListPaintingEnabled()) ||
         (aFor == nsISVGChildFrame::FOR_HIT_TESTING &&
@@ -731,7 +744,7 @@ nsSVGUtils::PaintFrameWithEffects(nsRenderingContext *aContext,
                                   nsIFrame *aFrame)
 {
   NS_ASSERTION(!NS_SVGDisplayListPaintingEnabled() ||
-               (aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD) ||
+               (aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY) ||
                aFrame->PresContext()->IsGlyph(),
                "If display lists are enabled, only painting of non-display "
                "SVG should take this code path");
@@ -760,7 +773,7 @@ nsSVGUtils::PaintFrameWithEffects(nsRenderingContext *aContext,
   nsSVGFilterFrame *filterFrame = effectProperties.GetFilterFrame(&isOK);
 
   if (aDirtyRect &&
-      !(aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+      !(aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
     // Here we convert aFrame's paint bounds to outer-<svg> device space,
     // compare it to aDirtyRect, and return early if they don't intersect.
     // We don't do this optimization for nondisplay SVG since nondisplay
@@ -831,7 +844,7 @@ nsSVGUtils::PaintFrameWithEffects(nsRenderingContext *aContext,
   if (opacity != 1.0f || maskFrame || (clipPathFrame && !isTrivialClip)) {
     complexEffects = true;
     gfx->Save();
-    if (!(aFrame->GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+    if (!(aFrame->GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
       // aFrame has a valid visual overflow rect, so clip to it before calling
       // PushGroup() to minimize the size of the surfaces we'll composite:
       gfxContextMatrixAutoSaveRestore matrixAutoSaveRestore(gfx);
@@ -1264,7 +1277,7 @@ nsSVGUtils::CanOptimizeOpacity(nsIFrame *aFrame)
     return true;
   }
   const nsStyleSVG *style = aFrame->StyleSVG();
-  if (style->mMarkerStart || style->mMarkerMid || style->mMarkerEnd) {
+  if (style->HasMarker()) {
     return false;
   }
   if (style->mFill.mType == eStyleSVGPaintType_None ||
@@ -1321,13 +1334,13 @@ nsSVGUtils::GetFirstNonAAncestorFrame(nsIFrame* aStartFrame)
 gfxMatrix
 nsSVGUtils::GetStrokeTransform(nsIFrame *aFrame)
 {
+  if (aFrame->GetContent()->IsNodeOfType(nsINode::eTEXT)) {
+    aFrame = aFrame->GetParent();
+  }
+
   if (aFrame->StyleSVGReset()->mVectorEffect ==
       NS_STYLE_VECTOR_EFFECT_NON_SCALING_STROKE) {
  
-    if (aFrame->GetContent()->IsNodeOfType(nsINode::eTEXT)) {
-      aFrame = aFrame->GetParent();
-    }
-
     nsIContent *content = aFrame->GetContent();
     NS_ABORT_IF_FALSE(content->IsSVG(), "bad cast");
 
@@ -1622,8 +1635,9 @@ nsSVGUtils::GetStrokeWidth(nsIFrame* aFrame, gfxTextObjectPaint *aObjectPaint)
 }
 
 void
-nsSVGUtils::SetupCairoStrokeGeometry(nsIFrame* aFrame, gfxContext *aContext,
-                                     gfxTextObjectPaint *aObjectPaint)
+nsSVGUtils::SetupCairoStrokeBBoxGeometry(nsIFrame* aFrame,
+                                         gfxContext *aContext,
+                                         gfxTextObjectPaint *aObjectPaint)
 {
   float width = GetStrokeWidth(aFrame, aObjectPaint);
   if (width <= 0)
@@ -1719,22 +1733,18 @@ GetStrokeDashData(nsIFrame* aFrame,
     *aDashOffset = aObjectPaint->GetStrokeDashOffset();
   } else {
     *aDashOffset = nsSVGUtils::CoordToFloat(presContext,
-                                           ctx,
-                                           style->mStrokeDashoffset);
+                                            ctx,
+                                            style->mStrokeDashoffset);
   }
   
-  if (content->IsNodeOfType(nsINode::eTEXT)) {
-    content = content->GetParent();
-  }
-
   return (totalLength > 0.0);
 }
 
 void
-nsSVGUtils::SetupCairoStrokeHitGeometry(nsIFrame* aFrame, gfxContext* aContext,
-                                        gfxTextObjectPaint *aObjectPaint)
+nsSVGUtils::SetupCairoStrokeGeometry(nsIFrame* aFrame, gfxContext* aContext,
+                                     gfxTextObjectPaint *aObjectPaint)
 {
-  SetupCairoStrokeGeometry(aFrame, aContext, aObjectPaint);
+  SetupCairoStrokeBBoxGeometry(aFrame, aContext, aObjectPaint);
 
   AutoFallibleTArray<gfxFloat, 10> dashes;
   gfxFloat dashOffset;
@@ -1809,7 +1819,7 @@ nsSVGUtils::SetupCairoStroke(nsIFrame* aFrame, gfxContext* aContext,
   if (!HasStroke(aFrame, aObjectPaint)) {
     return false;
   }
-  SetupCairoStrokeHitGeometry(aFrame, aContext, aObjectPaint);
+  SetupCairoStrokeGeometry(aFrame, aContext, aObjectPaint);
 
   return SetupCairoStrokePaint(aFrame, aContext, aObjectPaint);
 }

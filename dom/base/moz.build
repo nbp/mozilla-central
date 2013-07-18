@@ -28,6 +28,7 @@ EXPORTS += [
     'nsDOMClassInfoClasses.h',
     'nsDOMClassInfoID.h',
     'nsDOMJSUtils.h',
+    'nsDOMNavigationTiming.h',
     'nsDOMString.h',
     'nsFocusManager.h',
     'nsIDOMClassInfo.h',
@@ -47,6 +48,7 @@ EXPORTS += [
     'nsJSUtils.h',
     'nsPIDOMWindow.h',
     'nsPIWindowRoot.h',
+    'nsPerformance.h',
     'nsStructuredCloneContainer.h',
     'nsWindowMemoryReporter.h',
     'nsWrapperCache.h',
@@ -54,6 +56,7 @@ EXPORTS += [
 ]
 
 EXPORTS.mozilla.dom += [
+    'BarProps.h',
     'DOMCursor.h',
     'DOMError.h',
     'DOMRequest.h',
@@ -63,13 +66,13 @@ EXPORTS.mozilla.dom += [
 ]
 
 CPP_SOURCES += [
+    'BarProps.cpp',
     'Crypto.cpp',
     'DOMCursor.cpp',
     'DOMError.cpp',
     'DOMRequest.cpp',
     'Navigator.cpp',
     'URL.cpp',
-    'nsBarProps.cpp',
     'nsContentPermissionHelper.cpp',
     'nsDOMClassInfo.cpp',
     'nsDOMException.cpp',
@@ -94,5 +97,19 @@ CPP_SOURCES += [
     'nsStructuredCloneContainer.cpp',
     'nsWindowMemoryReporter.cpp',
     'nsWindowRoot.cpp',
+    'nsWrapperCache.cpp',
 ]
 
+EXTRA_COMPONENTS += [
+    'ConsoleAPI.js',
+    'ConsoleAPI.manifest',
+    'SiteSpecificUserAgent.js',
+    'SiteSpecificUserAgent.manifest',
+]
+
+EXTRA_JS_MODULES += [
+    'ConsoleAPIStorage.jsm',
+    'DOMRequestHelper.jsm',
+    'IndexedDBHelper.jsm',
+    'ObjectWrapper.jsm',
+]

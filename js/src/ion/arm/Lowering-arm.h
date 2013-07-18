@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_ion_lowering_arm_h__
-#define jsion_ion_lowering_arm_h__
+#ifndef ion_arm_Lowering_arm_h
+#define ion_arm_Lowering_arm_h
 
 #include "ion/shared/Lowering-shared.h"
 
@@ -25,6 +25,10 @@ class LIRGeneratorARM : public LIRGeneratorShared
     bool useBox(LInstruction *lir, size_t n, MDefinition *mir,
                 LUse::Policy policy = LUse::REGISTER, bool useAtStart = false);
     bool useBoxFixed(LInstruction *lir, size_t n, MDefinition *mir, Register reg1, Register reg2);
+
+    inline LDefinition tempToUnbox() {
+        return LDefinition::BogusTemp();
+    }
 
     void lowerUntypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock *block, size_t lirIndex);
     bool defineUntypedPhi(MPhi *phi, size_t lirIndex);
@@ -48,6 +52,8 @@ class LIRGeneratorARM : public LIRGeneratorShared
     bool lowerDivI(MDiv *div);
     bool lowerModI(MMod *mod);
     bool lowerMulI(MMul *mul, MDefinition *lhs, MDefinition *rhs);
+    bool lowerUDiv(MInstruction *div);
+    bool lowerUMod(MInstruction *mod);
     bool visitPowHalf(MPowHalf *ins);
     bool visitAsmJSNeg(MAsmJSNeg *ins);
     bool visitAsmJSUDiv(MAsmJSUDiv *ins);
@@ -57,6 +63,7 @@ class LIRGeneratorARM : public LIRGeneratorShared
                                   MTableSwitch *ins);
     LTableSwitchV *newLTableSwitchV(MTableSwitch *ins);
     LGetPropertyCacheT *newLGetPropertyCacheT(MGetPropertyCache *ins);
+    LGetElementCacheT *newLGetElementCacheT(MGetElementCache *ins);
 
   public:
     bool visitConstant(MConstant *ins);
@@ -80,4 +87,4 @@ typedef LIRGeneratorARM LIRGeneratorSpecific;
 } // namespace ion
 } // namespace js
 
-#endif // jsion_ion_lowering_arm_h__
+#endif /* ion_arm_Lowering_arm_h */

@@ -33,6 +33,8 @@
 #include "gfxQuartzNativeDrawing.h"
 #include <algorithm>
 
+using namespace mozilla::gfx;
+
 #define DRAW_IN_FRAME_DEBUG 0
 #define SCROLLBARS_VISUAL_DEBUG 0
 
@@ -2038,7 +2040,15 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
       break;
 
     case NS_THEME_MENUITEM: {
-      if (thebesCtx->OriginalSurface()->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA) {
+      bool isTransparent;
+      if (thebesCtx->IsCairo()) {
+        isTransparent = thebesCtx->OriginalSurface()->GetContentType() == gfxASurface::CONTENT_COLOR_ALPHA;
+      } else {
+        SurfaceFormat format  = thebesCtx->GetDrawTarget()->GetFormat();
+        isTransparent = (format == FORMAT_R8G8B8A8) ||
+                        (format == FORMAT_B8G8R8A8);
+      }
+      if (isTransparent) {
         // Clear the background to get correct transparency.
         CGContextClearRect(cgContext, macRect);
       }
@@ -2321,15 +2331,13 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
 
     case NS_THEME_SCROLLBAR_SMALL:
     case NS_THEME_SCROLLBAR:
-      if (nsLookAndFeel::GetInt(
-            nsLookAndFeel::eIntID_UseOverlayScrollbars) == 0) {
+      if (!nsLookAndFeel::UseOverlayScrollbars()) {
         DrawScrollbar(cgContext, macRect, aFrame);
       }
       break;
     case NS_THEME_SCROLLBAR_THUMB_VERTICAL:
     case NS_THEME_SCROLLBAR_THUMB_HORIZONTAL:
-      if (nsLookAndFeel::GetInt(
-            nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
+      if (nsLookAndFeel::UseOverlayScrollbars()) {
         BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_THUMB_HORIZONTAL);
         BOOL isRolledOver = CheckBooleanAttr(GetParentScrollbarFrame(aFrame),
                                              nsGkAtoms::hover);
@@ -2338,7 +2346,10 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
             macRect.origin.y += 4;
             macRect.size.height -= 4;
           } else {
-            macRect.origin.x += 4;
+            if (aFrame->StyleVisibility()->mDirection !=
+                NS_STYLE_DIRECTION_RTL) {
+              macRect.origin.x += 4;
+            }
             macRect.size.width -= 4;
           }
         }
@@ -2373,8 +2384,7 @@ nsNativeThemeCocoa::DrawWidgetBackground(nsRenderingContext* aContext,
     break;
     case NS_THEME_SCROLLBAR_TRACK_HORIZONTAL:
     case NS_THEME_SCROLLBAR_TRACK_VERTICAL:
-      if (nsLookAndFeel::GetInt(
-            nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0 &&
+      if (nsLookAndFeel::UseOverlayScrollbars() &&
           CheckBooleanAttr(GetParentScrollbarFrame(aFrame), nsGkAtoms::hover)) {
         BOOL isHorizontal = (aWidgetType == NS_THEME_SCROLLBAR_TRACK_HORIZONTAL);
         const BOOL isOnTopOfDarkBackground = IsDarkBackground(aFrame);
@@ -2583,8 +2593,7 @@ nsNativeThemeCocoa::GetWidgetBorder(nsDeviceContext* aContext,
         }
       }
 
-      if (nsLookAndFeel::GetInt(
-            nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
+      if (nsLookAndFeel::UseOverlayScrollbars()) {
         if (isHorizontal) {
           aResult->SizeTo(2, 1, 1, 1);
         } else {
@@ -2841,8 +2850,7 @@ nsNativeThemeCocoa::GetMinimumWidgetSize(nsRenderingContext* aContext,
     {
       *aIsOverridable = false;
 
-      if (nsLookAndFeel::GetInt(
-            nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0) {
+      if (nsLookAndFeel::UseOverlayScrollbars()) {
         aResult->SizeTo(16, 16);
         break;
       }
@@ -3100,8 +3108,7 @@ nsNativeThemeCocoa::ThemeSupportsWidget(nsPresContext* aPresContext, nsIFrame* a
       // overriden, and the custom transparent resizer looks better when
       // scrollbars are not present.
       nsIScrollableFrame* scrollFrame = do_QueryFrame(parentFrame);
-      return (nsLookAndFeel::GetInt(
-                nsLookAndFeel::eIntID_UseOverlayScrollbars) == 0 &&
+      return (!nsLookAndFeel::UseOverlayScrollbars() &&
               scrollFrame && scrollFrame->GetScrollbarVisibility());
       break;
     }
@@ -3157,9 +3164,7 @@ nsNativeThemeCocoa::GetWidgetTransparency(nsIFrame* aFrame, uint8_t aWidgetType)
 
   case NS_THEME_SCROLLBAR_SMALL:
   case NS_THEME_SCROLLBAR:
-    return nsLookAndFeel::GetInt(
-             nsLookAndFeel::eIntID_UseOverlayScrollbars) != 0 ?
-           eTransparent : eOpaque;
+    return nsLookAndFeel::UseOverlayScrollbars() ? eTransparent : eOpaque;
 
   case NS_THEME_STATUSBAR:
     // Knowing that scrollbars and statusbars are opaque improves

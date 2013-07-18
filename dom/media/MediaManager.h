@@ -92,16 +92,17 @@ public:
     return mStream->AsSourceStream();
   }
 
-  // mVideo/AudioSource are set by Activate(), so we assume they're capturing if set
+  // mVideo/AudioSource are set by Activate(), so we assume they're capturing
+  // if set and represent a real capture device.
   bool CapturingVideo()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-    return mVideoSource && !mStopped;
+    return mVideoSource && !mVideoSource->IsFake() && !mStopped;
   }
   bool CapturingAudio()
   {
     NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
-    return mAudioSource && !mStopped;
+    return mAudioSource && !mAudioSource->IsFake() && !mStopped;
   }
 
   void SetStopped()
@@ -212,7 +213,7 @@ class GetUserMediaNotificationEvent: public nsRunnable
     }
 
     NS_IMETHOD
-    Run()
+    Run() MOZ_OVERRIDE
     {
       NS_ASSERTION(NS_IsMainThread(), "Only call on main thread");
       // Make sure mStream is cleared and our reference to the DOMMediaStream
@@ -291,7 +292,7 @@ public:
   }
 
   NS_IMETHOD
-  Run()
+  Run() MOZ_OVERRIDE
   {
     SourceMediaStream *source = mListener->GetSourceStream();
     // No locking between these is required as all the callbacks for the

@@ -7,6 +7,8 @@
 #include <sstream>
 #include <errno.h>
 
+#include "IOInterposer.h"
+#include "ProfilerIOInterposeObserver.h"
 #include "platform.h"
 #include "PlatformMacros.h"
 #include "prenv.h"
@@ -55,6 +57,8 @@ std::vector<ThreadInfo*>* Sampler::sRegisteredThreads = nullptr;
 mozilla::Mutex* Sampler::sRegisteredThreadsMutex = nullptr;
 
 TableTicker* Sampler::sActiveSampler;
+
+static mozilla::ProfilerIOInterposeObserver* sInterposeObserver = nullptr;
 
 void Sampler::Startup() {
   sRegisteredThreads = new std::vector<ThreadInfo*>();
@@ -281,6 +285,9 @@ void mozilla_sampler_init(void* stackTop)
   // Allow the profiler to be started using signals
   OS::RegisterStartHandler();
 
+  // Initialize (but don't enable) I/O interposing
+  sInterposeObserver = new mozilla::ProfilerIOInterposeObserver();
+
   // We can't open pref so we use an environment variable
   // to know if we should trigger the profiler on startup
   // NOTE: Default
@@ -294,9 +301,14 @@ void mozilla_sampler_init(void* stackTop)
 #if defined(XP_WIN) || defined(XP_MACOSX)
                          , "stackwalk"
 #endif
+#if defined(SPS_OS_android) && !defined(MOZ_WIDGET_GONK)
+                         , "java"
+#endif
                          };
   profiler_start(PROFILE_DEFAULT_ENTRY, PROFILE_DEFAULT_INTERVAL,
-                         features, sizeof(features)/sizeof(const char*));
+                         features, sizeof(features)/sizeof(const char*),
+                         // TODO Add env variable to select threads
+                         NULL, 0);
   LOG("END   mozilla_sampler_init");
 }
 
@@ -322,6 +334,10 @@ void mozilla_sampler_shutdown()
   }
 
   profiler_stop();
+
+  delete sInterposeObserver;
+  sInterposeObserver = nullptr;
+  mozilla::IOInterposer::ClearInstance();
 
   Sampler::Shutdown();
 
@@ -391,6 +407,10 @@ const char** mozilla_sampler_get_features()
     "js",
     // Profile the registered secondary threads.
     "threads",
+    // Do not include user-identifiable information
+    "privacy",
+    // Add main thread I/O to the profile
+    "mainthreadio",
     NULL
   };
 
@@ -399,7 +419,9 @@ const char** mozilla_sampler_get_features()
 
 // Values are only honored on the first start
 void mozilla_sampler_start(int aProfileEntries, int aInterval,
-                           const char** aFeatures, uint32_t aFeatureCount)
+                           const char** aFeatures, uint32_t aFeatureCount,
+                           const char** aThreadNameFilters, uint32_t aFilterCount)
+
 {
   if (!stack_key_initialized)
     profiler_init(NULL);
@@ -409,19 +431,14 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
   if (sUnwindInterval > 0)
     aInterval = sUnwindInterval;
 
-  PseudoStack *stack = tlsPseudoStack.get();
-  if (!stack) {
-    ASSERT(false);
-    return;
-  }
-
   // Reset the current state if the profiler is running
   profiler_stop();
 
   TableTicker* t;
   t = new TableTicker(aInterval ? aInterval : PROFILE_DEFAULT_INTERVAL,
                       aProfileEntries ? aProfileEntries : PROFILE_DEFAULT_ENTRY,
-                      aFeatures, aFeatureCount);
+                      aFeatures, aFeatureCount,
+                      aThreadNameFilters, aFilterCount);
   if (t->HasUnwinderThread()) {
     // Create the unwinder thread.  ATM there is only one.
     uwt__init();
@@ -429,7 +446,7 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
 
   tlsTicker.set(t);
   t->Start();
-  if (t->ProfileJS()) {
+  if (t->ProfileJS() || t->InPrivacyMode()) {
       mozilla::MutexAutoLock lock(*Sampler::sRegisteredThreadsMutex);
       std::vector<ThreadInfo*> threads = t->GetRegisteredThreads();
 
@@ -439,7 +456,12 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
         if (!thread_profile) {
           continue;
         }
-        thread_profile->GetPseudoStack()->enableJSSampling();
+        if (t->ProfileJS()) {
+          thread_profile->GetPseudoStack()->enableJSSampling();
+        }
+        if (t->InPrivacyMode()) {
+          thread_profile->GetPseudoStack()->mPrivacyMode = true;
+        }
       }
   }
 
@@ -453,6 +475,10 @@ void mozilla_sampler_start(int aProfileEntries, int aInterval,
     mozilla::AndroidBridge::Bridge()->StartJavaProfiling(javaInterval, 1000);
   }
 #endif
+
+  if (t->AddMainThreadIO()) {
+    mozilla::IOInterposer::GetInstance()->Enable(true);
+  }
 
   sIsProfiling = true;
 
@@ -485,15 +511,18 @@ void mozilla_sampler_stop()
   t->Stop();
   delete t;
   tlsTicker.set(NULL);
-  PseudoStack *stack = tlsPseudoStack.get();
-  ASSERT(stack != NULL);
 
-  if (disableJS)
+  if (disableJS) {
+    PseudoStack *stack = tlsPseudoStack.get();
+    ASSERT(stack != NULL);
     stack->disableJSSampling();
+  }
 
   if (unwinderThreader) {
     uwt__deinit();
   }
+
+  mozilla::IOInterposer::GetInstance()->Enable(false);
 
   sIsProfiling = false;
 
@@ -558,19 +587,36 @@ void mozilla_sampler_unlock()
 
 bool mozilla_sampler_register_thread(const char* aName, void* stackTop)
 {
+#ifndef MOZ_WIDGET_GONK
   PseudoStack* stack = new PseudoStack();
   tlsPseudoStack.set(stack);
 
   return Sampler::RegisterCurrentThread(aName, stack, false, stackTop);
+#else
+  return false;
+#endif
 }
 
 void mozilla_sampler_unregister_thread()
 {
+#ifndef MOZ_WIDGET_GONK
   Sampler::UnregisterCurrentThread();
+
+  PseudoStack *stack = tlsPseudoStack.get();
+  if (!stack) {
+    ASSERT(false);
+    return;
+  }
+  delete stack;
+  tlsPseudoStack.set(nullptr);
+#endif
 }
 
 double mozilla_sampler_time()
 {
+  if (!mozilla_sampler_is_active()) {
+    return 0.0;
+  }
   TimeDuration delta = TimeStamp::Now() - sStartTime;
   return delta.ToMilliseconds();
 }

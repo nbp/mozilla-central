@@ -28,7 +28,6 @@
 #include "nsContentListDeclarations.h"
 #include "nsMathUtils.h"
 #include "nsReadableUtils.h"
-#include "nsWrapperCache.h"
 
 class imgICache;
 class imgIContainer;
@@ -61,6 +60,7 @@ class nsIDOMWindow;
 class nsIDragSession;
 class nsIEditor;
 class nsIFragmentContentSink;
+class nsIFrame;
 class nsIImageLoadingContent;
 class nsIInterfaceRequestor;
 class nsIIOService;
@@ -94,7 +94,7 @@ class nsScriptObjectTracer;
 class nsStringHashKey;
 class nsTextFragment;
 class nsViewportInfo;
-class nsIFrame;
+class nsWrapperCache;
 
 struct JSContext;
 struct JSPropertyDescriptor;
@@ -124,6 +124,16 @@ class EventTarget;
 namespace layers {
 class LayerManager;
 } // namespace layers
+
+// Called back from DeferredFinalize.  Should add 'thing' to the array of smart
+// pointers in 'pointers', creating the array if 'pointers' is null, and return
+// the array.
+typedef void* (*DeferredFinalizeAppendFunction)(void* pointers, void* thing);
+
+// Called to finalize a number of objects. Slice is the number of objects
+// to finalize, or if it's UINT32_MAX, all objects should be finalized.
+// Return value indicates whether it finalized all objects in the buffer.
+typedef bool (*DeferredFinalizeFunction)(uint32_t slice, void* data);
 
 } // namespace mozilla
 
@@ -509,17 +519,6 @@ public:
 
   static nsresult GuessCharset(const char *aData, uint32_t aDataLen,
                                nsACString &aCharset);
-
-  /**
-   * Determine whether aContent is in some way associated with aForm.  If the
-   * form is a container the only elements that are considered to be associated
-   * with a form are the elements that are contained within the form. If the
-   * form is a leaf element then all elements will be accepted into this list,
-   * since this can happen due to content fixup when a form spans table rows or
-   * table cells.
-   */
-  static bool BelongsInForm(nsIContent *aForm,
-                              nsIContent *aContent);
 
   static nsresult CheckQName(const nsAString& aQualifiedName,
                              bool aNamespaceAware = true,
@@ -1272,38 +1271,13 @@ public:
 
 #ifdef DEBUG
   static bool AreJSObjectsHeld(void* aScriptObjectHolder); 
-
-  static void CheckCCWrapperTraversal(void* aScriptObjectHolder,
-                                      nsWrapperCache* aCache,
-                                      nsScriptObjectTracer* aTracer);
 #endif
 
-  static void PreserveWrapper(nsISupports* aScriptObjectHolder,
-                              nsWrapperCache* aCache)
-  {
-    if (!aCache->PreservingWrapper()) {
-      nsISupports *ccISupports;
-      aScriptObjectHolder->QueryInterface(NS_GET_IID(nsCycleCollectionISupports),
-                                          reinterpret_cast<void**>(&ccISupports));
-      MOZ_ASSERT(ccISupports);
-      nsXPCOMCycleCollectionParticipant* participant;
-      CallQueryInterface(ccISupports, &participant);
-      PreserveWrapper(ccISupports, aCache, participant);
-    }
-  }
-  static void PreserveWrapper(void* aScriptObjectHolder,
-                              nsWrapperCache* aCache,
-                              nsScriptObjectTracer* aTracer)
-  {
-    if (!aCache->PreservingWrapper()) {
-      HoldJSObjects(aScriptObjectHolder, aTracer);
-      aCache->SetPreservingWrapper(true);
-#ifdef DEBUG
-      // Make sure the cycle collector will be able to traverse to the wrapper.
-      CheckCCWrapperTraversal(aScriptObjectHolder, aCache, aTracer);
-#endif
-    }
-  }
+  static void DeferredFinalize(nsISupports* aSupports);
+  static void DeferredFinalize(mozilla::DeferredFinalizeAppendFunction aAppendFunc,
+                               mozilla::DeferredFinalizeFunction aFunc,
+                               void* aThing);
+
   static void ReleaseWrapper(void* aScriptObjectHolder,
                              nsWrapperCache* aCache);
 
@@ -1350,6 +1324,11 @@ public:
    * Returns true if aPrincipal is the system principal.
    */
   static bool IsSystemPrincipal(nsIPrincipal* aPrincipal);
+
+  /**
+   * Returns true if aPrincipal is an nsExpandedPrincipal.
+   */
+  static bool IsExpandedPrincipal(nsIPrincipal* aPrincipal);
 
   /**
    * Gets the system principal from the security manager.
@@ -1559,11 +1538,6 @@ public:
   static nsViewportInfo GetViewportInfo(nsIDocument* aDocument,
                                         uint32_t aDisplayWidth,
                                         uint32_t aDisplayHeight);
-
-  /**
-   * The device-pixel-to-CSS-px ratio used to adjust meta viewport values.
-   */
-  static double GetDevicePixelsPerMetaViewportPixel(nsIWidget* aWidget);
 
   // Call EnterMicroTask when you're entering JS execution.
   // Usually the best way to do this is to use nsAutoMicroTask.

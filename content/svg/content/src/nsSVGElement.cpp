@@ -35,6 +35,7 @@
 #include "nsSVGEnum.h"
 #include "nsSVGViewBox.h"
 #include "nsSVGString.h"
+#include "mozilla/dom/SVGAnimatedEnumeration.h"
 #include "SVGAnimatedNumberList.h"
 #include "SVGAnimatedLengthList.h"
 #include "SVGAnimatedPointList.h"
@@ -82,7 +83,6 @@ nsSVGEnumMapping nsSVGElement::sSVGUnitTypesMap[] = {
 nsSVGElement::nsSVGElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsSVGElementBase(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 JSObject*
@@ -93,9 +93,9 @@ nsSVGElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
 
 //----------------------------------------------------------------------
 
-/* readonly attribute nsIDOMSVGAnimatedString className; */
+/* readonly attribute SVGAnimatedString className; */
 NS_IMETHODIMP
-nsSVGElement::GetClassName(nsIDOMSVGAnimatedString** aClassName)
+nsSVGElement::GetClassName(nsISupports** aClassName)
 {
   *aClassName = ClassName().get();
   return NS_OK;
@@ -1142,7 +1142,7 @@ nsSVGElement::GetViewportElement()
   return SVGContentUtils::GetNearestViewportElement(this);
 }
 
-already_AddRefed<nsIDOMSVGAnimatedString>
+already_AddRefed<SVGAnimatedString>
 nsSVGElement::ClassName()
 {
   return mClassAttribute.ToDOMAnimatedString(this);

@@ -23,6 +23,7 @@
 #include "gfxD2DSurface.h"
 #elif defined(XP_MACOSX)
 #include "gfxPlatformMac.h"
+#include "gfxQuartzSurface.h"
 #elif defined(MOZ_WIDGET_GTK)
 #include "gfxPlatformGtk.h"
 #elif defined(MOZ_WIDGET_QT)
@@ -63,6 +64,10 @@
 #include "TexturePoolOGL.h"
 #endif
 
+#ifdef USE_SKIA
+#include "skia/SkGraphics.h"
+#endif
+
 #ifdef USE_SKIA_GPU
 #include "skia/GrContext.h"
 #include "skia/GrGLInterface.h"
@@ -97,6 +102,7 @@ static void ShutdownCMS();
 static void MigratePrefs();
 
 static bool sDrawLayerBorders = false;
+static bool sDrawFrameCounter = false;
 
 #include "mozilla/gfx/2D.h"
 using namespace mozilla::gfx;
@@ -300,23 +306,6 @@ gfxPlatform::Init()
     sCmapDataLog = PR_NewLogModule("cmapdata");;
 #endif
 
-    bool useOffMainThreadCompositing = false;
-    useOffMainThreadCompositing = GetPrefLayersOffMainThreadCompositionEnabled() ||
-        Preferences::GetBool("browser.tabs.remote", false);
-#ifdef MOZ_X11
-    useOffMainThreadCompositing &= (PR_GetEnv("MOZ_USE_OMTC") != NULL) ||
-                                   (PR_GetEnv("MOZ_OMTC_ENABLED") != NULL);
-#endif
-
-    if (useOffMainThreadCompositing && (XRE_GetProcessType() ==
-                                        GeckoProcessType_Default)) {
-        CompositorParent::StartUp();
-        if (Preferences::GetBool("layers.async-video.enabled",false)) {
-            ImageBridgeChild::StartUp();
-        }
-
-    }
-
     /* Initialize the GfxInfo service.
      * Note: we can't call functions on GfxInfo that depend
      * on gPlatform until after it has been initialized
@@ -347,6 +336,19 @@ gfxPlatform::Init()
 #ifdef DEBUG
     mozilla::gl::GLContext::StaticInit();
 #endif
+
+    bool useOffMainThreadCompositing = GetPrefLayersOffMainThreadCompositionEnabled() ||
+        Preferences::GetBool("browser.tabs.remote", false);
+    useOffMainThreadCompositing &= GetPlatform()->SupportsOffMainThreadCompositing();
+
+    if (useOffMainThreadCompositing && (XRE_GetProcessType() ==
+                                        GeckoProcessType_Default)) {
+        CompositorParent::StartUp();
+        if (Preferences::GetBool("layers.async-video.enabled",false)) {
+            ImageBridgeChild::StartUp();
+        }
+
+    }
 
     nsresult rv;
 
@@ -405,6 +407,10 @@ gfxPlatform::Init()
 
     mozilla::Preferences::AddBoolVarCache(&sDrawLayerBorders,
                                           "layers.draw-borders",
+                                          false);
+
+    mozilla::Preferences::AddBoolVarCache(&sDrawFrameCounter,
+                                          "layers.frame-counter",
                                           false);
 
     CreateCMSOutputProfile();
@@ -476,8 +482,16 @@ gfxPlatform::~gfxPlatform()
     // cairo_debug_* function unconditionally.
     //
     // because cairo can assert and thus crash on shutdown, don't do this in release builds
-#if MOZ_TREE_CAIRO && (defined(DEBUG) || defined(NS_BUILD_REFCNT_LOGGING) || defined(NS_TRACE_MALLOC))
+#if defined(DEBUG) || defined(NS_BUILD_REFCNT_LOGGING) || defined(NS_TRACE_MALLOC) || defined(MOZ_VALGRIND)
+#ifdef USE_SKIA
+    // must do Skia cleanup before Cairo cleanup, because Skia may be referencing
+    // Cairo objects e.g. through SkCairoFTTypeface
+    SkGraphics::Term();
+#endif
+
+#if MOZ_TREE_CAIRO
     cairo_debug_reset_static_data();
+#endif
 #endif
 
 #if 0
@@ -533,6 +547,24 @@ gfxPlatform::CreateDrawTargetForSurface(gfxASurface *aSurface, const IntSize& aS
   return drawTarget;
 }
 
+// This is a temporary function used by ContentClient to build a DrawTarget
+// around the gfxASurface. This should eventually be replaced by plumbing
+// the DrawTarget through directly
+RefPtr<DrawTarget>
+gfxPlatform::CreateDrawTargetForUpdateSurface(gfxASurface *aSurface, const IntSize& aSize)
+{
+#ifdef XP_MACOSX
+  // this is a bit of a hack that assumes that the buffer associated with the CGContext
+  // will live around long enough that nothing bad will happen.
+  if (aSurface->GetType() == gfxASurface::SurfaceTypeQuartz) {
+    return Factory::CreateDrawTargetForCairoCGContext(static_cast<gfxQuartzSurface*>(aSurface)->GetCGContext(), aSize);
+  }
+#endif
+  MOZ_CRASH();
+  return nullptr;
+}
+
+
 cairo_user_data_key_t kSourceSurface;
 
 /**
@@ -568,6 +600,12 @@ void SourceSnapshotDetached(void *nullSurf)
   origSurf->SetData(&kSourceSurface, NULL, NULL);
 }
 #endif
+
+void
+gfxPlatform::ClearSourceSurfaceForSurface(gfxASurface *aSurface)
+{
+  aSurface->SetData(&kSourceSurface, nullptr, nullptr);
+}
 
 RefPtr<SourceSurface>
 gfxPlatform::GetSourceSurfaceForSurface(DrawTarget *aTarget, gfxASurface *aSurface)
@@ -729,6 +767,16 @@ DataDrawTargetDestroy(void *aTarget)
 }
 
 bool
+gfxPlatform::SupportsAzureContentForDrawTarget(DrawTarget* aTarget)
+{
+  if (!aTarget) {
+    return false;
+  }
+
+  return (1 << aTarget->GetType()) & mContentBackendBitmask;
+}
+
+bool
 gfxPlatform::UseAcceleratedSkiaCanvas()
 {
   return Preferences::GetBool("gfx.canvas.azure.accelerated", false) &&
@@ -815,27 +863,6 @@ gfxPlatform::CreateDrawTargetForData(unsigned char* aData, const IntSize& aSize,
 {
   NS_ASSERTION(mPreferredCanvasBackend, "No backend.");
   return Factory::CreateDrawTargetForData(mPreferredCanvasBackend, aData, aSize, aStride, aFormat);
-}
-
-RefPtr<DrawTarget>
-gfxPlatform::CreateDrawTargetForFBO(unsigned int aFBOID, mozilla::gl::GLContext* aGLContext, const IntSize& aSize, SurfaceFormat aFormat)
-{
-  NS_ASSERTION(mPreferredCanvasBackend, "No backend.");
-#ifdef USE_SKIA_GPU
-  if (mPreferredCanvasBackend == BACKEND_SKIA) {
-    static uint8_t sGrContextKey;
-    GrContext* ctx = reinterpret_cast<GrContext*>(aGLContext->GetUserData(&sGrContextKey));
-    if (!ctx) {
-      GrGLInterface* grInterface = CreateGrInterfaceFromGLContext(aGLContext);
-      ctx = GrContext::Create(kOpenGL_Shaders_GrEngine, (GrPlatform3DContext)grInterface);
-      aGLContext->SetUserData(&sGrContextKey, ctx);
-    }
-
-    // Unfortunately Factory can't depend on GLContext, so it needs to be passed a GrContext instead
-    return Factory::CreateSkiaDrawTargetForFBO(aFBOID, ctx, aSize, aFormat);
-  }
-#endif
-  return nullptr;
 }
 
 /* static */ BackendType
@@ -1139,6 +1166,11 @@ gfxPlatform::DrawLayerBorders()
     return sDrawLayerBorders;
 }
 
+bool
+gfxPlatform::DrawFrameCounter()
+{
+    return sDrawFrameCounter;
+}
 
 void
 gfxPlatform::GetLangPrefs(eFontPrefLang aPrefLangs[], uint32_t &aLen, eFontPrefLang aCharLang, eFontPrefLang aPageLang)
@@ -1286,6 +1318,7 @@ gfxPlatform::InitBackendPrefs(uint32_t aCanvasBitmask, uint32_t aContentBitmask)
     }
     mFallbackCanvasBackend = GetCanvasBackendPref(aCanvasBitmask & ~(1 << mPreferredCanvasBackend));
     mContentBackend = GetContentBackendPref(aContentBitmask);
+    mContentBackendBitmask = aContentBitmask;
 }
 
 /* static */ BackendType
@@ -1804,10 +1837,12 @@ gfxPlatform::GetOrientationSyncMillis() const
  */
 static bool sPrefLayersOffMainThreadCompositionEnabled = false;
 static bool sPrefLayersOffMainThreadCompositionTestingEnabled = false;
+static bool sPrefLayersOffMainThreadCompositionForceEnabled = false;
 static bool sPrefLayersAccelerationForceEnabled = false;
 static bool sPrefLayersAccelerationDisabled = false;
 static bool sPrefLayersPreferOpenGL = false;
 static bool sPrefLayersPreferD3D9 = false;
+static int  sPrefLayoutFrameRate = -1;
 
 void InitLayersAccelerationPrefs()
 {
@@ -1816,11 +1851,12 @@ void InitLayersAccelerationPrefs()
   {
     sPrefLayersOffMainThreadCompositionEnabled = Preferences::GetBool("layers.offmainthreadcomposition.enabled", false);
     sPrefLayersOffMainThreadCompositionTestingEnabled = Preferences::GetBool("layers.offmainthreadcomposition.testing.enabled", false);
-    sPrefLayersAccelerationForceEnabled = Preferences::GetBool("layers.acceleration.force-enabled", false) ||
-                                          Preferences::GetBool("browser.tabs.remote", false);
+    sPrefLayersOffMainThreadCompositionForceEnabled = Preferences::GetBool("layers.offmainthreadcomposition.force-enabled", false);
+    sPrefLayersAccelerationForceEnabled = Preferences::GetBool("layers.acceleration.force-enabled", false);
     sPrefLayersAccelerationDisabled = Preferences::GetBool("layers.acceleration.disabled", false);
     sPrefLayersPreferOpenGL = Preferences::GetBool("layers.prefer-opengl", false);
     sPrefLayersPreferD3D9 = Preferences::GetBool("layers.prefer-d3d9", false);
+    sPrefLayoutFrameRate = Preferences::GetInt("layout.frame_rate", -1);
 
     sLayersAccelerationPrefsInitialized = true;
   }
@@ -1830,7 +1866,14 @@ bool gfxPlatform::GetPrefLayersOffMainThreadCompositionEnabled()
 {
   InitLayersAccelerationPrefs();
   return sPrefLayersOffMainThreadCompositionEnabled ||
+         sPrefLayersOffMainThreadCompositionForceEnabled ||
          sPrefLayersOffMainThreadCompositionTestingEnabled;
+}
+
+bool gfxPlatform::GetPrefLayersOffMainThreadCompositionForceEnabled()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefLayersOffMainThreadCompositionForceEnabled;
 }
 
 bool gfxPlatform::GetPrefLayersAccelerationForceEnabled()
@@ -1856,4 +1899,10 @@ bool gfxPlatform::GetPrefLayersPreferD3D9()
 {
   InitLayersAccelerationPrefs();
   return sPrefLayersPreferD3D9;
+}
+
+int gfxPlatform::GetPrefLayoutFrameRate()
+{
+  InitLayersAccelerationPrefs();
+  return sPrefLayoutFrameRate;
 }

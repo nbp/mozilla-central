@@ -30,10 +30,10 @@ XPCOMUtils.defineLazyModuleGetter(this, "DebuggerClient",
 XPCOMUtils.defineLazyModuleGetter(this, "WebConsoleUtils",
     "resource://gre/modules/devtools/WebConsoleUtils.jsm");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-    "resource://gre/modules/commonjs/sdk/core/promise.js");
+XPCOMUtils.defineLazyModuleGetter(this, "promise",
+    "resource://gre/modules/commonjs/sdk/core/promise.js", "Promise");
 
-XPCOMUtils.defineLazyModuleGetter(this, "ViewHelpers",
+XPCOMUtils.defineLazyModuleGetter(this, "Heritage",
     "resource:///modules/devtools/ViewHelpers.jsm");
 
 let Telemetry = devtools.require("devtools/shared/telemetry");
@@ -42,6 +42,9 @@ const STRINGS_URI = "chrome://browser/locale/devtools/webconsole.properties";
 let l10n = new WebConsoleUtils.l10n(STRINGS_URI);
 
 const BROWSER_CONSOLE_WINDOW_FEATURES = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
+
+// The preference prefix for all of the Browser Console filters.
+const BROWSER_CONSOLE_FILTER_PREFS_PREFIX = "devtools.browserconsole.filter.";
 
 this.EXPORTED_SYMBOLS = ["HUDService"];
 
@@ -91,7 +94,7 @@ HUD_SERVICE.prototype =
    * @param nsIDOMWindow aChromeWindow
    *        The window of the web console owner.
    * @return object
-   *         A Promise object for the opening of the new WebConsole instance.
+   *         A promise object for the opening of the new WebConsole instance.
    */
   openWebConsole:
   function HS_openWebConsole(aTarget, aIframeWindow, aChromeWindow)
@@ -113,7 +116,7 @@ HUD_SERVICE.prototype =
    * @param nsIDOMWindow aChromeWindow
    *        The window of the browser console owner.
    * @return object
-   *         A Promise object for the opening of the new BrowserConsole instance.
+   *         A promise object for the opening of the new BrowserConsole instance.
    */
   openBrowserConsole:
   function HS_openBrowserConsole(aTarget, aIframeWindow, aChromeWindow)
@@ -205,6 +208,8 @@ function WebConsole(aTarget, aIframeWindow, aChromeWindow)
   if (element.getAttribute("windowtype") != "navigator:browser") {
     this.browserWindow = HUDService.currentContext();
   }
+
+  this.ui = new this.iframeWindow.WebConsoleFrame(this);
 }
 
 WebConsole.prototype = {
@@ -213,6 +218,7 @@ WebConsole.prototype = {
   browserWindow: null,
   hudId: null,
   target: null,
+  ui: null,
   _browserConsole: false,
   _destroyer: null,
 
@@ -248,11 +254,10 @@ WebConsole.prototype = {
    * Initialize the Web Console instance.
    *
    * @return object
-   *         A Promise for the initialization.
+   *         A promise for the initialization.
    */
   init: function WC_init()
   {
-    this.ui = new this.iframeWindow.WebConsoleFrame(this);
     return this.ui.init().then(() => this);
   },
 
@@ -338,6 +343,12 @@ WebConsole.prototype = {
   viewSourceInStyleEditor:
   function WC_viewSourceInStyleEditor(aSourceURL, aSourceLine)
   {
+    let toolbox = gDevTools.getToolbox(this.target);
+    if (!toolbox) {
+      this.viewSource(aSourceURL, aSourceLine);
+      return;
+    }
+
     gDevTools.showToolbox(this.target, "styleeditor").then(function(toolbox) {
       try {
         toolbox.getCurrentPanel().selectStyleSheet(aSourceURL, aSourceLine);
@@ -452,7 +463,7 @@ WebConsole.prototype = {
    * Console is closed.
    *
    * @return object
-   *         A Promise object that is resolved once the Web Console is closed.
+   *         A promise object that is resolved once the Web Console is closed.
    */
   destroy: function WC_destroy()
   {
@@ -462,7 +473,7 @@ WebConsole.prototype = {
 
     delete HUDService.hudReferences[this.hudId];
 
-    this._destroyer = Promise.defer();
+    this._destroyer = promise.defer();
 
     let popupset = this.mainPopupSet;
     let panels = popupset.querySelectorAll("panel[hudId=" + this.hudId + "]");
@@ -519,7 +530,7 @@ function BrowserConsole()
   this._telemetry = new Telemetry();
 }
 
-ViewHelpers.create({ constructor: BrowserConsole, proto: WebConsole.prototype },
+BrowserConsole.prototype = Heritage.extend(WebConsole.prototype,
 {
   _browserConsole: true,
   _bc_init: null,
@@ -531,13 +542,15 @@ ViewHelpers.create({ constructor: BrowserConsole, proto: WebConsole.prototype },
    * Initialize the Browser Console instance.
    *
    * @return object
-   *         A Promise for the initialization.
+   *         A promise for the initialization.
    */
   init: function BC_init()
   {
     if (this._bc_init) {
       return this._bc_init;
     }
+
+    this.ui._filterPrefsPrefix = BROWSER_CONSOLE_FILTER_PREFS_PREFIX;
 
     let window = this.iframeWindow;
 
@@ -564,7 +577,7 @@ ViewHelpers.create({ constructor: BrowserConsole, proto: WebConsole.prototype },
    * Destroy the object.
    *
    * @return object
-   *         A Promise object that is resolved once the Browser Console is closed.
+   *         A promise object that is resolved once the Browser Console is closed.
    */
   destroy: function BC_destroy()
   {
@@ -574,7 +587,7 @@ ViewHelpers.create({ constructor: BrowserConsole, proto: WebConsole.prototype },
 
     this._telemetry.toolClosed("browserconsole");
 
-    this._bc_destroyer = Promise.defer();
+    this._bc_destroyer = promise.defer();
 
     let chromeWindow = this.chromeWindow;
     this.$destroy().then(() =>
@@ -601,8 +614,8 @@ var HeadsUpDisplayUICommands = {
    * Toggle the Web Console for the current tab.
    *
    * @return object
-   *         A Promise for either the opening of the toolbox that holds the Web
-   *         Console, or a Promise for the closing of the toolbox.
+   *         A promise for either the opening of the toolbox that holds the Web
+   *         Console, or a promise for the closing of the toolbox.
    */
   toggleHUD: function UIC_toggleHUD()
   {
@@ -648,11 +661,11 @@ var HeadsUpDisplayUICommands = {
       return this._browserConsoleDefer.promise;
     }
 
-    this._browserConsoleDefer = Promise.defer();
+    this._browserConsoleDefer = promise.defer();
 
     function connect()
     {
-      let deferred = Promise.defer();
+      let deferred = promise.defer();
 
       if (!DebuggerServer.initialized) {
         DebuggerServer.init();
@@ -694,7 +707,7 @@ var HeadsUpDisplayUICommands = {
     {
       target = aTarget;
 
-      let deferred = Promise.defer();
+      let deferred = promise.defer();
 
       let win = Services.ww.openWindow(null, devtools.Tools.webConsole.url, "_blank",
                                        BROWSER_CONSOLE_WINDOW_FEATURES, null);

@@ -12,16 +12,19 @@ import java.util.Set;
 import java.util.SortedSet;
 import java.util.TimeZone;
 import java.util.TreeSet;
+import java.util.UUID;
 
+import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.json.JSONArray;
 import org.mozilla.apache.commons.codec.digest.DigestUtils;
 
 import android.content.ContentUris;
 import android.net.Uri;
 
 public class HealthReportUtils {
+  public static final String LOG_TAG = HealthReportUtils.class.getSimpleName();
+
   public static int getDay(final long time) {
     return (int) Math.floor(time / HealthReportConstants.MILLISECONDS_PER_DAY);
   }
@@ -110,6 +113,41 @@ public class HealthReportUtils {
     arr.put(dest);
     arr.put(value);
     o.put(key, arr);
-    return;
+  }
+
+  /**
+   * Accumulate counts for how often each provided value occurs.
+   *
+   * <code>
+   *   HealthReportUtils.count(o, "foo", "bar");
+   * </code>
+   *
+   * will change
+   *
+   * <pre>
+   *   {"foo", {"bar": 1}}
+   * </pre>
+   *
+   * into
+   *
+   * <pre>
+   *   {"foo", {"bar": 2}}
+   * </pre>
+   *
+   */
+  public static void count(JSONObject o, String key,
+                           String value) throws JSONException {
+    if (!o.has(key)) {
+      JSONObject counts = new JSONObject();
+      counts.put(value, 1);
+      o.put(key, counts);
+      return;
+    }
+    JSONObject dest = o.getJSONObject(key);
+    dest.put(value, dest.optInt(value, 0) + 1);
+  }
+
+  public static String generateDocumentId() {
+    return UUID.randomUUID().toString();
   }
 }

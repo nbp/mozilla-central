@@ -27,7 +27,7 @@ Cu.import("resource:///modules/devtools/scratchpad-manager.jsm");
 Cu.import("resource://gre/modules/jsdebugger.jsm");
 Cu.import("resource:///modules/devtools/gDevTools.jsm");
 Cu.import("resource://gre/modules/osfile.jsm");
-Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
+let promise = Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js").Promise;
 
 XPCOMUtils.defineLazyModuleGetter(this, "VariablesView",
                                   "resource:///modules/devtools/VariablesView.jsm");
@@ -273,7 +273,7 @@ var Scratchpad = {
   get sidebar()
   {
     if (!this._sidebar) {
-      this._sidebar = new ScratchpadSidebar();
+      this._sidebar = new ScratchpadSidebar(this);
     }
     return this._sidebar;
   },
@@ -389,7 +389,7 @@ var Scratchpad = {
    */
   evalForContext: function SP_evaluateForContext(aString)
   {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
     // This setTimeout is temporary and will be replaced by DebuggerClient
     // execution in a future patch (bug 825039). The purpose for using
@@ -434,8 +434,8 @@ var Scratchpad = {
    */
   run: function SP_run()
   {
-    let promise = this.execute();
-    promise.then(([, aError, ]) => {
+    let execPromise = this.execute();
+    execPromise.then(([, aError, ]) => {
       if (aError) {
         this.writeAsErrorComment(aError);
       }
@@ -443,7 +443,7 @@ var Scratchpad = {
         this.deselect();
       }
     });
-    return promise;
+    return execPromise;
   },
 
   /**
@@ -456,7 +456,7 @@ var Scratchpad = {
    */
   inspect: function SP_inspect()
   {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
     let reject = aReason => deferred.reject(aReason);
 
     this.execute().then(([aString, aError, aResult]) => {
@@ -475,7 +475,7 @@ var Scratchpad = {
         this.sidebar.open(aString, aResult).then(resolve, reject);
       }
     }, reject);
-    
+
     return deferred.promise;
   },
 
@@ -489,7 +489,7 @@ var Scratchpad = {
    */
   reloadAndRun: function SP_reloadAndRun()
   {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
     if (this.executionContext !== SCRATCHPAD_CONTEXT_CONTENT) {
       Cu.reportError(this.strings.
@@ -526,8 +526,8 @@ var Scratchpad = {
    */
   display: function SP_display()
   {
-    let promise = this.execute();
-    promise.then(([aString, aError, aResult]) => {
+    let execPromise = this.execute();
+    execPromise.then(([aString, aError, aResult]) => {
       if (aError) {
         this.writeAsErrorComment(aError);
       }
@@ -535,7 +535,7 @@ var Scratchpad = {
         this.writeAsComment(aResult);
       }
     });
-    return promise;
+    return execPromise;
   },
 
   /**
@@ -625,8 +625,8 @@ var Scratchpad = {
 
     let encoder = new TextEncoder();
     let buffer = encoder.encode(this.getText());
-    let promise = OS.File.writeAtomic(aFile.path, buffer,{tmpPath: aFile.path + ".tmp"});
-    promise.then(value => {
+    let writePromise = OS.File.writeAtomic(aFile.path, buffer,{tmpPath: aFile.path + ".tmp"});
+    writePromise.then(value => {
       if (aCallback) {
         aCallback.call(this, Components.results.NS_OK);
       }
@@ -882,7 +882,7 @@ var Scratchpad = {
 
   /**
    * Clear a range of files from the list.
-   * 
+   *
    * @param integer aIndex
    *        Index of file in menu to remove.
    * @param integer aLength
@@ -1399,6 +1399,7 @@ var Scratchpad = {
         telemetry.toolClosed("scratchpad");
         window.close();
       }
+
       if (aCallback) {
         aCallback();
       }
@@ -1467,6 +1468,9 @@ var Scratchpad = {
     }
   },
 
+  /**
+   * Opens the MDN documentation page for Scratchpad.
+   */
   openDocumentationPage: function SP_openDocumentationPage()
   {
     let url = this.strings.GetStringFromName("help.openDocumentationPage");
@@ -1476,17 +1480,16 @@ var Scratchpad = {
   },
 };
 
-
 /**
  * Encapsulates management of the sidebar containing the VariablesView for
  * object inspection.
  */
-function ScratchpadSidebar()
+function ScratchpadSidebar(aScratchpad)
 {
   let ToolSidebar = devtools.require("devtools/framework/sidebar").ToolSidebar;
   let tabbox = document.querySelector("#scratchpad-sidebar");
-  this._sidebar = new ToolSidebar(tabbox, this);
-  this._splitter = document.querySelector(".devtools-side-splitter");
+  this._sidebar = new ToolSidebar(tabbox, this, "scratchpad");
+  this._scratchpad = aScratchpad;
 }
 
 ScratchpadSidebar.prototype = {
@@ -1494,11 +1497,6 @@ ScratchpadSidebar.prototype = {
    * The ToolSidebar for this sidebar.
    */
   _sidebar: null,
-
-  /*
-   * The splitter element between the sidebar and the editor.
-   */
-  _splitter: null,
 
   /*
    * The VariablesView for this sidebar.
@@ -1525,13 +1523,17 @@ ScratchpadSidebar.prototype = {
   {
     this.show();
 
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
     let onTabReady = () => {
       if (!this.variablesView) {
         let window = this._sidebar.getWindowForTab("variablesview");
         let container = window.document.querySelector("#variables");
-        this.variablesView = new VariablesView(container);
+        this.variablesView = new VariablesView(container, {
+          searchEnabled: true,
+          searchPlaceholder: this._scratchpad.strings
+                             .GetStringFromName("propertiesFilterPlaceholder")
+        });
       }
       this._update(aObject).then(() => deferred.resolve());
     };
@@ -1555,7 +1557,6 @@ ScratchpadSidebar.prototype = {
     if (!this.visible) {
       this.visible = true;
       this._sidebar.show();
-      this._splitter.setAttribute("state", "open");
     }
   },
 
@@ -1567,7 +1568,6 @@ ScratchpadSidebar.prototype = {
     if (this.visible) {
       this.visible = false;
       this._sidebar.hide();
-      this._splitter.setAttribute("state", "collapsed");
     }
   },
 
@@ -1581,7 +1581,7 @@ ScratchpadSidebar.prototype = {
    */
   _update: function SS__update(aObject)
   {
-    let deferred = Promise.defer();
+    let deferred = promise.defer();
 
     this.variablesView.rawObject = aObject;
 

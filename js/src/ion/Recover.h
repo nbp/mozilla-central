@@ -7,8 +7,8 @@
 #ifndef jsion_recover_h__
 #define jsion_recover_h__
 
-#include "CompactBuffer.h"
-#include "Slots.h"
+#include "ion/CompactBuffer.h"
+#include "ion/Slots.h"
 
 namespace js {
 namespace ion {

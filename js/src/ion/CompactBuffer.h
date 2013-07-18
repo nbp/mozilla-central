@@ -4,12 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_compact_buffer_h__
-#define jsion_compact_buffer_h__
+#ifndef ion_Compactbuffer_h
+#define ion_Compactbuffer_h
 
 #include "js/Vector.h"
 #include "jsalloc.h"
-#include "IonTypes.h"
+#include "ion/IonTypes.h"
 
 namespace js {
 namespace ion {
@@ -43,8 +43,7 @@ class CompactBufferReader
             if (!(byte & 1))
                 return val;
         }
-        JS_NOT_REACHED("unreachable");
-        return 0;
+        MOZ_ASSUME_UNREACHABLE("unreachable");
     }
 
   public:
@@ -163,5 +162,4 @@ CompactBufferReader::CompactBufferReader(const CompactBufferWriter &writer)
 } // namespace ion
 } // namespace js
 
-#endif // jsion_compact_buffer_h__
-
+#endif /* ion_Compactbuffer_h */

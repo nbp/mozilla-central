@@ -9,19 +9,18 @@
 #include "mozilla/Attributes.h"
 #include "nsIDOMHTMLLegendElement.h"
 #include "nsGenericHTMLElement.h"
-#include "nsHTMLFormElement.h"
+#include "mozilla/dom/HTMLFormElement.h"
 
 namespace mozilla {
 namespace dom {
 
-class HTMLLegendElement : public nsGenericHTMLElement,
-                          public nsIDOMHTMLLegendElement
+class HTMLLegendElement MOZ_FINAL : public nsGenericHTMLElement,
+                                    public nsIDOMHTMLLegendElement
 {
 public:
   HTMLLegendElement(already_AddRefed<nsINodeInfo> aNodeInfo)
     : nsGenericHTMLElement(aNodeInfo)
   {
-    SetIsDOMBinding();
   }
   virtual ~HTMLLegendElement();
 
@@ -85,7 +84,7 @@ public:
    * WebIDL Interface
    */
 
-  already_AddRefed<nsHTMLFormElement> GetForm();
+  already_AddRefed<HTMLFormElement> GetForm();
 
   // The XPCOM GetAlign is OK for us
   void SetAlign(const nsAString& aAlign, ErrorResult& aError)

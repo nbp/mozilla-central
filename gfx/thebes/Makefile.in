@@ -24,7 +24,7 @@ LOCAL_INCLUDES += \
 	-I$(topsrcdir)/content/xml/document/src \
 	$(NULL)
 
-ifeq ($(MOZ_WIDGET_TOOLKIT),$(findstring $(MOZ_WIDGET_TOOLKIT),android gtk2 gonk qt))
+ifeq ($(MOZ_WIDGET_TOOLKIT),$(findstring $(MOZ_WIDGET_TOOLKIT),android gtk2 gtk3 gonk qt))
 DEFINES += -DMOZ_ENABLE_FREETYPE
 endif
 
@@ -52,17 +52,7 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),android)
 DEFINES +=	-DMOZ_USING_ANDROID_JAVA_WIDGETS
 endif
 
-ifeq ($(MOZ_WIDGET_TOOLKIT),qt)
-endif
-
-ifeq ($(MOZ_WIDGET_TOOLKIT),cocoa)
-CMMSRCS = \
-	gfxMacPlatformFontList.mm \
-	$(NULL)
-endif
-
 DEFINES += \
-	-DIMPL_THEBES \
 	-DHB_DONT_DEFINE_STDINT \
 	-DMOZ_OTS_REPORT_ERRORS \
 	-DGRAPHITE2_STATIC \
@@ -88,7 +78,7 @@ ifeq ($(MOZ_WIDGET_TOOLKIT),gonk)
 CXXFLAGS += $(CAIRO_FT_CFLAGS)
 endif
 
-ifeq ($(MOZ_WIDGET_TOOLKIT),gtk2)
+ifdef MOZ_WIDGET_GTK
 CXXFLAGS += $(MOZ_PANGO_CFLAGS)
 endif
 

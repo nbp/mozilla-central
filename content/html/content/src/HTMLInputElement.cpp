@@ -96,6 +96,8 @@
 
 #include <limits>
 
+#include "nsIColorPicker.h"
+
 // input type=date
 #include "js/Date.h"
 
@@ -324,6 +326,10 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
     nsresult rv = mFilePicker->GetDomfiles(getter_AddRefs(iter));
     NS_ENSURE_SUCCESS(rv, rv);
 
+    if (!iter) {
+      return NS_OK;
+    }
+
     nsCOMPtr<nsISupports> tmp;
     bool prefSaved = false;
     bool loop = true;
@@ -373,6 +379,103 @@ HTMLInputElement::nsFilePickerShownCallback::Done(int16_t aResult)
 NS_IMPL_ISUPPORTS1(HTMLInputElement::nsFilePickerShownCallback,
                    nsIFilePickerShownCallback)
 
+class nsColorPickerShownCallback MOZ_FINAL
+  : public nsIColorPickerShownCallback
+{
+public:
+  nsColorPickerShownCallback(HTMLInputElement* aInput,
+                             nsIColorPicker* aColorPicker)
+    : mInput(aInput)
+    , mColorPicker(aColorPicker)
+    , mValueChanged(false)
+  {}
+
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD Update(const nsAString& aColor) MOZ_OVERRIDE;
+  NS_IMETHOD Done(const nsAString& aColor) MOZ_OVERRIDE;
+
+private:
+  /**
+   * Updates the internals of the object using aColor as the new value.
+   * If aTrustedUpdate is true, it will consider that aColor is a new value.
+   * Otherwise, it will check that aColor is different from the current value.
+   */
+  nsresult UpdateInternal(const nsAString& aColor, bool aTrustedUpdate);
+
+  nsRefPtr<HTMLInputElement> mInput;
+  nsCOMPtr<nsIColorPicker>   mColorPicker;
+  bool                       mValueChanged;
+};
+
+nsresult
+nsColorPickerShownCallback::UpdateInternal(const nsAString& aColor,
+                                           bool aTrustedUpdate)
+{
+  bool valueChanged = false;
+
+  nsAutoString oldValue;
+  if (aTrustedUpdate) {
+    valueChanged = true;
+  } else {
+    mInput->GetValue(oldValue);
+  }
+
+  mInput->SetValue(aColor);
+
+  if (!aTrustedUpdate) {
+    nsAutoString newValue;
+    mInput->GetValue(newValue);
+    if (!oldValue.Equals(newValue)) {
+      valueChanged = true;
+    }
+  }
+
+  if (valueChanged) {
+    mValueChanged = true;
+    return nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
+                                                static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                                NS_LITERAL_STRING("input"), true,
+                                                false);
+  }
+
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsColorPickerShownCallback::Update(const nsAString& aColor)
+{
+  return UpdateInternal(aColor, true);
+}
+
+NS_IMETHODIMP
+nsColorPickerShownCallback::Done(const nsAString& aColor)
+{
+  /**
+   * When Done() is called, we might be at the end of a serie of Update() calls
+   * in which case mValueChanged is set to true and a change event will have to
+   * be fired but we might also be in a one shot Done() call situation in which
+   * case we should fire a change event iif the value actually changed.
+   * UpdateInternal(bool) is taking care of that logic for us.
+   */
+  nsresult rv = NS_OK;
+
+  if (!aColor.IsEmpty()) {
+    UpdateInternal(aColor, false);
+  }
+
+  if (mValueChanged) {
+    rv = nsContentUtils::DispatchTrustedEvent(mInput->OwnerDoc(),
+                                              static_cast<nsIDOMHTMLInputElement*>(mInput.get()),
+                                              NS_LITERAL_STRING("change"), true,
+                                              false);
+  }
+
+  return rv;
+}
+
+NS_IMPL_ISUPPORTS1(nsColorPickerShownCallback, nsIColorPickerShownCallback)
+
 HTMLInputElement::AsyncClickHandler::AsyncClickHandler(HTMLInputElement* aInput)
   : mInput(aInput)
 {
@@ -396,8 +499,50 @@ HTMLInputElement::AsyncClickHandler::Run()
 nsresult
 HTMLInputElement::AsyncClickHandler::InitColorPicker()
 {
-  // TODO
-  return NS_OK;
+  // Get parent nsPIDOMWindow object.
+  nsCOMPtr<nsIDocument> doc = mInput->OwnerDoc();
+
+  nsCOMPtr<nsPIDOMWindow> win = doc->GetWindow();
+  if (!win) {
+    return NS_ERROR_FAILURE;
+  }
+
+  // Check if page is allowed to open the popup
+  if (mPopupControlState > openControlled) {
+    nsCOMPtr<nsIPopupWindowManager> pm =
+      do_GetService(NS_POPUPWINDOWMANAGER_CONTRACTID);
+
+    if (!pm) {
+      return NS_OK;
+    }
+
+    uint32_t permission;
+    pm->TestPermission(doc->NodePrincipal(), &permission);
+    if (permission == nsIPopupWindowManager::DENY_POPUP) {
+      nsGlobalWindow::FirePopupBlockedEvent(doc, win, nullptr, EmptyString(), EmptyString());
+      return NS_OK;
+    }
+  }
+
+  // Get Loc title
+  nsXPIDLString title;
+  nsContentUtils::GetLocalizedString(nsContentUtils::eFORMS_PROPERTIES,
+                                     "ColorPicker", title);
+
+  nsCOMPtr<nsIColorPicker> colorPicker = do_CreateInstance("@mozilla.org/colorpicker;1");
+  if (!colorPicker) {
+    return NS_ERROR_FAILURE;
+  }
+
+  nsAutoString initialValue;
+  mInput->GetValueInternal(initialValue);
+  nsresult rv = colorPicker->Init(win, title, initialValue);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  nsCOMPtr<nsIColorPickerShownCallback> callback =
+    new nsColorPickerShownCallback(mInput, colorPicker);
+
+  return colorPicker->Open(callback);
 }
 
 nsresult
@@ -643,8 +788,6 @@ HTMLInputElement::HTMLInputElement(already_AddRefed<nsINodeInfo> aNodeInfo,
   , mHasRange(false)
   , mIsDraggingRange(false)
 {
-  SetIsDOMBinding();
-
   // We are in a type=text so we now we currenty need a nsTextEditorState.
   mInputData.mState = new nsTextEditorState(this);
 
@@ -730,18 +873,18 @@ NS_IMPL_RELEASE_INHERITED(HTMLInputElement, Element)
 
 // QueryInterface implementation for HTMLInputElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLInputElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE8(HTMLInputElement,
-                                   nsIDOMHTMLInputElement,
-                                   nsITextControlElement,
-                                   nsIPhonetic,
-                                   imgINotificationObserver,
-                                   nsIImageLoadingContent,
-                                   imgIOnloadBlocker,
-                                   nsIDOMNSEditableElement,
-                                   nsIConstraintValidation)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLInputElement,
-                                               nsGenericHTMLFormElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLFormElement)
+  NS_INTERFACE_TABLE_INHERITED8(HTMLInputElement,
+                                nsIDOMHTMLInputElement,
+                                nsITextControlElement,
+                                nsIPhonetic,
+                                imgINotificationObserver,
+                                nsIImageLoadingContent,
+                                imgIOnloadBlocker,
+                                nsIDOMNSEditableElement,
+                                nsIConstraintValidation)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 // nsIConstraintValidation
 NS_IMPL_NSICONSTRAINTVALIDATION_EXCEPT_SETCUSTOMVALIDITY(HTMLInputElement)
@@ -2320,7 +2463,7 @@ HTMLInputElement::MaybeSubmitForm(nsPresContext* aPresContext)
     // bug 592124.
     // If there's only one text control, just submit the form
     // Hold strong ref across the event
-    nsRefPtr<nsHTMLFormElement> form = mForm;
+    nsRefPtr<mozilla::dom::HTMLFormElement> form = mForm;
     nsFormEvent event(true, NS_FORM_SUBMIT);
     nsEventStatus status = nsEventStatus_eIgnore;
     shell->HandleDOMEventWithTarget(mForm, &event, &status);
@@ -2761,10 +2904,30 @@ HTMLInputElement::ShouldPreventDOMActivateDispatch(EventTarget* aOriginalTarget)
                              nsGkAtoms::button, eCaseMatters);
 }
 
+void
+HTMLInputElement::MaybeFireAsyncClickHandler(nsEventChainPostVisitor& aVisitor)
+{
+  // Open a file picker when we receive a click on a <input type='file'>, or
+  // open a color picker when we receive a click on a <input type='color'>.
+  // A click is handled in the following cases:
+  // - preventDefault() has not been called (or something similar);
+  // - it's the left mouse button.
+  // We do not prevent non-trusted click because authors can already use
+  // .click(). However, the file picker will follow the rules of popup-blocking.
+  if ((mType == NS_FORM_INPUT_FILE || mType == NS_FORM_INPUT_COLOR) &&
+      NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
+      !aVisitor.mEvent->mFlags.mDefaultPrevented) {
+    FireAsyncClickHandler();
+  }
+}
+
 nsresult
 HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
 {
   if (!aVisitor.mPresContext) {
+    // Hack alert! In order to open file picker even in case the element isn't
+    // in document, fire click handler even without PresContext.
+    MaybeFireAsyncClickHandler(aVisitor);
     return NS_OK;
   }
 
@@ -3141,7 +3304,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
                               HasAttr(kNameSpaceID_None, nsGkAtoms::formnovalidate) ||
                               mForm->CheckValidFormSubmission())) {
               // Hold a strong ref while dispatching
-              nsRefPtr<nsHTMLFormElement> form(mForm);
+              nsRefPtr<mozilla::dom::HTMLFormElement> form(mForm);
               presShell->HandleDOMEventWithTarget(mForm, &event, &status);
               aVisitor.mEventStatus = nsEventStatus_eConsumeNoDefault;
             }
@@ -3168,18 +3331,7 @@ HTMLInputElement::PostHandleEvent(nsEventChainPostVisitor& aVisitor)
     PostHandleEventForRangeThumb(aVisitor);
   }
 
-  // Open a file picker when we receive a click on a <input type='file'>, or
-  // open a color picker when we receive a click on a <input type='color'>.
-  // A click is handled in the following cases:
-  // - preventDefault() has not been called (or something similar);
-  // - it's the left mouse button.
-  // We do not prevent non-trusted click because authors can already use
-  // .click(). However, the file picker will follow the rules of popup-blocking.
-  if ((mType == NS_FORM_INPUT_FILE || mType == NS_FORM_INPUT_COLOR) &&
-      NS_IS_MOUSE_LEFT_CLICK(aVisitor.mEvent) &&
-      !aVisitor.mEvent->mFlags.mDefaultPrevented) {
-    return FireAsyncClickHandler();
-  }
+  MaybeFireAsyncClickHandler(aVisitor);
 
   return rv;
 }

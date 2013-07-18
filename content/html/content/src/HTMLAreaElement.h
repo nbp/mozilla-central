@@ -8,22 +8,22 @@
 #define mozilla_dom_HTMLAreaElement_h
 
 #include "mozilla/Attributes.h"
-#include "nsIDOMHTMLAreaElement.h"
+#include "mozilla/dom/Link.h"
 #include "nsGenericHTMLElement.h"
-#include "nsILink.h"
 #include "nsGkAtoms.h"
+#include "nsIDOMHTMLAreaElement.h"
+#include "nsILink.h"
 #include "nsIURL.h"
-#include "Link.h"
 
 class nsIDocument;
 
 namespace mozilla {
 namespace dom {
 
-class HTMLAreaElement : public nsGenericHTMLElement,
-                        public nsIDOMHTMLAreaElement,
-                        public nsILink,
-                        public Link
+class HTMLAreaElement MOZ_FINAL : public nsGenericHTMLElement,
+                                  public nsIDOMHTMLAreaElement,
+                                  public nsILink,
+                                  public Link
 {
 public:
   HTMLAreaElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -57,7 +57,6 @@ public:
   virtual nsresult PostHandleEvent(nsEventChainPostVisitor& aVisitor) MOZ_OVERRIDE;
   virtual bool IsLink(nsIURI** aURI) const MOZ_OVERRIDE;
   virtual void GetLinkTarget(nsAString& aTarget) MOZ_OVERRIDE;
-  virtual nsLinkState GetLinkState() const MOZ_OVERRIDE;
   virtual already_AddRefed<nsIURI> GetHrefURI() const MOZ_OVERRIDE;
 
   virtual nsresult BindToTree(nsIDocument* aDocument, nsIContent* aParent,

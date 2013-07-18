@@ -100,6 +100,7 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
   , mGenericID(aSrc.mGenericID)
   , mScriptLevel(aSrc.mScriptLevel)
   , mExplicitLanguage(aSrc.mExplicitLanguage)
+  , mAllowZoom(aSrc.mAllowZoom)
   , mScriptUnconstrainedSize(aSrc.mScriptUnconstrainedSize)
   , mScriptMinSize(aSrc.mScriptMinSize)
   , mScriptSizeMultiplier(aSrc.mScriptSizeMultiplier)
@@ -128,6 +129,7 @@ nsStyleFont::Init(nsPresContext* aPresContext)
       NS_POINTS_TO_TWIPS(NS_MATHML_DEFAULT_SCRIPT_MIN_SIZE_PT));
   mScriptLevel = 0;
   mScriptSizeMultiplier = NS_MATHML_DEFAULT_SCRIPT_SIZE_MULTIPLIER;
+  mAllowZoom = true;
 
   nsAutoString language;
   aPresContext->Document()->GetContentLanguage(language);
@@ -161,8 +163,30 @@ nsStyleFont::Destroy(nsPresContext* aContext) {
   aContext->FreeToShell(sizeof(nsStyleFont), this);
 }
 
+void
+nsStyleFont::EnableZoom(nsPresContext* aContext, bool aEnable)
+{
+  if (mAllowZoom == aEnable) {
+    return;
+  }
+  mAllowZoom = aEnable;
+  if (mAllowZoom) {
+    mSize = nsStyleFont::ZoomText(aContext, mSize);
+    mFont.size = nsStyleFont::ZoomText(aContext, mFont.size);
+    mScriptUnconstrainedSize =
+      nsStyleFont::ZoomText(aContext, mScriptUnconstrainedSize);
+  } else {
+    mSize = nsStyleFont::UnZoomText(aContext, mSize);
+    mFont.size = nsStyleFont::UnZoomText(aContext, mFont.size);
+    mScriptUnconstrainedSize =
+      nsStyleFont::UnZoomText(aContext, mScriptUnconstrainedSize);
+  }
+}
+
 nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aOther) const
 {
+  MOZ_ASSERT(mAllowZoom == aOther.mAllowZoom,
+             "expected mAllowZoom to be the same on both nsStyleFonts");
   if (mSize != aOther.mSize ||
       mLanguage != aOther.mLanguage ||
       mExplicitLanguage != aOther.mExplicitLanguage) {
@@ -2189,18 +2213,34 @@ nsStyleDisplay::nsStyleDisplay(const nsStyleDisplay& aSource)
   mPerspectiveOrigin[1] = aSource.mPerspectiveOrigin[1];
 }
 
+static uint8_t
+MapRelativePositionToStatic(uint8_t aPositionValue)
+{
+  return aPositionValue == NS_STYLE_POSITION_RELATIVE ?
+      NS_STYLE_POSITION_STATIC : aPositionValue;
+}
+
 nsChangeHint nsStyleDisplay::CalcDifference(const nsStyleDisplay& aOther) const
 {
   nsChangeHint hint = nsChangeHint(0);
 
+  // Changes between position:static and position:relative don't need
+  // to reconstruct frames.
   if (!EqualURIs(mBinding, aOther.mBinding)
-      || mPosition != aOther.mPosition
+      || MapRelativePositionToStatic(mPosition) !=
+           MapRelativePositionToStatic(aOther.mPosition)
       || mDisplay != aOther.mDisplay
       || (mFloats == NS_STYLE_FLOAT_NONE) != (aOther.mFloats == NS_STYLE_FLOAT_NONE)
       || mOverflowX != aOther.mOverflowX
       || mOverflowY != aOther.mOverflowY
-      || mResize != aOther.mResize)
+      || mResize != aOther.mResize) {
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
+  }
+
+  if (mPosition != aOther.mPosition) {
+    NS_UpdateHint(hint,
+      NS_CombineHint(nsChangeHint_NeedReflow, nsChangeHint_RepaintFrame));
+  }
 
   if (mFloats != aOther.mFloats) {
     // Changing which side we float on doesn't affect descendants directly
@@ -2305,6 +2345,7 @@ nsStyleVisibility::nsStyleVisibility(nsPresContext* aPresContext)
 
   mVisible = NS_STYLE_VISIBILITY_VISIBLE;
   mPointerEvents = NS_STYLE_POINTER_EVENTS_AUTO;
+  mWritingMode = NS_STYLE_WRITING_MODE_HORIZONTAL_TB;
 }
 
 nsStyleVisibility::nsStyleVisibility(const nsStyleVisibility& aSource)
@@ -2313,13 +2354,14 @@ nsStyleVisibility::nsStyleVisibility(const nsStyleVisibility& aSource)
   mDirection = aSource.mDirection;
   mVisible = aSource.mVisible;
   mPointerEvents = aSource.mPointerEvents;
+  mWritingMode = aSource.mWritingMode;
 } 
 
 nsChangeHint nsStyleVisibility::CalcDifference(const nsStyleVisibility& aOther) const
 {
   nsChangeHint hint = nsChangeHint(0);
 
-  if (mDirection != aOther.mDirection) {
+  if (mDirection != aOther.mDirection || mWritingMode != aOther.mWritingMode) {
     NS_UpdateHint(hint, nsChangeHint_ReconstructFrame);
   } else {
     if (mVisible != aOther.mVisible) {

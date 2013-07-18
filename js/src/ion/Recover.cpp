@@ -31,8 +31,7 @@ RInstruction::dispatch(void *mem, CompactBufferReader &reader)
         break;
     }
 
-    JS_NOT_REACHED("Forgot to read/write an operand?");
-    return NULL;
+    MOZ_ASSUME_UNREACHABLE("Forgot to read/write an operand?");
 }
 
 void
@@ -116,6 +115,10 @@ RResumePoint::recoverCallee(SnapshotIterator &it, JSScript *script, uint32_t *nu
     JS_ASSERT(js_CodeSpec[*pc].format & JOF_INVOKE);
     if (JSOp(*pc) != JSOP_FUNAPPLY)
         *numActualArgs = GET_ARGC(pc);
+    if (JSOp(*pc) == JSOP_FUNCALL) {
+        JS_ASSERT(GET_ARGC(pc) > 0);
+        *numActualArgs = GET_ARGC(pc) - 1;
+    }
 
     JS_ASSERT(*numActualArgs != 0xbadbad);
 
@@ -140,9 +143,9 @@ RResumePoint::readStackSlot(JSContext *cx, SnapshotIterator &it) const
     // and a value override has been specified, don't read from the
     // iterator. Otherwise, we risk using a garbage value.
     if (it.operandIndex() == numOperands() && isLastFrame() &&
-        cx->runtime->hasIonReturnOverride())
+        cx->runtime()->hasIonReturnOverride())
     {
-        return cx->runtime->takeIonReturnOverride();
+        return cx->runtime()->takeIonReturnOverride();
     }
 
     return recoverValue(it, slot);
@@ -151,6 +154,5 @@ RResumePoint::readStackSlot(JSContext *cx, SnapshotIterator &it) const
 bool
 RResumePoint::resume(JSContext *cx, HandleScript script, SnapshotIterator &it) const
 {
-    JS_NOT_REACHED("Resuming a resume point? Have a look at bailouts.");
-    return false;
+    MOZ_ASSUME_UNREACHABLE("Resuming a resume point? Have a look at bailouts.");
 }

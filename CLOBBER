@@ -17,7 +17,5 @@
 #
 # Modifying this file will now automatically clobber the buildbot machines \o/
 #
-Bug 869002 touched webidl, so Windows needs to clobber
-
-Alternative to clobber is to run ./config.status from the objdir and to
-touch the CLOBBER file in the objdir.
+Bug 889503 - Move Settings API to WebIDL.
+Requires a clobber due to Bug 890744.

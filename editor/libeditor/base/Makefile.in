@@ -10,16 +10,12 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME	= editorbase_s
 LIBXUL_LIBRARY	= 1
 FAIL_ON_WARNINGS = 1
 
 
 # Internal header files, needed by other editor sublibs:
 INTERNAL_HDR_DIR = ../internal
-
-# don't want the shared lib; force the creation of a static lib.
-FORCE_STATIC_LIB = 1
 
 include $(topsrcdir)/config/rules.mk
 

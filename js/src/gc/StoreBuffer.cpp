@@ -6,14 +6,17 @@
 
 #ifdef JSGC_GENERATIONAL
 
-#include "jsgc.h"
-
-#include "gc/Barrier-inl.h"
 #include "gc/StoreBuffer.h"
+
+#include "mozilla/Assertions.h"
+
+#include "vm/ForkJoin.h"
+
 #include "vm/ObjectImpl-inl.h"
 
 using namespace js;
 using namespace js::gc;
+using mozilla::ReentrancyGuard;
 
 /*** SlotEdge ***/
 
@@ -43,11 +46,10 @@ StoreBuffer::SlotEdge::location() const
     return (void *)slotLocation();
 }
 
-template <typename NurseryType>
 JS_ALWAYS_INLINE bool
-StoreBuffer::SlotEdge::inRememberedSet(NurseryType *nursery) const
+StoreBuffer::SlotEdge::inRememberedSet(const Nursery &nursery) const
 {
-    return !nursery->isInside(object) && nursery->isInside(deref());
+    return !nursery.isInside(object) && nursery.isInside(deref());
 }
 
 JS_ALWAYS_INLINE bool
@@ -57,13 +59,22 @@ StoreBuffer::SlotEdge::isNullEdge() const
 }
 
 void
-StoreBuffer::WholeObjectEdges::mark(JSTracer *trc)
+StoreBuffer::WholeCellEdges::mark(JSTracer *trc)
 {
-    tenured->markChildren(trc);
+    JSGCTraceKind kind = GetGCThingTraceKind(tenured);
+    if (kind <= JSTRACE_OBJECT) {
+        MarkChildren(trc, static_cast<JSObject *>(tenured));
+        return;
+    }
+#ifdef JS_ION
+    JS_ASSERT(kind == JSTRACE_IONCODE);
+    static_cast<ion::IonCode *>(tenured)->trace(trc);
+#else
+    MOZ_ASSUME_UNREACHABLE("Only objects can be in the wholeCellBuffer if IonMonkey is disabled.");
+#endif
 }
 
 /*** MonoTypeBuffer ***/
-
 
 /* How full we allow a store buffer to become before we request a MinorGC. */
 const static double HighwaterRatio = 7.0 / 8.0;
@@ -96,9 +107,8 @@ StoreBuffer::MonoTypeBuffer<T>::clear()
 }
 
 template <typename T>
-template <typename NurseryType>
 void
-StoreBuffer::MonoTypeBuffer<T>::compactNotInSet(NurseryType *nursery)
+StoreBuffer::MonoTypeBuffer<T>::compactNotInSet(const Nursery &nursery)
 {
     T *insert = base;
     for (T *v = base; v != pos; ++v) {
@@ -130,12 +140,7 @@ template <typename T>
 void
 StoreBuffer::MonoTypeBuffer<T>::compact()
 {
-#ifdef JS_GC_ZEAL
-    if (owner->runtime->gcVerifyPostData)
-        compactNotInSet(&owner->runtime->gcVerifierNursery);
-    else
-#endif
-        compactNotInSet(&owner->runtime->gcNursery);
+    compactNotInSet(owner->runtime->gcNursery);
     compactRemoveDuplicates();
 }
 
@@ -143,6 +148,7 @@ template <typename T>
 void
 StoreBuffer::MonoTypeBuffer<T>::mark(JSTracer *trc)
 {
+    ReentrancyGuard g(*this);
     compact();
     T *cursor = base;
     while (cursor != pos) {
@@ -153,24 +159,6 @@ StoreBuffer::MonoTypeBuffer<T>::mark(JSTracer *trc)
 
         edge.mark(trc);
     }
-}
-
-template <typename T>
-bool
-StoreBuffer::MonoTypeBuffer<T>::accumulateEdges(EdgeSet &edges)
-{
-    compact();
-    T *cursor = base;
-    while (cursor != pos) {
-        T edge = *cursor++;
-
-        /* Note: the relocatable buffer is allowed to store pointers to NULL. */
-        if (edge.isNullEdge())
-            continue;
-        if (!edges.putNew(edge.location()))
-            return false;
-    }
-    return true;
 }
 
 namespace js {
@@ -189,20 +177,6 @@ class AccumulateEdgesTracer : public JSTracer
         JS_TracerInit(this, rt, AccumulateEdgesTracer::tracer);
     }
 };
-
-template <>
-bool
-StoreBuffer::MonoTypeBuffer<StoreBuffer::WholeObjectEdges>::accumulateEdges(EdgeSet &edges)
-{
-    compact();
-    AccumulateEdgesTracer trc(owner->runtime, &edges);
-    StoreBuffer::WholeObjectEdges *cursor = base;
-    while (cursor != pos) {
-        cursor->tenured->markChildren(&trc);
-        cursor++;
-    }
-    return true;
-}
 } /* namespace gc */
 } /* namespace js */
 
@@ -268,6 +242,8 @@ StoreBuffer::GenericBuffer::clear()
 void
 StoreBuffer::GenericBuffer::mark(JSTracer *trc)
 {
+    ReentrancyGuard g(*this);
+
     uint8_t *p = base;
     while (p < pos) {
         unsigned size = *((unsigned *)p);
@@ -278,22 +254,6 @@ StoreBuffer::GenericBuffer::mark(JSTracer *trc)
 
         p += size;
     }
-}
-
-bool
-StoreBuffer::GenericBuffer::containsEdge(void *location) const
-{
-    uint8_t *p = base;
-    while (p < pos) {
-        unsigned size = *((unsigned *)p);
-        p += sizeof(unsigned);
-
-        if (((BufferableRef *)p)->match(location))
-            return true;
-
-        p += size;
-    }
-    return false;
 }
 
 /*** Edges ***/
@@ -347,9 +307,9 @@ StoreBuffer::enable()
         return false;
     offset += SlotBufferSize;
 
-    if (!bufferWholeObject.enable(&asBytes[offset], WholeObjectBufferSize))
+    if (!bufferWholeCell.enable(&asBytes[offset], WholeCellBufferSize))
         return false;
-    offset += WholeObjectBufferSize;
+    offset += WholeCellBufferSize;
 
     if (!bufferRelocVal.enable(&asBytes[offset], RelocValueBufferSize))
         return false;
@@ -380,7 +340,7 @@ StoreBuffer::disable()
     bufferVal.disable();
     bufferCell.disable();
     bufferSlot.disable();
-    bufferWholeObject.disable();
+    bufferWholeCell.disable();
     bufferRelocVal.disable();
     bufferRelocCell.disable();
     bufferGeneric.disable();
@@ -401,7 +361,7 @@ StoreBuffer::clear()
     bufferVal.clear();
     bufferCell.clear();
     bufferSlot.clear();
-    bufferWholeObject.clear();
+    bufferWholeCell.clear();
     bufferRelocVal.clear();
     bufferRelocCell.clear();
     bufferGeneric.clear();
@@ -418,7 +378,7 @@ StoreBuffer::mark(JSTracer *trc)
     bufferVal.mark(trc);
     bufferCell.mark(trc);
     bufferSlot.mark(trc);
-    bufferWholeObject.mark(trc);
+    bufferWholeCell.mark(trc);
     bufferRelocVal.mark(trc);
     bufferRelocCell.mark(trc);
     bufferGeneric.mark(trc);
@@ -439,38 +399,9 @@ StoreBuffer::setOverflowed()
 }
 
 bool
-StoreBuffer::coalesceForVerification()
+StoreBuffer::inParallelSection() const
 {
-    if (!edgeSet.initialized()) {
-        if (!edgeSet.init())
-            return false;
-    }
-    JS_ASSERT(edgeSet.empty());
-    if (!bufferVal.accumulateEdges(edgeSet))
-        return false;
-    if (!bufferCell.accumulateEdges(edgeSet))
-        return false;
-    if (!bufferSlot.accumulateEdges(edgeSet))
-        return false;
-    if (!bufferWholeObject.accumulateEdges(edgeSet))
-        return false;
-    if (!bufferRelocVal.accumulateEdges(edgeSet))
-        return false;
-    if (!bufferRelocCell.accumulateEdges(edgeSet))
-        return false;
-    return true;
-}
-
-bool
-StoreBuffer::containsEdgeAt(void *loc) const
-{
-    return edgeSet.has(loc) || bufferGeneric.containsEdge(loc);
-}
-
-void
-StoreBuffer::releaseVerificationData()
-{
-    edgeSet.finish();
+    return InParallelSection();
 }
 
 JS_PUBLIC_API(void)
@@ -510,7 +441,7 @@ JS::HeapValueRelocate(JS::Value *valuep)
 template class StoreBuffer::MonoTypeBuffer<StoreBuffer::ValueEdge>;
 template class StoreBuffer::MonoTypeBuffer<StoreBuffer::CellPtrEdge>;
 template class StoreBuffer::MonoTypeBuffer<StoreBuffer::SlotEdge>;
-template class StoreBuffer::MonoTypeBuffer<StoreBuffer::WholeObjectEdges>;
+template class StoreBuffer::MonoTypeBuffer<StoreBuffer::WholeCellEdges>;
 template class StoreBuffer::RelocatableMonoTypeBuffer<StoreBuffer::ValueEdge>;
 template class StoreBuffer::RelocatableMonoTypeBuffer<StoreBuffer::CellPtrEdge>;
 

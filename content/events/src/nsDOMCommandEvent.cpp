@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsDOMCommandEvent.h"
+#include "prtime.h"
 
 nsDOMCommandEvent::nsDOMCommandEvent(mozilla::dom::EventTarget* aOwner,
                                      nsPresContext* aPresContext,
@@ -17,7 +18,6 @@ nsDOMCommandEvent::nsDOMCommandEvent(mozilla::dom::EventTarget* aOwner,
   } else {
     mEventIsInternal = true;
   }
-  SetIsDOMBinding();
 }
 
 nsDOMCommandEvent::~nsDOMCommandEvent()

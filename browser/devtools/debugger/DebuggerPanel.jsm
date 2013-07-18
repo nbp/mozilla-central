@@ -12,11 +12,8 @@ this.EXPORTED_SYMBOLS = ["DebuggerPanel"];
 Cu.import("resource://gre/modules/XPCOMUtils.jsm");
 Cu.import("resource:///modules/devtools/shared/event-emitter.js");
 
-XPCOMUtils.defineLazyModuleGetter(this, "Promise",
-  "resource://gre/modules/commonjs/sdk/core/promise.js");
-
-XPCOMUtils.defineLazyModuleGetter(this, "DebuggerServer",
-  "resource://gre/modules/devtools/dbg-server.jsm");
+XPCOMUtils.defineLazyModuleGetter(this, "promise",
+  "resource://gre/modules/commonjs/sdk/core/promise.js", "Promise");
 
 this.DebuggerPanel = function DebuggerPanel(iframeWindow, toolbox) {
   this.panelWin = iframeWindow;
@@ -27,6 +24,9 @@ this.DebuggerPanel = function DebuggerPanel(iframeWindow, toolbox) {
   this._controller._target = this.target;
   this._bkp = this._controller.Breakpoints;
 
+  this.highlightWhenPaused = this.highlightWhenPaused.bind(this);
+  this.unhighlightWhenResumed = this.unhighlightWhenResumed.bind(this);
+
   EventEmitter.decorate(this);
 }
 
@@ -35,22 +35,24 @@ DebuggerPanel.prototype = {
    * Open is effectively an asynchronous constructor.
    *
    * @return object
-   *         A Promise that is resolved when the Debugger completes opening.
+   *         A promise that is resolved when the Debugger completes opening.
    */
   open: function DebuggerPanel_open() {
-    let promise;
+    let targetPromise;
 
     // Local debugging needs to make the target remote.
     if (!this.target.isRemote) {
-      promise = this.target.makeRemote();
+      targetPromise = this.target.makeRemote();
     } else {
-      promise = Promise.resolve(this.target);
+      targetPromise = promise.resolve(this.target);
     }
 
-    return promise
+    return targetPromise
       .then(() => this._controller.startupDebugger())
       .then(() => this._controller.connect())
       .then(() => {
+        this.target.on("thread-paused", this.highlightWhenPaused);
+        this.target.on("thread-resumed", this.unhighlightWhenResumed);
         this.isReady = true;
         this.emit("ready");
         return this;
@@ -65,8 +67,10 @@ DebuggerPanel.prototype = {
   get target() this._toolbox.target,
 
   destroy: function() {
+    this.target.off("thread-paused", this.highlightWhenPaused);
+    this.target.off("thread-resumed", this.unhighlightWhenResumed);
     this.emit("destroyed");
-    return Promise.resolve(null);
+    return promise.resolve(null);
   },
 
   // DebuggerPanel API
@@ -85,5 +89,16 @@ DebuggerPanel.prototype = {
 
   getAllBreakpoints: function() {
     return this._bkp.store;
+  },
+
+  highlightWhenPaused: function() {
+    this._toolbox.highlightTool("jsdebugger");
+    // Also raise the toolbox window if it is undocked or select the
+    // corresponding tab when toolbox is docked.
+    this._toolbox.raise();
+  },
+
+  unhighlightWhenResumed: function() {
+    this._toolbox.unhighlightTool("jsdebugger");
   }
 };

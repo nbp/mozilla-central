@@ -11,15 +11,15 @@
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMHTMLOptionElement.h"
 #include "nsIJSNativeInitializer.h"
-#include "nsHTMLFormElement.h"
+#include "mozilla/dom/HTMLFormElement.h"
 
 namespace mozilla {
 namespace dom {
 
 class HTMLSelectElement;
 
-class HTMLOptionElement : public nsGenericHTMLElement,
-                          public nsIDOMHTMLOptionElement
+class HTMLOptionElement MOZ_FINAL : public nsGenericHTMLElement,
+                                    public nsIDOMHTMLOptionElement
 {
 public:
   HTMLOptionElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -91,7 +91,7 @@ public:
     SetHTMLBoolAttr(nsGkAtoms::disabled, aValue, aRv);
   }
 
-  nsHTMLFormElement* GetForm();
+  HTMLFormElement* GetForm();
 
   // The XPCOM GetLabel is OK for us
   void SetLabel(const nsAString& aLabel, ErrorResult& aError)

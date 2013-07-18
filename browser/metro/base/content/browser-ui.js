@@ -2,8 +2,10 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+"use strict";
 
 Cu.import("resource://gre/modules/PageThumbs.jsm");
+Cu.import("resource://gre/modules/devtools/dbg-server.jsm")
 
 /**
  * Constants
@@ -14,15 +16,19 @@ Cu.import("resource://gre/modules/PageThumbs.jsm");
 const TOOLBARSTATE_LOADING  = 1;
 const TOOLBARSTATE_LOADED   = 2;
 
-// delay for ContextUI's dismissWithDelay
-const kHideContextAndTrayDelayMsec = 3000;
-
-// delay when showing the tab bar briefly as a new tab opens
-const kNewTabAnimationDelayMsec = 500;
-
-
 // Page for which the start UI is shown
 const kStartOverlayURI = "about:start";
+
+// Devtools Messages
+const debugServerStateChanged = "devtools.debugger.remote-enabled";
+const debugServerPortChanged = "devtools.debugger.remote-port";
+
+// delay when showing the tab bar briefly after a new (empty) tab opens
+const kNewTabAnimationDelayMsec = 1000;
+// delay when showing the tab bar after opening a link on a new tab
+const kOpenInNewTabAnimationDelayMsec = 3000;
+// delay before closing tab bar after selecting another tab
+const kSelectTabAnimationDelayMsec = 500;
 
 /**
  * Cache of commonly used elements.
@@ -45,13 +51,10 @@ let Elements = {};
   ["browsers",           "browsers"],
   ["navbar",             "navbar"],
   ["contextappbar",      "contextappbar"],
+  ["findbar",            "findbar"],
   ["contentViewport",    "content-viewport"],
   ["progress",           "progress-control"],
   ["progressContainer",  "progress-container"],
-  ["contentNavigator",   "content-navigator"],
-  ["aboutFlyout",        "about-flyoutpanel"],
-  ["prefsFlyout",        "prefs-flyoutpanel"],
-  ["syncFlyout",         "sync-flyoutpanel"]
 ].forEach(function (aElementGlobal) {
   let [name, id] = aElementGlobal;
   XPCOMUtils.defineLazyGetter(Elements, name, function() {
@@ -79,8 +82,17 @@ var BrowserUI = {
   get _back() { return document.getElementById("cmd_back"); },
   get _forward() { return document.getElementById("cmd_forward"); },
 
-  lastKnownGoodURL: "", //used when the user wants to escape unfinished url entry
+  lastKnownGoodURL: "", // used when the user wants to escape unfinished url entry
+  ready: false, // used for tests to determine when delayed initialization is done
+
   init: function() {
+    // start the debugger now so we can use it on the startup code as well
+    if (Services.prefs.getBoolPref(debugServerStateChanged)) {
+      this.runDebugServer();
+    }
+    Services.prefs.addObserver(debugServerStateChanged, this, false);
+    Services.prefs.addObserver(debugServerPortChanged, this, false);
+
     // listen content messages
     messageManager.addMessageListener("DOMTitleChanged", this);
     messageManager.addMessageListener("DOMWillOpenModalDialog", this);
@@ -106,22 +118,24 @@ var BrowserUI = {
     FlyoutPanelsUI.init();
     PageThumbs.init();
     SettingsCharm.init();
+    NavButtonSlider.init();
 
     // show the right toolbars, awesomescreen, etc for the os viewstate
     BrowserUI._adjustDOMforViewState();
 
     // We can delay some initialization until after startup.  We wait until
     // the first page is shown, then dispatch a UIReadyDelayed event.
-    messageManager.addMessageListener("pageshow", function() {
+    messageManager.addMessageListener("pageshow", function onPageShow() {
       if (getBrowser().currentURI.spec == "about:blank")
         return;
 
-      messageManager.removeMessageListener("pageshow", arguments.callee, true);
+      messageManager.removeMessageListener("pageshow", onPageShow);
 
       setTimeout(function() {
         let event = document.createEvent("Events");
         event.initEvent("UIReadyDelayed", true, false);
         window.dispatchEvent(event);
+        BrowserUI.ready = true;
       }, 0);
     });
 
@@ -131,9 +145,9 @@ var BrowserUI = {
     });
 
     // Delay the panel UI and Sync initialization
-    window.addEventListener("UIReadyDelayed", function(aEvent) {
+    window.addEventListener("UIReadyDelayed", function delayedInit(aEvent) {
       Util.dumpLn("* delay load started...");
-      window.removeEventListener(aEvent.type, arguments.callee, false);
+      window.removeEventListener("UIReadyDelayed",  delayedInit, false);
 
       // Login Manager and Form History initialization
       Cc["@mozilla.org/login-manager;1"].getService(Ci.nsILoginManager);
@@ -147,9 +161,6 @@ var BrowserUI = {
         FormHelperUI.init();
         FindHelperUI.init();
         PdfJs.init();
-#ifdef MOZ_SERVICES_SYNC
-        Sync.init();
-#endif
       } catch(ex) {
         Util.dumpLn("Exception in delay load module:", ex.message);
       }
@@ -157,9 +168,8 @@ var BrowserUI = {
       BrowserUI._pullDesktopControlledPrefs();
 
       // check for left over crash reports and submit them if found.
-      if (BrowserUI.startupCrashCheck()) {
-        Browser.selectedTab = BrowserUI.newOrSelectTab("about:crash");
-      }
+      BrowserUI.startupCrashCheck();
+
       Util.dumpLn("* delay load complete.");
     }, false);
 
@@ -183,8 +193,38 @@ var BrowserUI = {
     SettingsCharm.uninit();
     messageManager.removeMessageListener("Content:StateChange", this);
     PageThumbs.uninit();
+    this.stopDebugServer();
   },
 
+  /************************************
+   * Devtools Debugger
+   */
+  runDebugServer: function runDebugServer(aPort) {
+    let port = aPort || Services.prefs.getIntPref(debugServerPortChanged);
+    if (!DebuggerServer.initialized) {
+      DebuggerServer.init();
+      DebuggerServer.addBrowserActors();
+      DebuggerServer.addActors('chrome://browser/content/dbg-metro-actors.js');
+    }
+    DebuggerServer.openListener(port);
+  },
+
+  stopDebugServer: function stopDebugServer() {
+    if (DebuggerServer.initialized) {
+      DebuggerServer.destroy();
+    }
+  },
+
+  // If the server is not on, port changes have nothing to effect. The new value
+  //    will be picked up if the server is started.
+  // To be consistent with desktop fx, if the port is changed while the server
+  //    is running, restart server.
+  changeDebugPort:function changeDebugPort(aPort) {
+    if (DebuggerServer.initialized) {
+      this.stopDebugServer();
+      this.runDebugServer(aPort);
+    }
+  },
 
   /*********************************
    * Content visibility
@@ -198,7 +238,7 @@ var BrowserUI = {
     DialogUI.closeAllDialogs();
     StartUI.update(aURI);
     ContextUI.dismissTabs();
-    ContextUI.dismissAppbar();
+    ContextUI.dismissContextAppbar();
     FlyoutPanelsUI.hide();
     PanelUI.hide();
   },
@@ -213,19 +253,43 @@ var BrowserUI = {
     return this.CrashSubmit;
   },
 
+  get lastCrashID() {
+    return Cc["@mozilla.org/xre/runtime;1"].getService(Ci.nsIXULRuntime).lastRunCrashID;
+  },
+
   startupCrashCheck: function startupCrashCheck() {
 #ifdef MOZ_CRASHREPORTER
-    if (!Services.prefs.getBoolPref("app.reportCrashes"))
-      return false;
-    if (CrashReporter.enabled) {
-      var lastCrashID = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo).lastRunCrashID;
-      if (lastCrashID.length) {
-        this.CrashSubmit.submit(lastCrashID);
-        return true;
-      }
+    if (!CrashReporter.enabled) {
+      return;
+    }
+    let lastCrashID = this.lastCrashID;
+    if (!lastCrashID || !lastCrashID.length) {
+      return;
+    }
+    let shouldReport = Services.prefs.getBoolPref("app.crashreporter.autosubmit");
+    let didPrompt = Services.prefs.getBoolPref("app.crashreporter.prompted");
+
+    if (!shouldReport && !didPrompt) {
+      // We have a crash to submit, we haven't prompted for approval yet,
+      // and the auto-submit pref is false, prompt. The dialog will call
+      // startupCrashCheck again if the user approves.
+      Services.prefs.setBoolPref("app.crashreporter.prompted", true);
+      DialogUI.importModal(document, "chrome://browser/content/prompt/crash.xul");
+      return;
+    }
+
+    // We've already prompted, return if the user doesn't want to report.
+    if (!shouldReport && didPrompt) {
+      return;
+    }
+
+    Util.dumpLn("Submitting last crash id:", lastCrashID);
+    try {
+      this.CrashSubmit.submit(lastCrashID);
+    } catch (ex) {
+      Util.dumpLn(ex);
     }
 #endif
-    return false;
   },
 
 
@@ -233,64 +297,38 @@ var BrowserUI = {
    * Navigation
    */
 
+  /* Updates the overall state of the toolbar, but not the URL bar. */
   update: function(aState) {
+    let uri = this.getDisplayURI(Browser.selectedBrowser);
+    StartUI.update(uri);
+
+    this._updateButtons();
     this._updateToolbar();
+  },
+
+  /* Updates the URL bar. */
+  updateURI: function(aOptions) {
+    let uri = this.getDisplayURI(Browser.selectedBrowser);
+    let cleanURI = Util.isURLEmpty(uri) ? "" : uri;
+    this._edit.value = cleanURI;
   },
 
   getDisplayURI: function(browser) {
     let uri = browser.currentURI;
+    let spec = uri.spec;
+
     try {
-      uri = gURIFixup.createExposableURI(uri);
+      spec = gURIFixup.createExposableURI(uri).spec;
     } catch (ex) {}
 
-    return uri.spec;
-  },
+    try {
+      let charset = browser.characterSet;
+      let textToSubURI = Cc["@mozilla.org/intl/texttosuburi;1"].
+                         getService(Ci.nsITextToSubURI);
+      spec = textToSubURI.unEscapeNonAsciiURI(charset, spec);
+    } catch (ex) {}
 
-  /**
-    * Some prefs that have consequences in both Metro and Desktop such as
-    * app-update prefs, are automatically pulled from Desktop here.
-    */
-  _pullDesktopControlledPrefs: function() {
-    function pullDesktopControlledPrefType(prefType, prefFunc) {
-      try {
-        registry.create(Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
-                      "Software\\Mozilla\\Firefox\\Metro\\Prefs\\" + prefType,
-                      Ci.nsIWindowsRegKey.ACCESS_ALL);
-        for (let i = 0; i < registry.valueCount; i++) {
-          let prefName = registry.getValueName(i);
-          let prefValue = registry.readStringValue(prefName);
-          if (prefType == Ci.nsIPrefBranch.PREF_BOOL) {
-            prefValue = prefValue == "true";
-          }
-          Services.prefs[prefFunc](prefName, prefValue);
-        }
-      } catch (ex) {
-        Util.dumpLn("Could not pull for prefType " + prefType + ": " + ex);
-      } finally {
-        registry.close();
-      }
-    }
-    let registry = Cc["@mozilla.org/windows-registry-key;1"].
-                   createInstance(Ci.nsIWindowsRegKey);
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_INT, "setIntPref");
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_BOOL, "setBoolPref");
-    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_STRING, "setCharPref");
-  },
-
-  /* Set the location to the current content */
-  updateURI: function(aOptions) {
-    aOptions = aOptions || {};
-
-    let uri = this.getDisplayURI(Browser.selectedBrowser);
-    let cleanURI = Util.isURLEmpty(uri) ? "" : uri;
-    this._setURI(cleanURI);
-
-    if ("captionOnly" in aOptions && aOptions.captionOnly)
-      return;
-
-    StartUI.update(uri);
-    this._updateButtons();
-    this._updateToolbar();
+    return spec;
   },
 
   goToURI: function(aURI) {
@@ -298,12 +336,13 @@ var BrowserUI = {
     if (!aURI)
       return;
 
+    this._edit.value = aURI;
+
     // Make sure we're online before attempting to load
     Util.forceOnline();
 
     BrowserUI.showContent(aURI);
-    content.focus();
-    this._setURI(aURI);
+    Browser.selectedBrowser.focus();
 
     Task.spawn(function() {
       let postData = {};
@@ -320,75 +359,27 @@ var BrowserUI = {
     });
   },
 
-  handleUrlbarEnter: function handleUrlbarEnter(aEvent) {
-    let url = this._edit.value;
-    if (aEvent instanceof KeyEvent)
-      url = this._canonizeURL(url, aEvent);
-    this.goToURI(url);
-  },
-
-  _canonizeURL: function _canonizeURL(aUrl, aTriggeringEvent) {
-    if (!aUrl)
-      return "";
-
-    // Only add the suffix when the URL bar value isn't already "URL-like",
-    // and only if we get a keyboard event, to match user expectations.
-    if (/^\s*[^.:\/\s]+(?:\/.*|\s*)$/i.test(aUrl)) {
-      let accel = aTriggeringEvent.ctrlKey;
-      let shift = aTriggeringEvent.shiftKey;
-      let suffix = "";
-
-      switch (true) {
-        case (accel && shift):
-          suffix = ".org/";
-          break;
-        case (shift):
-          suffix = ".net/";
-          break;
-        case (accel):
-          try {
-            suffix = gPrefService.getCharPref("browser.fixup.alternate.suffix");
-            if (suffix.charAt(suffix.length - 1) != "/")
-              suffix += "/";
-          } catch(e) {
-            suffix = ".com/";
-          }
-          break;
-      }
-
-      if (suffix) {
-        // trim leading/trailing spaces (bug 233205)
-        aUrl = aUrl.trim();
-
-        // Tack www. and suffix on.  If user has appended directories, insert
-        // suffix before them (bug 279035).  Be careful not to get two slashes.
-        let firstSlash = aUrl.indexOf("/");
-        if (firstSlash >= 0) {
-          aUrl = aUrl.substring(0, firstSlash) + suffix + aUrl.substring(firstSlash + 1);
-        } else {
-          aUrl = aUrl + suffix;
-        }
-        aUrl = "http://www." + aUrl;
-      }
-    }
-    return aUrl;
-  },
-
   doOpenSearch: function doOpenSearch(aName) {
     // save the current value of the urlbar
     let searchValue = this._edit.value;
+    let engine = Services.search.getEngineByName(aName);
+    let submission = engine.getSubmission(searchValue, null);
+
+    this._edit.value = submission.uri.spec;
 
     // Make sure we're online before attempting to load
     Util.forceOnline();
+
     BrowserUI.showContent();
+    Browser.selectedBrowser.focus();
 
-    let engine = Services.search.getEngineByName(aName);
-    let submission = engine.getSubmission(searchValue, null);
-    Browser.loadURI(submission.uri.spec, { postData: submission.postData });
+    Task.spawn(function () {
+      Browser.loadURI(submission.uri.spec, { postData: submission.postData });
 
-    // loadURI may open a new tab, so get the selectedBrowser afterward.
-    Browser.selectedBrowser.userTypedValue = submission.uri.spec;
-    this._titleChanged(Browser.selectedBrowser);
+      // loadURI may open a new tab, so get the selectedBrowser afterward.
+      Browser.selectedBrowser.userTypedValue = submission.uri.spec;
+      BrowserUI._titleChanged(Browser.selectedBrowser);
+    });
   },
 
   /*********************************
@@ -398,19 +389,7 @@ var BrowserUI = {
   newTab: function newTab(aURI, aOwner) {
     aURI = aURI || kStartOverlayURI;
     let tab = Browser.addTab(aURI, true, aOwner);
-    ContextUI.peekTabs();
     return tab;
-  },
-
-  newOrSelectTab: function newOrSelectTab(aURI, aOwner) {
-    let tabs = Browser.tabs;
-    for (let i = 0; i < tabs.length; i++) {
-      if (tabs[i].browser.currentURI.spec == aURI) {
-        Browser.selectedTab = tabs[i];
-        return;
-      }
-    }
-    this.newTab(aURI, aOwner);
   },
 
   setOnTabAnimationEnd: function setOnTabAnimationEnd(aCallback) {
@@ -429,15 +408,15 @@ var BrowserUI = {
   animateClosingTab: function animateClosingTab(tabToClose) {
     tabToClose.chromeTab.setAttribute("closing", "true");
 
-    let wasCollapsed = !ContextUI.isExpanded;
+    let wasCollapsed = !ContextUI.tabbarVisible;
     if (wasCollapsed) {
       ContextUI.displayTabs();
     }
 
     this.setOnTabAnimationEnd(function() {
-	    Browser.closeTab(tabToClose, { forceClose: true } );
-        if (wasCollapsed)
-          ContextUI.dismissWithDelay(kNewTabAnimationDelayMsec);
+      Browser.closeTab(tabToClose, { forceClose: true } );
+      if (wasCollapsed)
+        ContextUI.dismissTabsWithDelay(kNewTabAnimationDelayMsec);
     });
   },
 
@@ -479,7 +458,7 @@ var BrowserUI = {
 
   selectTabAndDismiss: function selectTabAndDismiss(aTab) {
     this.selectTab(aTab);
-    ContextUI.dismiss();
+    ContextUI.dismissTabsWithDelay(kSelectTabAnimationDelayMsec);
   },
 
   selectTabAtIndex: function selectTabAtIndex(aIndex) {
@@ -540,13 +519,11 @@ var BrowserUI = {
   },
 
   blurNavBar: function blurNavBar() {
-    this._edit.blur();
-  },
-
-  // If the user types in the address bar, cancel pending
-  // navbar autohide if set.
-  navEditKeyPress: function navEditKeyPress() {
-    ContextUI.cancelDismiss();
+    if (this._edit.focused) {
+      this._edit.blur();
+      return true;
+    }
+    return false;
   },
 
   observe: function BrowserUI_observe(aSubject, aTopic, aData) {
@@ -556,11 +533,21 @@ var BrowserUI = {
           case "browser.cache.disk_cache_ssl":
             this._sslDiskCacheEnabled = Services.prefs.getBoolPref(aData);
             break;
+          case debugServerStateChanged:
+            if (Services.prefs.getBoolPref(aData)) {
+              this.runDebugServer();
+            } else {
+              this.stopDebugServer();
+            }
+            break;
+          case debugServerPortChanged:
+            this.changeDebugPort(Services.prefs.getIntPref(aData));
+            break;
         }
         break;
       case "metro_viewstate_changed":
         this._adjustDOMforViewState();
-        let autocomplete = document.getElementById("start-autocomplete");
+        let autocomplete = document.getElementById("urlbar-autocomplete");
         if (aData == "snapped") {
           FlyoutPanelsUI.hide();
           // Order matters (need grids to get dimensions, etc), now
@@ -578,6 +565,37 @@ var BrowserUI = {
   /*********************************
    * Internal utils
    */
+
+  /**
+  * Some prefs that have consequences in both Metro and Desktop such as
+  * app-update prefs, are automatically pulled from Desktop here.
+  */
+  _pullDesktopControlledPrefs: function() {
+    function pullDesktopControlledPrefType(prefType, prefFunc) {
+      try {
+        registry.create(Ci.nsIWindowsRegKey.ROOT_KEY_CURRENT_USER,
+                      "Software\\Mozilla\\Firefox\\Metro\\Prefs\\" + prefType,
+                      Ci.nsIWindowsRegKey.ACCESS_ALL);
+        for (let i = 0; i < registry.valueCount; i++) {
+          let prefName = registry.getValueName(i);
+          let prefValue = registry.readStringValue(prefName);
+          if (prefType == Ci.nsIPrefBranch.PREF_BOOL) {
+            prefValue = prefValue == "true";
+          }
+          Services.prefs[prefFunc](prefName, prefValue);
+        }
+      } catch (ex) {
+        Util.dumpLn("Could not pull for prefType " + prefType + ": " + ex);
+      } finally {
+        registry.close();
+      }
+    }
+    let registry = Cc["@mozilla.org/windows-registry-key;1"].
+                   createInstance(Ci.nsIWindowsRegKey);
+    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_INT, "setIntPref");
+    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_BOOL, "setBoolPref");
+    pullDesktopControlledPrefType(Ci.nsIPrefBranch.PREF_STRING, "setCharPref");
+  },
 
   _adjustDOMforViewState: function() {
     if (MetroUtils.immersive) {
@@ -646,34 +664,6 @@ var BrowserUI = {
       Elements.urlbarState.setAttribute("mode", "view");
   },
 
-  _setURI: function _setURI(aURL) {
-    this._edit.value = aURL;
-    this.lastKnownGoodURL = aURL;
-  },
-
-  _urlbarClicked: function _urlbarClicked() {
-    // If the urlbar is not already focused, focus it and select the contents.
-    if (Elements.urlbarState.getAttribute("mode") != "edit")
-      this._editURI(true);
-  },
-
-  _editURI: function _editURI(aShouldDismiss) {
-    this._edit.focus();
-    this._edit.select();
-
-    Elements.urlbarState.setAttribute("mode", "edit");
-    StartUI.show();
-    if (aShouldDismiss)
-      ContextUI.dismissTabs();
-  },
-
-  _urlbarBlurred: function _urlbarBlurred() {
-    let state = Elements.urlbarState;
-    if (state.getAttribute("mode") == "edit")
-      state.removeAttribute("mode");
-    this._updateToolbar();
-  },
-
   _closeOrQuit: function _closeOrQuit() {
     // Close active dialog, if we have one. If not then close the application.
     if (!BrowserUI.isContentShowing()) {
@@ -734,10 +724,7 @@ var BrowserUI = {
     aEvent.preventDefault();
 
     if (this._edit.popupOpen) {
-      this._edit.value = this.lastKnownGoodURL;
-      this._edit.closePopup();
-      StartUI.hide();
-      ContextUI.dismiss();
+      this._edit.endEditing(true);
       return;
     }
 
@@ -766,9 +753,8 @@ var BrowserUI = {
     }
 
     // Check content helper
-    let contentHelper = Elements.contentNavigator;
-    if (contentHelper.isActive) {
-      contentHelper.model.hide();
+    if (FindHelperUI.isActive) {
+      FindHelperUI.hide();
       return;
     }
 
@@ -778,12 +764,12 @@ var BrowserUI = {
       return;
     }
 
-    if (ContextUI.dismiss()) {
+    if (Browser.selectedTab.isLoading()) {
+      Browser.selectedBrowser.stop();
       return;
     }
 
-    if (Browser.selectedTab.isLoading()) {
-      Browser.selectedBrowser.stop();
+    if (ContextUI.dismiss()) {
       return;
     }
   },
@@ -979,8 +965,6 @@ var BrowserUI = {
       case "cmd_panel":
       case "cmd_flyout_back":
       case "cmd_sanitize":
-      case "cmd_zoomin":
-      case "cmd_zoomout":
       case "cmd_volumeLeft":
       case "cmd_volumeRight":
       case "cmd_openFile":
@@ -1036,10 +1020,10 @@ var BrowserUI = {
         break;
       case "cmd_openLocation":
         ContextUI.displayNavbar();
-        this._editURI(true);
+        this._edit.beginEditing(true);
         break;
       case "cmd_addBookmark":
-        Elements.navbar.show();
+        ContextUI.displayNavbar();
         Appbar.onStarButton(true);
         break;
       case "cmd_bookmarks":
@@ -1049,11 +1033,13 @@ var BrowserUI = {
         PanelUI.show("history-container");
         break;
       case "cmd_remoteTabs":
+#ifdef MOZ_SERVICES_SYNC
         if (Weave.Status.checkSetup() == Weave.CLIENT_NOT_CONFIGURED) {
-          Sync.open();
+          FlyoutPanelsUI.show('SyncFlyout');
         } else {
           PanelUI.show("remotetabs-container");
         }
+#endif
         break;
       case "cmd_quit":
         // Only close one window
@@ -1064,7 +1050,8 @@ var BrowserUI = {
         break;
       case "cmd_newTab":
         this.newTab();
-        this._editURI(false);
+        this._edit.beginEditing(false);
+        ContextUI.peekTabs(kNewTabAnimationDelayMsec);
         break;
       case "cmd_closeTab":
         this.closeTab();
@@ -1076,17 +1063,10 @@ var BrowserUI = {
         SanitizeUI.onSanitize();
         break;
       case "cmd_flyout_back":
-        FlyoutPanelsUI.hide();
-        MetroUtils.showSettingsFlyout();
+        FlyoutPanelsUI.onBackButton();
         break;
       case "cmd_panel":
         PanelUI.toggle();
-        break;
-      case "cmd_zoomin":
-        Browser.zoom(-1);
-        break;
-      case "cmd_zoomout":
-        Browser.zoom(1);
         break;
       case "cmd_volumeLeft":
         // Zoom in (portrait) or out (landscape)
@@ -1110,295 +1090,9 @@ var BrowserUI = {
   }
 };
 
-/**
- * Tracks whether context UI (app bar, tab bar, url bar) is shown or hidden.
- * Manages events to summon and hide the context UI.
- */
-var ContextUI = {
-  _expandable: true,
-  _hidingId: 0,
-
-  /*******************************************
-   * init
-   */
-
-  init: function init() {
-    Elements.browsers.addEventListener("mousedown", this, true);
-    Elements.browsers.addEventListener("touchstart", this, true);
-    Elements.browsers.addEventListener("AlertActive", this, true);
-    window.addEventListener("MozEdgeUIStarted", this, true);
-    window.addEventListener("MozEdgeUICanceled", this, true);
-    window.addEventListener("MozEdgeUICompleted", this, true);
-    window.addEventListener("keypress", this, true);
-    window.addEventListener("KeyboardChanged", this, false);
-
-    Elements.tray.addEventListener("transitionend", this, true);
-
-    Appbar.init();
-  },
-
-  /*******************************************
-   * Context UI state getters & setters
-   */
-
-  get isVisible() { return Elements.tray.hasAttribute("visible"); },
-  get isExpanded() { return Elements.tray.hasAttribute("expanded"); },
-  get isExpandable() { return this._expandable; },
-
-  set isExpandable(aFlag) {
-    this._expandable = aFlag;
-    if (!this._expandable)
-      this.dismiss();
-  },
-
-  /*******************************************
-   * Context UI state control
-   */
-
-  toggle: function toggle() {
-    if (!this._expandable) {
-      // exandable setter takes care of resetting state
-      // so if we're not expandable, there's nothing to do here
-      return;
-    }
-    // if we're not showing, show
-    if (!this.dismiss()) {
-      dump("* ContextUI is hidden, show it\n");
-      this.show();
-    }
-  },
-
-  // show all context UI
-  // returns true if any non-visible UI was shown
-  show: function() {
-    let shown = false;
-    if (!this.isExpanded) {
-      // show the tab tray
-      this._setIsExpanded(true);
-      shown = true;
-    }
-    if (!this.isVisible) {
-      // show the navbar
-      this._setIsVisible(true);
-      shown = true;
-    }
-    if (!Elements.navbar.isShowing) {
-      // show the navbar
-      Elements.navbar.show();
-      shown = true;
-    }
-
-    this._clearDelayedTimeout();
-    if (shown) {
-      ContentAreaObserver.update(window.innerWidth, window.innerHeight);
-    }
-    return shown;
-  },
-
-  // Display the nav bar
-  displayNavbar: function displayNavbar() {
-    this._clearDelayedTimeout();
-    this._setIsVisible(true, true);
-  },
-
-  // Display the toolbar and tabs
-  displayTabs: function displayTabs() {
-    this._clearDelayedTimeout();
-    this._setIsVisible(true, true);
-    this._setIsExpanded(true, true);
-  },
-
-  /** Briefly show the tab bar and then hide it */
-  peekTabs: function peekTabs() {
-    if (this.isExpanded) {
-      setTimeout(function () {
-        ContextUI.dismissWithDelay(kNewTabAnimationDelayMsec);
-      }, 0);
-    } else {
-      BrowserUI.setOnTabAnimationEnd(function () {
-        ContextUI.dismissWithDelay(kNewTabAnimationDelayMsec);
-      });
-
-      this.displayTabs();
-    }
-  },
-
-  // Dismiss all context UI.
-  // Returns true if any visible UI was dismissed.
-  dismiss: function dismiss() {
-    let dismissed = false;
-    if (this.isExpanded) {
-      this._setIsExpanded(false);
-      dismissed = true;
-    }
-    if (this.isVisible && !StartUI.isStartURI()) {
-      this._setIsVisible(false);
-      dismissed = true;
-    }
-    if (Elements.navbar.isShowing) {
-      this.dismissAppbar();
-      dismissed = true;
-    }
-    this._clearDelayedTimeout();
-    if (dismissed) {
-      ContentAreaObserver.update(window.innerWidth, window.innerHeight);
-    }
-    return dismissed;
-  },
-
-  // Dismiss all context ui after a delay
-  dismissWithDelay: function dismissWithDelay(aDelay) {
-    aDelay = aDelay || kHideContextAndTrayDelayMsec;
-    this._clearDelayedTimeout();
-    this._hidingId = setTimeout(function () {
-        ContextUI.dismiss();
-      }, aDelay);
-  },
-
-  // Cancel any pending delayed dismiss
-  cancelDismiss: function cancelDismiss() {
-    this._clearDelayedTimeout();
-  },
-
-  dismissTabs: function dimissTabs() {
-    this._clearDelayedTimeout();
-    this._setIsExpanded(false, true);
-  },
-
-  dismissAppbar: function dismissAppbar() {
-    this._fire("MozAppbarDismiss");
-  },
-
-  /*******************************************
-   * Internal tray state setters
-   */
-
-  // url bar state
-  _setIsVisible: function _setIsVisible(aFlag, setSilently) {
-    if (this.isVisible == aFlag)
-      return;
-
-    if (aFlag)
-      Elements.tray.setAttribute("visible", "true");
-    else
-      Elements.tray.removeAttribute("visible");
-
-    if (!aFlag) {
-      content.focus();
-    }
-
-    if (!setSilently)
-      this._fire(aFlag ? "MozContextUIShow" : "MozContextUIDismiss");
-  },
-
-  // tab tray state
-  _setIsExpanded: function _setIsExpanded(aFlag, setSilently) {
-    // if the tray can't be expanded, don't expand it.
-    if (!this.isExpandable || this.isExpanded == aFlag)
-      return;
-
-    if (aFlag)
-      Elements.tray.setAttribute("expanded", "true");
-    else
-      Elements.tray.removeAttribute("expanded");
-
-    if (!setSilently)
-      this._fire("MozContextUIExpand");
-  },
-
-  /*******************************************
-   * Internal utils
-   */
-
-  _clearDelayedTimeout: function _clearDelayedTimeout() {
-    if (this._hidingId) {
-      clearTimeout(this._hidingId);
-      this._hidingId = 0;
-    }
-  },
-
-  /*******************************************
-   * Events
-   */
-
-  _onEdgeUIStarted: function(aEvent) {
-    this._hasEdgeSwipeStarted = true;
-    this._clearDelayedTimeout();
-
-    if (StartUI.hide()) {
-      this.dismiss();
-      return;
-    }
-    this.toggle();
-  },
-
-  _onEdgeUICanceled: function(aEvent) {
-    this._hasEdgeSwipeStarted = false;
-    StartUI.hide();
-    this.dismiss();
-  },
-
-  _onEdgeUICompleted: function(aEvent) {
-    if (this._hasEdgeSwipeStarted) {
-      this._hasEdgeSwipeStarted = false;
-      return;
-    }
-
-    this._clearDelayedTimeout();
-    if (StartUI.hide()) {
-      this.dismiss();
-      return;
-    }
-    this.toggle();
-  },
-
-  handleEvent: function handleEvent(aEvent) {
-    switch (aEvent.type) {
-      case "MozEdgeUIStarted":
-        this._onEdgeUIStarted(aEvent);
-        break;
-      case "MozEdgeUICanceled":
-        this._onEdgeUICanceled(aEvent);
-        break;
-      case "MozEdgeUICompleted":
-        this._onEdgeUICompleted(aEvent);
-        break;
-      case "mousedown":
-        if (aEvent.button == 0 && this.isVisible)
-          this.dismiss();
-        break;
-      case "touchstart":
-      // ContextUI can hide the notification bar. Workaround until bug 845348 is fixed.
-      case "AlertActive":
-        this.dismiss();
-        break;
-      case "keypress":
-        if (String.fromCharCode(aEvent.which) == "z" &&
-            aEvent.getModifierState("Win"))
-          this.toggle();
-        break;
-      case "transitionend":
-        setTimeout(function () {
-          ContentAreaObserver.updateContentArea();
-        }, 0);
-        break;
-      case "KeyboardChanged":
-        this.dismissTabs();
-        break;
-    }
-  },
-
-  _fire: function (name) {
-    let event = document.createEvent("Events");
-    event.initEvent(name, true, true);
-    window.dispatchEvent(event);
-  }
-};
-
 var StartUI = {
-  get isVisible() { return this.isStartPageVisible || this.isFiltering; },
+  get isVisible() { return this.isStartPageVisible; },
   get isStartPageVisible() { return Elements.windowState.hasAttribute("startpage"); },
-  get isFiltering() { return Elements.windowState.hasAttribute("filtering"); },
 
   get maxResultsPerSection() {
     return Services.prefs.getIntPref("browser.display.startUI.maxresults");
@@ -1413,16 +1107,16 @@ var StartUI = {
   ],
 
   init: function init() {
-    Elements.startUI.addEventListener("autocompletestart", this, false);
-    Elements.startUI.addEventListener("autocompleteend", this, false);
     Elements.startUI.addEventListener("contextmenu", this, false);
     Elements.startUI.addEventListener("click", this, false);
+    Elements.startUI.addEventListener("MozMousePixelScroll", this, false);
 
     this.sections.forEach(function (sectionName) {
       let section = window[sectionName];
       if (section.init)
         section.init();
     });
+
   },
 
   uninit: function() {
@@ -1451,24 +1145,6 @@ var StartUI = {
     return true;
   },
 
-  /** Show the autocomplete popup */
-  filter: function filter() {
-    if (this.isFiltering)
-      return;
-
-    BrowserUI._edit.openPopup();
-    Elements.windowState.setAttribute("filtering", "true");
-  },
-
-  /** Hide the autocomplete popup */
-  unfilter: function unfilter() {
-    if (!this.isFiltering)
-      return;
-
-    BrowserUI._edit.closePopup();
-    Elements.windowState.removeAttribute("filtering");
-  },
-
   /** Hide the Firefox start page */
   hide: function hide(aURI) {
     aURI = aURI || Browser.selectedBrowser.currentURI.spec;
@@ -1477,8 +1153,6 @@ var StartUI = {
 
     Elements.contentShowing.removeAttribute("disabled");
     Elements.windowState.removeAttribute("startpage");
-
-    this.unfilter();
     return true;
   },
 
@@ -1501,17 +1175,18 @@ var StartUI = {
   onClick: function onClick(aEvent) {
     // If someone clicks / taps in empty grid space, take away
     // focus from the nav bar edit so the soft keyboard will hide.
-    BrowserUI.blurNavBar();
+    if (BrowserUI.blurNavBar()) {
+      // Advanced notice to CAO, so we can shuffle the nav bar in advance
+      // of the keyboard transition.
+      ContentAreaObserver.navBarWillBlur();
+    }
+
+    if (aEvent.button == 0)
+      ContextUI.dismissTabs();
   },
 
   handleEvent: function handleEvent(aEvent) {
     switch (aEvent.type) {
-      case "autocompletestart":
-        this.filter();
-        break;
-      case "autocompleteend":
-        this.unfilter();
-        break;
       case "contextmenu":
         let event = document.createEvent("Events");
         event.initEvent("MozEdgeUICompleted", true, false);
@@ -1520,38 +1195,17 @@ var StartUI = {
       case "click":
         this.onClick(aEvent);
         break;
+
+      case "MozMousePixelScroll":
+        let startBox = document.getElementById("start-scrollbox");
+        let [, scrollInterface] = ScrollUtils.getScrollboxFromElement(startBox);
+
+        scrollInterface.scrollBy(aEvent.detail, 0);
+
+        aEvent.preventDefault();
+        aEvent.stopPropagation();
+        break;
     }
-  }
-};
-
-var SyncPanelUI = {
-  init: function() {
-    // Run some setup code the first time the panel is shown.
-    Elements.syncFlyout.addEventListener("PopupChanged", function onShow(aEvent) {
-      if (aEvent.detail && aEvent.target === Elements.syncFlyout) {
-        Elements.syncFlyout.removeEventListener("PopupChanged", onShow, false);
-        Sync.init();
-      }
-    }, false);
-  }
-};
-
-var FlyoutPanelsUI = {
-  init: function() {
-    AboutPanelUI.init();
-    PreferencesPanelView.init();
-    SyncPanelUI.init();
-
-    // make sure to hide all flyouts when window is deactivated
-    window.addEventListener("deactivate", function(window) {
-      FlyoutPanelsUI.hide();
-    });
-  },
-
-  hide: function() {
-    Elements.aboutFlyout.hide();
-    Elements.prefsFlyout.hide();
-    Elements.syncFlyout.hide();
   }
 };
 
@@ -1699,9 +1353,18 @@ var DialogUI = {
     let dispatcher = aParent || getBrowser();
     dispatcher.dispatchEvent(event);
 
-    // create a full-screen semi-opaque box as a background
-    let back = document.createElement("box");
+    // create a full-screen semi-opaque box as a background or reuse
+    // the existing one.
+    let back = document.getElementById("dialog-modal-block");
+    if (!back) {
+      back = document.createElement("box");
+    } else {
+      while (back.hasChildNodes()) {
+        back.removeChild(back.firstChild);
+      }
+    }
     back.setAttribute("class", "modal-block");
+    back.setAttribute("id", "dialog-modal-block");
     dialog = back.appendChild(document.importNode(doc, true));
     parentNode.insertBefore(back, contentMenuContainer);
 
@@ -1833,17 +1496,17 @@ var SettingsCharm = {
     // Options
     this.addEntry({
         label: Strings.browser.GetStringFromName("optionsCharm"),
-        onselected: function() Elements.prefsFlyout.show()
+        onselected: function() FlyoutPanelsUI.show('PrefsFlyout')
     });
-    // Sync 
+    // Sync
     this.addEntry({
         label: Strings.browser.GetStringFromName("syncCharm"),
-        onselected: function() Elements.syncFlyout.show()
+        onselected: function() FlyoutPanelsUI.show('SyncFlyout')
     });
     // About
     this.addEntry({
         label: Strings.browser.GetStringFromName("aboutCharm1"),
-        onselected: function() Elements.aboutFlyout.show()
+        onselected: function() FlyoutPanelsUI.show('AboutFlyout')
     });
     // Help
     this.addEntry({

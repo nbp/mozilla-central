@@ -15,8 +15,8 @@ namespace dom {
 
 class Visitor;
 
-class HTMLMenuItemElement : public nsGenericHTMLElement,
-                            public nsIDOMHTMLMenuItemElement
+class HTMLMenuItemElement MOZ_FINAL : public nsGenericHTMLElement,
+                                      public nsIDOMHTMLMenuItemElement
 {
 public:
   using mozilla::dom::Element::GetText;
@@ -38,9 +38,6 @@ public:
 
   // nsIDOMHTMLElement
   NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLCommandElement
-  NS_DECL_NSIDOMHTMLCOMMANDELEMENT
 
   // nsIDOMHTMLMenuItemElement
   NS_DECL_NSIDOMHTMLMENUITEMELEMENT

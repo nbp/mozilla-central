@@ -2,8 +2,13 @@
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
 let temp = {};
+
 const PROFILER_ENABLED = "devtools.profiler.enabled";
 const REMOTE_ENABLED = "devtools.debugger.remote-enabled";
+const SHOW_PLATFORM_DATA = "devtools.profiler.ui.show-platform-data";
+const PROFILE_IDLE = 0;
+const PROFILE_RUNNING = 1;
+const PROFILE_COMPLETED = 2;
 
 Cu.import("resource:///modules/devtools/gDevTools.jsm", temp);
 let gDevTools = temp.gDevTools;
@@ -25,6 +30,7 @@ registerCleanupFunction(function () {
   helpers = null;
   Services.prefs.clearUserPref(PROFILER_ENABLED);
   Services.prefs.clearUserPref(REMOTE_ENABLED);
+  Services.prefs.clearUserPref(SHOW_PLATFORM_DATA);
   DebuggerServer.destroy();
 });
 
@@ -34,6 +40,11 @@ function getProfileInternals(uid) {
   let doc = win.document;
 
   return [win, doc];
+}
+
+function getSidebarItem(uid, panel=gPanel) {
+  let profile = panel.profiles.get(uid);
+  return panel.sidebar.getItemByProfile(profile);
 }
 
 function sendFromProfile(uid, msg) {

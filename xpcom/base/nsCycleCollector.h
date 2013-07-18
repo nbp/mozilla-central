@@ -6,9 +6,22 @@
 #ifndef nsCycleCollector_h__
 #define nsCycleCollector_h__
 
-class nsCycleCollectionJSRuntime;
 class nsICycleCollectorListener;
 class nsISupports;
+class nsScriptObjectTracer;
+
+#include "nsError.h"
+#include "nsID.h"
+
+namespace mozilla {
+
+class CycleCollectedJSRuntime;
+
+// See the comments in nsContentUtils.h for explanations of these functions.
+typedef void* (*DeferredFinalizeAppendFunction)(void* pointers, void* thing);
+typedef bool (*DeferredFinalizeFunction)(uint32_t slice, void* data);
+
+}
 
 // Contains various stats about the cycle collection.
 class nsCycleCollectorResults
@@ -43,6 +56,8 @@ void nsCycleCollector_setForgetSkippableCallback(CC_ForgetSkippableCallback aCB)
 
 void nsCycleCollector_forgetSkippable(bool aRemoveChildlessNodes = false);
 
+void nsCycleCollector_dispatchDeferredDeletion();
+
 void nsCycleCollector_collect(bool aManuallyTriggered,
                               nsCycleCollectorResults *aResults,
                               nsICycleCollectorListener *aListener);
@@ -51,7 +66,7 @@ void nsCycleCollector_shutdownThreads();
 void nsCycleCollector_shutdown();
 
 // Helpers for interacting with JS
-void nsCycleCollector_registerJSRuntime(nsCycleCollectionJSRuntime *aRt);
+void nsCycleCollector_registerJSRuntime(mozilla::CycleCollectedJSRuntime *aRt);
 void nsCycleCollector_forgetJSRuntime();
 
 #define NS_CYCLE_COLLECTOR_LOGGER_CID \
@@ -62,5 +77,23 @@ extern nsresult
 nsCycleCollectorLoggerConstructor(nsISupports* outer,
                                   const nsIID& aIID,
                                   void* *aInstancePtr);
+
+namespace mozilla {
+namespace cyclecollector {
+
+void AddJSHolder(void* aHolder, nsScriptObjectTracer* aTracer);
+void RemoveJSHolder(void* aHolder);
+#ifdef DEBUG
+bool TestJSHolder(void* aHolder);
+#endif
+
+void DeferredFinalize(DeferredFinalizeAppendFunction aAppendFunc,
+                      DeferredFinalizeFunction aFunc,
+                      void* aThing);
+void DeferredFinalize(nsISupports* aSupports);
+
+
+} // namespace cyclecollector
+} // namespace mozilla
 
 #endif // nsCycleCollector_h__

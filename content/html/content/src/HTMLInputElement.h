@@ -17,14 +17,13 @@
 #include "nsCOMPtr.h"
 #include "nsIConstraintValidation.h"
 #include "nsDOMFile.h"
-#include "nsHTMLFormElement.h" // for ShouldShowInvalidUI()
+#include "mozilla/dom/HTMLFormElement.h" // for ShouldShowInvalidUI()
 #include "nsIFile.h"
 #include "nsIFilePicker.h"
 #include "nsIContentPrefService2.h"
 #include "mozilla/Decimal.h"
 
 class nsDOMFileList;
-class nsIFilePicker;
 class nsIRadioGroupContainer;
 class nsIRadioGroupVisitor;
 class nsIRadioVisitor;
@@ -78,13 +77,13 @@ public:
   };
 };
 
-class HTMLInputElement : public nsGenericHTMLFormElement,
-                         public nsImageLoadingContent,
-                         public nsIDOMHTMLInputElement,
-                         public nsITextControlElement,
-                         public nsIPhonetic,
-                         public nsIDOMNSEditableElement,
-                         public nsIConstraintValidation
+class HTMLInputElement MOZ_FINAL : public nsGenericHTMLFormElement,
+                                   public nsImageLoadingContent,
+                                   public nsIDOMHTMLInputElement,
+                                   public nsITextControlElement,
+                                   public nsIPhonetic,
+                                   public nsIDOMNSEditableElement,
+                                   public nsIConstraintValidation
 {
 public:
   using nsIConstraintValidation::GetValidationMessage;
@@ -223,6 +222,7 @@ public:
 
   virtual nsresult Clone(nsINodeInfo *aNodeInfo, nsINode **aResult) const MOZ_OVERRIDE;
 
+  void MaybeFireAsyncClickHandler(nsEventChainPostVisitor& aVisitor);
   NS_IMETHOD FireAsyncClickHandler();
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(HTMLInputElement,

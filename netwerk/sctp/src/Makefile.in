@@ -16,7 +16,6 @@ include $(DEPTH)/config/autoconf.mk
 
 LIBRARY_NAME   = nksctp_s
 LIBXUL_LIBRARY = 1
-FORCE_STATIC_LIB = 1
 NO_PROFILE_GUIDED_OPTIMIZE = 1 # Don't PGO
 
 DISABLED_CSRCS = \
@@ -97,18 +96,38 @@ DEFINES += \
   -U__FreeBSD__ \
   $(NULL)
 else
+ifeq ($(OS_TARGET),NetBSD)
+DEFINES += \
+  -D__Userspace_os_NetBSD=1 \
+  -U__NetBSD__ \
+  $(NULL)
+else
+ifeq ($(OS_TARGET),OpenBSD)
+DEFINES += \
+  -D__Userspace_os_OpenBSD=1 \
+  -U__OpenBSD__ \
+  $(NULL)
+else
+ifeq ($(OS_TARGET),DragonFly)
+DEFINES += \
+  -D__Userspace_os_DragonFly=1 \
+  -U__DragonFly__ \
+  $(NULL)
+else
 #error Unsupported platform!
+endif
+endif
+endif
 endif
 endif
 endif
 endif
 
 include $(topsrcdir)/config/config.mk
-include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
 ifdef GNU_CC
 CFLAGS += -std=gnu99
 endif
 
-DEFINES += -DIMPL_NS_NET

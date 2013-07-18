@@ -31,6 +31,7 @@
 #include "chrome/common/file_descriptor_set_posix.h"
 #include "chrome/common/ipc_logging.h"
 #include "chrome/common/ipc_message_utils.h"
+#include "mozilla/ipc/ProtocolUtils.h"
 
 namespace IPC {
 
@@ -288,6 +289,10 @@ void Channel::ChannelImpl::Init(Mode mode, Listener* listener) {
   listener_ = listener;
   waiting_connect_ = true;
   processing_incoming_ = false;
+  closed_ = false;
+#if defined(OS_MACOSX)
+  last_pending_fd_id_ = 0;
+#endif
 }
 
 bool Channel::ChannelImpl::CreatePipe(const std::wstring& channel_id,
@@ -561,6 +566,17 @@ bool Channel::ChannelImpl::ProcessIncomingMessages() {
             return false;
           }
 
+#if defined(OS_MACOSX)
+          // Send a message to the other side, indicating that we are now
+          // responsible for closing the descriptor.
+          Message *fdAck = new Message(MSG_ROUTING_NONE,
+                                       RECEIVED_FDS_MESSAGE_TYPE,
+                                       IPC::Message::PRIORITY_NORMAL);
+          DCHECK(m.fd_cookie() != 0);
+          fdAck->set_fd_cookie(m.fd_cookie());
+          output_queue_.push(fdAck);
+#endif
+
           m.file_descriptor_set()->SetDescriptors(
               &fds[fds_i], m.header()->num_fds);
           fds_i += m.header()->num_fds;
@@ -573,6 +589,12 @@ bool Channel::ChannelImpl::ProcessIncomingMessages() {
             m.type() == HELLO_MESSAGE_TYPE) {
           // The Hello message contains only the process id.
           listener_->OnChannelConnected(MessageIterator(m).NextInt());
+#if defined(OS_MACOSX)
+        } else if (m.routing_id() == MSG_ROUTING_NONE &&
+                   m.type() == RECEIVED_FDS_MESSAGE_TYPE) {
+          DCHECK(m.fd_cookie() != 0);
+          CloseDescriptors(m.fd_cookie());
+#endif
         } else {
           listener_->OnMessageReceived(m);
         }
@@ -623,15 +645,8 @@ bool Channel::ChannelImpl::ProcessOutgoingMessages() {
   while (!output_queue_.empty()) {
     Message* msg = output_queue_.front();
 
-    size_t amt_to_write = msg->size() - message_send_bytes_written_;
-    DCHECK(amt_to_write != 0);
-    const char *out_bytes = reinterpret_cast<const char*>(msg->data()) +
-        message_send_bytes_written_;
-
     struct msghdr msgh = {0};
-    struct iovec iov = {const_cast<char*>(out_bytes), amt_to_write};
-    msgh.msg_iov = &iov;
-    msgh.msg_iovlen = 1;
+
     static const int tmp = CMSG_SPACE(sizeof(
         int[FileDescriptorSet::MAX_DESCRIPTORS_PER_MESSAGE]));
     char buf[tmp];
@@ -659,11 +674,27 @@ bool Channel::ChannelImpl::ProcessOutgoingMessages() {
       msgh.msg_controllen = cmsg->cmsg_len;
 
       msg->header()->num_fds = num_fds;
+#if defined(OS_MACOSX)
+      msg->set_fd_cookie(++last_pending_fd_id_);
+#endif
     }
 
+    size_t amt_to_write = msg->size() - message_send_bytes_written_;
+    DCHECK(amt_to_write != 0);
+    const char *out_bytes = reinterpret_cast<const char*>(msg->data()) +
+        message_send_bytes_written_;
+
+    struct iovec iov = {const_cast<char*>(out_bytes), amt_to_write};
+    msgh.msg_iov = &iov;
+    msgh.msg_iovlen = 1;
+
     ssize_t bytes_written = HANDLE_EINTR(sendmsg(pipe_, &msgh, MSG_DONTWAIT));
+#if !defined(OS_MACOSX)
+    // On OSX CommitAll gets called later, once we get the RECEIVED_FDS_MESSAGE_TYPE
+    // message.
     if (bytes_written > 0)
       msg->file_descriptor_set()->CommitAll();
+#endif
 
     if (bytes_written < 0 && errno != EAGAIN) {
       LOG(ERROR) << "pipe error: " << strerror(errno);
@@ -688,6 +719,12 @@ bool Channel::ChannelImpl::ProcessOutgoingMessages() {
     } else {
       message_send_bytes_written_ = 0;
 
+#if defined(OS_MACOSX)
+      if (!msg->file_descriptor_set()->empty())
+        pending_fds_.push_back(PendingDescriptors(msg->fd_cookie(),
+                                                  msg->file_descriptor_set()));
+#endif
+
       // Message sent OK!
 #ifdef IPC_MESSAGE_DEBUG_EXTRA
       DLOG(INFO) << "sent message @" << msg << " on channel @" << this <<
@@ -711,6 +748,19 @@ bool Channel::ChannelImpl::Send(Message* message) {
   Logging::current()->OnSendMessage(message, L"");
 #endif
 
+  // If the channel has been closed, ProcessOutgoingMessages() is never going
+  // to pop anything off output_queue; output_queue will only get emptied when
+  // the channel is destructed.  We might as well delete message now, instead
+  // of waiting for the channel to be destructed.
+  if (closed_) {
+    if (mozilla::ipc::LoggingEnabled()) {
+      fprintf(stderr, "Can't send message %s, because this channel is closed.\n",
+              message->name());
+    }
+    delete message;
+    return false;
+  }
+
   output_queue_.push(message);
   if (!waiting_connect_) {
     if (!is_blocked_on_write_) {
@@ -727,6 +777,14 @@ void Channel::ChannelImpl::GetClientFileDescriptorMapping(int *src_fd,
   DCHECK(mode_ == MODE_SERVER);
   *src_fd = client_pipe_;
   *dest_fd = kClientChannelFd;
+}
+
+void Channel::ChannelImpl::CloseClientFileDescriptor() {
+  if (client_pipe_ != -1) {
+    Singleton<PipeMap>()->Remove(pipe_name_);
+    HANDLE_EINTR(close(client_pipe_));
+    client_pipe_ = -1;
+  }
 }
 
 // Called by libevent when we can read from th pipe without blocking.
@@ -774,6 +832,23 @@ void Channel::ChannelImpl::OnFileCanReadWithoutBlocking(int fd) {
     ProcessOutgoingMessages();
   }
 }
+
+#if defined(OS_MACOSX)
+void Channel::ChannelImpl::CloseDescriptors(uint32_t pending_fd_id)
+{
+  DCHECK(pending_fd_id != 0);
+  for (std::list<PendingDescriptors>::iterator i = pending_fds_.begin();
+       i != pending_fds_.end();
+       i++) {
+    if ((*i).id == pending_fd_id) {
+      (*i).fds->CommitAll();
+      pending_fds_.erase(i);
+      return;
+    }
+  }
+  DCHECK(false) << "pending_fd_id not in our list!";
+}
+#endif
 
 // Called by libevent when we can write to the pipe without blocking.
 void Channel::ChannelImpl::OnFileCanWriteWithoutBlocking(int fd) {
@@ -825,6 +900,17 @@ void Channel::ChannelImpl::Close() {
     HANDLE_EINTR(close(*i));
   }
   input_overflow_fds_.clear();
+
+#if defined(OS_MACOSX)
+  for (std::list<PendingDescriptors>::iterator i = pending_fds_.begin();
+       i != pending_fds_.end();
+       i++) {
+    (*i).fds->CommitAll();
+  }
+  pending_fds_.clear();
+#endif
+
+  closed_ = true;
 }
 
 //------------------------------------------------------------------------------
@@ -864,6 +950,10 @@ void Channel::GetClientFileDescriptorMapping(int *src_fd, int *dest_fd) const {
 
 int Channel::GetServerFileDescriptor() const {
   return channel_impl_->GetServerFileDescriptor();
+}
+
+void Channel::CloseClientFileDescriptor() {
+  channel_impl_->CloseClientFileDescriptor();
 }
 
 }  // namespace IPC

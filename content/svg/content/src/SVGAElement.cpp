@@ -4,13 +4,14 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/SVGAElement.h"
-#include "base/compiler_specific.h"
+
+#include "mozilla/Attributes.h"
 #include "mozilla/dom/SVGAElementBinding.h"
+#include "nsCOMPtr.h"
+#include "nsContentUtils.h"
+#include "nsGkAtoms.h"
 #include "nsILink.h"
 #include "nsSVGString.h"
-#include "nsCOMPtr.h"
-#include "nsGkAtoms.h"
-#include "nsContentUtils.h"
 
 NS_IMPL_NS_NEW_NAMESPACED_SVG_ELEMENT(A)
 
@@ -45,12 +46,12 @@ NS_IMPL_ISUPPORTS_INHERITED5(SVGAElement, SVGAElementBase,
 // Implementation
 
 SVGAElement::SVGAElement(already_AddRefed<nsINodeInfo> aNodeInfo)
-  : SVGAElementBase(aNodeInfo),
-    ALLOW_THIS_IN_INITIALIZER_LIST(Link(this))
+  : SVGAElementBase(aNodeInfo)
+  , Link(MOZ_THIS_IN_INITIALIZER_LIST())
 {
 }
 
-already_AddRefed<nsIDOMSVGAnimatedString>
+already_AddRefed<SVGAnimatedString>
 SVGAElement::Href()
 {
   return mStringAttributes[HREF].ToDOMAnimatedString(this);
@@ -79,7 +80,7 @@ NS_IMPL_ELEMENT_CLONE_WITH_INIT(SVGAElement)
 
 //----------------------------------------------------------------------
 
-already_AddRefed<nsIDOMSVGAnimatedString>
+already_AddRefed<SVGAnimatedString>
 SVGAElement::Target()
 {
   return mStringAttributes[TARGET].ToDOMAnimatedString(this);
@@ -132,12 +133,6 @@ SVGAElement::UnbindFromTree(bool aDeep, bool aNullParent)
   }
 
   SVGAElementBase::UnbindFromTree(aDeep, aNullParent);
-}
-
-nsLinkState
-SVGAElement::GetLinkState() const
-{
-  return Link::GetLinkState();
 }
 
 already_AddRefed<nsIURI>

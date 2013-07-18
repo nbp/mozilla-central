@@ -100,6 +100,7 @@ struct Scale {
   float y;
   float z;
 };
+struct Skew { float x; float y; };
 struct SkewX { float x; };
 struct SkewY { float y; };
 struct TransformMatrix { gfx3DMatrix value; };
@@ -117,6 +118,7 @@ union TransformFunction {
   Rotation;
   Rotation3D;
   Scale;
+  Skew;
   SkewX;
   SkewY;
   Translation;
@@ -201,7 +203,7 @@ struct ContainerLayerAttributes {
   float inheritedXScale;
   float inheritedYScale;
 };
-struct ColorLayerAttributes     { LayerColor color; };
+struct ColorLayerAttributes     { LayerColor color; nsIntRect bounds; };
 struct CanvasLayerAttributes    { GraphicsFilterType filter; nsIntRect bounds; };
 struct RefLayerAttributes       { int64_t id; };
 struct ImageLayerAttributes     { GraphicsFilterType filter; gfxIntSize scaleToSize; ScaleMode scaleMode; };

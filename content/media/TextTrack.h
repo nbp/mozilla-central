@@ -59,6 +59,10 @@ public:
   {
     aType = mType;
   }
+  void GetId(nsAString& aId) const
+  {
+    aId = mId;
+  }
 
   TextTrackMode Mode() const
   {
@@ -82,7 +86,8 @@ public:
     return mActiveCueList;
   }
 
-  void Update(double time);
+  // Time is in seconds.
+  void Update(double aTime);
 
   void AddCue(TextTrackCue& aCue);
   void RemoveCue(TextTrackCue& aCue);
@@ -97,6 +102,7 @@ private:
   nsString mLabel;
   nsString mLanguage;
   nsString mType;
+  nsString mId;
   TextTrackMode mMode;
 
   nsRefPtr<TextTrackCueList> mCueList;

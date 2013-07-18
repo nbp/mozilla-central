@@ -14,11 +14,12 @@ include protocol PRenderFrame;
 include protocol POfflineCacheUpdate;
 include protocol PIndexedDB;
 include DOMTypes;
+include JavaScriptTypes;
 include URIParams;
 
 include "gfxMatrix.h";
 include "FrameMetrics.h";
-include "IPC/nsGUIEventIPC.h";
+include "ipc/nsGUIEventIPC.h";
 include "mozilla/dom/TabMessageUtils.h";
 include "mozilla/dom/ScreenOrientation.h";
 include "mozilla/dom/PermissionMessageUtils.h";
@@ -27,8 +28,8 @@ include "mozilla/layers/CompositorTypes.h";
 
 using IPC::Principal;
 using gfxMatrix;
-using gfxRect;
 using gfxSize;
+using CSSRect;
 using mozilla::layers::FrameMetrics;
 using mozilla::layout::ScrollingBehavior;
 using mozilla::void_t;
@@ -51,6 +52,7 @@ using nsTouchEvent;
 using RemoteDOMEvent;
 using mozilla::dom::ScreenOrientation;
 using mozilla::layers::TextureFactoryIdentifier;
+using mozilla::CSSIntPoint;
 namespace mozilla {
 namespace dom {
 
@@ -66,7 +68,7 @@ rpc protocol PBrowser
     manages PIndexedDB;
 
 both:
-    AsyncMessage(nsString aMessage, ClonedMessageData aData);
+    AsyncMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows);
 
 parent:
     /**
@@ -79,7 +81,7 @@ parent:
 
     rpc CreateWindow() returns (PBrowser window);
 
-    sync SyncMessage(nsString aMessage, ClonedMessageData aData)
+    sync SyncMessage(nsString aMessage, ClonedMessageData aData, CpowEntry[] aCpows)
       returns (nsString[] retval);
 
     /**
@@ -263,7 +265,7 @@ parent:
      * Instructs the TabParent to forward a request to zoom to a rect given in
      * CSS pixels. This rect is relative to the document.
      */
-    ZoomToRect(gfxRect aRect);
+    ZoomToRect(CSSRect aRect);
 
     /**
      * We know for sure that content has either preventDefaulted or not
@@ -307,21 +309,21 @@ child:
      * the scroll offset. This message is expected to round-trip back to
      * ZoomToRect() with a rect indicating where we should zoom to.
      */
-    HandleDoubleTap(nsIntPoint point);
+    HandleDoubleTap(CSSIntPoint point);
 
     /**
      * Requests handling of a single tap. |point| is in CSS pixels, relative to
      * the scroll offset. This message is expected to send a "mousedown" and
      * "mouseup" series of events at this point.
      */
-    HandleSingleTap(nsIntPoint point);
+    HandleSingleTap(CSSIntPoint point);
 
     /**
      * Requests handling of a long tap. |point| is in CSS pixels, relative to
      * the scroll offset. This message is expected to send a "contextmenu"
      * events at this point.
      */
-    HandleLongTap(nsIntPoint point);
+    HandleLongTap(CSSIntPoint point);
 
     /**
      * Sending an activate message moves focus to the child.

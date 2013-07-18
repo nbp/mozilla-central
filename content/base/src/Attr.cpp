@@ -100,10 +100,9 @@ NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 // QueryInterface implementation for Attr
 NS_INTERFACE_TABLE_HEAD(Attr)
   NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_NODE_INTERFACE_TABLE5(Attr, nsIDOMAttr, nsIAttribute, nsIDOMNode,
-                           nsIDOMEventTarget, EventTarget)
-  NS_INTERFACE_MAP_ENTRIES_CYCLE_COLLECTION(Attr)
-  NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIAttribute)
+  NS_INTERFACE_TABLE6(Attr, nsINode, nsIDOMAttr, nsIAttribute, nsIDOMNode,
+                      nsIDOMEventTarget, EventTarget)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE_CYCLE_COLLECTION(Attr)
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsISupportsWeakReference,
                                  new nsNodeSupportsWeakRefTearoff(this))
   NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIDOMXPathNSResolver,
@@ -111,8 +110,8 @@ NS_INTERFACE_TABLE_HEAD(Attr)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(Attr)
-NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_DESTROY(Attr,
-                                              nsNodeUtils::LastRelease(this))
+NS_IMPL_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE(Attr,
+                                                   nsNodeUtils::LastRelease(this))
 
 void
 Attr::SetMap(nsDOMAttributeMap *aMap)

@@ -7,8 +7,8 @@
 #include "ion/LIR.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
-#include "Lowering-shared.h"
-#include "Lowering-shared-inl.h"
+#include "ion/shared/Lowering-shared.h"
+#include "ion/shared/Lowering-shared-inl.h"
 
 using namespace js;
 using namespace ion;
@@ -68,7 +68,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecover *recover, BailoutK
     size_t slotIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
-        for (size_t j = 0; j < mir->numOperands(); ++j) {
+        for (size_t j = 0, e = mir->numOperands(); j < e; ++j) {
             MDefinition *def = mir->getOperand(j);
             if (def->isResumeOperation()) {
                 JS_ASSERT(!(*it)->operands[j].isSlot);
@@ -123,7 +123,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LRecover *recover, BailoutK
     size_t slotIndex = 0;
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
         MNode *mir = (*it)->mir;
-        for (size_t j = 0; j < mir->numOperands(); ++j) {
+        for (size_t j = 0, e = mir->numOperands(); j < e; ++j) {
             MDefinition *def = mir->getOperand(j);
             if (def->isResumeOperation()) {
                 JS_ASSERT(!(*it)->operands[j].isSlot);

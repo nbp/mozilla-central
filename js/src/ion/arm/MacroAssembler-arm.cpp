@@ -94,11 +94,15 @@ MacroAssemblerARM::convertDoubleToInt32(const FloatRegister &src, const Register
     ma_vcmp(src, ScratchFloatReg);
     as_vmrs(pc);
     ma_b(fail, Assembler::VFP_NotEqualOrUnordered);
-    // If they're equal, test for 0.  It would be nicer to test for -0.0 explicitly, but that seems hard.
+
     if (negativeZeroCheck) {
         ma_cmp(dest, Imm32(0));
+        // Test and bail for -0.0, when integer result is 0
+        // Move the top word of the double into the output reg, if it is non-zero,
+        // then the original value was -0.0
+        as_vxfer(dest, InvalidReg, src, FloatToCore, Assembler::Equal, 1);
+        ma_cmp(dest, Imm32(0x80000000), Assembler::Equal);
         ma_b(fail, Assembler::Equal);
-        // guard for != 0.
     }
 }
 
@@ -691,7 +695,7 @@ MacroAssemblerARM::ma_cmn(Register src1, Register src2, Condition c)
 void
 MacroAssemblerARM::ma_cmn(Register src1, Operand op, Condition c)
 {
-    JS_NOT_REACHED("Feature NYI");
+    MOZ_ASSUME_UNREACHABLE("Feature NYI");
 }
 
 // Compare (src - src2).
@@ -725,8 +729,7 @@ MacroAssemblerARM::ma_cmp(Register src1, Operand op, Condition c)
         as_cmp(src1, O2Reg(ScratchRegister), c);
         break;
       default:
-        JS_NOT_REACHED("trying to compare FP and integer registers");
-        break;
+        MOZ_ASSUME_UNREACHABLE("trying to compare FP and integer registers");
     }
 }
 void
@@ -799,9 +802,7 @@ MacroAssemblerARM::ma_check_mul(Register src1, Register src2, Register dest, Con
         return NotEqual;
     }
 
-    JS_NOT_REACHED("Condition NYI");
-    return Always;
-
+    MOZ_ASSUME_UNREACHABLE("Condition NYI");
 }
 
 Assembler::Condition
@@ -819,8 +820,7 @@ MacroAssemblerARM::ma_check_mul(Register src1, Imm32 imm, Register dest, Conditi
         return NotEqual;
     }
 
-    JS_NOT_REACHED("Condition NYI");
-    return Always;
+    MOZ_ASSUME_UNREACHABLE("Condition NYI");
 }
 
 void
@@ -882,6 +882,13 @@ MacroAssemblerARM::ma_mod_mask(Register src, Register dest, Register hold, int32
 
 }
 
+// division
+void
+MacroAssemblerARM::ma_sdiv(Register num, Register div, Register dest, Condition cond)
+{
+    as_sdiv(dest, num, div, cond);
+}
+
 // Memory.
 // Shortcut for when we know we're transferring 32 bits of data.
 void
@@ -895,7 +902,7 @@ void
 MacroAssemblerARM::ma_dtr(LoadStore ls, Register rn, Register rm, Register rt,
                           Index mode, Assembler::Condition cc)
 {
-    JS_NOT_REACHED("Feature NYI");
+    MOZ_ASSUME_UNREACHABLE("Feature NYI");
 }
 
 void
@@ -1209,7 +1216,7 @@ MacroAssemblerARM::ma_b(void *target, Relocation::Kind reloc, Assembler::Conditi
             m_buffer.markGuard();
         break;
       default:
-        JS_NOT_REACHED("Other methods of generating tracable jumps NYI");
+        MOZ_ASSUME_UNREACHABLE("Other methods of generating tracable jumps NYI");
     }
 }
 
@@ -2759,7 +2766,7 @@ MacroAssemblerARMCompat::loadValue(Address src, ValueOperand val)
                 mode = IB;
                 break;
               default:
-                JS_NOT_REACHED("Bogus Offset for LoadValue as DTM");
+                MOZ_ASSUME_UNREACHABLE("Bogus Offset for LoadValue as DTM");
             }
             startDataTransferM(IsLoad, Register::FromCode(srcOp.base()), mode);
             transferReg(val.payloadReg());
@@ -2829,7 +2836,7 @@ MacroAssemblerARMCompat::storePayload(Register src, Operand dest)
         ma_str(src, ToPayload(dest));
         return;
     }
-    JS_NOT_REACHED("why do we do all of these things?");
+    MOZ_ASSUME_UNREACHABLE("why do we do all of these things?");
 
 }
 
@@ -2866,7 +2873,7 @@ MacroAssemblerARMCompat::storeTypeTag(ImmTag tag, Operand dest) {
         return;
     }
 
-    JS_NOT_REACHED("why do we do all of these things?");
+    MOZ_ASSUME_UNREACHABLE("why do we do all of these things?");
 
 }
 
@@ -2988,8 +2995,10 @@ MacroAssemblerARMCompat::setupABICall(uint32_t args)
 #else
     usedSlots_ = 0;
 #endif
-    floatArgsInGPR[0] = VFPRegister();
-    floatArgsInGPR[1] = VFPRegister();
+    floatArgsInGPR[0] = MoveOperand();
+    floatArgsInGPR[1] = MoveOperand();
+    floatArgsInGPRValid[0] = false;
+    floatArgsInGPRValid[1] = false;
 }
 
 void
@@ -3074,7 +3083,8 @@ MacroAssemblerARMCompat::passABIArg(const MoveOperand &from)
     MoveOperand dest;
     if (GetIntArgReg(usedSlots_, 0, &destReg)) {
         if (from.isDouble()) {
-            floatArgsInGPR[destReg.code() >> 1] = VFPRegister(from.floatReg());
+            floatArgsInGPR[destReg.code() >> 1] = from;
+            floatArgsInGPRValid[destReg.code() >> 1] = true;
             useResolver = false;
         } else if (from.isGeneralReg() && from.reg() == destReg) {
             // No need to move anything
@@ -3143,8 +3153,26 @@ MacroAssemblerARMCompat::callWithABIPre(uint32_t *stackAdjust)
         emitter.finish();
     }
     for (int i = 0; i < 2; i++) {
-        if (!floatArgsInGPR[i].isInvalid())
-            ma_vxfer(floatArgsInGPR[i], Register::FromCode(i*2), Register::FromCode(i*2+1));
+        if (floatArgsInGPRValid[i]) {
+            MoveOperand from = floatArgsInGPR[i];
+            Register to0 = Register::FromCode(i * 2), to1 = Register::FromCode(i * 2 + 1);
+
+            if (from.isFloatReg()) {
+                ma_vxfer(VFPRegister(from.floatReg()), to0, to1);
+            } else {
+                JS_ASSERT(from.isFloatAddress());
+                // Note: We can safely use the MoveOperand's displacement here,
+                // even if the base is SP: MoveEmitter::toOperand adjusts
+                // SP-relative operands by the difference between the current
+                // stack usage and stackAdjust, which emitter.finish() resets
+                // to 0.
+                //
+                // Warning: if the offset isn't within [-255,+255] then this
+                // will assert-fail (or, if non-debug, load the wrong words).
+                // Nothing uses such an offset at the time of this writing.
+                ma_ldrd(EDtrAddr(from.base(), EDtrOffImm(from.disp())), to0, to1);
+            }
+        }
     }
     checkStackAlignment();
 
@@ -3215,13 +3243,22 @@ MacroAssemblerARMCompat::handleFailureWithHandler(void *handler)
     passABIArg(r0);
     callWithABI(handler);
 
-    Label catch_;
+    IonCode *excTail = GetIonContext()->compartment->ionCompartment()->getExceptionTail();
+    branch(excTail);
+}
+
+void
+MacroAssemblerARMCompat::handleFailureWithHandlerTail()
+{
     Label entryFrame;
+    Label catch_;
+    Label finally;
     Label return_;
 
     ma_ldr(Operand(sp, offsetof(ResumeFromException, kind)), r0);
     branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
     branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
+    branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
     branch32(Assembler::Equal, r0, Imm32(ResumeFromException::RESUME_FORCED_RETURN), &return_);
 
     breakpoint(); // Invalid kind.
@@ -3242,6 +3279,21 @@ MacroAssemblerARMCompat::handleFailureWithHandler(void *handler)
     ma_ldr(Operand(sp, offsetof(ResumeFromException, target)), r0);
     ma_ldr(Operand(sp, offsetof(ResumeFromException, framePointer)), r11);
     ma_ldr(Operand(sp, offsetof(ResumeFromException, stackPointer)), sp);
+    jump(r0);
+
+    // If we found a finally block, this must be a baseline frame. Push
+    // two values expected by JSOP_RETSUB: BooleanValue(true) and the
+    // exception.
+    bind(&finally);
+    ValueOperand exception = ValueOperand(r1, r2);
+    loadValue(Operand(sp, offsetof(ResumeFromException, exception)), exception);
+
+    ma_ldr(Operand(sp, offsetof(ResumeFromException, target)), r0);
+    ma_ldr(Operand(sp, offsetof(ResumeFromException, framePointer)), r11);
+    ma_ldr(Operand(sp, offsetof(ResumeFromException, stackPointer)), sp);
+
+    pushValue(BooleanValue(true));
+    pushValue(exception);
     jump(r0);
 
     // Only used in debug mode. Return BaselineFrame->returnValue() to the caller.

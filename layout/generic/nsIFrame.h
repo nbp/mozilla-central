@@ -321,6 +321,10 @@ typedef uint64_t nsFrameState;
 // rect stored to invalidate.
 #define NS_FRAME_HAS_INVALID_RECT                   NS_FRAME_STATE_BIT(52)
 
+// Frame is not displayed directly due to it being, or being under, an SVG
+// <defs> element or an SVG resource element (<mask>, <pattern>, etc.)
+#define NS_FRAME_IS_NONDISPLAY                      NS_FRAME_STATE_BIT(53)
+
 // Box layout bits
 #define NS_STATE_IS_HORIZONTAL                      NS_FRAME_STATE_BIT(22)
 #define NS_STATE_IS_DIRECTION_NORMAL                NS_FRAME_STATE_BIT(31)
@@ -2126,24 +2130,6 @@ public:
   { return mParent && mParent->GetType() == nsGkAtoms::flexContainerFrame; }
 
   /**
-   * This must only be called on frames that are display roots (see
-   * nsLayoutUtils::GetDisplayRootFrame). This causes all invalidates
-   * reaching this frame to be performed asynchronously off an event,
-   * instead of being applied to the widget immediately. Also,
-   * invalidation of areas in aExcludeRegion is ignored completely
-   * for invalidates with INVALIDATE_EXCLUDE_CURRENT_PAINT specified.
-   * These can't be nested; two invocations of
-   * BeginDeferringInvalidatesForDisplayRoot for a frame must have a
-   * EndDeferringInvalidatesForDisplayRoot between them.
-   */
-  void BeginDeferringInvalidatesForDisplayRoot(const nsRegion& aExcludeRegion);
-
-  /**
-   * Cancel the most recent BeginDeferringInvalidatesForDisplayRoot.
-   */
-  void EndDeferringInvalidatesForDisplayRoot();
-
-  /**
    * Mark this frame as using active layers. This marking will time out
    * after a short period. This call does no immediate invalidation,
    * but when the mark times out, we'll invalidate the frame's overflow
@@ -3141,8 +3127,7 @@ public:
    */
   static void RootFrameList(nsPresContext* aPresContext,
                             FILE* out, int32_t aIndent);
-  static void DumpFrameTree(nsIFrame* aFrame);
-
+  virtual void DumpFrameTree();
 
   NS_IMETHOD  GetFrameName(nsAString& aResult) const = 0;
   NS_IMETHOD_(nsFrameState)  GetDebugStateBits() const = 0;

@@ -218,6 +218,8 @@ ThreadActor.prototype = {
       }
       packet.why = { type: "attached" };
 
+      this._restoreBreakpoints();
+
       // Send the response to the attach request now (rather than
       // returning it), because we're going to start a nested event loop
       // here.
@@ -278,10 +280,7 @@ ThreadActor.prototype = {
       resolve(onPacket(packet)).then(this.conn.send.bind(this.conn));
       return this._nest();
     } catch(e) {
-      let msg = "Got an exception during TA__pauseAndRespond: " + e +
-                ": " + e.stack;
-      Cu.reportError(msg);
-      dumpn(msg);
+      reportError(e, "Got an exception during TA__pauseAndRespond: ");
       return undefined;
     }
   },
@@ -327,45 +326,71 @@ ThreadActor.prototype = {
     if (aRequest && aRequest.resumeLimit) {
       // Bind these methods because some of the hooks are called with 'this'
       // set to the current frame.
-      let pauseAndRespond = this._pauseAndRespond.bind(this);
+      let pauseAndRespond = (aFrame, onPacket=function (k) k) => {
+        this._pauseAndRespond(aFrame, { type: "resumeLimit" }, onPacket);
+      };
       let createValueGrip = this.createValueGrip.bind(this);
 
-      let startFrame = this._youngestFrame;
+      let startFrame = this.youngestFrame;
       let startLine;
-      if (this._youngestFrame.script) {
-        let offset = this._youngestFrame.offset;
-        startLine = this._youngestFrame.script.getOffsetLine(offset);
+      if (this.youngestFrame.script) {
+        let offset = this.youngestFrame.offset;
+        startLine = this.youngestFrame.script.getOffsetLine(offset);
       }
 
       // Define the JS hook functions for stepping.
 
-      let onEnterFrame = function TA_onEnterFrame(aFrame) {
-        return pauseAndRespond(aFrame, { type: "resumeLimit" });
+      let onEnterFrame = aFrame => {
+        if (this.sources.isBlackBoxed(aFrame.script.url)) {
+          return undefined;
+        }
+        return pauseAndRespond(aFrame);
       };
+
+      let thread = this;
 
       let onPop = function TA_onPop(aCompletion) {
         // onPop is called with 'this' set to the current frame.
+        if (thread.sources.isBlackBoxed(this.script.url)) {
+          return undefined;
+        }
 
         // Note that we're popping this frame; we need to watch for
         // subsequent step events on its caller.
         this.reportedPop = true;
 
-        return pauseAndRespond(this, { type: "resumeLimit" });
-      }
+        return pauseAndRespond(this, (aPacket) => {
+          aPacket.why.frameFinished = {};
+          if (!aCompletion) {
+            aPacket.why.frameFinished.terminated = true;
+          } else if (aCompletion.hasOwnProperty("return")) {
+            aPacket.why.frameFinished.return = createValueGrip(aCompletion.return);
+          } else if (aCompletion.hasOwnProperty("yield")) {
+            aPacket.why.frameFinished.return = createValueGrip(aCompletion.yield);
+          } else {
+            aPacket.why.frameFinished.throw = createValueGrip(aCompletion.throw);
+          }
+          return aPacket;
+        });
+      };
 
       let onStep = function TA_onStep() {
         // onStep is called with 'this' set to the current frame.
+
+        if (thread.sources.isBlackBoxed(this.script.url)) {
+          return undefined;
+        }
 
         // If we've changed frame or line, then report that.
         if (this !== startFrame ||
             (this.script &&
              this.script.getOffsetLine(this.offset) != startLine)) {
-          return pauseAndRespond(this, { type: "resumeLimit" });
+          return pauseAndRespond(this);
         }
 
         // Otherwise, let execution continue.
         return undefined;
-      }
+      };
 
       let steppingType = aRequest.resumeLimit.type;
       if (["step", "next", "finish"].indexOf(steppingType) == -1) {
@@ -390,12 +415,22 @@ ThreadActor.prototype = {
       }
     }
 
-    if (aRequest && aRequest.pauseOnExceptions) {
-      this.dbg.onExceptionUnwind = this.onExceptionUnwind.bind(this);
+    if (aRequest) {
+      this._options.pauseOnExceptions = aRequest.pauseOnExceptions;
+      this.maybePauseOnExceptions();
     }
     let packet = this._resumed();
     DebuggerServer.xpcInspector.exitNestedEventLoop();
     return packet;
+  },
+
+  /**
+   * Set the debugging hook to pause on exceptions if configured to do so.
+   */
+  maybePauseOnExceptions: function() {
+    if (this._options.pauseOnExceptions) {
+      this.dbg.onExceptionUnwind = this.onExceptionUnwind.bind(this);
+    }
   },
 
   /**
@@ -430,7 +465,7 @@ ThreadActor.prototype = {
     // save our frame now to be restored after eval returns.
     // XXX: or we could just start using dbg.getNewestFrame() now that it
     // works as expected.
-    let youngest = this._youngestFrame;
+    let youngest = this.youngestFrame;
 
     // Put ourselves back in the running state and inform the client.
     let resumedPacket = this._resumed();
@@ -459,7 +494,7 @@ ThreadActor.prototype = {
     let count = aRequest.count;
 
     // Find the starting frame...
-    let frame = this._youngestFrame;
+    let frame = this.youngestFrame;
     let i = 0;
     while (frame && (i < start)) {
       frame = frame.older;
@@ -714,14 +749,23 @@ ThreadActor.prototype = {
 
   /**
    * Get the script and source lists from the debugger.
+   *
+   * TODO bug 637572: we should be dealing with sources directly, not inferring
+   * them through scripts.
    */
-  _discoverScriptsAndSources: function TA__discoverScriptsAndSources() {
-    return all([this._addScript(s)
-                for (s of this.dbg.findScripts())]);
+  _discoverSources: function TA__discoverSources() {
+    // Only get one script per url.
+    let scriptsByUrl = {};
+    for (let s of this.dbg.findScripts()) {
+      scriptsByUrl[s.url] = s;
+    }
+
+    return all([this.sources.sourcesForScript(scriptsByUrl[s])
+                for (s of Object.keys(scriptsByUrl))]);
   },
 
   onSources: function TA_onSources(aRequest) {
-    return this._discoverScriptsAndSources().then(() => {
+    return this._discoverSources().then(() => {
       return {
         sources: [s.form() for (s of this.sources.iter())]
       };
@@ -789,7 +833,7 @@ ThreadActor.prototype = {
    */
   _requestFrame: function TA_requestFrame(aFrameID) {
     if (!aFrameID) {
-      return this._youngestFrame;
+      return this.youngestFrame;
     }
 
     if (this._framePool.has(aFrameID)) {
@@ -823,7 +867,7 @@ ThreadActor.prototype = {
 
     // Save the pause frame (if any) as the youngest frame for
     // stack viewing.
-    this._youngestFrame = aFrame;
+    this.youngestFrame = aFrame;
 
     // Create the actor pool that will hold the pause actor and its
     // children.
@@ -886,7 +930,7 @@ ThreadActor.prototype = {
 
     this._pausePool = null;
     this._pauseActor = null;
-    this._youngestFrame = null;
+    this.youngestFrame = null;
 
     return { from: this.actorID, type: "resumed" };
   },
@@ -1163,7 +1207,7 @@ ThreadActor.prototype = {
    *        The exception that was thrown in the debugger code.
    */
   uncaughtExceptionHook: function TA_uncaughtExceptionHook(aException) {
-    dumpn("Got an exception:" + aException);
+    dumpn("Got an exception: " + aException.message + "\n" + aException.stack);
   },
 
   /**
@@ -1174,6 +1218,9 @@ ThreadActor.prototype = {
    *        The stack frame that contained the debugger statement.
    */
   onDebuggerStatement: function TA_onDebuggerStatement(aFrame) {
+    if (this.sources.isBlackBoxed(aFrame.script.url)) {
+      return undefined;
+    }
     return this._pauseAndRespond(aFrame, { type: "debuggerStatement" });
   },
 
@@ -1187,6 +1234,9 @@ ThreadActor.prototype = {
    *        The exception that was thrown.
    */
   onExceptionUnwind: function TA_onExceptionUnwind(aFrame, aValue) {
+    if (this.sources.isBlackBoxed(aFrame.script.url)) {
+      return undefined;
+    }
     try {
       let packet = this._paused(aFrame);
       if (!packet) {
@@ -1198,8 +1248,7 @@ ThreadActor.prototype = {
       this.conn.send(packet);
       return this._nest();
     } catch(e) {
-      Cu.reportError("Got an exception during TA_onExceptionUnwind: " + e +
-                     ": " + e.stack);
+      reportError(e, "Got an exception during TA_onExceptionUnwind: ");
       return undefined;
     }
   },
@@ -1215,6 +1264,7 @@ ThreadActor.prototype = {
    */
   onNewScript: function TA_onNewScript(aScript, aGlobal) {
     this._addScript(aScript);
+    this.sources.sourcesForScript(aScript);
   },
 
   onNewSource: function TA_onNewSource(aSource) {
@@ -1249,42 +1299,45 @@ ThreadActor.prototype = {
   },
 
   /**
+   * Restore any pre-existing breakpoints to the scripts that we have access to.
+   */
+  _restoreBreakpoints: function TA__restoreBreakpoints() {
+    for (let s of this.dbg.findScripts()) {
+      this._addScript(s);
+    }
+  },
+
+  /**
    * Add the provided script to the server cache.
    *
    * @param aScript Debugger.Script
    *        The source script that will be stored.
-   * @returns true, if the script was added, false otherwise.
+   * @returns true, if the script was added; false otherwise.
    */
   _addScript: function TA__addScript(aScript) {
     if (!this._allowSource(aScript.url)) {
-      return resolve(false);
+      return false;
     }
 
-    // TODO bug 637572: we should be dealing with sources directly, not
-    // inferring them through scripts.
-    return this.sources.sourcesForScript(aScript).then(() => {
-
-      // Set any stored breakpoints.
-      let existing = this._breakpointStore[aScript.url];
-      if (existing) {
-        let endLine = aScript.startLine + aScript.lineCount - 1;
-        // Iterate over the lines backwards, so that sliding breakpoints don't
-        // affect the loop.
-        for (let line = existing.length - 1; line >= 0; line--) {
-          let bp = existing[line];
-          // Only consider breakpoints that are not already associated with
-          // scripts, and limit search to the line numbers contained in the new
-          // script.
-          if (bp && !bp.actor.scripts.length &&
-              line >= aScript.startLine && line <= endLine) {
-            this._setBreakpoint(bp);
-          }
+    // Set any stored breakpoints.
+    let existing = this._breakpointStore[aScript.url];
+    if (existing) {
+      let endLine = aScript.startLine + aScript.lineCount - 1;
+      // Iterate over the lines backwards, so that sliding breakpoints don't
+      // affect the loop.
+      for (let line = existing.length - 1; line >= aScript.startLine; line--) {
+        let bp = existing[line];
+        // Only consider breakpoints that are not already associated with
+        // scripts, and limit search to the line numbers contained in the new
+        // script.
+        if (bp && !bp.actor.scripts.length && line <= endLine) {
+          this._setBreakpoint(bp);
         }
       }
-
-      return true;
-    });
+    }
+    return true;
   },
+
 };
 
 ThreadActor.prototype.requestTypes = {
@@ -1400,7 +1453,8 @@ SourceActor.prototype = {
   form: function SA_form() {
     return {
       actor: this.actorID,
-      url: this._url
+      url: this._url,
+      isBlackBoxed: this.threadActor.sources.isBlackBoxed(this.url)
       // TODO bug 637572: introductionScript
     };
   },
@@ -1442,21 +1496,46 @@ SourceActor.prototype = {
           source: aSourceGrip
         };
       }, (aError) => {
-        let msg = "Got an exception during SA_onSource: " + aError +
-          "\n" + aError.stack;
-        Cu.reportError(msg);
-        dumpn(msg);
+        reportError(aError, "Got an exception during SA_onSource: ");
         return {
           "from": this.actorID,
           "error": "loadSourceError",
           "message": "Could not load the source for " + this._url + "."
         };
       });
+  },
+
+  /**
+   * Handler for the "blackbox" packet.
+   */
+  onBlackBox: function SA_onBlackBox(aRequest) {
+    this.threadActor.sources.blackBox(this.url);
+    let packet = {
+      from: this.actorID
+    };
+    if (this.threadActor.state == "paused"
+        && this.threadActor.youngestFrame
+        && this.threadActor.youngestFrame.script.url == this.url) {
+      packet.pausedInSource = true;
+    }
+    return packet;
+  },
+
+  /**
+   * Handler for the "unblackbox" packet.
+   */
+  onUnblackBox: function SA_onUnblackBox(aRequest) {
+    this.threadActor.sources.unblackBox(this.url);
+    return {
+      from: this.actorID
+    };
   }
 };
 
 SourceActor.prototype.requestTypes = {
-  "source": SourceActor.prototype.onSource
+  "source": SourceActor.prototype.onSource,
+  "blackbox": SourceActor.prototype.onBlackBox,
+  "unblackbox": SourceActor.prototype.onUnblackBox
 };
 
 
@@ -1540,7 +1619,18 @@ ObjectActor.prototype = {
    */
   onPrototypeAndProperties: function OA_onPrototypeAndProperties(aRequest) {
     let ownProperties = Object.create(null);
-    for (let name of this.obj.getOwnPropertyNames()) {
+    let names;
+    try {
+      names = this.obj.getOwnPropertyNames();
+    } catch (ex) {
+      // The above can throw if this.obj points to a dead object.
+      // TODO: we should use Cu.isDeadWrapper() - see bug 885800.
+      return { from: this.actorID,
+               prototype: this.threadActor.createValueGrip(null),
+               ownProperties: ownProperties,
+               safeGetterValues: Object.create(null) };
+    }
+    for (let name of names) {
       ownProperties[name] = this._propertyDescriptor(name);
     }
     return { from: this.actorID,
@@ -1714,7 +1804,7 @@ ObjectActor.prototype = {
       enumerable: desc.enumerable
     };
 
-    if (desc.value !== undefined) {
+    if ("value" in desc) {
       retval.writable = desc.writable;
       retval.value = this.threadActor.createValueGrip(desc.value);
     } else {
@@ -2003,6 +2093,7 @@ FrameActor.prototype = {
     if (this.frame.script) {
       form.where = { url: this.frame.script.url,
                      line: this.frame.script.getOffsetLine(this.frame.offset) };
+      form.isBlackBoxed = this.threadActor.sources.isBlackBoxed(this.frame.script.url)
     }
 
     if (!this.frame.older) {
@@ -2101,6 +2192,10 @@ BreakpointActor.prototype = {
    *        The stack frame that contained the breakpoint.
    */
   hit: function BA_hit(aFrame) {
+    if (this.threadActor.sources.isBlackBoxed(this.location.url)) {
+      return undefined;
+    }
+
     // TODO: add the rest of the breakpoints on that line (bug 676602).
     let reason = { type: "breakpoint", actors: [ this.actorID ] };
     return this.threadActor._pauseAndRespond(aFrame, reason, (aPacket) => {
@@ -2438,8 +2533,8 @@ update(ChromeDebuggerActor.prototype, {
  * Manages the sources for a thread. Handles source maps, locations in the
  * sources, etc for ThreadActors.
  */
-function ThreadSources(aThreadActor, aUseSourceMaps,
-                       aAllowPredicate, aOnNewSource) {
+function ThreadSources(aThreadActor, aUseSourceMaps, aAllowPredicate,
+                       aOnNewSource) {
   this._thread = aThreadActor;
   this._useSourceMaps = aUseSourceMaps;
   this._allow = aAllowPredicate;
@@ -2457,9 +2552,17 @@ function ThreadSources(aThreadActor, aUseSourceMaps,
   this._generatedUrlsByOriginalUrl = Object.create(null);
 }
 
+/**
+ * Must be a class property because it needs to persist across reloads, same as
+ * the breakpoint store.
+ */
+ThreadSources._blackBoxedSources = new Set();
+
 ThreadSources.prototype = {
   /**
-   * Add a source to the current set of sources.
+   * Return the source actor representing |aURL|, creating one if none
+   * exists already. Returns null if |aURL| is not allowed by the 'allow'
+   * predicate.
    *
    * Right now this takes a URL, but in the future it should
    * take a Debugger.Source. See bug 637572.
@@ -2467,8 +2570,8 @@ ThreadSources.prototype = {
    * @param String aURL
    *        The source URL.
    * @param optional SourceMapConsumer aSourceMap
-   *        The source map that introduced this source.
-   * @returns a SourceActor representing the source or null.
+   *        The source map that introduced this source, if any.
+   * @returns a SourceActor representing the source at aURL or null.
    */
   source: function TS_source(aURL, aSourceMap=null) {
     if (!this._allow(aURL)) {
@@ -2491,7 +2594,12 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Add all of the sources associated with the given script.
+   * Return a promise of an array of source actors representing all the
+   * sources of |aScript|.
+   *
+   * If source map handling is enabled and |aScript| has a source map, then
+   * use it to find all of |aScript|'s *original* sources; return a promise
+   * of an array of source actors for those.
    */
   sourcesForScript: function TS_sourcesForScript(aScript) {
     if (!this._useSourceMaps || !aScript.sourceMapURL) {
@@ -2503,7 +2611,8 @@ ThreadSources.prototype = {
         return [
           this.source(s, aSourceMap) for (s of aSourceMap.sources)
         ];
-      }, (e) => {
+      })
+      .then(null, (e) => {
         reportError(e);
         delete this._sourceMaps[this._normalize(aScript.sourceMapURL, aScript.url)];
         delete this._sourceMapsByGeneratedSource[aScript.url];
@@ -2515,15 +2624,16 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Add the source map for the given script.
+   * Return a promise of a SourceMapConsumer for the source map for
+   * |aScript|; if we already have such a promise extant, return that.
+   * |aScript| must have a non-null sourceMapURL.
    */
   sourceMap: function TS_sourceMap(aScript) {
     if (aScript.url in this._sourceMapsByGeneratedSource) {
       return this._sourceMapsByGeneratedSource[aScript.url];
     }
     dbg_assert(aScript.sourceMapURL);
-    let sourceMapURL = this._normalize(aScript.sourceMapURL,
-                                       aScript.url);
+    let sourceMapURL = this._normalize(aScript.sourceMapURL, aScript.url);
     let map = this._fetchSourceMap(sourceMapURL)
       .then((aSourceMap) => {
         for (let s of aSourceMap.sources) {
@@ -2537,14 +2647,16 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Fetch the source map located at the given url.
+   * Return a promise of a SourceMapConsumer for the source map located at
+   * |aAbsSourceMapURL|, which must be absolute. If there is already such a
+   * promise extant, return it.
    */
   _fetchSourceMap: function TS__fetchSourceMap(aAbsSourceMapURL) {
     if (aAbsSourceMapURL in this._sourceMaps) {
       return this._sourceMaps[aAbsSourceMapURL];
     } else {
       let promise = fetch(aAbsSourceMapURL).then((rawSourceMap) => {
-        let map =  new SourceMapConsumer(rawSourceMap);
+        let map = new SourceMapConsumer(rawSourceMap);
         let base = aAbsSourceMapURL.replace(/\/[^\/]+$/, '/');
         if (base.indexOf("data:") !== 0) {
           map.sourceRoot = map.sourceRoot
@@ -2559,7 +2671,7 @@ ThreadSources.prototype = {
   },
 
   /**
-   * Returns a promise for the location in the original source if the source is
+   * Returns a promise of the location in the original source if the source is
    * source mapped, otherwise a promise of the same location.
    *
    * TODO bug 637572: take/return a column
@@ -2591,6 +2703,11 @@ ThreadSources.prototype = {
    * Returns a promise of the location in the generated source corresponding to
    * the original source and line given.
    *
+   * When we pass a script S representing generated code to |sourceMap|,
+   * above, that returns a promise P. The process of resolving P populates
+   * the tables this function uses; thus, it won't know that S's original
+   * source URLs map to S until P is resolved.
+   *
    * TODO bug 637572: take/return a column
    */
   getGeneratedLocation: function TS_getGeneratedLocation(aSourceUrl, aLine) {
@@ -2614,6 +2731,39 @@ ThreadSources.prototype = {
       url: aSourceUrl,
       line: aLine
     });
+  },
+
+  /**
+   * Returns true if URL for the given source is black boxed.
+   *
+   * @param aURL String
+   *        The URL of the source which we are checking whether it is black
+   *        boxed or not.
+   */
+  isBlackBoxed: function TS_isBlackBoxed(aURL) {
+    return ThreadSources._blackBoxedSources.has(aURL);
+  },
+
+  /**
+   * Add the given source URL to the set of sources that are black boxed. If the
+   * thread is currently paused and we are black boxing the yougest frame's
+   * source, this will force a step.
+   *
+   * @param aURL String
+   *        The URL of the source which we are black boxing.
+   */
+  blackBox: function TS_blackBox(aURL) {
+    ThreadSources._blackBoxedSources.add(aURL);
+  },
+
+  /**
+   * Remove the given source URL to the set of sources that are black boxed.
+   *
+   * @param aURL String
+   *        The URL of the source which we are no longer black boxing.
+   */
+  unblackBox: function TS_unblackBox(aURL) {
+    ThreadSources._blackBoxedSources.delete(aURL);
   },
 
   /**
@@ -2670,6 +2820,7 @@ function isNotNull(aThing) {
  * @param aURL String
  *        The URL we will request.
  * @returns Promise
+ *        A promise of the document at that URL, as a string.
  *
  * XXX: It may be better to use nsITraceableChannel to get to the sources
  * without relying on caching when we can (not for eval, etc.):
@@ -2698,7 +2849,7 @@ function fetch(aURL, aOptions={ loadFromCache: true }) {
       try {
         NetUtil.asyncFetch(url, function onFetch(aStream, aStatus) {
           if (!Components.isSuccessCode(aStatus)) {
-            deferred.reject("Request failed: " + url);
+            deferred.reject(new Error("Request failed: " + url));
             return;
           }
 
@@ -2707,7 +2858,7 @@ function fetch(aURL, aOptions={ loadFromCache: true }) {
           aStream.close();
         });
       } catch (ex) {
-        deferred.reject("Request failed: " + url);
+        deferred.reject(new Error("Request failed: " + url));
       }
       break;
 
@@ -2725,7 +2876,7 @@ function fetch(aURL, aOptions={ loadFromCache: true }) {
       let streamListener = {
         onStartRequest: function(aRequest, aContext, aStatusCode) {
           if (!Components.isSuccessCode(aStatusCode)) {
-            deferred.reject("Request failed: " + url);
+            deferred.reject(new Error("Request failed: " + url));
           }
         },
         onDataAvailable: function(aRequest, aContext, aStream, aOffset, aCount) {
@@ -2733,7 +2884,7 @@ function fetch(aURL, aOptions={ loadFromCache: true }) {
         },
         onStopRequest: function(aRequest, aContext, aStatusCode) {
           if (!Components.isSuccessCode(aStatusCode)) {
-            deferred.reject("Request failed: " + url);
+            deferred.reject(new Error("Request failed: " + url));
             return;
           }
 
@@ -2776,8 +2927,15 @@ function convertToUnicode(aString, aCharset=null) {
 
 /**
  * Report the given error in the error console and to stdout.
+ *
+ * @param Error aError
+ *        The error object you wish to report.
+ * @param String aPrefix
+ *        An optional prefix for the reported error message.
  */
-function reportError(aError) {
-  Cu.reportError(aError);
-  dumpn(aError.message + ":\n" + aError.stack);
+function reportError(aError, aPrefix="") {
+  dbg_assert(aError instanceof Error, "Must pass Error objects to reportError");
+  let msg = aPrefix + aError.message + ":\n" + aError.stack;
+  Cu.reportError(msg);
+  dumpn(msg);
 }

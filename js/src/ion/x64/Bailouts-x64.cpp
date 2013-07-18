@@ -8,7 +8,6 @@
 #include "jscompartment.h"
 #include "ion/Bailouts.h"
 #include "ion/IonCompartment.h"
-#include "ion/IonFrames-inl.h"
 
 using namespace js;
 using namespace js::ion;
@@ -49,7 +48,7 @@ class BailoutStack
 # pragma pack(pop)
 #endif
 
-IonBailoutIterator::IonBailoutIterator(const IonActivationIterator &activations,
+IonBailoutIterator::IonBailoutIterator(const JitActivationIterator &activations,
                                        BailoutStack *bailout)
   : IonFrameIterator(activations),
     machine_(bailout->machineState())
@@ -64,7 +63,7 @@ IonBailoutIterator::IonBailoutIterator(const IonActivationIterator &activations,
     snapshotOffset_ = bailout->snapshotOffset();
 }
 
-IonBailoutIterator::IonBailoutIterator(const IonActivationIterator &activations,
+IonBailoutIterator::IonBailoutIterator(const JitActivationIterator &activations,
                                        InvalidationBailoutStack *bailout)
   : IonFrameIterator(activations),
     machine_(bailout->machine())

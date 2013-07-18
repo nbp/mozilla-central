@@ -307,7 +307,7 @@ nsSVGGlyphFrame::DidSetStyleContext(nsStyleContext* aOldStyleContext)
   nsSVGGlyphFrameBase::DidSetStyleContext(aOldStyleContext);
 
   if (!(GetStateBits() & NS_FRAME_FIRST_REFLOW) ||
-      (GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+      (GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
     ClearTextRun();
     NotifyGlyphMetricsChange();
   }
@@ -393,11 +393,6 @@ nsSVGGlyphFrame::PaintSVG(nsRenderingContext *aContext,
     if (!iter.SetInitialMatrix(gfx)) {
       return NS_OK;
     }
-
-    if (GetClipRule() == NS_STYLE_FILL_RULE_EVENODD)
-      gfx->SetFillRule(gfxContext::FILL_RULE_EVEN_ODD);
-    else
-      gfx->SetFillRule(gfxContext::FILL_RULE_WINDING);
 
     if (renderMode == SVGAutoRenderState::CLIP_MASK) {
       gfx->SetColor(gfxRGBA(1.0f, 1.0f, 1.0f, 1.0f));
@@ -504,7 +499,7 @@ nsSVGGlyphFrame::ReflowSVG()
   NS_ASSERTION(nsSVGUtils::OuterSVGIsCallingReflowSVG(this),
                "This call is probably a wasteful mistake");
 
-  NS_ABORT_IF_FALSE(!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD),
+  NS_ABORT_IF_FALSE(!(GetStateBits() & NS_FRAME_IS_NONDISPLAY),
                     "ReflowSVG mechanism not designed for this");
 
   mRect.SetEmpty();
@@ -682,7 +677,7 @@ nsSVGGlyphFrame::GetCanvasTM(uint32_t aFor)
   if (mOverrideCanvasTM) {
     return *mOverrideCanvasTM;
   }
-  if (!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+  if (!(GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
     if ((aFor == FOR_PAINTING && NS_SVGDisplayListPaintingEnabled()) ||
         (aFor == FOR_HIT_TESTING && NS_SVGDisplayListHitTestingEnabled())) {
       return nsSVGIntegrationUtils::GetCSSPxToDevPxMatrix(this);
@@ -975,7 +970,7 @@ nsSVGGlyphFrame::SetupCairoStroke(gfxContext *aContext,
   }
 
   const nsStyleSVG *style = StyleSVG();
-  nsSVGUtils::SetupCairoStrokeHitGeometry(this, aContext, aOuterObjectPaint);
+  nsSVGUtils::SetupCairoStrokeGeometry(this, aContext, aOuterObjectPaint);
   float opacity = nsSVGUtils::GetOpacity(style->mStrokeOpacitySource,
                                          style->mStrokeOpacity,
                                          aOuterObjectPaint);
@@ -1631,9 +1626,7 @@ nsSVGGlyphFrame::EnsureTextRun(float *aDrawScale, float *aMetricsScale,
   // fonts in SVG to respond to the browser's "TextZoom"
   // (Ctrl++,Ctrl+-)
   nsPresContext *presContext = PresContext();
-  float textZoom = presContext->TextZoom();
-  double size =
-    presContext->AppUnitsToFloatCSSPixels(fontData->mSize) / textZoom;
+  double size = presContext->AppUnitsToFloatCSSPixels(fontData->mSize);
 
   double textRunSize;
   if (mTextRun) {
@@ -1686,7 +1679,7 @@ nsSVGGlyphFrame::EnsureTextRun(float *aDrawScale, float *aMetricsScale,
 
     gfxMatrix m;
     if (aForceGlobalTransform ||
-        !(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD)) {
+        !(GetStateBits() & NS_FRAME_IS_NONDISPLAY)) {
       m = GetCanvasTM(mGetCanvasTMForFlag);
       if (m.IsSingular())
         return false;

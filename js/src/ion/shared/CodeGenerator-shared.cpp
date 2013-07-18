@@ -6,11 +6,11 @@
 
 #include "mozilla/DebugOnly.h"
 
-#include "CodeGenerator-shared.h"
+#include "ion/shared/CodeGenerator-shared.h"
 #include "ion/MIRGenerator.h"
 #include "ion/IonFrames-inl.h"
 #include "ion/MIR.h"
-#include "CodeGenerator-shared-inl.h"
+#include "ion/shared/CodeGenerator-shared-inl.h"
 #include "ion/IonSpewer.h"
 #include "ion/IonMacroAssembler.h"
 #include "ion/ParallelFunctions.h"
@@ -170,7 +170,7 @@ CodeGeneratorShared::encodeOperation(LSnapshot *snapshot, LRecoverOperation *ope
             *startIndex);
 
     uint32_t nbSlots = 0;
-    for (uint32_t op = 0; op < recover->numOperands(); op++) {
+    for (uint32_t op = 0, e = recover->numOperands(); op < e; op++) {
         MDefinition *mir = recover->getOperand(op);
 
         JS_ASSERT(mir->isResumeOperation() == !operation->operands[op].isSlot);
@@ -315,7 +315,6 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     for (LRecoverOperation **it = recover->begin(); it != recover->end(); it++) {
 #ifdef DEBUG
         if ((*it)->mir->isResumePoint()) {
-            JSContext *cx = GetIonContext()->cx;
             MResumePoint *mir = (*it)->mir->toResumePoint();
             MBasicBlock *block = mir->block();
             JSFunction *fun = block->info().fun();
@@ -330,11 +329,22 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
             if (mir->mode() == MResumePoint::ResumeAfter)
                 bailPC = GetNextPc(pc);
 
-            // For fun.apply({}, arguments) the reconstructStackDepth will have stackdepth 4,
-            // but it could be that we inlined the funapply. In that case exprStackSlots,
-            // will have the real arguments in the slots and not be 4.
-            JS_ASSERT_IF(cx && JSOp(*bailPC) != JSOP_FUNAPPLY,
-                         exprStack == js_ReconstructStackDepth(cx, script, bailPC));
+            JSContext *cx = GetIonContext()->cx;
+            if (cx) {
+                uint32_t stackDepth = js_ReconstructStackDepth(cx, script, bailPC);
+                if (JSOp(*bailPC) == JSOP_FUNCALL) {
+                    // For fun.call(this, ...); the reconstructStackDepth will
+                    // include the this. When inlining that is not included.
+                    // So the exprStackSlots will be one less.
+                    JS_ASSERT(stackDepth - exprStack <= 1);
+                } else if (JSOp(*bailPC) != JSOP_FUNAPPLY) {
+                    // For fun.apply({}, arguments) the reconstructStackDepth will
+                    // have stackdepth 4, but it could be that we inlined the
+                    // funapply. In that case exprStackSlots, will have the real
+                    // arguments in the slots and not be 4.
+                    JS_ASSERT(exprStack == stackDepth);
+                }
+            }
         }
 #endif
 

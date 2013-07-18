@@ -55,15 +55,15 @@ GetPNGDecoderAccountingLog()
 #define BYTES_NEEDED_FOR_DIMENSIONS (HEIGHT_OFFSET + 4)
 
 nsPNGDecoder::AnimFrameInfo::AnimFrameInfo()
- : mDispose(RasterImage::kDisposeKeep)
- , mBlend(RasterImage::kBlendOver)
+ : mDispose(FrameBlender::kDisposeKeep)
+ , mBlend(FrameBlender::kBlendOver)
  , mTimeout(0)
 {}
 
 #ifdef PNG_APNG_SUPPORTED
 nsPNGDecoder::AnimFrameInfo::AnimFrameInfo(png_structp aPNG, png_infop aInfo)
- : mDispose(RasterImage::kDisposeKeep)
- , mBlend(RasterImage::kBlendOver)
+ : mDispose(FrameBlender::kDisposeKeep)
+ , mBlend(FrameBlender::kBlendOver)
  , mTimeout(0)
 {
   png_uint_16 delay_num, delay_den;
@@ -87,17 +87,17 @@ nsPNGDecoder::AnimFrameInfo::AnimFrameInfo(png_structp aPNG, png_infop aInfo)
   }
 
   if (dispose_op == PNG_DISPOSE_OP_PREVIOUS) {
-    mDispose = RasterImage::kDisposeRestorePrevious;
+    mDispose = FrameBlender::kDisposeRestorePrevious;
   } else if (dispose_op == PNG_DISPOSE_OP_BACKGROUND) {
-    mDispose = RasterImage::kDisposeClear;
+    mDispose = FrameBlender::kDisposeClear;
   } else {
-    mDispose = RasterImage::kDisposeKeep;
+    mDispose = FrameBlender::kDisposeKeep;
   }
 
   if (blend_op == PNG_BLEND_OP_SOURCE) {
-    mBlend = RasterImage::kBlendSource;
+    mBlend = FrameBlender::kBlendSource;
   } else {
-    mBlend = RasterImage::kBlendOver;
+    mBlend = FrameBlender::kBlendOver;
   }
 }
 #endif
@@ -141,11 +141,10 @@ void nsPNGDecoder::CreateFrame(png_uint_32 x_offset, png_uint_32 y_offset,
                                gfxASurface::gfxImageFormat format)
 {
   // Our first full frame is automatically created by the image decoding
-  // infrastructure. Just use it as long as we're not creating a subframe.
+  // infrastructure. Just use it as long as it matches up.
   MOZ_ASSERT(HasSize());
   if (mNumFrames != 0 ||
-      x_offset != 0 || y_offset != 0 ||
-      width != mImageMetadata.GetWidth() || height != mImageMetadata.GetHeight()) {
+      !GetCurrentFrame()->GetRect().IsEqualEdges(nsIntRect(x_offset, y_offset, width, height))) {
     NeedNewFrame(mNumFrames, x_offset, y_offset, width, height, format);
   } else if (mNumFrames == 0) {
     // Our preallocated frame matches up, with the possible exception of alpha.
@@ -182,11 +181,11 @@ void nsPNGDecoder::EndImageFrame()
 
   mNumFrames++;
 
-  RasterImage::FrameAlpha alpha;
+  FrameBlender::FrameAlpha alpha;
   if (mFrameHasNoAlpha)
-    alpha = RasterImage::kFrameOpaque;
+    alpha = FrameBlender::kFrameOpaque;
   else
-    alpha = RasterImage::kFrameHasAlpha;
+    alpha = FrameBlender::kFrameHasAlpha;
 
 #ifdef PNG_APNG_SUPPORTED
   uint32_t numFrames = GetFrameCount();

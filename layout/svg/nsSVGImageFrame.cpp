@@ -20,7 +20,6 @@
 #include "SVGImageContext.h"
 #include "mozilla/dom/SVGImageElement.h"
 #include "nsContentUtils.h"
-#include "nsCxPusher.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -117,12 +116,6 @@ nsSVGImageFrame::~nsSVGImageFrame()
   if (mListener) {
     nsCOMPtr<nsIImageLoadingContent> imageLoader = do_QueryInterface(mContent);
     if (imageLoader) {
-      // Push a null JSContext on the stack so that code that runs
-      // within the below code doesn't think it's being called by
-      // JS. See bug 604262.
-      nsCxPusher pusher;
-      pusher.PushNull();
-
       imageLoader->RemoveObserver(mListener);
     }
     reinterpret_cast<nsSVGImageListener*>(mListener.get())->SetFrame(nullptr);
@@ -149,12 +142,6 @@ nsSVGImageFrame::Init(nsIContent* aContent,
   // We should have a PresContext now, so let's notify our image loader that
   // we need to register any image animations with the refresh driver.
   imageLoader->FrameCreated(this);
-
-  // Push a null JSContext on the stack so that code that runs within
-  // the below code doesn't think it's being called by JS. See bug
-  // 604262.
-  nsCxPusher pusher;
-  pusher.PushNull();
 
   imageLoader->AddObserver(mListener);
 }
@@ -261,19 +248,20 @@ nsSVGImageFrame::TransformContextForPainting(gfxContext* aGfxContext)
     }
     imageTransform =
       GetRasterImageTransform(nativeWidth, nativeHeight, FOR_PAINTING);
+
+    // NOTE: We need to cancel out the effects of Full-Page-Zoom, or else
+    // it'll get applied an extra time by DrawSingleUnscaledImage.
+    nscoord appUnitsPerDevPx = PresContext()->AppUnitsPerDevPixel();
+    gfxFloat pageZoomFactor =
+      nsPresContext::AppUnitsToFloatCSSPixels(appUnitsPerDevPx);
+    imageTransform.Scale(pageZoomFactor, pageZoomFactor);
   }
 
   if (imageTransform.IsSingular()) {
     return false;
   }
 
-  // NOTE: We need to cancel out the effects of Full-Page-Zoom, or else
-  // it'll get applied an extra time by DrawSingleUnscaledImage.
-  nscoord appUnitsPerDevPx = PresContext()->AppUnitsPerDevPixel();
-  gfxFloat pageZoomFactor =
-    nsPresContext::AppUnitsToFloatCSSPixels(appUnitsPerDevPx);
-  aGfxContext->Multiply(imageTransform.Scale(pageZoomFactor, pageZoomFactor));
-
+  aGfxContext->Multiply(imageTransform);
   return true;
 }
 
@@ -335,7 +323,7 @@ nsSVGImageFrame::PaintSVG(nsRenderingContext *aContext,
     nsRect dirtyRect; // only used if aDirtyRect is non-null
     if (aDirtyRect) {
       NS_ASSERTION(!NS_SVGDisplayListPaintingEnabled() ||
-                   (mState & NS_STATE_SVG_NONDISPLAY_CHILD),
+                   (mState & NS_FRAME_IS_NONDISPLAY),
                    "Display lists handle dirty rect intersection test");
       dirtyRect = aDirtyRect->ToAppUnits(appUnitsPerDevPx);
       // Adjust dirtyRect to match our local coordinate system.
@@ -444,7 +432,7 @@ nsSVGImageFrame::ReflowSVG()
   NS_ASSERTION(nsSVGUtils::OuterSVGIsCallingReflowSVG(this),
                "This call is probably a wasteful mistake");
 
-  NS_ABORT_IF_FALSE(!(GetStateBits() & NS_STATE_SVG_NONDISPLAY_CHILD),
+  NS_ABORT_IF_FALSE(!(GetStateBits() & NS_FRAME_IS_NONDISPLAY),
                     "ReflowSVG mechanism not designed for this");
 
   if (!nsSVGUtils::NeedsReflowSVG(this)) {
@@ -561,6 +549,7 @@ nsSVGImageListener::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect
     return NS_ERROR_FAILURE;
 
   if (aType == imgINotificationObserver::LOAD_COMPLETE) {
+    mFrame->InvalidateFrame();
     nsSVGEffects::InvalidateRenderingObservers(mFrame);
     nsSVGUtils::ScheduleReflowSVG(mFrame);
   }
@@ -569,11 +558,13 @@ nsSVGImageListener::Notify(imgIRequest *aRequest, int32_t aType, const nsIntRect
     // No new dimensions, so we don't need to call
     // nsSVGUtils::InvalidateAndScheduleBoundsUpdate.
     nsSVGEffects::InvalidateRenderingObservers(mFrame);
+    mFrame->InvalidateFrame();
   }
 
   if (aType == imgINotificationObserver::SIZE_AVAILABLE) {
     // Called once the resource's dimensions have been obtained.
     aRequest->GetImage(getter_AddRefs(mFrame->mImageContainer));
+    mFrame->InvalidateFrame();
     nsSVGEffects::InvalidateRenderingObservers(mFrame);
     nsSVGUtils::ScheduleReflowSVG(mFrame);
   }

@@ -24,9 +24,6 @@ interface AudioContext : EventTarget {
     [Creator, Throws]
     AudioBuffer createBuffer(unsigned long numberOfChannels, unsigned long length, float sampleRate);
 
-    [Creator, Throws]
-    AudioBuffer? createBuffer(ArrayBuffer buffer, boolean mixToMono);
-
     void decodeAudioData(ArrayBuffer audioData,
                          DecodeSuccessCallback successCallback,
                          optional DecodeErrorCallback errorCallback);
@@ -34,6 +31,9 @@ interface AudioContext : EventTarget {
     // AudioNode creation 
     [Creator]
     AudioBufferSourceNode createBufferSource();
+
+    [Creator]
+    MediaStreamAudioDestinationNode createMediaStreamDestination();
 
     [Creator, Throws]
     ScriptProcessorNode createScriptProcessor(optional unsigned long bufferSize = 0,
@@ -52,6 +52,8 @@ interface AudioContext : EventTarget {
     WaveShaperNode createWaveShaper();
     [Creator]
     PannerNode createPanner();
+    [Creator]
+    ConvolverNode createConvolver();
 
     [Creator, Throws]
     ChannelSplitterNode createChannelSplitter(optional unsigned long numberOfOutputs = 6);
@@ -62,7 +64,7 @@ interface AudioContext : EventTarget {
     DynamicsCompressorNode createDynamicsCompressor();
 
     [Creator, Throws]
-    WaveTable createWaveTable(Float32Array real, Float32Array imag);
+    PeriodicWave createPeriodicWave(Float32Array real, Float32Array imag);
 
 };
 
@@ -72,16 +74,19 @@ interface AudioContext : EventTarget {
  */
 [PrefControlled]
 partial interface AudioContext {
-    // Same as createGain()
-    [Creator]
-    GainNode createGainNode();
-    
-    // Same as createDelay()
     [Creator, Throws]
+    AudioBuffer? createBuffer(ArrayBuffer buffer, boolean mixToMono);
+
+    // Same as createGain()
+    [Creator,Pref="media.webaudio.legacy.AudioContext"]
+    GainNode createGainNode();
+
+    // Same as createDelay()
+    [Creator, Throws, Pref="media.webaudio.legacy.AudioContext"]
     DelayNode createDelayNode(optional double maxDelayTime = 1);
 
     // Same as createScriptProcessor()
-    [Creator, Throws]
+    [Creator, Throws, Pref="media.webaudio.legacy.AudioContext"]
     ScriptProcessorNode createJavaScriptNode(optional unsigned long bufferSize = 0,
                                              optional unsigned long numberOfInputChannels = 2,
                                              optional unsigned long numberOfOutputChannels = 2);

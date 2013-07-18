@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef pcscriptcache_h__
-#define pcscriptcache_h__
+#ifndef ion_PcScriptCache_h
+#define ion_PcScriptCache_h
 
 // Defines a fixed-size hash table solely for the purpose of caching ion::GetPcScript().
 // One cache is attached to each JSRuntime; it functions as if cleared on GC.
@@ -41,9 +41,24 @@ struct PcScriptCache
     }
 
     // Get a value from the cache. May perform lazy allocation.
-    // Defined in PcScriptCache-inl.h.
     bool get(JSRuntime *rt, uint32_t hash, uint8_t *addr,
-             JSScript **scriptRes, jsbytecode **pcRes);
+             JSScript **scriptRes, jsbytecode **pcRes)
+    {
+        // If a GC occurred, lazily clear the cache now.
+        if (gcNumber != rt->gcNumber) {
+            clear(rt->gcNumber);
+            return false;
+        }
+
+        if (entries[hash].returnAddress != addr)
+            return false;
+
+        *scriptRes = entries[hash].script;
+        if (pcRes)
+            *pcRes = entries[hash].pc;
+
+        return true;
+    }
 
     void add(uint32_t hash, uint8_t *addr, jsbytecode *pc, JSScript *script) {
         entries[hash].returnAddress = addr;
@@ -60,4 +75,4 @@ struct PcScriptCache
 } // namespace ion
 } // namespace js
 
-#endif // pcscriptcache_h__
+#endif /* ion_PcScriptCache_h */

@@ -7,6 +7,7 @@
 
 #include "mozilla/layers/CompositorChild.h"
 #include "mozilla/layers/CompositorParent.h"
+#include "mozilla/layers/ImageBridgeChild.h"
 #include "nsBaseWidget.h"
 #include "nsDeviceContext.h"
 #include "nsCOMPtr.h"
@@ -37,6 +38,7 @@
 #include "mozilla/Attributes.h"
 #include "nsContentUtils.h"
 #include "gfxPlatform.h"
+#include "mozilla/gfx/2D.h"
 
 #ifdef ACCESSIBILITY
 #include "nsAccessibilityService.h"
@@ -118,8 +120,32 @@ nsBaseWidget::nsBaseWidget()
 #ifdef DEBUG
   debug_RegisterPrefCallbacks();
 #endif
+
+  mShutdownObserver = new WidgetShutdownObserver(this);
+  nsContentUtils::RegisterShutdownObserver(mShutdownObserver);
 }
 
+NS_IMPL_ISUPPORTS1(WidgetShutdownObserver, nsIObserver)
+
+NS_IMETHODIMP
+WidgetShutdownObserver::Observe(nsISupports *aSubject,
+                                const char *aTopic,
+                                const PRUnichar *aData)
+{
+  if (strcmp(aTopic, NS_XPCOM_SHUTDOWN_OBSERVER_ID) == 0 &&
+      mWidget) {
+    mWidget->Shutdown();
+    nsContentUtils::UnregisterShutdownObserver(this);
+  }
+ return NS_OK;
+}
+
+void
+nsBaseWidget::Shutdown()
+{
+  DestroyCompositor();
+  mShutdownObserver = nullptr;
+}
 
 static void DeferredDestroyCompositor(CompositorParent* aCompositorParent,
                               CompositorChild* aCompositorChild)
@@ -169,6 +195,15 @@ nsBaseWidget::~nsBaseWidget()
   if (mLayerManager) {
     mLayerManager->Destroy();
     mLayerManager = nullptr;
+  }
+
+  if (mShutdownObserver) {
+    // If the shutdown observer is currently processing observers,
+    // then UnregisterShutdownObserver won't stop our Observer
+    // function from being called. Make sure we don't try
+    // to reference the dead widget.
+    mShutdownObserver->mWidget = nullptr;
+    nsContentUtils::UnregisterShutdownObserver(mShutdownObserver);
   }
 
   DestroyCompositor();
@@ -441,7 +476,16 @@ void nsBaseWidget::AddChild(nsIWidget* aChild)
 //-------------------------------------------------------------------------
 void nsBaseWidget::RemoveChild(nsIWidget* aChild)
 {
+#ifdef DEBUG
+#ifdef XP_MACOSX
+  // nsCocoaWindow doesn't implement GetParent, so in that case parent will be
+  // null and we'll just have to do without this assertion.
+  nsIWidget* parent = aChild->GetParent();
+  NS_ASSERTION(!parent || parent == this, "Not one of our kids!");
+#else
   NS_ASSERTION(aChild->GetParent() == this, "Not one of our kids!");
+#endif
+#endif
 
   if (mLastChild == aChild) {
     mLastChild = mLastChild->GetPrevSibling();
@@ -877,21 +921,23 @@ void nsBaseWidget::CreateCompositor()
 mozilla::layers::LayersBackend
 nsBaseWidget::GetPreferredCompositorBackend()
 {
-  // We need a separate preference here (instead of using mUseLayersAcceleration)
-  // because we force enable accelerated layers with e10s. Once the BasicCompositor
-  // is stable enough to be used for Ripc/Cipc, then we can remove that and this
-  // pref.
-  if (Preferences::GetBool("layers.offmainthreadcomposition.prefer-basic", false)) {
-    return mozilla::layers::LAYERS_BASIC;
+  if (mUseLayersAcceleration) {
+    return mozilla::layers::LAYERS_OPENGL;
   }
 
-  return mozilla::layers::LAYERS_OPENGL;
+  return mozilla::layers::LAYERS_BASIC;
 }
 
 void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
 {
   // Recreating this is tricky, as we may still have an old and we need
   // to make sure it's properly destroyed by calling DestroyCompositor!
+
+  // If we've already received a shutdown notification, don't try
+  // create a new compositor.
+  if (!mShutdownObserver) {
+    return;
+  }
 
   mCompositorParent = NewCompositorParent(aWidth, aHeight);
   AsyncChannel *parentChannel = mCompositorParent->GetIPCChannel();
@@ -917,6 +963,7 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight)
     }
     lf->SetShadowManager(shadowManager);
     lf->IdentifyTextureHost(textureFactoryIdentifier);
+    ImageBridgeChild::IdentifyCompositorTextureHost(textureFactoryIdentifier);
 
     mLayerManager = lm;
     return;
@@ -992,6 +1039,11 @@ BasicLayerManager* nsBaseWidget::CreateBasicLayerManager()
 CompositorChild* nsBaseWidget::GetRemoteRenderer()
 {
   return mCompositorChild;
+}
+
+TemporaryRef<mozilla::gfx::DrawTarget> nsBaseWidget::StartRemoteDrawing()
+{
+  return nullptr;
 }
 
 //-------------------------------------------------------------------------
@@ -1446,7 +1498,7 @@ nsBaseWidget::NotifyUIStateChanged(UIStateChangeType aShowAccelerators,
 #ifdef ACCESSIBILITY
 
 a11y::Accessible*
-nsBaseWidget::GetAccessible()
+nsBaseWidget::GetRootAccessible()
 {
   NS_ENSURE_TRUE(mWidgetListener, nullptr);
 
@@ -1461,7 +1513,8 @@ nsBaseWidget::GetAccessible()
 
   // Accessible creation might be not safe so use IsSafeToRunScript to
   // make sure it's not created at unsafe times.
-  nsCOMPtr<nsIAccessibilityService> accService = services::GetAccessibilityService();
+  nsCOMPtr<nsIAccessibilityService> accService =
+    services::GetAccessibilityService();
   if (accService) {
     return accService->GetRootDocumentAccessible(presShell, nsContentUtils::IsSafeToRunScript());
   }

@@ -41,7 +41,9 @@ this.AccessFu = {
     }
 
     this._activatePref = new PrefCache(
-      'accessibility.accessfu.activate', this._enableOrDisable.bind(this), true);
+      'accessibility.accessfu.activate', this._enableOrDisable.bind(this));
+
+    this._enableOrDisable();
   },
 
   /**
@@ -114,6 +116,7 @@ this.AccessFu = {
     Services.obs.addObserver(this, 'Accessibility:PreviousObject', false);
     Services.obs.addObserver(this, 'Accessibility:Focus', false);
     Services.obs.addObserver(this, 'Accessibility:ActivateObject', false);
+    Services.obs.addObserver(this, 'Accessibility:MoveCaret', false);
     Utils.win.addEventListener('TabOpen', this);
     Utils.win.addEventListener('TabClose', this);
     Utils.win.addEventListener('TabSelect', this);
@@ -156,6 +159,7 @@ this.AccessFu = {
     Services.obs.removeObserver(this, 'Accessibility:PreviousObject');
     Services.obs.removeObserver(this, 'Accessibility:Focus');
     Services.obs.removeObserver(this, 'Accessibility:ActivateObject');
+    Services.obs.removeObserver(this, 'Accessibility:MoveCaret');
 
     if (this.doneCallback) {
       this.doneCallback();
@@ -193,6 +197,9 @@ this.AccessFu = {
         break;
       case 'AccessFu:Input':
         this.Input.setEditState(aMessage.json);
+        break;
+      case 'AccessFu:ActivateContextMenu':
+        this.Input.activateContextMenu(aMessage.json);
         break;
     }
   },
@@ -232,12 +239,14 @@ this.AccessFu = {
     aMessageManager.addMessageListener('AccessFu:Present', this);
     aMessageManager.addMessageListener('AccessFu:Input', this);
     aMessageManager.addMessageListener('AccessFu:Ready', this);
+    aMessageManager.addMessageListener('AccessFu:ActivateContextMenu', this);
   },
 
   _removeMessageListeners: function _removeMessageListeners(aMessageManager) {
     aMessageManager.removeMessageListener('AccessFu:Present', this);
     aMessageManager.removeMessageListener('AccessFu:Input', this);
     aMessageManager.removeMessageListener('AccessFu:Ready', this);
+    aMessageManager.removeMessageListener('AccessFu:ActivateContextMenu', this);
   },
 
   _handleMessageManager: function _handleMessageManager(aMessageManager) {
@@ -260,15 +269,16 @@ this.AccessFu = {
         this.Input.moveCursor('movePrevious', 'Simple', 'gesture');
         break;
       case 'Accessibility:ActivateObject':
-        this.Input.activateCurrent();
+        this.Input.activateCurrent(JSON.parse(aData));
         break;
       case 'Accessibility:Focus':
         this._focused = JSON.parse(aData);
         if (this._focused) {
-          let mm = Utils.getMessageManager(Utils.CurrentBrowser);
-          mm.sendAsyncMessage('AccessFu:VirtualCursor',
-                              {action: 'whereIsIt', move: true});
+          this.showCurrent(true);
         }
+        break;
+      case 'Accessibility:MoveCaret':
+        this.Input.moveCaret(JSON.parse(aData));
         break;
       case 'remote-browser-frame-shown':
       case 'in-process-browser-or-app-frame-shown':
@@ -315,18 +325,22 @@ this.AccessFu = {
       case 'TabSelect':
       {
         if (this._focused) {
-          let mm = Utils.getMessageManager(Utils.CurrentBrowser);
           // We delay this for half a second so the awesomebar could close,
           // and we could use the current coordinates for the content item.
           // XXX TODO figure out how to avoid magic wait here.
           Utils.win.setTimeout(
             function () {
-              mm.sendAsyncMessage('AccessFu:VirtualCursor', {action: 'whereIsIt'});
-            }, 500);
+              this.showCurrent(false);
+            }.bind(this), 500);
         }
         break;
       }
     }
+  },
+
+  showCurrent: function showCurrent(aMove) {
+    let mm = Utils.getMessageManager(Utils.CurrentBrowser);
+    mm.sendAsyncMessage('AccessFu:ShowCurrent', { move: aMove });
   },
 
   announce: function announce(aAnnouncement) {
@@ -346,6 +360,73 @@ this.AccessFu = {
 };
 
 var Output = {
+  brailleState: {
+    startOffset: 0,
+    endOffset: 0,
+    text: '',
+    selectionStart: 0,
+    selectionEnd: 0,
+
+    init: function init(aOutput) {
+      if (aOutput && 'output' in aOutput) {
+        this.startOffset = aOutput.startOffset;
+        this.endOffset = aOutput.endOffset;
+        // We need to append a space at the end so that the routing key corresponding
+        // to the end of the output (i.e. the space) can be hit to move the caret there.
+        this.text = aOutput.output + ' ';
+        this.selectionStart = typeof aOutput.selectionStart === 'number' ?
+                              aOutput.selectionStart : this.selectionStart;
+        this.selectionEnd = typeof aOutput.selectionEnd === 'number' ?
+                            aOutput.selectionEnd : this.selectionEnd;
+
+        return { text: this.text,
+                 selectionStart: this.selectionStart,
+                 selectionEnd: this.selectionEnd };
+      }
+
+      return null;
+    },
+
+    adjustText: function adjustText(aText) {
+      let newBraille = [];
+      let braille = {};
+
+      let prefix = this.text.substring(0, this.startOffset).trim();
+      if (prefix) {
+        prefix += ' ';
+        newBraille.push(prefix);
+      }
+
+      newBraille.push(aText);
+
+      let suffix = this.text.substring(this.endOffset).trim();
+      if (suffix) {
+        suffix = ' ' + suffix;
+        newBraille.push(suffix);
+      }
+
+      this.startOffset = braille.startOffset = prefix.length;
+      this.text = braille.text = newBraille.join('') + ' ';
+      this.endOffset = braille.endOffset = braille.text.length - suffix.length;
+      braille.selectionStart = this.selectionStart;
+      braille.selectionEnd = this.selectionEnd;
+
+      return braille;
+    },
+
+    adjustSelection: function adjustSelection(aSelection) {
+      let braille = {};
+
+      braille.startOffset = this.startOffset;
+      braille.endOffset = this.endOffset;
+      braille.text = this.text;
+      this.selectionStart = braille.selectionStart = aSelection.selectionStart + this.startOffset;
+      this.selectionEnd = braille.selectionEnd = aSelection.selectionEnd + this.startOffset;
+
+      return braille;
+    }
+  },
+
   start: function start() {
     Cu.import('resource://gre/modules/Geometry.jsm');
   },
@@ -407,7 +488,7 @@ var Output = {
       {
         let highlightBox = this.highlightBox ? this.highlightBox.get() : null;
         if (highlightBox)
-          highlightBox.get().style.display = 'none';
+          highlightBox.style.display = 'none';
         break;
       }
       case 'showAnnouncement':
@@ -446,13 +527,28 @@ var Output = {
   },
 
   Android: function Android(aDetails, aBrowser) {
+    const ANDROID_VIEW_TEXT_CHANGED = 0x10;
+    const ANDROID_VIEW_TEXT_SELECTION_CHANGED = 0x2000;
+
     if (!this._bridge)
       this._bridge = Cc['@mozilla.org/android/bridge;1'].getService(Ci.nsIAndroidBridge);
 
     for each (let androidEvent in aDetails) {
       androidEvent.type = 'Accessibility:Event';
       if (androidEvent.bounds)
-        androidEvent.bounds = this._adjustBounds(androidEvent.bounds, aBrowser);
+        androidEvent.bounds = this._adjustBounds(androidEvent.bounds, aBrowser, true);
+
+      switch(androidEvent.eventType) {
+        case ANDROID_VIEW_TEXT_CHANGED:
+          androidEvent.brailleOutput = this.brailleState.adjustText(androidEvent.text);
+          break;
+        case ANDROID_VIEW_TEXT_SELECTION_CHANGED:
+          androidEvent.brailleOutput = this.brailleState.adjustSelection(androidEvent.brailleOutput);
+          break;
+        default:
+          androidEvent.brailleOutput = this.brailleState.init(androidEvent.brailleOutput);
+          break;
+      }
       this._bridge.handleGeckoMessage(JSON.stringify(androidEvent));
     }
   },
@@ -461,7 +557,11 @@ var Output = {
     Utils.win.navigator.vibrate(aDetails.pattern);
   },
 
-  _adjustBounds: function(aJsonBounds, aBrowser) {
+  Braille: function Braille(aDetails, aBrowser) {
+    Logger.debug('Braille output: ' + aDetails.text);
+  },
+
+  _adjustBounds: function(aJsonBounds, aBrowser, aIncludeZoom) {
     let bounds = new Rect(aJsonBounds.left, aJsonBounds.top,
                           aJsonBounds.right - aJsonBounds.left,
                           aJsonBounds.bottom - aJsonBounds.top);
@@ -479,8 +579,13 @@ var Output = {
       offset.top += clientRect.top + win.mozInnerScreenY;
     }
 
-    return bounds.scale(scale, scale).translate(offset.left, offset.top).
-      scale(vp.zoom, vp.zoom).expandToIntegers();
+    let newBounds = bounds.scale(scale, scale).translate(offset.left, offset.top);
+
+    if (aIncludeZoom) {
+      newBounds = newBounds.scale(vp.zoom, vp.zoom);
+    }
+
+    return newBounds.expandToIntegers();
   }
 };
 
@@ -510,6 +615,9 @@ var Input = {
         this._handleKeypress(aEvent);
         break;
       case 'mozAccessFuGesture':
+        let vp = Utils.getViewport(Utils.win) || { zoom: 1.0 };
+        aEvent.detail.x *= vp.zoom;
+        aEvent.detail.y *= vp.zoom;
         this._handleGesture(aEvent.detail);
         break;
       }
@@ -526,11 +634,13 @@ var Input = {
     switch (gestureName) {
       case 'dwell1':
       case 'explore1':
-        this.moveCursor('moveToPoint', 'Simple', 'gesture',
-                        aGesture.x, aGesture.y);
+        this.moveToPoint('SimpleTouch', aGesture.x, aGesture.y);
         break;
       case 'doubletap1':
         this.activateCurrent();
+        break;
+      case 'doubletaphold1':
+        this.sendContextMenuMessage();
         break;
       case 'swiperight1':
         this.moveCursor('moveNext', 'Simple', 'gestures');
@@ -645,17 +755,52 @@ var Input = {
     aEvent.stopPropagation();
   },
 
-  moveCursor: function moveCursor(aAction, aRule, aInputType, aX, aY) {
+  moveToPoint: function moveToPoint(aRule, aX, aY) {
     let mm = Utils.getMessageManager(Utils.CurrentBrowser);
-    mm.sendAsyncMessage('AccessFu:VirtualCursor',
-                        {action: aAction, rule: aRule,
-                         x: aX, y: aY, origin: 'top',
-                         inputType: aInputType});
+    mm.sendAsyncMessage('AccessFu:MoveToPoint', {rule: aRule,
+                                                 x: aX, y: aY,
+                                                 origin: 'top'});
   },
 
-  activateCurrent: function activateCurrent() {
+  moveCursor: function moveCursor(aAction, aRule, aInputType) {
     let mm = Utils.getMessageManager(Utils.CurrentBrowser);
-    mm.sendAsyncMessage('AccessFu:Activate', {});
+    mm.sendAsyncMessage('AccessFu:MoveCursor',
+                        {action: aAction, rule: aRule,
+                         origin: 'top', inputType: aInputType});
+  },
+
+  moveCaret: function moveCaret(aDetails) {
+    if (!this.editState.editing) {
+      return;
+    }
+
+    aDetails.atStart = this.editState.atStart;
+    aDetails.atEnd = this.editState.atEnd;
+
+    let mm = Utils.getMessageManager(Utils.CurrentBrowser);
+    mm.sendAsyncMessage('AccessFu:MoveCaret', aDetails);
+  },
+
+  activateCurrent: function activateCurrent(aData) {
+    let mm = Utils.getMessageManager(Utils.CurrentBrowser);
+    let offset = aData && typeof aData.keyIndex === 'number' ?
+                 aData.keyIndex - Output.brailleState.startOffset : -1;
+
+    mm.sendAsyncMessage('AccessFu:Activate', {offset: offset});
+  },
+
+  sendContextMenuMessage: function sendContextMenuMessage() {
+    let mm = Utils.getMessageManager(Utils.CurrentBrowser);
+    mm.sendAsyncMessage('AccessFu:ContextMenu', {});
+  },
+
+  activateContextMenu: function activateContextMenu(aMessage) {
+    if (Utils.MozBuildApp === 'mobile/android') {
+      let vp = Utils.getViewport(Utils.win) || { zoom: 1.0 };
+      Services.obs.notifyObservers(null, 'Gesture:LongPress',
+                                   JSON.stringify({x: aMessage.x / vp.zoom,
+                                                   y: aMessage.y / vp.zoom}));
+    }
   },
 
   setEditState: function setEditState(aEditState) {
@@ -676,6 +821,8 @@ var Input = {
       B: ['movePrevious', 'Button'],
       c: ['moveNext', 'Combobox'],
       C: ['movePrevious', 'Combobox'],
+      d: ['moveNext', 'Landmark'],
+      D: ['movePrevious', 'Landmark'],
       e: ['moveNext', 'Entry'],
       E: ['movePrevious', 'Entry'],
       f: ['moveNext', 'FormElement'],

@@ -54,10 +54,10 @@ ImageLayerComposite::Disconnect()
 LayerRenderState
 ImageLayerComposite::GetRenderState()
 {
-  if (!mImageHost) {
-    return LayerRenderState();
+  if (mImageHost) {
+    return mImageHost->GetRenderState();
   }
-  return mImageHost->GetRenderState();
+  return LayerRenderState();
 }
 
 Layer*
@@ -105,8 +105,8 @@ ImageLayerComposite::ComputeEffectiveTransforms(const gfx3DMatrix& aTransformToS
 
   // Snap image edges to pixel boundaries
   gfxRect sourceRect(0, 0, 0, 0);
-  if (mImageHost && mImageHost->GetTextureHost()) {
-    IntSize size = mImageHost->GetTextureHost()->GetSize();
+  if (mImageHost && mImageHost->GetDeprecatedTextureHost()) {
+    IntSize size = mImageHost->GetDeprecatedTextureHost()->GetSize();
     sourceRect.SizeTo(size.width, size.height);
     if (mScaleMode != SCALE_NONE &&
         sourceRect.width != 0.0 && sourceRect.height != 0.0) {

@@ -4,6 +4,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// HttpLog.h should generally be included first
+#include "HttpLog.h"
+
 #include "nsHttp.h"
 #include "SpdySession2.h"
 #include "SpdyStream2.h"
@@ -332,6 +335,12 @@ SpdySession2::AddStream(nsAHttpTransaction *aHttpTransaction,
     LOG3(("SpdySession2::AddStream %p stream %p queued.",
           this, stream));
     mQueuedStreams.Push(stream);
+  }
+
+  if (!(aHttpTransaction->Caps() & NS_HTTP_ALLOW_KEEPALIVE)) {
+    LOG3(("SpdySession2::AddStream %p transaction %p forces keep-alive off.\n",
+          this, aHttpTransaction));
+    DontReuse();
   }
 
   return true;

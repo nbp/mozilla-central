@@ -59,6 +59,9 @@
           return this._visibleTabs;
         ]]></getter>
       </property>
+
+      <field name="closingTabsEnum" readonly="true">({ ALL: 0, OTHER: 1, TO_END: 2 });</field>
+
       <field name="_visibleTabs">null</field>
 
       <field name="mURIFixup" readonly="true">
@@ -122,6 +125,10 @@
         false
       </field>
 
+      <field name="_lastFindValue">
+        ""
+      </field>
+
       <property name="_numPinnedTabs" readonly="true">
         <getter><![CDATA[
           for (var i = 0; i < this.tabs.length; i++) {
@@ -131,6 +138,40 @@
           return i;
         ]]></getter>
       </property>
+
+      <method name="isFindBarInitialized">
+        <parameter name="aTab"/>
+        <body><![CDATA[
+          return (aTab || this.selectedTab)._findBar != undefined;
+        ]]></body>
+      </method>
+
+      <method name="getFindBar">
+        <parameter name="aTab"/>
+        <body><![CDATA[
+          if (!aTab)
+            aTab = this.selectedTab;
+
+          if (aTab._findBar)
+            return aTab._findBar;
+
+          let findBar = document.createElementNS(this.namespaceURI, "findbar");
+          let browser = this.getBrowserForTab(aTab);
+          let browserContainer = this.getBrowserContainer(browser);
+          findBar.setAttribute("position", "top");
+          browserContainer.insertBefore(findBar, browserContainer.firstChild);
+
+          // Force a style flush to ensure that our binding is attached.
+          findBar.clientTop;
+
+          findBar.browser = browser;
+          findBar._findField.value = this._lastFindValue;
+
+          aTab._findBar = findBar;
+
+          return findBar;
+        ]]></body>
+      </method>
 
       <method name="updateWindowResizers">
         <body><![CDATA[
@@ -647,6 +688,17 @@
                 // previous location.
                 this.mBrowser.missingPlugins = null;
 
+                if (this.mTabBrowser.isFindBarInitialized(this.mTab)) {
+                  let findBar = this.mTabBrowser.getFindBar(this.mTab);
+
+                  // Close the Find toolbar if we're in old-style TAF mode
+                  if (findBar.findMode != findBar.FIND_NORMAL)
+                    findBar.close();
+
+                  // fix bug 253793 - turn off highlight when page changes
+                  findBar.getElement("highlight").checked = false;
+                }
+
                 // Don't clear the favicon if this onLocationChange was
                 // triggered by a pushState or a replaceState.  See bug 550565.
                 if (!gMultiProcessBrowser) {
@@ -676,8 +728,10 @@
                                              aFlags]);
               }
 
-              if (topLevel)
+              if (topLevel) {
                 this.mBrowser.lastURI = aLocation;
+                this.mBrowser.lastLocationChange = Date.now();
+              }
             },
 
             onStatusChange: function (aWebProgress, aRequest, aStatus, aMessage) {
@@ -966,9 +1020,11 @@
               this.mCurrentTab.removeAttribute("unread");
               this.selectedTab.lastAccessed = Date.now();
 
-              // Bug 666816 - TypeAheadFind support for e10s
-              if (!gMultiProcessBrowser)
-                this._fastFind.setDocShell(this.mCurrentBrowser.docShell);
+              let oldFindBar = oldTab._findBar;
+              if (oldFindBar &&
+                  oldFindBar.findMode == oldFindBar.FIND_NORMAL &&
+                  !oldFindBar.hidden)
+                this._lastFindValue = oldFindBar._findField.value;
 
               this.updateTitlebar();
 
@@ -1049,11 +1105,11 @@
                   }
                 }
 
-                // If the find bar is focused, keep it focused.
-                if (gFindBarInitialized &&
-                    !gFindBar.hidden &&
-                    gFindBar.getElement("findbar-textbox").getAttribute("focused") == "true")
+                // If the find bar is open, focus it.
+                if (gFindBarInitialized && !gFindBar.hidden) {
+                  gFindBar._findField.focus();
                   break;
+                }
 
                 // Otherwise, focus the content area.
                 let fm = Cc["@mozilla.org/focus-manager;1"].getService(Ci.nsIFocusManager);
@@ -1380,6 +1436,12 @@
             t._tPos = position;
             this.tabContainer._setPositionalAttributes();
 
+            // Prevent the superfluous initial load of a blank document
+            // if we're going to load something other than about:blank.
+            if (!uriIsAboutBlank) {
+              b.setAttribute("nodefaultsrc", "true");
+            }
+
             // NB: this appendChild call causes us to run constructors for the
             // browser element, which fires off a bunch of notifications. Some
             // of those notifications can cause code to run that inspects our
@@ -1388,13 +1450,6 @@
             this.mPanelContainer.appendChild(notificationbox);
 
             this.tabContainer.updateVisibility();
-
-            if (!uriIsAboutBlank) {
-              // Stop the existing about:blank load.  Otherwise, if aURI
-              // doesn't stop in-progress loads on its own, we'll get into
-              // trouble with multiple parallel loads running at once.
-              b.stop();
-            }
 
             // wire up a progress listener for the new browser object.
             var tabListener = this.mTabProgressListener(t, b, uriIsAboutBlank);
@@ -1405,15 +1460,7 @@
             this.mTabListeners[position] = tabListener;
             this.mTabFilters[position] = filter;
 
-            b._fastFind = this.fastFind;
             b.droppedLinkHandler = handleDroppedLink;
-
-            // Dispatch a new tab notification.  We do this once we're
-            // entirely done, so that things are in a consistent state
-            // even if the event listener opens or closes tabs.
-            var evt = document.createEvent("Events");
-            evt.initEvent("TabOpen", true, false);
-            t.dispatchEvent(evt);
 
             // If we just created a new tab that loads the default
             // newtab url, swap in a preloaded page if possible.
@@ -1423,6 +1470,13 @@
                 !PrivateBrowsingUtils.isWindowPrivate(window)) {
               docShellsSwapped = gBrowserNewTabPreloader.newTab(t);
             }
+
+            // Dispatch a new tab notification.  We do this once we're
+            // entirely done, so that things are in a consistent state
+            // even if the event listener opens or closes tabs.
+            var evt = document.createEvent("Events");
+            evt.initEvent("TabOpen", true, false);
+            t.dispatchEvent(evt);
 
             // If we didn't swap docShells with a preloaded browser
             // then let's just continue loading the page normally.
@@ -1477,7 +1531,7 @@
                 // This call to adjustTabstrip is redundant but needed so that
                 // when opening a second tab, the first tab's close buttons
                 // appears immediately rather than when the transition ends.
-                if (this.tabContainer.childNodes.length == 2)
+                if (this.tabs.length - this._removingTabs.length == 2)
                   this.tabContainer.adjustTabstrip();
               }.bind(this));
             }
@@ -1488,17 +1542,33 @@
       </method>
 
       <method name="warnAboutClosingTabs">
-      <parameter name="aAll"/>
+      <parameter name="aCloseTabs"/>
+      <parameter name="aTab"/>
       <body>
         <![CDATA[
-          var tabsToClose = (aAll ?
-                               this.tabs.length - this._removingTabs.length :
-                               this.visibleTabs.length - 1)
-                            - gBrowser._numPinnedTabs;
+          var tabsToClose;
+          switch (aCloseTabs) {
+            case this.closingTabsEnum.ALL:
+              tabsToClose = this.tabs.length - this._removingTabs.length -
+                            gBrowser._numPinnedTabs;
+              break;
+            case this.closingTabsEnum.OTHER:
+              tabsToClose = this.visibleTabs.length - 1 - gBrowser._numPinnedTabs;
+              break;
+            case this.closingTabsEnum.TO_END:
+              if (!aTab)
+                throw new Error("Required argument missing: aTab");
+
+              tabsToClose = this.getTabsToTheEndFrom(aTab).length;
+              break;
+            default:
+              throw new Error("Invalid argument: " + aCloseTabs);
+          }
+
           if (tabsToClose <= 1)
             return true;
 
-          const pref = aAll ?
+          const pref = aCloseTabs == this.closingTabsEnum.ALL ?
                        "browser.tabs.warnOnClose" : "browser.tabs.warnOnCloseOtherTabs";
           var shouldPrompt = Services.prefs.getBoolPref(pref);
           if (!shouldPrompt)
@@ -1525,18 +1595,46 @@
                          + (ps.BUTTON_TITLE_CANCEL * ps.BUTTON_POS_1),
                          bundle.getString("tabs.closeButtonMultiple"),
                          null, null,
-                         aAll ?
+                         aCloseTabs == this.closingTabsEnum.ALL ?
                            bundle.getString("tabs.closeWarningPromptMe") : null,
                          warnOnClose);
           var reallyClose = (buttonPressed == 0);
 
           // don't set the pref unless they press OK and it's false
-          if (aAll && reallyClose && !warnOnClose.value)
+          if (aCloseTabs == this.closingTabsEnum.ALL && reallyClose && !warnOnClose.value)
             Services.prefs.setBoolPref(pref, false);
 
           return reallyClose;
         ]]>
       </body>
+      </method>
+
+      <method name="getTabsToTheEndFrom">
+        <parameter name="aTab"/>
+        <body>
+          <![CDATA[
+            var tabsToEnd = [];
+            let tabs = this.visibleTabs;
+            for (let i = tabs.length - 1; tabs[i] != aTab && i >= 0; --i) {
+              tabsToEnd.push(tabs[i]);
+            }
+            return tabsToEnd.reverse();
+          ]]>
+        </body>
+      </method>
+
+      <method name="removeTabsToTheEndFrom">
+        <parameter name="aTab"/>
+        <body>
+          <![CDATA[
+            if (this.warnAboutClosingTabs(this.closingTabsEnum.TO_END, aTab)) {
+              let tabs = this.getTabsToTheEndFrom(aTab);
+              for (let i = tabs.length - 1; i >= 0; --i) {
+                this.removeTab(tabs[i], {animate: true});
+              }
+            }
+          ]]>
+        </body>
       </method>
 
       <method name="removeAllTabsBut">
@@ -1546,7 +1644,7 @@
             if (aTab.pinned)
               return;
 
-            if (this.warnAboutClosingTabs(false)) {
+            if (this.warnAboutClosingTabs(this.closingTabsEnum.OTHER)) {
               let tabs = this.visibleTabs;
               this.selectedTab = aTab;
 
@@ -1617,6 +1715,13 @@
             this._blurTab(aTab);
             aTab.style.maxWidth = ""; // ensure that fade-out transition happens
             aTab.removeAttribute("fadein");
+
+            if (this.tabs.length - this._removingTabs.length == 1) {
+              // The second tab just got closed and we will end up with a single
+              // one. Remove the first tab's close button immediately (if needed)
+              // rather than after the tabclose animation ends.
+              this.tabContainer.adjustTabstrip();
+            }
 
             setTimeout(function (tab, tabbrowser) {
               if (tab.parentNode &&
@@ -1977,6 +2082,15 @@
               }
 
               this._swapBrowserDocShells(aOurTab, otherBrowser);
+            }
+
+            // Handle findbar data (if any)
+            let otherFindBar = aOtherTab._findBar;
+            if (otherFindBar &&
+                otherFindBar.findMode == otherFindBar.FIND_NORMAL) {
+              let ourFindBar = this.getFindBar(aOurTab);
+              ourFindBar.hidden = otherFindBar.hidden;
+              ourFindBar._findField.value = otherFindBar._findField.value;
             }
 
             // Finish tearing down the tab that's going away.
@@ -2514,21 +2628,6 @@
       <property name="currentURI"
                 onget="return this.mCurrentBrowser.currentURI;"
                 readonly="true"/>
-
-      <field name="_fastFind">null</field>
-      <property name="fastFind"
-                readonly="true">
-        <getter>
-        <![CDATA[
-          if (!this._fastFind) {
-            this._fastFind = Components.classes["@mozilla.org/typeaheadfind;1"]
-                                       .createInstance(Components.interfaces.nsITypeAheadFind);
-            this._fastFind.init(this.docShell);
-          }
-          return this._fastFind;
-        ]]>
-        </getter>
-      </property>
 
       <property name="docShell"
                 onget="return this.mCurrentBrowser.docShell"
@@ -3163,6 +3262,8 @@
 
       <method name="adjustTabstrip">
         <body><![CDATA[
+          let numTabs = this.childNodes.length -
+                        this.tabbrowser._removingTabs.length;
           // modes for tabstrip
           // 0 - button on active tab only
           // 1 - close buttons on all tabs
@@ -3170,17 +3271,27 @@
           // 3 - close button at the end of the tabstrip
           switch (this.mCloseButtons) {
           case 0:
-            if (this.childNodes.length == 1 && this._closeWindowWithLastTab)
+            if (numTabs == 1 && this._closeWindowWithLastTab)
               this.setAttribute("closebuttons", "hidden");
             else
               this.setAttribute("closebuttons", "activetab");
             break;
           case 1:
-            if (this.childNodes.length == 1) {
+            if (numTabs == 1) {
               if (this._closeWindowWithLastTab)
                 this.setAttribute("closebuttons", "hidden");
               else
                 this.setAttribute("closebuttons", "alltabs");
+            } else if (numTabs == 2) {
+              // This is an optimization to avoid layout flushes by calling
+              // getBoundingClientRect() when we just opened a second tab. In
+              // this case it's highly unlikely that the tab width is smaller
+              // than mTabClipWidth and the tab close button obscures too much
+              // of the tab's label. In the edge case of the window being too
+              // narrow (or if tabClipWidth has been set to a way higher value),
+              // we'll correct the 'closebuttons' attribute after the tabopen
+              // animation has finished.
+              this.setAttribute("closebuttons", "alltabs");
             } else {
               let tab = this.tabbrowser.visibleTabs[this.tabbrowser._numPinnedTabs];
               if (tab && tab.getBoundingClientRect().width > this.mTabClipWidth)

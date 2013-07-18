@@ -4,8 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef jsion_cpu_x64_assembler_h__
-#define jsion_cpu_x64_assembler_h__
+#ifndef ion_x64_Assembler_x64_h
+#define ion_x64_Assembler_x64_h
 
 #include "ion/shared/Assembler-shared.h"
 #include "ion/CompactBuffer.h"
@@ -15,39 +15,39 @@
 namespace js {
 namespace ion {
 
-static const Register rax = { JSC::X86Registers::eax };
-static const Register rbx = { JSC::X86Registers::ebx };
-static const Register rcx = { JSC::X86Registers::ecx };
-static const Register rdx = { JSC::X86Registers::edx };
-static const Register rsi = { JSC::X86Registers::esi };
-static const Register rdi = { JSC::X86Registers::edi };
-static const Register rbp = { JSC::X86Registers::ebp };
-static const Register r8  = { JSC::X86Registers::r8  };
-static const Register r9  = { JSC::X86Registers::r9  };
-static const Register r10 = { JSC::X86Registers::r10 };
-static const Register r11 = { JSC::X86Registers::r11 };
-static const Register r12 = { JSC::X86Registers::r12 };
-static const Register r13 = { JSC::X86Registers::r13 };
-static const Register r14 = { JSC::X86Registers::r14 };
-static const Register r15 = { JSC::X86Registers::r15 };
-static const Register rsp = { JSC::X86Registers::esp };
+static MOZ_CONSTEXPR_VAR Register rax = { JSC::X86Registers::eax };
+static MOZ_CONSTEXPR_VAR Register rbx = { JSC::X86Registers::ebx };
+static MOZ_CONSTEXPR_VAR Register rcx = { JSC::X86Registers::ecx };
+static MOZ_CONSTEXPR_VAR Register rdx = { JSC::X86Registers::edx };
+static MOZ_CONSTEXPR_VAR Register rsi = { JSC::X86Registers::esi };
+static MOZ_CONSTEXPR_VAR Register rdi = { JSC::X86Registers::edi };
+static MOZ_CONSTEXPR_VAR Register rbp = { JSC::X86Registers::ebp };
+static MOZ_CONSTEXPR_VAR Register r8  = { JSC::X86Registers::r8  };
+static MOZ_CONSTEXPR_VAR Register r9  = { JSC::X86Registers::r9  };
+static MOZ_CONSTEXPR_VAR Register r10 = { JSC::X86Registers::r10 };
+static MOZ_CONSTEXPR_VAR Register r11 = { JSC::X86Registers::r11 };
+static MOZ_CONSTEXPR_VAR Register r12 = { JSC::X86Registers::r12 };
+static MOZ_CONSTEXPR_VAR Register r13 = { JSC::X86Registers::r13 };
+static MOZ_CONSTEXPR_VAR Register r14 = { JSC::X86Registers::r14 };
+static MOZ_CONSTEXPR_VAR Register r15 = { JSC::X86Registers::r15 };
+static MOZ_CONSTEXPR_VAR Register rsp = { JSC::X86Registers::esp };
 
-static const FloatRegister xmm0 = { JSC::X86Registers::xmm0 };
-static const FloatRegister xmm1 = { JSC::X86Registers::xmm1 };
-static const FloatRegister xmm2 = { JSC::X86Registers::xmm2 };
-static const FloatRegister xmm3 = { JSC::X86Registers::xmm3 };
-static const FloatRegister xmm4 = { JSC::X86Registers::xmm4 };
-static const FloatRegister xmm5 = { JSC::X86Registers::xmm5 };
-static const FloatRegister xmm6 = { JSC::X86Registers::xmm6 };
-static const FloatRegister xmm7 = { JSC::X86Registers::xmm7 };
-static const FloatRegister xmm8 = { JSC::X86Registers::xmm8 };
-static const FloatRegister xmm9 = { JSC::X86Registers::xmm9 };
-static const FloatRegister xmm10 = { JSC::X86Registers::xmm10 };
-static const FloatRegister xmm11 = { JSC::X86Registers::xmm11 };
-static const FloatRegister xmm12 = { JSC::X86Registers::xmm12 };
-static const FloatRegister xmm13 = { JSC::X86Registers::xmm13 };
-static const FloatRegister xmm14 = { JSC::X86Registers::xmm14 };
-static const FloatRegister xmm15 = { JSC::X86Registers::xmm15 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm0 = { JSC::X86Registers::xmm0 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm1 = { JSC::X86Registers::xmm1 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm2 = { JSC::X86Registers::xmm2 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm3 = { JSC::X86Registers::xmm3 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm4 = { JSC::X86Registers::xmm4 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm5 = { JSC::X86Registers::xmm5 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm6 = { JSC::X86Registers::xmm6 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm7 = { JSC::X86Registers::xmm7 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm8 = { JSC::X86Registers::xmm8 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm9 = { JSC::X86Registers::xmm9 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm10 = { JSC::X86Registers::xmm10 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm11 = { JSC::X86Registers::xmm11 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm12 = { JSC::X86Registers::xmm12 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm13 = { JSC::X86Registers::xmm13 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm14 = { JSC::X86Registers::xmm14 };
+static MOZ_CONSTEXPR_VAR FloatRegister xmm15 = { JSC::X86Registers::xmm15 };
 
 // X86-common synonyms.
 static const Register eax = rax;
@@ -59,74 +59,74 @@ static const Register edi = rdi;
 static const Register ebp = rbp;
 static const Register esp = rsp;
 
-static const Register InvalidReg = { JSC::X86Registers::invalid_reg };
-static const FloatRegister InvalidFloatReg = { JSC::X86Registers::invalid_xmm };
+static MOZ_CONSTEXPR_VAR Register InvalidReg = { JSC::X86Registers::invalid_reg };
+static MOZ_CONSTEXPR_VAR FloatRegister InvalidFloatReg = { JSC::X86Registers::invalid_xmm };
 
 static const Register StackPointer = rsp;
 static const Register FramePointer = rbp;
-static const Register JSReturnReg = rcx;
+static MOZ_CONSTEXPR_VAR Register JSReturnReg = rcx;
 // Avoid, except for assertions.
-static const Register JSReturnReg_Type = JSReturnReg;
-static const Register JSReturnReg_Data = JSReturnReg;
+static MOZ_CONSTEXPR_VAR Register JSReturnReg_Type = JSReturnReg;
+static MOZ_CONSTEXPR_VAR Register JSReturnReg_Data = JSReturnReg;
 
-static const Register ReturnReg = rax;
-static const Register ScratchReg = r11;
-static const Register HeapReg = r15;
-static const FloatRegister ReturnFloatReg = xmm0;
-static const FloatRegister ScratchFloatReg = xmm15;
+static MOZ_CONSTEXPR_VAR Register ReturnReg = rax;
+static MOZ_CONSTEXPR_VAR Register ScratchReg = r11;
+static MOZ_CONSTEXPR_VAR Register HeapReg = r15;
+static MOZ_CONSTEXPR_VAR FloatRegister ReturnFloatReg = xmm0;
+static MOZ_CONSTEXPR_VAR FloatRegister ScratchFloatReg = xmm15;
 
-static const Register ArgumentsRectifierReg = r8;
-static const Register CallTempReg0 = rax;
-static const Register CallTempReg1 = rdi;
-static const Register CallTempReg2 = rbx;
-static const Register CallTempReg3 = rcx;
-static const Register CallTempReg4 = rsi;
-static const Register CallTempReg5 = rdx;
-static const Register CallTempReg6 = rbp;
+static MOZ_CONSTEXPR_VAR Register ArgumentsRectifierReg = r8;
+static MOZ_CONSTEXPR_VAR Register CallTempReg0 = rax;
+static MOZ_CONSTEXPR_VAR Register CallTempReg1 = rdi;
+static MOZ_CONSTEXPR_VAR Register CallTempReg2 = rbx;
+static MOZ_CONSTEXPR_VAR Register CallTempReg3 = rcx;
+static MOZ_CONSTEXPR_VAR Register CallTempReg4 = rsi;
+static MOZ_CONSTEXPR_VAR Register CallTempReg5 = rdx;
+static MOZ_CONSTEXPR_VAR Register CallTempReg6 = rbp;
 
 // Different argument registers for WIN64
 #if defined(_WIN64)
-static const Register IntArgReg0 = rcx;
-static const Register IntArgReg1 = rdx;
-static const Register IntArgReg2 = r8;
-static const Register IntArgReg3 = r9;
-static const uint32_t NumIntArgRegs = 4;
-static const Register IntArgRegs[NumIntArgRegs] = { rcx, rdx, r8, r9 };
+static MOZ_CONSTEXPR_VAR Register IntArgReg0 = rcx;
+static MOZ_CONSTEXPR_VAR Register IntArgReg1 = rdx;
+static MOZ_CONSTEXPR_VAR Register IntArgReg2 = r8;
+static MOZ_CONSTEXPR_VAR Register IntArgReg3 = r9;
+static MOZ_CONSTEXPR_VAR uint32_t NumIntArgRegs = 4;
+static MOZ_CONSTEXPR_VAR Register IntArgRegs[NumIntArgRegs] = { rcx, rdx, r8, r9 };
 
-static const Register CallTempNonArgRegs[] = { rax, rdi, rbx, rsi };
+static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { rax, rdi, rbx, rsi };
 static const uint32_t NumCallTempNonArgRegs =
     mozilla::ArrayLength(CallTempNonArgRegs);
 
-static const FloatRegister FloatArgReg0 = xmm0;
-static const FloatRegister FloatArgReg1 = xmm1;
-static const FloatRegister FloatArgReg2 = xmm2;
-static const FloatRegister FloatArgReg3 = xmm3;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg0 = xmm0;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg1 = xmm1;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg2 = xmm2;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg3 = xmm3;
 static const uint32_t NumFloatArgRegs = 4;
 static const FloatRegister FloatArgRegs[NumFloatArgRegs] = { xmm0, xmm1, xmm2, xmm3 };
 #else
-static const Register IntArgReg0 = rdi;
-static const Register IntArgReg1 = rsi;
-static const Register IntArgReg2 = rdx;
-static const Register IntArgReg3 = rcx;
-static const Register IntArgReg4 = r8;
-static const Register IntArgReg5 = r9;
-static const uint32_t NumIntArgRegs = 6;
-static const Register IntArgRegs[NumIntArgRegs] = { rdi, rsi, rdx, rcx, r8, r9 };
+static MOZ_CONSTEXPR_VAR Register IntArgReg0 = rdi;
+static MOZ_CONSTEXPR_VAR Register IntArgReg1 = rsi;
+static MOZ_CONSTEXPR_VAR Register IntArgReg2 = rdx;
+static MOZ_CONSTEXPR_VAR Register IntArgReg3 = rcx;
+static MOZ_CONSTEXPR_VAR Register IntArgReg4 = r8;
+static MOZ_CONSTEXPR_VAR Register IntArgReg5 = r9;
+static MOZ_CONSTEXPR_VAR uint32_t NumIntArgRegs = 6;
+static MOZ_CONSTEXPR_VAR Register IntArgRegs[NumIntArgRegs] = { rdi, rsi, rdx, rcx, r8, r9 };
 
-static const Register CallTempNonArgRegs[] = { rax, rbx };
+static MOZ_CONSTEXPR_VAR Register CallTempNonArgRegs[] = { rax, rbx };
 static const uint32_t NumCallTempNonArgRegs =
     mozilla::ArrayLength(CallTempNonArgRegs);
 
-static const FloatRegister FloatArgReg0 = xmm0;
-static const FloatRegister FloatArgReg1 = xmm1;
-static const FloatRegister FloatArgReg2 = xmm2;
-static const FloatRegister FloatArgReg3 = xmm3;
-static const FloatRegister FloatArgReg4 = xmm4;
-static const FloatRegister FloatArgReg5 = xmm5;
-static const FloatRegister FloatArgReg6 = xmm6;
-static const FloatRegister FloatArgReg7 = xmm7;
-static const uint32_t NumFloatArgRegs = 8;
-static const FloatRegister FloatArgRegs[NumFloatArgRegs] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg0 = xmm0;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg1 = xmm1;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg2 = xmm2;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg3 = xmm3;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg4 = xmm4;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg5 = xmm5;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg6 = xmm6;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgReg7 = xmm7;
+static MOZ_CONSTEXPR_VAR uint32_t NumFloatArgRegs = 8;
+static MOZ_CONSTEXPR_VAR FloatRegister FloatArgRegs[NumFloatArgRegs] = { xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7 };
 #endif
 
 class ABIArgGenerator
@@ -147,14 +147,14 @@ class ABIArgGenerator
     uint32_t stackBytesConsumedSoFar() const { return stackOffset_; }
 
     // Note: these registers are all guaranteed to be different
+    static const Register NonArgReturnVolatileReg0;
     static const Register NonArgReturnVolatileReg1;
-    static const Register NonArgReturnVolatileReg2;
     static const Register NonVolatileReg;
 };
 
-static const Register OsrFrameReg = IntArgReg3;
+static MOZ_CONSTEXPR_VAR Register OsrFrameReg = IntArgReg3;
 
-static const Register PreBarrierReg = rdx;
+static MOZ_CONSTEXPR_VAR Register PreBarrierReg = rdx;
 
 // GCC stack is aligned on 16 bytes, but we don't maintain the invariant in
 // jitted code.
@@ -265,7 +265,7 @@ namespace js {
 namespace ion {
 
 // Return operand from a JS -> JS call.
-static const ValueOperand JSReturnOperand = ValueOperand(JSReturnReg);
+static MOZ_CONSTEXPR_VAR ValueOperand JSReturnOperand = ValueOperand(JSReturnReg);
 
 class Assembler : public AssemblerX86Shared
 {
@@ -310,6 +310,7 @@ class Assembler : public AssemblerX86Shared
     using AssemblerX86Shared::j;
     using AssemblerX86Shared::jmp;
     using AssemblerX86Shared::push;
+    using AssemblerX86Shared::pop;
 
     static uint8_t *PatchableJumpAddress(IonCode *code, size_t index);
     static void PatchJumpEntry(uint8_t *entry, uint8_t *target);
@@ -346,7 +347,7 @@ class Assembler : public AssemblerX86Shared
         }
     }
     void push(const FloatRegister &src) {
-        subq(Imm32(sizeof(void*)), StackPointer);
+        subq(Imm32(sizeof(double)), StackPointer);
         movsd(src, Operand(StackPointer, 0));
     }
     CodeOffsetLabel pushWithPatch(const ImmWord &word) {
@@ -355,13 +356,33 @@ class Assembler : public AssemblerX86Shared
         return label;
     }
 
+    void pop(const FloatRegister &src) {
+        movsd(Operand(StackPointer, 0), src);
+        addq(Imm32(sizeof(double)), StackPointer);
+    }
+
     CodeOffsetLabel movWithPatch(const ImmWord &word, const Register &dest) {
-        movq(word, dest);
+        masm.movq_i64r(word.value, dest.code());
         return masm.currentOffset();
     }
 
+    // Load an ImmWord value into a register. Note that this instruction will
+    // attempt to optimize its immediate field size. When a full 64-bit
+    // immediate is needed for a relocation, use movWithPatch.
     void movq(ImmWord word, const Register &dest) {
-        masm.movq_i64r(word.value, dest.code());
+        // Load a 64-bit immediate into a register. If the value falls into
+        // certain ranges, we can use specialized instructions which have
+        // smaller encodings.
+        if (word.value <= UINT32_MAX) {
+            // movl has a 32-bit unsigned (effectively) immediate field.
+            masm.movl_i32r((uint32_t)word.value, dest.code());
+        } else if ((intptr_t)word.value >= INT32_MIN && (intptr_t)word.value <= INT32_MAX) {
+            // movq has a 32-bit signed immediate field.
+            masm.movq_i32r((int32_t)(intptr_t)word.value, dest.code());
+        } else {
+            // Otherwise use movabs.
+            masm.movq_i64r(word.value, dest.code());
+        }
     }
     void movq(ImmGCPtr ptr, const Register &dest) {
         masm.movq_i64r(ptr.value, dest.code());
@@ -379,7 +400,7 @@ class Assembler : public AssemblerX86Shared
             masm.movq_mr(src.disp(), src.base(), src.index(), src.scale(), dest.code());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void movq(const Register &src, const Operand &dest) {
@@ -394,7 +415,7 @@ class Assembler : public AssemblerX86Shared
             masm.movq_rm(src.code(), dest.disp(), dest.base(), dest.index(), dest.scale());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void movq(Imm32 imm32, const Operand &dest) {
@@ -409,7 +430,7 @@ class Assembler : public AssemblerX86Shared
             masm.movq_i32m(imm32.value, dest.disp(), dest.base(), dest.index(), dest.scale());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void movqsd(const Register &src, const FloatRegister &dest) {
@@ -420,6 +441,10 @@ class Assembler : public AssemblerX86Shared
     }
     void movq(const Register &src, const Register &dest) {
         masm.movq_rr(src.code(), dest.code());
+    }
+
+    void xchgq(const Register &src, const Register &dest) {
+        masm.xchgq_rr(src.code(), dest.code());
     }
 
     void andq(const Register &src, const Register &dest) {
@@ -441,7 +466,7 @@ class Assembler : public AssemblerX86Shared
             masm.addq_im(imm.value, dest.disp(), dest.base());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void addq(const Register &src, const Register &dest) {
@@ -456,7 +481,7 @@ class Assembler : public AssemblerX86Shared
             masm.addq_mr(src.disp(), src.base(), dest.code());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
 
@@ -475,7 +500,7 @@ class Assembler : public AssemblerX86Shared
             masm.subq_mr(src.disp(), src.base(), dest.code());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void shlq(Imm32 imm, const Register &dest) {
@@ -502,7 +527,7 @@ class Assembler : public AssemblerX86Shared
             masm.orq_mr(src.disp(), src.base(), dest.code());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void xorq(const Register &src, const Register &dest) {
@@ -513,16 +538,7 @@ class Assembler : public AssemblerX86Shared
     }
 
     void mov(ImmWord word, const Register &dest) {
-        // If the word value is in [0,UINT32_MAX], we can use the more compact
-        // movl instruction, which has a 32-bit immediate field which it
-        // zero-extends into the 64-bit register.
-        if (word.value <= UINT32_MAX) {
-            uint32_t value32 = static_cast<uint32_t>(word.value);
-            Imm32 imm32(static_cast<int32_t>(value32));
-            movl(imm32, dest);
-        } else {
-            movq(word, dest);
-        }
+        movq(word, dest);
     }
     void mov(const Imm32 &imm32, const Register &dest) {
         movl(imm32, dest);
@@ -546,6 +562,9 @@ class Assembler : public AssemblerX86Shared
         masm.movq_i64r(label->prev(), dest.code());
         label->setPrev(masm.size());
     }
+    void xchg(const Register &src, const Register &dest) {
+        xchgq(src, dest);
+    }
     void lea(const Operand &src, const Register &dest) {
         switch (src.kind()) {
           case Operand::REG_DISP:
@@ -555,7 +574,7 @@ class Assembler : public AssemblerX86Shared
             masm.leaq_mr(src.disp(), src.base(), src.index(), src.scale(), dest.code());
             break;
           default:
-            JS_NOT_REACHED("unexepcted operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexepcted operand kind");
         }
     }
 
@@ -590,7 +609,7 @@ class Assembler : public AssemblerX86Shared
             masm.cmpq_rm(rhs.code(), lhs.disp(), lhs.base());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void cmpq(const Operand &lhs, Imm32 rhs) {
@@ -602,7 +621,7 @@ class Assembler : public AssemblerX86Shared
             masm.cmpq_im(rhs.value, lhs.disp(), lhs.base());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void cmpq(const Register &lhs, const Operand &rhs) {
@@ -614,7 +633,7 @@ class Assembler : public AssemblerX86Shared
             masm.cmpq_mr(rhs.disp(), rhs.base(), lhs.code());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
         }
     }
     void cmpq(const Register &lhs, const Register &rhs) {
@@ -639,7 +658,7 @@ class Assembler : public AssemblerX86Shared
             masm.testq_i32m(rhs.value, lhs.disp(), lhs.base());
             break;
           default:
-            JS_NOT_REACHED("unexpected operand kind");
+            MOZ_ASSUME_UNREACHABLE("unexpected operand kind");
             break;
         }
     }
@@ -758,4 +777,4 @@ GetFloatArgReg(uint32_t intArg, uint32_t floatArg, FloatRegister *out)
 } // namespace ion
 } // namespace js
 
-#endif // jsion_cpu_x64_assembler_h__
+#endif /* ion_x64_Assembler_x64_h */

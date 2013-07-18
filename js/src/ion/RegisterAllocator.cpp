@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "RegisterAllocator.h"
+#include "ion/RegisterAllocator.h"
 
 using namespace js;
 using namespace js::ion;
@@ -16,15 +16,11 @@ AllocationIntegrityState::record()
     if (!instructions.empty())
         return true;
 
-    if (!instructions.reserve(graph.numInstructions()))
+    if (!instructions.appendN(InstructionInfo(), graph.numInstructions()))
         return false;
-    for (size_t i = 0; i < graph.numInstructions(); i++)
-        instructions.infallibleAppend(InstructionInfo());
 
-    if (!virtualRegisters.reserve(graph.numVirtualRegisters()))
+    if (!virtualRegisters.appendN((LDefinition *)NULL, graph.numVirtualRegisters()))
         return false;
-    for (size_t i = 0; i < graph.numVirtualRegisters(); i++)
-        virtualRegisters.infallibleAppend((LDefinition *)NULL);
 
     if (!blocks.reserve(graph.numBlocks()))
         return false;
@@ -290,6 +286,15 @@ AllocationIntegrityState::checkSafepointAllocation(LInstruction *ins,
         }
         JS_ASSERT(safepoint->hasGcPointer(alloc));
         break;
+      case LDefinition::SLOTS:
+        if (populateSafepoints) {
+            IonSpew(IonSpew_RegAlloc, "Safepoint slots v%u i%u %s",
+                    vreg, ins->id(), alloc.toString());
+            if (!safepoint->addSlotsOrElementsPointer(alloc))
+                return false;
+        }
+        JS_ASSERT(safepoint->hasSlotsOrElementsPointer(alloc));
+        break;
 #ifdef JS_NUNBOX32
       // Do not assert that safepoint information for nunbox types is complete,
       // as if a vreg for a value's components are copied in multiple places
@@ -425,8 +430,7 @@ AllocationIntegrityState::dump()
     // were discovered.
 
     Vector<IntegrityItem, 20, SystemAllocPolicy> seenOrdered;
-    for (size_t i = 0; i < seen.count(); i++)
-        seenOrdered.append(IntegrityItem());
+    seenOrdered.appendN(IntegrityItem(), seen.count());
 
     for (IntegrityItemSet::Enum iter(seen); !iter.empty(); iter.popFront()) {
         IntegrityItem item = iter.front();

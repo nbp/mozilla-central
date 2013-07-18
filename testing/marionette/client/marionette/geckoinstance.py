@@ -13,6 +13,9 @@ class GeckoInstance(object):
     required_prefs = {"marionette.defaultPrefs.enabled": True,
                       "marionette.defaultPrefs.port": 2828,
                       "startup.homepage_welcome_url": "about:blank",
+                      "browser.shell.checkDefaultBrowser": False,
+                      "browser.startup.page": 0,
+                      "browser.sessionstore.resume_from_crash": False,
                       "browser.warnOnQuit": False}
 
     def __init__(self, host, port, bin, profile):
@@ -38,7 +41,7 @@ class GeckoInstance(object):
         self.runner = runner_class.create(
             binary=self.bin,
             profile_args=profile_args,
-            cmdargs=['-no-remote'],
+            cmdargs=['-no-remote', '-marionette'],
             kp_kwargs={
                 'processOutputLine': [NullOutput()],
                 'logfile': self.gecko_log})

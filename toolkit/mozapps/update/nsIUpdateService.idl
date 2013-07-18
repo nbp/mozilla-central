@@ -87,7 +87,7 @@ interface nsIUpdatePatch : nsISupports
  * that the front end and other application services can use to learn more
  * about what is going on.
  */
-[scriptable, uuid(8f7185a7-056a-45a8-985c-1cb39cf7b7a8)]
+[scriptable, uuid(6b0b7721-6746-443d-8cb0-c6199d7f28a6)]
 interface nsIUpdate : nsISupports
 {
   /**
@@ -178,10 +178,9 @@ interface nsIUpdate : nsISupports
   attribute boolean showNeverForVersion;
 
   /**
-   * Whether to show the survey link in the update prompt. The url must also be
-   * present in the app.update.surveyURL preference.
+   * Whether the update is no longer supported on this system.
    */
-  attribute boolean showSurvey;
+  attribute boolean unsupported;
   
   /**
    * Allows overriding the default amount of time in seconds before prompting the
@@ -352,9 +351,15 @@ interface nsIUpdateChecker : nsISupports
  * background update checks and provides utilities for selecting and
  * downloading update patches.
  */
-[scriptable, uuid(900b4a18-3bef-4f3e-bcf5-84dce0021c6d)]
+[scriptable, uuid(579ef84b-3e66-46fb-aeb4-799db5ade506)]
 interface nsIApplicationUpdateService : nsISupports
 {
+  /**
+   * Checks for available updates in the background using the listener provided
+   * by the application update service for background checks.
+   */
+  void checkForBackgroundUpdates();
+
   /**
    * The Update Checker used for background update checking.
    */
@@ -395,13 +400,8 @@ interface nsIApplicationUpdateService : nsISupports
   AString downloadUpdate(in nsIUpdate update, in boolean background);
 
   /**
-   * Apply an update in the background.
-   */
-  void applyUpdateInBackground(in nsIUpdate update);
-
-  /**
    * Get the Active Updates directory
-   * @returns The active updates directory.
+   * @returns An nsIFile for the active updates directory.
    */
   nsIFile getUpdatesDirectory();
 
@@ -454,6 +454,10 @@ interface nsIUpdateProcessor : nsISupports
   /**
    * Processes the update which has been downloaded.
    * This happens without restarting the application.
+   * On Windows, this can also be used for switching to an applied
+   * update request.
+   * @param update The update being applied, or null if this is a switch
+   *               to updated application request.  Must be non-null on GONK.
    */
   void processUpdate(in nsIUpdate update);
 };

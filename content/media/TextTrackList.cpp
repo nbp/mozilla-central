@@ -21,6 +21,15 @@ TextTrackList::TextTrackList(nsISupports* aGlobal) : mGlobal(aGlobal)
   SetIsDOMBinding();
 }
 
+void
+TextTrackList::Update(double aTime)
+{
+  uint32_t length = Length(), i;
+  for (i = 0; i < length; i++) {
+    mTextTracks[i]->Update(aTime);
+  }
+}
+
 JSObject*
 TextTrackList::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aScope)
 {
@@ -43,6 +52,19 @@ TextTrackList::AddTextTrack(TextTrackKind aKind,
   mTextTracks.AppendElement(track);
   // TODO: dispatch addtrack event
   return track.forget();
+}
+
+TextTrack*
+TextTrackList::GetTrackById(const nsAString& aId)
+{
+  nsAutoString id;
+  for (uint32_t i = 0; i < Length(); i++) {
+    mTextTracks[i]->GetId(id);
+    if (aId.Equals(id)) {
+      return mTextTracks[i];
+    }
+  }
+  return nullptr;
 }
 
 void

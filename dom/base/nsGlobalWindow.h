@@ -15,6 +15,7 @@
 #include "nsAutoPtr.h"
 #include "nsWeakReference.h"
 #include "nsDataHashtable.h"
+#include "nsJSThingHashtable.h"
 #include "nsCycleCollectionParticipant.h"
 
 // Interfaces Needed
@@ -59,11 +60,12 @@
 #include "nsIIdleObserver.h"
 #include "nsIDOMWakeLock.h"
 #ifdef MOZ_GAMEPAD
-#include "nsDOMGamepad.h"
+#include "mozilla/dom/Gamepad.h"
 #endif
 #include "nsIDocument.h"
 
 #include "mozilla/dom/EventTarget.h"
+#include "Units.h"
 
 // JS includes
 #include "jsapi.h"
@@ -94,7 +96,6 @@
 #define MIN_IDLE_NOTIFICATION_TIME_S 1
 
 class nsIContent;
-class nsIDOMBarProp;
 class nsIDocument;
 class nsPresContext;
 class nsIDOMCrypto;
@@ -102,7 +103,6 @@ class nsIDOMEvent;
 class nsIScrollableFrame;
 class nsIControllers;
 
-class nsBarProp;
 class nsLocation;
 class nsScreen;
 class nsHistory;
@@ -121,6 +121,7 @@ class nsWindowSizes;
 
 namespace mozilla {
 namespace dom {
+class BarProp;
 class Navigator;
 class URL;
 class SpeechSynthesis;
@@ -442,6 +443,7 @@ public:
   void DispatchDOMWindowCreated();
   virtual NS_HIDDEN_(void) SetOpenerWindow(nsIDOMWindow* aOpener,
                                            bool aOriginalOpener);
+  // Outer windows only.
   virtual NS_HIDDEN_(void) EnsureSizeUpToDate();
 
   virtual NS_HIDDEN_(nsIDOMWindow*) EnterModalState();
@@ -691,15 +693,19 @@ public:
   }
 
 #ifdef MOZ_GAMEPAD
-  void AddGamepad(uint32_t aIndex, nsDOMGamepad* aGamepad);
+  void AddGamepad(uint32_t aIndex, mozilla::dom::Gamepad* aGamepad);
   void RemoveGamepad(uint32_t aIndex);
-  already_AddRefed<nsDOMGamepad> GetGamepad(uint32_t aIndex);
+  void GetGamepads(nsTArray<nsRefPtr<mozilla::dom::Gamepad> >& aGamepads);
+  already_AddRefed<mozilla::dom::Gamepad> GetGamepad(uint32_t aIndex);
   void SetHasSeenGamepadInput(bool aHasSeen);
   bool HasSeenGamepadInput();
   void SyncGamepadState();
   static PLDHashOperator EnumGamepadsForSync(const uint32_t& aKey,
-                                             nsDOMGamepad* aData,
-                                             void* userArg);
+                                             mozilla::dom::Gamepad* aData,
+                                             void* aUserArg);
+  static PLDHashOperator EnumGamepadsForGet(const uint32_t& aKey,
+                                            mozilla::dom::Gamepad* aData,
+                                            void* aUserArg);
 #endif
 
   // Enable/disable updates for gamepad input.
@@ -768,6 +774,8 @@ public:
   mozilla::dom::SpeechSynthesis* GetSpeechSynthesisInternal();
 #endif
 
+  mozilla::dom::BarProp* Scrollbars();
+
 protected:
   // Array of idle observers that are notified of idle events.
   nsTObserverArray<IdleObserverHolder> mIdleObservers;
@@ -797,7 +805,7 @@ protected:
   static bool sIdleObserversAPIFuzzTimeDisabled;
 
   friend class HashchangeCallback;
-  friend class nsBarProp;
+  friend class mozilla::dom::BarProp;
 
   // Object Management
   virtual ~nsGlobalWindow();
@@ -990,9 +998,14 @@ protected:
                        bool aDoFlush);
   nsresult GetScrollMaxXY(int32_t* aScrollMaxX, int32_t* aScrollMaxY);
 
+  // Outer windows only.
+  nsresult GetInnerSize(mozilla::CSSIntSize& aSize);
+
   nsresult GetOuterSize(nsIntSize* aSizeCSSPixels);
   nsresult SetOuterSize(int32_t aLengthCSSPixels, bool aIsWidth);
   nsRect GetInnerScreenRect();
+
+  void ScrollTo(const mozilla::CSSIntPoint& aScroll);
 
   bool IsFrame()
   {
@@ -1154,7 +1167,7 @@ protected:
   // Indicates whether this window wants gamepad input events
   bool                   mHasGamepad : 1;
 #ifdef MOZ_GAMEPAD
-  nsRefPtrHashtable<nsUint32HashKey, nsDOMGamepad> mGamepads;
+  nsRefPtrHashtable<nsUint32HashKey, mozilla::dom::Gamepad> mGamepads;
   bool mHasSeenGamepadInput;
 #endif
 
@@ -1177,12 +1190,12 @@ protected:
   nsRefPtr<Navigator>           mNavigator;
   nsRefPtr<nsScreen>            mScreen;
   nsRefPtr<nsDOMWindowList>     mFrames;
-  nsRefPtr<nsBarProp>           mMenubar;
-  nsRefPtr<nsBarProp>           mToolbar;
-  nsRefPtr<nsBarProp>           mLocationbar;
-  nsRefPtr<nsBarProp>           mPersonalbar;
-  nsRefPtr<nsBarProp>           mStatusbar;
-  nsRefPtr<nsBarProp>           mScrollbars;
+  nsRefPtr<mozilla::dom::BarProp> mMenubar;
+  nsRefPtr<mozilla::dom::BarProp> mToolbar;
+  nsRefPtr<mozilla::dom::BarProp> mLocationbar;
+  nsRefPtr<mozilla::dom::BarProp> mPersonalbar;
+  nsRefPtr<mozilla::dom::BarProp> mStatusbar;
+  nsRefPtr<mozilla::dom::BarProp> mScrollbars;
   nsRefPtr<nsDOMWindowUtils>    mWindowUtils;
   nsString                      mStatus;
   nsString                      mDefaultStatus;
@@ -1233,7 +1246,7 @@ protected:
 
   nsCOMPtr<nsIDOMOfflineResourceList> mApplicationCache;
 
-  nsDataHashtable<nsPtrHashKey<nsXBLPrototypeHandler>, JSObject*> mCachedXBLPrototypeHandlers;
+  nsJSThingHashtable<nsPtrHashKey<nsXBLPrototypeHandler>, JSObject*> mCachedXBLPrototypeHandlers;
 
   nsCOMPtr<nsIDocument> mSuspendedDoc;
 

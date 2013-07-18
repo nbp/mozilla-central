@@ -24,8 +24,10 @@
 #include "ScriptProcessorNode.h"
 #include "ChannelMergerNode.h"
 #include "ChannelSplitterNode.h"
+#include "MediaStreamAudioDestinationNode.h"
 #include "WaveShaperNode.h"
-#include "WaveTable.h"
+#include "PeriodicWave.h"
+#include "ConvolverNode.h"
 #include "nsNetUtil.h"
 
 namespace mozilla {
@@ -47,9 +49,10 @@ AudioContext::AudioContext(nsPIDOMWindow* aWindow,
                            uint32_t aLength,
                            float aSampleRate)
   : mSampleRate(aIsOffline ? aSampleRate : IdealAudioRate())
-  , mDestination(new AudioDestinationNode(this, aIsOffline,
-                                          aNumberOfChannels,
+  , mDestination(new AudioDestinationNode(MOZ_THIS_IN_INITIALIZER_LIST(),
+                                          aIsOffline, aNumberOfChannels,
                                           aLength, aSampleRate))
+  , mNumberOfChannels(aNumberOfChannels)
   , mIsOffline(aIsOffline)
 {
   // Actually play audio
@@ -160,6 +163,12 @@ already_AddRefed<AudioBuffer>
 AudioContext::CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
                           bool aMixToMono, ErrorResult& aRv)
 {
+  // Do not accept this method unless the legacy pref has been set.
+  if (!Preferences::GetBool("media.webaudio.legacy.AudioContext")) {
+    aRv.ThrowNotEnoughArgsError();
+    return nullptr;
+  }
+
   // Sniff the content of the media.
   // Failed type sniffing will be handled by SyncDecodeMedia.
   nsAutoCString contentType;
@@ -167,12 +176,13 @@ AudioContext::CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
                   aBuffer.Data(), aBuffer.Length(),
                   contentType);
 
-  WebAudioDecodeJob job(contentType, this);
+  nsRefPtr<WebAudioDecodeJob> job =
+    new WebAudioDecodeJob(contentType, this, aBuffer);
 
   if (mDecoder.SyncDecodeMedia(contentType.get(),
-                               aBuffer.Data(), aBuffer.Length(), job) &&
-      job.mOutput) {
-    nsRefPtr<AudioBuffer> buffer = job.mOutput.forget();
+                               aBuffer.Data(), aBuffer.Length(), *job) &&
+      job->mOutput) {
+    nsRefPtr<AudioBuffer> buffer = job->mOutput.forget();
     if (aMixToMono) {
       buffer->MixToMono(aJSContext);
     }
@@ -200,6 +210,14 @@ bool IsValidBufferSize(uint32_t aBufferSize) {
   }
 }
 
+}
+
+already_AddRefed<MediaStreamAudioDestinationNode>
+AudioContext::CreateMediaStreamDestination()
+{
+  nsRefPtr<MediaStreamAudioDestinationNode> node =
+      new MediaStreamAudioDestinationNode(this);
+  return node.forget();
 }
 
 already_AddRefed<ScriptProcessorNode>
@@ -263,6 +281,13 @@ AudioContext::CreatePanner()
   return pannerNode.forget();
 }
 
+already_AddRefed<ConvolverNode>
+AudioContext::CreateConvolver()
+{
+  nsRefPtr<ConvolverNode> convolverNode = new ConvolverNode(this);
+  return convolverNode.forget();
+}
+
 already_AddRefed<ChannelSplitterNode>
 AudioContext::CreateChannelSplitter(uint32_t aNumberOfOutputs, ErrorResult& aRv)
 {
@@ -307,10 +332,10 @@ AudioContext::CreateBiquadFilter()
   return filterNode.forget();
 }
 
-already_AddRefed<WaveTable>
-AudioContext::CreateWaveTable(const Float32Array& aRealData,
-                              const Float32Array& aImagData,
-                              ErrorResult& aRv)
+already_AddRefed<PeriodicWave>
+AudioContext::CreatePeriodicWave(const Float32Array& aRealData,
+                                 const Float32Array& aImagData,
+                                 ErrorResult& aRv)
 {
   if (aRealData.Length() != aImagData.Length() ||
       aRealData.Length() == 0 ||
@@ -319,10 +344,10 @@ AudioContext::CreateWaveTable(const Float32Array& aRealData,
     return nullptr;
   }
 
-  nsRefPtr<WaveTable> waveTable =
-    new WaveTable(this, aRealData.Data(), aRealData.Length(),
-                  aImagData.Data(), aImagData.Length());
-  return waveTable.forget();
+  nsRefPtr<PeriodicWave> periodicWave =
+    new PeriodicWave(this, aRealData.Data(), aRealData.Length(),
+                     aImagData.Data(), aImagData.Length());
+  return periodicWave.forget();
 }
 
 AudioListener*
@@ -348,10 +373,10 @@ AudioContext::DecodeAudioData(const ArrayBuffer& aBuffer,
 
   nsCOMPtr<DecodeErrorCallback> failureCallback;
   if (aFailureCallback.WasPassed()) {
-    failureCallback = aFailureCallback.Value().get();
+    failureCallback = &aFailureCallback.Value();
   }
-  nsAutoPtr<WebAudioDecodeJob> job(
-    new WebAudioDecodeJob(contentType, this,
+  nsRefPtr<WebAudioDecodeJob> job(
+    new WebAudioDecodeJob(contentType, this, aBuffer,
                           &aSuccessCallback, failureCallback));
   mDecoder.AsyncDecodeMedia(contentType.get(),
                             aBuffer.Data(), aBuffer.Length(), *job);
@@ -395,6 +420,12 @@ void
 AudioContext::UpdatePannerSource()
 {
   mPannerNodes.EnumerateEntries(FindConnectedSourcesOn, nullptr);
+}
+
+uint32_t
+AudioContext::MaxChannelCount() const
+{
+  return mIsOffline ? mNumberOfChannels : AudioStream::MaxNumberOfChannels();
 }
 
 MediaStreamGraph*
@@ -504,6 +535,20 @@ AudioContext::StartRendering()
   MOZ_ASSERT(mIsOffline, "This should only be called on OfflineAudioContext");
 
   mDestination->StartRendering();
+}
+
+void
+AudioContext::Mute() const
+{
+  MOZ_ASSERT(!mIsOffline);
+  mDestination->Mute();
+}
+
+void
+AudioContext::Unmute() const
+{
+  MOZ_ASSERT(!mIsOffline);
+  mDestination->Unmute();
 }
 
 }

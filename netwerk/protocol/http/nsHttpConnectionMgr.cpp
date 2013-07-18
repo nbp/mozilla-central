@@ -3,6 +3,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+// HttpLog.h should generally be included first
+#include "HttpLog.h"
+
 #include "nsHttpConnectionMgr.h"
 #include "nsHttpConnection.h"
 #include "nsHttpPipeline.h"
@@ -70,7 +73,6 @@ nsHttpConnectionMgr::nsHttpConnectionMgr()
 {
     LOG(("Creating nsHttpConnectionMgr @%x\n", this));
     mCT.Init();
-    mAlternateProtocolHash.Init(16);
     mSpdyPreferredHash.Init();
 }
 
@@ -324,7 +326,8 @@ nsHttpConnectionMgr::DoShiftReloadConnectionCleanup(nsHttpConnectionInfo *aCI)
 
 nsresult
 nsHttpConnectionMgr::SpeculativeConnect(nsHttpConnectionInfo *ci,
-                                        nsIInterfaceRequestor *callbacks)
+                                        nsIInterfaceRequestor *callbacks,
+                                        uint32_t caps)
 {
     LOG(("nsHttpConnectionMgr::SpeculativeConnect [ci=%s]\n",
          ci->HashKey().get()));
@@ -334,7 +337,7 @@ nsHttpConnectionMgr::SpeculativeConnect(nsHttpConnectionInfo *ci,
     nsCOMPtr<nsIInterfaceRequestor> wrappedCallbacks;
     NS_NewInterfaceRequestorAggregation(callbacks, nullptr, getter_AddRefs(wrappedCallbacks));
 
-    uint32_t caps = ci->GetAnonymous() ? NS_HTTP_LOAD_ANONYMOUS : 0;
+    caps |= ci->GetAnonymous() ? NS_HTTP_LOAD_ANONYMOUS : 0;
     nsRefPtr<NullHttpTransaction> trans =
         new NullHttpTransaction(ci, wrappedCallbacks, caps);
 
@@ -636,72 +639,6 @@ nsHttpConnectionMgr::GetSpdyCWNDSetting(nsHttpConnectionInfo *ci)
         return 0;
 
     return ent->mSpdyCWND;
-}
-
-bool
-nsHttpConnectionMgr::GetSpdyAlternateProtocol(nsACString &hostPortKey)
-{
-    if (!gHttpHandler->UseAlternateProtocol())
-        return false;
-
-    // The Alternate Protocol hash is protected under the monitor because
-    // it is read from both the main and the network thread.
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-
-    return mAlternateProtocolHash.Contains(hostPortKey);
-}
-
-void
-nsHttpConnectionMgr::ReportSpdyAlternateProtocol(nsHttpConnection *conn)
-{
-    // Check network.http.spdy.use-alternate-protocol pref
-    if (!gHttpHandler->UseAlternateProtocol())
-        return;
-
-    // For now lets not bypass proxies due to the alternate-protocol header
-    if (conn->ConnectionInfo()->UsingHttpProxy())
-        return;
-
-    nsCString hostPortKey(conn->ConnectionInfo()->Host());
-    if (conn->ConnectionInfo()->Port() != 80) {
-        hostPortKey.Append(NS_LITERAL_CSTRING(":"));
-        hostPortKey.AppendInt(conn->ConnectionInfo()->Port());
-    }
-
-    // The Alternate Protocol hash is protected under the monitor because
-    // it is read from both the main and the network thread.
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-
-    // Check to see if this is already present
-    if (mAlternateProtocolHash.Contains(hostPortKey))
-        return;
-
-    if (mAlternateProtocolHash.Count() > 2000)
-        mAlternateProtocolHash.EnumerateEntries(&TrimAlternateProtocolHash,
-						this);
-
-    mAlternateProtocolHash.PutEntry(hostPortKey);
-}
-
-void
-nsHttpConnectionMgr::RemoveSpdyAlternateProtocol(nsACString &hostPortKey)
-{
-    // The Alternate Protocol hash is protected under the monitor because
-    // it is read from both the main and the network thread.
-    ReentrantMonitorAutoEnter mon(mReentrantMonitor);
-
-    return mAlternateProtocolHash.RemoveEntry(hostPortKey);
-}
-
-PLDHashOperator
-nsHttpConnectionMgr::TrimAlternateProtocolHash(nsCStringHashKey *entry,
-                                               void *closure)
-{
-    nsHttpConnectionMgr *self = (nsHttpConnectionMgr *) closure;
-
-    if (self->mAlternateProtocolHash.Count() > 2000)
-        return PL_DHASH_REMOVE;
-    return PL_DHASH_STOP;
 }
 
 nsHttpConnectionMgr::nsConnectionEntry *
@@ -1368,8 +1305,11 @@ nsHttpConnectionMgr::MakeNewConnection(nsConnectionEntry *ent,
     // If this host is trying to negotiate a SPDY session right now,
     // don't create any new connections until the result of the
     // negotiation is known.
-    if (!(trans->Caps() & NS_HTTP_DISALLOW_SPDY) && RestrictConnections(ent))
+    if (!(trans->Caps() & NS_HTTP_DISALLOW_SPDY) &&
+        (trans->Caps() & NS_HTTP_ALLOW_KEEPALIVE) &&
+        RestrictConnections(ent)) {
         return NS_ERROR_NOT_AVAILABLE;
+    }
 
     // We need to make a new connection. If that is going to exceed the
     // global connection limit then try and free up some room by closing
@@ -1574,6 +1514,7 @@ nsHttpConnectionMgr::TryDispatchTransaction(nsConnectionEntry *ent,
     // 6 - no connection is available - queue it
 
     bool attemptedOptimisticPipeline = !(caps & NS_HTTP_ALLOW_PIPELINING);
+    nsRefPtr<nsHttpConnection> unusedSpdyPersistentConnection;
 
     // step 0
     // look for existing spdy connection - that's always best because it is
@@ -1582,10 +1523,13 @@ nsHttpConnectionMgr::TryDispatchTransaction(nsConnectionEntry *ent,
     if (!(caps & NS_HTTP_DISALLOW_SPDY) && gHttpHandler->IsSpdyEnabled()) {
         nsRefPtr<nsHttpConnection> conn = GetSpdyPreferredConn(ent);
         if (conn) {
-            LOG(("   dispatch to spdy: [conn=%x]\n", conn.get()));
-            trans->RemoveDispatchedAsBlocking();  /* just in case */
-            DispatchTransaction(ent, trans, conn);
-            return NS_OK;
+            if ((caps & NS_HTTP_ALLOW_KEEPALIVE) || !conn->IsExperienced()) {
+                LOG(("   dispatch to spdy: [conn=%x]\n", conn.get()));
+                trans->RemoveDispatchedAsBlocking();  /* just in case */
+                DispatchTransaction(ent, trans, conn);
+                return NS_OK;
+            }
+            unusedSpdyPersistentConnection = conn;
         }
     }
 
@@ -1715,6 +1659,13 @@ nsHttpConnectionMgr::TryDispatchTransaction(nsConnectionEntry *ent,
     }
 
     // step 6
+    if (unusedSpdyPersistentConnection) {
+        // to avoid deadlocks, we need to throw away this perfectly valid SPDY
+        // connection to make room for a new one that can service a no KEEPALIVE
+        // request
+        unusedSpdyPersistentConnection->DontReuse();
+    }
+
     return NS_ERROR_NOT_AVAILABLE;                /* queue it */
 }
 
@@ -2479,9 +2430,9 @@ nsHttpConnectionMgr::TimeoutTickCB(const nsACString &key,
                 LOG(("Force timeout of half open to %s after %.2fms.\n",
                      ent->mConnInfo->HashKey().get(), delta));
                 if (half->SocketTransport())
-                    half->SocketTransport()->Close(NS_ERROR_NET_TIMEOUT);
+                    half->SocketTransport()->Close(NS_ERROR_ABORT);
                 if (half->BackupTransport())
-                    half->BackupTransport()->Close(NS_ERROR_NET_TIMEOUT);
+                    half->BackupTransport()->Close(NS_ERROR_ABORT);
             }
 
             // If this half open hangs around for 5 seconds after we've closed() it
@@ -2877,6 +2828,10 @@ nsHalfOpenSocket::OnOutputStreamReady(nsIAsyncOutputStream *out)
     nsRefPtr<nsHttpConnection> conn = new nsHttpConnection();
     LOG(("nsHalfOpenSocket::OnOutputStreamReady "
          "Created new nshttpconnection %p\n", conn.get()));
+
+    // Some capabilities are needed before a transaciton actually gets
+    // scheduled (e.g. how to negotiate false start)
+    conn->SetTransactionCaps(mTransaction->Caps());
 
     NetAddr peeraddr;
     nsCOMPtr<nsIInterfaceRequestor> callbacks;
@@ -3380,13 +3335,19 @@ nsHttpConnectionMgr::ReadConnectionEntry(const nsACString &key,
         HttpConnInfo info;
         info.ttl = ent->mActiveConns[i]->TimeToLive();
         info.rtt = ent->mActiveConns[i]->Rtt();
+        if (ent->mActiveConns[i]->UsingSpdy())
+            info.SetHTTP2ProtocolVersion(ent->mActiveConns[i]->GetSpdyVersion());
+        else
+            info.SetHTTP1ProtocolVersion(ent->mActiveConns[i]->GetLastHttpResponseVersion());
+
         data.active.AppendElement(info);
     }
     for (uint32_t i = 0; i < ent->mIdleConns.Length(); i++) {
         HttpConnInfo info;
         info.ttl = ent->mIdleConns[i]->TimeToLive();
         info.rtt = ent->mIdleConns[i]->Rtt();
-        data.active.AppendElement(info);
+        info.SetHTTP1ProtocolVersion(ent->mIdleConns[i]->GetLastHttpResponseVersion());
+        data.idle.AppendElement(info);
     }
     data.spdy = ent->mUsingSpdy;
     data.ssl = ent->mConnInfo->UsingSSL();

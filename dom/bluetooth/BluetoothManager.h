@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_bluetooth_bluetoothmanager_h__
 #define mozilla_dom_bluetooth_bluetoothmanager_h__
 
+#include "mozilla/Attributes.h"
 #include "BluetoothCommon.h"
 #include "BluetoothPropertyContainer.h"
 #include "nsDOMEventTargetHelper.h"
@@ -28,18 +29,17 @@ public:
 
   NS_REALLY_FORWARD_NSIDOMEVENTTARGET(nsDOMEventTargetHelper)
 
+  // Never returns null
   static already_AddRefed<BluetoothManager>
-  Create(nsPIDOMWindow* aWindow);
+    Create(nsPIDOMWindow* aWindow);
+  static bool CheckPermission(nsPIDOMWindow* aWindow);
   void Notify(const BluetoothSignal& aData);
-  virtual void SetPropertyByValue(const BluetoothNamedValue& aValue);
+  virtual void SetPropertyByValue(const BluetoothNamedValue& aValue) MOZ_OVERRIDE;
 private:
   BluetoothManager(nsPIDOMWindow* aWindow);
   ~BluetoothManager();
 };
 
 END_BLUETOOTH_NAMESPACE
-
-nsresult NS_NewBluetoothManager(nsPIDOMWindow* aWindow,
-                                nsIDOMBluetoothManager** aBluetoothManager);
 
 #endif

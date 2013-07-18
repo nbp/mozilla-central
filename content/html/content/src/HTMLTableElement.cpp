@@ -235,7 +235,7 @@ TableRowsCollection::NamedItem(JSContext* cx, const nsAString& name,
         JS::Rooted<JSObject*> wrapper(cx, nsWrapperCache::GetWrapper());
         JSAutoCompartment ac(cx, wrapper);
         JS::Rooted<JS::Value> v(cx);
-        if (!mozilla::dom::WrapObject(cx, wrapper, item, v.address())) {
+        if (!mozilla::dom::WrapObject(cx, wrapper, item, &v)) {
           error.Throw(NS_ERROR_FAILURE);
           return nullptr;
         }
@@ -297,7 +297,6 @@ HTMLTableElement::HTMLTableElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo),
     mTableInheritedAttributes(TABLE_ATTRS_DIRTY)
 {
-  SetIsDOMBinding();
 }
 
 HTMLTableElement::~HTMLTableElement()
@@ -332,10 +331,10 @@ NS_IMPL_RELEASE_INHERITED(HTMLTableElement, Element)
 
 // QueryInterface implementation for HTMLTableElement
 NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(HTMLTableElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE1(HTMLTableElement, nsIDOMHTMLTableElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLTableElement,
-                                               nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
+  NS_INTERFACE_TABLE_INHERITED1(HTMLTableElement, nsIDOMHTMLTableElement)
+  NS_INTERFACE_TABLE_TO_MAP_SEGUE
+NS_ELEMENT_INTERFACE_MAP_END
 
 
 NS_IMPL_ELEMENT_CLONE(HTMLTableElement)
@@ -709,6 +708,35 @@ HTMLTableElement::DeleteCaption()
   }
 
   return NS_OK;
+}
+
+already_AddRefed<nsGenericHTMLElement>
+HTMLTableElement::CreateTBody()
+{
+  nsCOMPtr<nsINodeInfo> nodeInfo =
+    OwnerDoc()->NodeInfoManager()->GetNodeInfo(nsGkAtoms::tbody, nullptr,
+                                               kNameSpaceID_XHTML,
+                                               nsIDOMNode::ELEMENT_NODE);
+  MOZ_ASSERT(nodeInfo);
+
+  nsCOMPtr<nsGenericHTMLElement> newBody =
+    NS_NewHTMLTableSectionElement(nodeInfo.forget());
+  MOZ_ASSERT(newBody);
+
+  nsIContent* referenceNode = nullptr;
+  for (nsIContent* child = nsINode::GetLastChild();
+       child;
+       child = child->GetPreviousSibling()) {
+    if (child->IsHTML(nsGkAtoms::tbody)) {
+      referenceNode = child->GetNextSibling();
+      break;
+    }
+  }
+
+  ErrorResult rv;
+  nsINode::InsertBefore(*newBody, referenceNode, rv);
+
+  return newBody.forget();
 }
 
 already_AddRefed<nsGenericHTMLElement>

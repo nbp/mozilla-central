@@ -6,11 +6,9 @@
 
 #include "js/MemoryMetrics.h"
 
-#include "mozilla/Assertions.h"
 #include "mozilla/DebugOnly.h"
 
 #include "jsapi.h"
-#include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsgc.h"
 #include "jsobj.h"
@@ -18,6 +16,7 @@
 
 #include "ion/BaselineJIT.h"
 #include "ion/Ion.h"
+#include "vm/Runtime.h"
 #include "vm/Shape.h"
 
 #include "jsobjinlines.h"
@@ -174,9 +173,9 @@ StatsCellCallback(JSRuntime *rt, void *data, void *thing, JSGCTraceKind traceKin
       case JSTRACE_OBJECT: {
         JSObject *obj = static_cast<JSObject *>(thing);
         CompartmentStats *cStats = GetCompartmentStats(obj->compartment());
-        if (obj->isFunction())
+        if (obj->is<JSFunction>())
             cStats->gcHeapObjectsFunction += thingSize;
-        else if (obj->isArray())
+        else if (obj->is<ArrayObject>())
             cStats->gcHeapObjectsDenseArray += thingSize;
         else if (obj->isCrossCompartmentWrapper())
             cStats->gcHeapObjectsCrossCompartmentWrapper += thingSize;

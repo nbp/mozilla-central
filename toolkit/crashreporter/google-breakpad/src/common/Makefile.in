@@ -9,11 +9,9 @@ VPATH		= @srcdir@
 
 include $(DEPTH)/config/autoconf.mk
 
-LIBRARY_NAME	= breakpad_common_s
 MSVC_ENABLE_PGO := 1
 ifneq (WINNT,$(OS_TARGET))
 ifdef MOZ_CRASHREPORTER
-HOST_LIBRARY_NAME = host_breakpad_common_s
 endif
 endif
 
@@ -32,15 +30,12 @@ HOST_CPPSRCS = \
   stabs_to_module.cc \
   stabs_reader.cc \
   dwarf_line_to_module.cc \
+  arm_ex_reader.cc \
+  arm_ex_to_module.cc \
   pathname_stripper.cc \
   logging.cc \
   $(NULL)
 endif
-endif
-
-ifeq ($(OS_ARCH),Darwin)
-CMMSRCS += \
-  mac/dump_syms.mm
 endif
 
 DISABLED_CSRCS = \
@@ -49,7 +44,6 @@ DISABLED_CSRCS = \
 
 ifeq ($(OS_TARGET),Android)
 VPATH += $(srcdir)/android
-SSRCS := breakpad_getcontext.S
 TARGET_LOCAL_INCLUDES += -I$(topsrcdir)/toolkit/crashreporter/google-breakpad/src/common/android/include/
 DEFINES += -DNO_STABS_SUPPORT
 endif
@@ -77,7 +71,6 @@ endif
 
 ifneq (WINNT,$(OS_TARGET))
 ifdef MOZ_CRASHREPORTER
-HOST_CSRCS = $(CSRCS)
 endif
 endif
 

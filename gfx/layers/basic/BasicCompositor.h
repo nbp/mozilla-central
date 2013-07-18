@@ -34,7 +34,7 @@ public:
 
   virtual bool Initialize() MOZ_OVERRIDE { return true; };
 
-  virtual void Destroy() MOZ_OVERRIDE { };
+  virtual void Destroy() MOZ_OVERRIDE;
 
   virtual TextureFactoryIdentifier GetTextureFactoryIdentifier() MOZ_OVERRIDE
   {
@@ -83,7 +83,7 @@ public:
     mCopyTarget = aTarget;
   }
   
-  virtual void SetScreenRenderOffset(const gfx::Point& aOffset) MOZ_OVERRIDE {
+  virtual void SetScreenRenderOffset(const ScreenPoint& aOffset) MOZ_OVERRIDE {
   }
 
   virtual void MakeCurrent(MakeCurrentFlags aFlags = 0) { }

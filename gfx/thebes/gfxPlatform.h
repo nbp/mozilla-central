@@ -136,7 +136,7 @@ GetBackendName(mozilla::gfx::BackendType aBackend)
       case mozilla::gfx::BACKEND_NONE:
         return "none";
   }
-  MOZ_NOT_REACHED("Incomplete switch");
+  MOZ_CRASH("Incomplete switch");
 }
 
 class gfxPlatform {
@@ -180,6 +180,9 @@ public:
     virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
       CreateDrawTargetForSurface(gfxASurface *aSurface, const mozilla::gfx::IntSize& aSize);
 
+    virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
+      CreateDrawTargetForUpdateSurface(gfxASurface *aSurface, const mozilla::gfx::IntSize& aSize);
+
     /*
      * Creates a SourceSurface for a gfxASurface. This function does no caching,
      * so the caller should cache the gfxASurface if it will be used frequently.
@@ -190,6 +193,8 @@ public:
      */
     virtual mozilla::RefPtr<mozilla::gfx::SourceSurface>
       GetSourceSurfaceForSurface(mozilla::gfx::DrawTarget *aTarget, gfxASurface *aSurface);
+
+    static void ClearSourceSurfaceForSurface(gfxASurface *aSurface);
 
     virtual mozilla::TemporaryRef<mozilla::gfx::ScaledFont>
       GetScaledFontForFont(mozilla::gfx::DrawTarget* aTarget, gfxFont *aFont);
@@ -223,18 +228,28 @@ public:
       CreateDrawTargetForData(unsigned char* aData, const mozilla::gfx::IntSize& aSize, 
                               int32_t aStride, mozilla::gfx::SurfaceFormat aFormat);
 
-    virtual mozilla::RefPtr<mozilla::gfx::DrawTarget>
-      CreateDrawTargetForFBO(unsigned int aFBOID, mozilla::gl::GLContext* aGLContext,
-                             const mozilla::gfx::IntSize& aSize, mozilla::gfx::SurfaceFormat aFormat);
-
+    /**
+     * Returns true if we will render content using Azure using a gfxPlatform
+     * provided DrawTarget.
+     */
     bool SupportsAzureContent() {
       return GetContentBackend() != mozilla::gfx::BACKEND_NONE;
     }
+
+    /**
+     * Returns true if we should use Azure to render content with aTarget. For
+     * example, it is possible that we are using Direct2D for rendering and thus
+     * using Azure. But we want to render to a CairoDrawTarget, in which case
+     * SupportsAzureContent will return true but SupportsAzureContentForDrawTarget
+     * will return false.
+     */
+    bool SupportsAzureContentForDrawTarget(mozilla::gfx::DrawTarget* aTarget);
 
     virtual bool UseAcceleratedSkiaCanvas();
 
     void GetAzureBackendInfo(mozilla::widget::InfoObject &aObj) {
       aObj.DefineProperty("AzureCanvasBackend", GetBackendName(mPreferredCanvasBackend));
+      aObj.DefineProperty("AzureSkiaAccelerated", UseAcceleratedSkiaCanvas());
       aObj.DefineProperty("AzureFallbackCanvasBackend", GetBackendName(mFallbackCanvasBackend));
       aObj.DefineProperty("AzureContentBackend", GetBackendName(mContentBackend));
     }
@@ -449,10 +464,12 @@ public:
      * only once, and remain the same until restart.
      */
     static bool GetPrefLayersOffMainThreadCompositionEnabled();
+    static bool GetPrefLayersOffMainThreadCompositionForceEnabled();
     static bool GetPrefLayersAccelerationForceEnabled();
     static bool GetPrefLayersAccelerationDisabled();
     static bool GetPrefLayersPreferOpenGL();
     static bool GetPrefLayersPreferD3D9();
+    static int  GetPrefLayoutFrameRate();
 
     /**
      * Are we going to try color management?
@@ -536,6 +553,7 @@ public:
     uint32_t GetOrientationSyncMillis() const;
 
     static bool DrawLayerBorders();
+    static bool DrawFrameCounter();
 
 protected:
     gfxPlatform();
@@ -616,6 +634,8 @@ private:
 
     virtual qcms_profile* GetPlatformCMSOutputProfile();
 
+    virtual bool SupportsOffMainThreadCompositing() { return true; }
+
     nsRefPtr<gfxASurface> mScreenReferenceSurface;
     nsTArray<uint32_t> mCJKPrefLangs;
     nsCOMPtr<nsIObserver> mSRGBOverrideObserver;
@@ -628,6 +648,8 @@ private:
     mozilla::gfx::BackendType mFallbackCanvasBackend;
     // The backend to use for content
     mozilla::gfx::BackendType mContentBackend;
+    // Bitmask of backend types we can use to render content
+    uint32_t mContentBackendBitmask;
 
     mozilla::widget::GfxInfoCollector<gfxPlatform> mAzureCanvasBackendCollector;
     bool mWorkAroundDriverBugs;

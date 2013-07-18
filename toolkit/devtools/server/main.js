@@ -24,10 +24,11 @@ let wantLogging = Services.prefs.getBoolPref("devtools.debugger.log");
 Cu.import("resource://gre/modules/jsdebugger.jsm");
 addDebuggerToGlobal(this);
 
-Cu.import("resource://gre/modules/commonjs/sdk/core/promise.js");
-const { defer, resolve, reject, all } = Promise;
+loadSubScript.call(this, "resource://gre/modules/commonjs/sdk/core/promise.js");
 
 Cu.import("resource://gre/modules/devtools/SourceMap.jsm");
+
+loadSubScript.call(this, "resource://gre/modules/devtools/DevToolsUtils.js");
 
 function dumpn(str) {
   if (wantLogging) {
@@ -48,6 +49,58 @@ const ServerSocket = CC("@mozilla.org/network/server-socket;1",
                         "nsIServerSocket",
                         "initSpecialConnection");
 
+var gRegisteredModules = Object.create(null);
+
+/**
+ * The ModuleAPI object is passed to modules loaded using the
+ * DebuggerServer.registerModule() API.  Modules can use this
+ * object to register actor factories.
+ * Factories registered through the module API will be removed
+ * when the module is unregistered or when the server is
+ * destroyed.
+ */
+function ModuleAPI() {
+  let activeTabActors = new Set();
+  let activeGlobalActors = new Set();
+
+  return {
+    // See DebuggerServer.addGlobalActor for a description.
+    addGlobalActor: function(factory, name) {
+      DebuggerServer.addGlobalActor(factory, name);
+      activeGlobalActors.add(factory);
+    },
+    // See DebuggerServer.removeGlobalActor for a description.
+    removeGlobalActor: function(factory) {
+      DebuggerServer.removeGlobalActor(factory);
+      activeGlobalActors.delete(factory);
+    },
+
+    // See DebuggerServer.addTabActor for a description.
+    addTabActor: function(factory, name) {
+      DebuggerServer.addTabActor(factory, name);
+      activeTabActors.add(factory);
+    },
+    // See DebuggerServer.removeTabActor for a description.
+    removeTabActor: function(factory) {
+      DebuggerServer.removeTabActor(factory);
+      activeTabActors.delete(factory);
+    },
+
+    // Destroy the module API object, unregistering any
+    // factories registered by the module.
+    destroy: function() {
+      for (let factory of activeTabActors) {
+        DebuggerServer.removeTabActor(factory);
+      }
+      activeTabActors = null;
+      for (let factory of activeGlobalActors) {
+        DebuggerServer.removeGlobalActor(factory);
+      }
+      activeGlobalActors = null;
+    }
+  }
+};
+
 /***
  * Public API
  */
@@ -65,6 +118,7 @@ var DebuggerServer = {
 
   LONG_STRING_LENGTH: 10000,
   LONG_STRING_INITIAL_LENGTH: 1000,
+  LONG_STRING_READ_LENGTH: 1000,
 
   /**
    * A handler function that prompts the user to accept or decline the incoming
@@ -114,7 +168,7 @@ var DebuggerServer = {
 
     this.xpcInspector = Cc["@mozilla.org/jsinspector;1"].getService(Ci.nsIJSInspector);
     this.initTransport(aAllowConnectionCallback);
-    this.addActors("resource://gre/modules/devtools/server/actors/script.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/root.js");
 
     this._initialized = true;
   },
@@ -143,22 +197,34 @@ var DebuggerServer = {
   get initialized() this._initialized,
 
   /**
-   * Performs cleanup tasks before shutting down the debugger server, if no
-   * connections are currently open. Such tasks include clearing any actor
-   * constructors added at runtime. This method should be called whenever a
-   * debugger server is no longer useful, to avoid memory leaks. After this
-   * method returns, the debugger server must be initialized again before use.
+   * Performs cleanup tasks before shutting down the debugger server. Such tasks
+   * include clearing any actor constructors added at runtime. This method
+   * should be called whenever a debugger server is no longer useful, to avoid
+   * memory leaks. After this method returns, the debugger server must be
+   * initialized again before use.
    */
   destroy: function DS_destroy() {
-    if (Object.keys(this._connections).length == 0) {
-      this.closeListener();
-      this.globalActorFactories = {};
-      this.tabActorFactories = {};
-      delete this._allowConnection;
-      this._transportInitialized = false;
-      this._initialized = false;
-      dumpn("Debugger server is shut down.");
+    if (!this._initialized) {
+      return;
     }
+
+    for (let connID of Object.getOwnPropertyNames(this._connections)) {
+      this._connections[connID].close();
+    }
+
+    for (let id of Object.getOwnPropertyNames(gRegisteredModules)) {
+      let mod = gRegisteredModules[id];
+      mod.module.unregister(mod.api);
+    }
+    gRegisteredModules = {};
+
+    this.closeListener();
+    this.globalActorFactories = {};
+    this.tabActorFactories = {};
+    delete this._allowConnection;
+    this._transportInitialized = false;
+    this._initialized = false;
+    dumpn("Debugger server is shut down.");
   },
 
   /**
@@ -174,10 +240,50 @@ var DebuggerServer = {
   },
 
   /**
+   * Register a CommonJS module with the debugger server.
+   * @param id string
+   *    The ID of a CommonJS module.  This module must export
+   *    'register' and 'unregister' functions.
+   */
+  registerModule: function(id) {
+    if (id in gRegisteredModules) {
+      throw new Error("Tried to register a module twice: " + id + "\n");
+    }
+
+    let moduleAPI = ModuleAPI();
+
+    let {devtools} = Cu.import("resource://gre/modules/devtools/Loader.jsm", {});
+    let mod = devtools.require(id);
+    mod.register(moduleAPI);
+    gRegisteredModules[id] = { module: mod, api: moduleAPI };
+  },
+
+  /**
+   * Returns true if a module id has been registered.
+   */
+  isModuleRegistered: function(id) {
+    return (id in gRegisteredModules);
+  },
+
+  /**
+   * Unregister a previously-loaded CommonJS module from the debugger server.
+   */
+  unregisterModule: function(id) {
+    let mod = gRegisteredModules[id];
+    if (!mod) {
+      throw new Error("Tried to unregister a module that was not previously registered.");
+    }
+    mod.module.unregister(mod.api);
+    mod.api.destroy();
+    delete gRegisteredModules[id];
+  },
+
+  /**
    * Install Firefox-specific actors.
    */
   addBrowserActors: function DS_addBrowserActors() {
     this.addActors("resource://gre/modules/devtools/server/actors/webbrowser.js");
+    this.addActors("resource://gre/modules/devtools/server/actors/script.js");
     this.addGlobalActor(this.ChromeDebuggerActor, "chromeDebugger");
     this.addActors("resource://gre/modules/devtools/server/actors/webconsole.js");
     this.addActors("resource://gre/modules/devtools/server/actors/gcli.js");
@@ -186,6 +292,7 @@ var DebuggerServer = {
 
     this.addActors("resource://gre/modules/devtools/server/actors/styleeditor.js");
     this.addActors("resource://gre/modules/devtools/server/actors/webapps.js");
+    this.registerModule("devtools/server/actors/inspector");
   },
 
   /**
@@ -261,7 +368,24 @@ var DebuggerServer = {
     let serverTransport = new LocalDebuggerTransport;
     let clientTransport = new LocalDebuggerTransport(serverTransport);
     serverTransport.other = clientTransport;
-    this._onConnection(serverTransport);
+    let connection = this._onConnection(serverTransport);
+
+    // I'm putting this here because I trust you.
+    //
+    // There are times, when using a local connection, when you're going
+    // to be tempted to just get direct access to the server.  Resist that
+    // temptation!  If you succumb to that temptation, you will make the
+    // fine developers that work on Fennec and Firefox OS sad.  They're
+    // professionals, they'll try to act like they understand, but deep
+    // down you'll know that you hurt them.
+    //
+    // This reference allows you to give in to that temptation.  There are
+    // times this makes sense: tests, for example, and while porting a
+    // previously local-only codebase to the remote protocol.
+    //
+    // But every time you use this, you will feel the shame of having
+    // used a property that starts with a '_'.
+    clientTransport._serverConnection = connection;
 
     return clientTransport;
   },
@@ -313,6 +437,8 @@ var DebuggerServer = {
     conn.addActor(conn.rootActor);
     aTransport.send(conn.rootActor.sayHello());
     aTransport.ready();
+
+    return conn;
   },
 
   /**
@@ -436,7 +562,7 @@ ActorPool.prototype = {
    *
    * @param aActor object
    *        The actor implementation.  If the object has a
-   *        'disconnected' property, it will be called when the actor
+   *        'disconnect' property, it will be called when the actor
    *        pool is cleaned up.
    */
   addActor: function AP_addActor(aActor) {
@@ -484,6 +610,13 @@ ActorPool.prototype = {
   },
 
   /**
+   * Match the api expected by the protocol library.
+   */
+  unmanage: function(aActor) {
+    return this.removeActor(aActor);
+  },
+
+  /**
    * Run all actor cleanups.
    */
   cleanup: function AP_cleanup() {
@@ -524,6 +657,10 @@ DebuggerServerConnection.prototype = {
 
   _transport: null,
   get transport() { return this._transport },
+
+  close: function() {
+    this._transport.close();
+  },
 
   send: function DSC_send(aPacket) {
     this.transport.send(aPacket);
@@ -574,6 +711,13 @@ DebuggerServerConnection.prototype = {
   },
 
   /**
+   * Match the api expected by the protocol library.
+   */
+  unmanage: function(aActor) {
+    return this.removeActor(aActor);
+  },
+
+  /**
    * Look up an actor implementation for an actorID.  Will search
    * all the actor pools registered with the connection.
    *
@@ -581,20 +725,28 @@ DebuggerServerConnection.prototype = {
    *        Actor ID to look up.
    */
   getActor: function DSC_getActor(aActorID) {
-    if (this._actorPool.has(aActorID)) {
-      return this._actorPool.get(aActorID);
-    }
-
-    for each (let pool in this._extraPools) {
-      if (pool.has(aActorID)) {
-        return pool.get(aActorID);
-      }
+    let pool = this.poolFor(aActorID);
+    if (pool) {
+      return pool.get(aActorID);
     }
 
     if (aActorID === "root") {
       return this.rootActor;
     }
 
+    return null;
+  },
+
+  poolFor: function DSC_actorPool(aActorID) {
+    if (this._actorPool && this._actorPool.has(aActorID)) {
+      return this._actorPool;
+    }
+
+    for (let pool of this._extraPools) {
+      if (pool.has(aActorID)) {
+        return pool;
+      }
+    }
     return null;
   },
 
@@ -648,11 +800,14 @@ DebuggerServerConnection.prototype = {
     // Dispatch the request to the actor.
     if (actor.requestTypes && actor.requestTypes[aPacket.type]) {
       try {
-        ret = actor.requestTypes[aPacket.type].bind(actor)(aPacket);
+        this.currentPacket = aPacket;
+        ret = actor.requestTypes[aPacket.type].bind(actor)(aPacket, this);
       } catch(e) {
         this.transport.send(this._unknownError(
           "error occurred while processing '" + aPacket.type,
           e));
+      } finally {
+        delete this.currentPacket;
       }
     } else {
       ret = { error: "unrecognizedPacketType",

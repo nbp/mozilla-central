@@ -27,6 +27,9 @@ const USB_FUNCTION_ADB    = "adb";
 const kNetdInterfaceChangedTopic = "netd-interface-change";
 const kNetdBandwidthControlTopic = "netd-bandwidth-control";
 
+// Use this command to continue the function chain.
+const DUMMY_COMMAND = "tether status";
+
 // Retry 20 times (2 seconds) for usb state transition.
 const USB_FUNCTION_RETRY_TIMES = 20;
 // Check "sys.usb.state" every 100ms.
@@ -67,6 +70,11 @@ function isError(code) {
 function isComplete(code) {
   let type = netdResponseType(code);
   return (type != NETD_COMMAND_PROCEEDING);
+}
+
+function isProceeding(code) {
+  let type = netdResponseType(code);
+  return (type === NETD_COMMAND_PROCEEDING);
 }
 
 function sendBroadcastMessage(code, reason) {
@@ -116,9 +124,6 @@ function usbTetheringFail(params) {
   postMessage(params);
   // Try to roll back to ensure
   // we don't leave the network systems in limbo.
-  let functionChain = [setIpForwardingEnabled,
-                       stopTethering];
-
   // This parameter is used to disable ipforwarding.
   params.enable = false;
   chain(params, gUSBFailChain, null);
@@ -143,6 +148,18 @@ function networkInterfaceStatsSuccess(params) {
   // Notify the main thread.
   params.txBytes = parseFloat(params.resultReason);
 
+  postMessage(params);
+  return true;
+}
+
+function updateUpStreamSuccess(params) {
+  // Notify the main thread.
+  postMessage(params);
+  return true;
+}
+
+function updateUpStreamFail(params) {
+  // Notify the main thread.
   postMessage(params);
   return true;
 }
@@ -229,20 +246,18 @@ function removeDefaultRoute(options) {
  * Add host route for given network interface.
  */
 function addHostRoute(options) {
-  libnetutils.ifc_add_route(options.ifname, options.dns1, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.dns2, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.httpproxy, 32, options.gateway);
-  libnetutils.ifc_add_route(options.ifname, options.mmsproxy, 32, options.gateway);
+  for (let i = 0; i < options.hostnames.length; i++) {
+    libnetutils.ifc_add_route(options.ifname, options.hostnames[i], 32, options.gateway);
+  }
 }
 
 /**
  * Remove host route for given network interface.
  */
 function removeHostRoute(options) {
-  libnetutils.ifc_remove_route(options.ifname, options.dns1, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.dns2, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.httpproxy, 32, options.gateway);
-  libnetutils.ifc_remove_route(options.ifname, options.mmsproxy, 32, options.gateway);
+  for (let i = 0; i < options.hostnames.length; i++) {
+    libnetutils.ifc_remove_route(options.ifname, options.hostnames[i], 32, options.gateway);
+  }
 }
 
 function removeNetworkRoute(options) {
@@ -261,6 +276,7 @@ let gCommandQueue = [];
 let gCurrentCommand = null;
 let gCurrentCallback = null;
 let gPending = false;
+let gReason = [];
 
 /**
  * Handle received data from netd.
@@ -287,23 +303,33 @@ function onNetdMessage(data) {
     reason += String.fromCharCode(octet);
   }
 
+  if (isBroadcastMessage(code)) {
+    debug("Receiving broadcast message from netd.");
+    debug("          ==> Code: " + code + "  Reason: " + reason);
+    sendBroadcastMessage(code, reason);
+    nextNetdCommand();
+    return;
+  }
+
   // Set pending to false before we handle next command.
   debug("Receiving '" + gCurrentCommand + "' command response from netd.");
   debug("          ==> Code: " + code + "  Reason: " + reason);
 
+  gReason.push(reason);
+
   // 1xx response code regards as command is proceeding, we need to wait for
   // final response code such as 2xx, 4xx and 5xx before sending next command.
-  if (isBroadcastMessage(code)) {
-    sendBroadcastMessage(code, reason);
-    nextNetdCommand();
+  if (isProceeding(code)) {
     return;
   }
 
   if (isComplete(code)) {
     gPending = false;
   }
+
   if (gCurrentCallback) {
-    gCurrentCallback(isError(code), {code: code, reason: reason});
+    gCurrentCallback(isError(code), {code: code, reason: gReason.join(" ")});
+    gReason = [];
   }
 
   // Handling pending commands if any.
@@ -349,23 +375,63 @@ function setIpForwardingEnabled(params, callback) {
   if (params.enable) {
     command = "ipfwd enable";
   } else {
-    command = "ipfwd disable";
+    // Don't disable ip forwarding because others interface still need it.
+    // Send the dummy command to continue the function chain.
+    if (params.interfaceList.length > 1) {
+      command = DUMMY_COMMAND;
+    } else {
+      command = "ipfwd disable";
+    }
   }
   return doCommand(command, callback);
 }
 
 function startTethering(params, callback) {
-  let command = "tether start " + params.startIp + " " + params.endIp;
+  let command;
+  // We don't need to start tethering again.
+  // Send the dummy command to continue the function chain.
+  if (params.resultReason.indexOf("started") !== -1) {
+    command = DUMMY_COMMAND;
+  } else {
+    command = "tether start " + params.wifiStartIp + " " + params.wifiEndIp +
+              " " + params.usbStartIp + " " + params.usbEndIp;
+  }
+  return doCommand(command, callback);
+}
+
+function tetheringStatus(params, callback) {
+  let command = "tether status";
   return doCommand(command, callback);
 }
 
 function stopTethering(params, callback) {
-  let command = "tether stop";
+  let command;
+
+  // Don't stop tethering because others interface still need it.
+  // Send the dummy to continue the function chain.
+  if (params.interfaceList.length > 1) {
+    command = DUMMY_COMMAND;
+  } else {
+    command = "tether stop";
+  }
   return doCommand(command, callback);
 }
 
 function tetherInterface(params, callback) {
   let command = "tether interface add " + params.ifname;
+  return doCommand(command, callback);
+}
+
+function preTetherInterfaceList(params, callback) {
+  let command = "tether interface list 0";
+  return doCommand(command, callback);
+}
+
+function postTetherInterfaceList(params, callback) {
+  params.interfaceList = params.resultReason.split(" ");
+
+  // Send the dummy command to continue the function chain.
+  let command = DUMMY_COMMAND;
   return doCommand(command, callback);
 }
 
@@ -386,8 +452,16 @@ function enableNat(params, callback) {
 }
 
 function disableNat(params, callback) {
-  let command = "nat disable " + params.internalIfname + " " +
-                params.externalIfname + " " + "0";
+  let command;
+
+  // Don't disable nat because others interface still need it.
+  // Send the dummy command to continue the function chain.
+  if (params.interfaceList.length > 1) {
+    command = DUMMY_COMMAND;
+  } else {
+    command = "nat disable " + params.internalIfname + " " +
+              params.externalIfname + " " + "0";
+  }
   return doCommand(command, callback);
 }
 
@@ -441,6 +515,18 @@ function setAccessPoint(params, callback) {
                 " " + params.security +
                 " \"" + escapeQuote(params.key) + "\"" +
                 " " + "6 0 8";
+  return doCommand(command, callback);
+}
+
+function cleanUpStream(params, callback) {
+  let command = "nat disable " + params.previous.internalIfname + " " +
+                params.previous.externalIfname + " " + "0";
+  return doCommand(command, callback);
+}
+
+function createUpStream(params, callback) {
+  let command = "nat enable " + params.current.internalIfname + " " +
+                params.current.externalIfname + " " + "0";
   return doCommand(command, callback);
 }
 
@@ -575,6 +661,7 @@ let gWifiEnableChain = [wifiFirmwareReload,
                         setInterfaceUp,
                         tetherInterface,
                         setIpForwardingEnabled,
+                        tetheringStatus,
                         startTethering,
                         setDnsForwarders,
                         enableNat,
@@ -583,8 +670,10 @@ let gWifiEnableChain = [wifiFirmwareReload,
 let gWifiDisableChain = [stopSoftAP,
                          stopAccessPointDriver,
                          wifiFirmwareReload,
-                         disableNat,
                          untetherInterface,
+                         preTetherInterfaceList,
+                         postTetherInterfaceList,
+                         disableNat,
                          setIpForwardingEnabled,
                          stopTethering,
                          wifiTetheringSuccess];
@@ -618,18 +707,31 @@ function setWifiTethering(params) {
   return true;
 }
 
+let gUpdateUpStreamChain = [cleanUpStream,
+                            createUpStream,
+                            updateUpStreamSuccess];
+/**
+ * handling upstream interface change event.
+ */
+function updateUpStream(params) {
+  chain(params, gUpdateUpStreamChain, updateUpStreamFail);
+}
+
 let gUSBEnableChain = [setInterfaceUp,
                        enableNat,
                        setIpForwardingEnabled,
                        tetherInterface,
+                       tetheringStatus,
                        startTethering,
                        setDnsForwarders,
                        usbTetheringSuccess];
 
-let gUSBDisableChain = [disableNat,
+let gUSBDisableChain = [untetherInterface,
+                        preTetherInterfaceList,
+                        postTetherInterfaceList,
+                        disableNat,
                         setIpForwardingEnabled,
                         stopTethering,
-                        untetherInterface,
                         usbTetheringSuccess];
 
 /**

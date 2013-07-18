@@ -46,15 +46,17 @@ class AudioListener;
 class BiquadFilterNode;
 class ChannelMergerNode;
 class ChannelSplitterNode;
+class ConvolverNode;
 class DelayNode;
 class DynamicsCompressorNode;
 class GainNode;
 class GlobalObject;
+class MediaStreamAudioDestinationNode;
 class OfflineRenderSuccessCallback;
 class PannerNode;
 class ScriptProcessorNode;
 class WaveShaperNode;
-class WaveTable;
+class PeriodicWave;
 
 class AudioContext MOZ_FINAL : public nsDOMEventTargetHelper,
                                public EnableWebAudioCheck
@@ -124,6 +126,9 @@ public:
   CreateBuffer(JSContext* aJSContext, ArrayBuffer& aBuffer,
                bool aMixToMono, ErrorResult& aRv);
 
+  already_AddRefed<MediaStreamAudioDestinationNode>
+  CreateMediaStreamDestination();
+
   already_AddRefed<ScriptProcessorNode>
   CreateScriptProcessor(uint32_t aBufferSize,
                         uint32_t aNumberOfInputChannels,
@@ -167,6 +172,9 @@ public:
   already_AddRefed<PannerNode>
   CreatePanner();
 
+  already_AddRefed<ConvolverNode>
+  CreateConvolver();
+
   already_AddRefed<ChannelSplitterNode>
   CreateChannelSplitter(uint32_t aNumberOfOutputs, ErrorResult& aRv);
 
@@ -179,9 +187,9 @@ public:
   already_AddRefed<BiquadFilterNode>
   CreateBiquadFilter();
 
-  already_AddRefed<WaveTable>
-  CreateWaveTable(const Float32Array& aRealData, const Float32Array& aImagData,
-                  ErrorResult& aRv);
+  already_AddRefed<PeriodicWave>
+  CreatePeriodicWave(const Float32Array& aRealData, const Float32Array& aImagData,
+                     ErrorResult& aRv);
 
   void DecodeAudioData(const ArrayBuffer& aBuffer,
                        DecodeSuccessCallback& aSuccessCallback,
@@ -200,6 +208,11 @@ public:
   void UnregisterScriptProcessorNode(ScriptProcessorNode* aNode);
   void UpdatePannerSource();
 
+  uint32_t MaxChannelCount() const;
+
+  void Mute() const;
+  void Unmute() const;
+
   JSContext* GetJSContext() const;
 
 private:
@@ -214,7 +227,7 @@ private:
   nsRefPtr<AudioDestinationNode> mDestination;
   nsRefPtr<AudioListener> mListener;
   MediaBufferDecoder mDecoder;
-  nsTArray<nsAutoPtr<WebAudioDecodeJob> > mDecodeJobs;
+  nsTArray<nsRefPtr<WebAudioDecodeJob> > mDecodeJobs;
   // Two hashsets containing all the PannerNodes and AudioBufferSourceNodes,
   // to compute the doppler shift, and also to stop AudioBufferSourceNodes.
   // These are all weak pointers.
@@ -223,6 +236,8 @@ private:
   // Hashset containing all ScriptProcessorNodes in order to stop them.
   // These are all weak pointers.
   nsTHashtable<nsPtrHashKey<ScriptProcessorNode> > mScriptProcessorNodes;
+  // Number of channels passed in the OfflineAudioContext ctor.
+  uint32_t mNumberOfChannels;
   bool mIsOffline;
 };
 

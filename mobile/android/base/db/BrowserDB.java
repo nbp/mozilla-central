@@ -65,6 +65,8 @@ public class BrowserDB {
 
         public boolean isVisited(ContentResolver cr, String uri);
 
+        public int getReadingListCount(ContentResolver cr);
+
         public boolean isBookmark(ContentResolver cr, String uri);
 
         public boolean isReadingListItem(ContentResolver cr, String uri);
@@ -112,6 +114,8 @@ public class BrowserDB {
         public void unpinAllSites(ContentResolver cr);
 
         public Cursor getPinnedSites(ContentResolver cr, int limit);
+
+        public Cursor getBookmarkForUrl(ContentResolver cr, String url);
     }
 
     static {
@@ -191,6 +195,10 @@ public class BrowserDB {
 
     public static boolean isVisited(ContentResolver cr, String uri) {
         return sDb.isVisited(cr, uri);
+    }
+
+    public static int getReadingListCount(ContentResolver cr) {
+        return sDb.getReadingListCount(cr);
     }
 
     public static boolean isBookmark(ContentResolver cr, String uri) {
@@ -289,6 +297,10 @@ public class BrowserDB {
         return sDb.getPinnedSites(cr, limit);
     }
 
+    public static Cursor getBookmarkForUrl(ContentResolver cr, String url) {
+        return sDb.getBookmarkForUrl(cr, url);
+    }
+
     public static class PinnedSite {
         public String title = "";
         public String url = "";
@@ -319,7 +331,15 @@ public class BrowserDB {
 
         public void setPinnedSites(Cursor c) {
             mPinnedSites = new SparseArray<PinnedSite>();
-            if (c != null && c.getCount() > 0) {
+
+            if (c == null) {
+                return;
+            }
+
+            try {
+                if (c.getCount() <= 0) {
+                    return;
+                }
                 c.moveToPosition(0);
                 do {
                     int pos = c.getInt(c.getColumnIndex(Bookmarks.POSITION));
@@ -327,8 +347,7 @@ public class BrowserDB {
                     String title = c.getString(c.getColumnIndex(URLColumns.TITLE));
                     mPinnedSites.put(pos, new PinnedSite(title, url));
                 } while (c.moveToNext());
-            }
-            if (c != null && !c.isClosed()) {
+            } finally {
                 c.close();
             }
         }

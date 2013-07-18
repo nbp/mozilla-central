@@ -4,10 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#ifndef js_ion_backtrackingallocator_h__
-#define js_ion_backtrackingallocator_h__
+#ifndef ion_BacktrackingAllocator_h
+#define ion_BacktrackingAllocator_h
 
-#include "LiveRangeAllocator.h"
+#include "mozilla/Array.h"
+
+#include "ion/LiveRangeAllocator.h"
 
 #include "ds/PriorityQueue.h"
 #include "ds/SplayTree.h"
@@ -160,7 +162,7 @@ class BacktrackingAllocator : public LiveRangeAllocator<BacktrackingVirtualRegis
 
         PhysicalRegister() : allocatable(false) {}
     };
-    FixedArityList<PhysicalRegister, AnyRegister::Total> registers;
+    mozilla::Array<PhysicalRegister, AnyRegister::Total> registers;
 
     // Ranges of code which are considered to be hot, for which good allocation
     // should be prioritized.
@@ -234,4 +236,4 @@ class BacktrackingAllocator : public LiveRangeAllocator<BacktrackingVirtualRegis
 } // namespace ion
 } // namespace js
 
-#endif
+#endif /* ion_BacktrackingAllocator_h */

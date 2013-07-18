@@ -26,8 +26,8 @@
  * methods' implementations, potentially under time pressure.
  */
 
-#ifndef js_CallArgs_h___
-#define js_CallArgs_h___
+#ifndef js_CallArgs_h
+#define js_CallArgs_h
 
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
@@ -45,6 +45,29 @@ class JSObject;
 typedef JSBool
 (* JSNative)(JSContext *cx, unsigned argc, JS::Value *vp);
 
+/* Typedef for native functions that may be called in parallel. */
+typedef js::ParallelResult
+(* JSParallelNative)(js::ForkJoinSlice *slice, unsigned argc, JS::Value *vp);
+
+/*
+ * Typedef for native functions that may be called either in parallel or
+ * sequential execution.
+ */
+typedef JSBool
+(* JSThreadSafeNative)(js::ThreadSafeContext *cx, unsigned argc, JS::Value *vp);
+
+/*
+ * Convenience wrappers for passing in ThreadSafeNative to places that expect
+ * a JSNative or a JSParallelNative.
+ */
+template <JSThreadSafeNative threadSafeNative>
+inline JSBool
+JSNativeThreadSafeWrapper(JSContext *cx, unsigned argc, JS::Value *vp);
+
+template <JSThreadSafeNative threadSafeNative>
+inline js::ParallelResult
+JSParallelNativeThreadSafeWrapper(js::ForkJoinSlice *slice, unsigned argc, JS::Value *vp);
+
 /*
  * Compute |this| for the |vp| inside a JSNative, either boxing primitives or
  * replacing with the global object as necessary.
@@ -58,6 +81,8 @@ extern JS_PUBLIC_API(JS::Value)
 JS_ComputeThis(JSContext *cx, JS::Value *vp);
 
 namespace JS {
+
+extern JS_PUBLIC_DATA(const HandleValue) UndefinedHandleValue;
 
 /*
  * JS::CallReceiver encapsulates access to the callee, |this|, and eventual
@@ -95,6 +120,11 @@ namespace JS {
  */
 
 namespace detail {
+
+#ifdef DEBUG
+extern JS_PUBLIC_API(void)
+CheckIsValidConstructible(Value v);
+#endif
 
 enum UsedRval { IncludeUsedRval, NoUsedRval };
 
@@ -167,6 +197,14 @@ class MOZ_STACK_CLASS CallReceiverBase : public UsedRvalBase<
             return thisv();
 
         return JS_ComputeThis(cx, base());
+    }
+
+    bool isConstructing() const {
+#ifdef DEBUG
+        if (this->usedRval_)
+            CheckIsValidConstructible(calleev());
+#endif
+        return argv_[-1].isMagic();
     }
 
     /*
@@ -299,6 +337,16 @@ class MOZ_STACK_CLASS CallArgsBase :
     }
 
     /*
+     * Returns the i-th zero-indexed argument as a handle, or |undefined| if
+     * there's no such argument.
+     */
+    HandleValue handleOrUndefinedAt(unsigned i) const {
+        return i < length()
+               ? HandleValue::fromMarkedLocation(&this->argv_[i])
+               : UndefinedHandleValue;
+    }
+
+    /*
      * Returns true if the i-th zero-indexed argument is present and is not
      * |undefined|.
      */
@@ -388,4 +436,4 @@ JS_THIS(JSContext *cx, JS::Value *vp)
  */
 #define JS_THIS_VALUE(cx,vp)    ((vp)[1])
 
-#endif /* js_CallArgs_h___ */
+#endif /* js_CallArgs_h */

@@ -7,20 +7,20 @@
 #define mozilla_dom_HTMLLinkElement_h
 
 #include "mozilla/Attributes.h"
+#include "mozilla/dom/Link.h"
 #include "nsGenericHTMLElement.h"
 #include "nsIDOMHTMLLinkElement.h"
 #include "nsILink.h"
 #include "nsStyleLinkElement.h"
-#include "mozilla/dom/Link.h"
 
 namespace mozilla {
 namespace dom {
 
-class HTMLLinkElement : public nsGenericHTMLElement,
-                        public nsIDOMHTMLLinkElement,
-                        public nsILink,
-                        public nsStyleLinkElement,
-                        public Link
+class HTMLLinkElement MOZ_FINAL : public nsGenericHTMLElement,
+                                  public nsIDOMHTMLLinkElement,
+                                  public nsILink,
+                                  public nsStyleLinkElement,
+                                  public Link
 {
 public:
   HTMLLinkElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -79,7 +79,6 @@ public:
   virtual nsresult UnsetAttr(int32_t aNameSpaceID, nsIAtom* aAttribute,
                              bool aNotify) MOZ_OVERRIDE;
   virtual bool IsLink(nsIURI** aURI) const MOZ_OVERRIDE;
-  virtual nsLinkState GetLinkState() const MOZ_OVERRIDE;
   virtual already_AddRefed<nsIURI> GetHrefURI() const MOZ_OVERRIDE;
 
   // Element

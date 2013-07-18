@@ -55,6 +55,7 @@ public:
   virtual bool RecvResume() MOZ_OVERRIDE;
   virtual bool RecvMakeSnapshot(const SurfaceDescriptor& aInSnapshot,
                                 SurfaceDescriptor* aOutSnapshot);
+  virtual bool RecvFlushRendering() MOZ_OVERRIDE;
 
   virtual void ActorDestroy(ActorDestroyReason why) MOZ_OVERRIDE;
 
@@ -72,8 +73,6 @@ public:
   void Destroy();
 
   LayerManagerComposite* GetLayerManager() { return mLayerManager; }
-
-  void SetTransformation(float aScale, nsIntPoint aScrollOffset);
 
   void AsyncRender();
 
@@ -174,10 +173,10 @@ public:
 
 protected:
   virtual PLayerTransactionParent*
-    AllocPLayerTransaction(const LayersBackend& aBackendHint,
-                           const uint64_t& aId,
-                           TextureFactoryIdentifier* aTextureFactoryIdentifier);
-  virtual bool DeallocPLayerTransaction(PLayerTransactionParent* aLayers);
+    AllocPLayerTransactionParent(const LayersBackend& aBackendHint,
+                                 const uint64_t& aId,
+                                 TextureFactoryIdentifier* aTextureFactoryIdentifier);
+  virtual bool DeallocPLayerTransactionParent(PLayerTransactionParent* aLayers);
   virtual void ScheduleTask(CancelableTask*, int);
   virtual void Composite();
   virtual void ComposeToTarget(gfxContext* aTarget);

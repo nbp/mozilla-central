@@ -39,6 +39,9 @@ int directsound_init(cubeb ** context, char const * context_name);
 #if defined(USE_WINMM)
 int winmm_init(cubeb ** context, char const * context_name);
 #endif
+#if defined(USE_WASAPI)
+int wasapi_init(cubeb ** context, char const * context_name);
+#endif
 #if defined(USE_SNDIO)
 int sndio_init(cubeb ** context, char const * context_name);
 #endif
@@ -93,6 +96,9 @@ cubeb_init(cubeb ** context, char const * context_name)
 #if defined(USE_AUDIOQUEUE)
     audioqueue_init,
 #endif
+#if defined(USE_WASAPI)
+    wasapi_init,
+#endif
 #if defined(USE_WINMM)
     winmm_init,
 #endif
@@ -132,6 +138,16 @@ cubeb_get_backend_id(cubeb * context)
   }
 
   return context->ops->get_backend_id(context);
+}
+
+int
+cubeb_get_max_channel_count(cubeb * context, uint32_t * max_channels)
+{
+  if (!context || !max_channels) {
+    return CUBEB_ERROR_INVALID_PARAMETER;
+  }
+
+  return context->ops->get_max_channel_count(context, max_channels);
 }
 
 void

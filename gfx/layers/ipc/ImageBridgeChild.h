@@ -148,6 +148,8 @@ public:
    */
   void ConnectAsync(ImageBridgeParent* aParent);
 
+  static void IdentifyCompositorTextureHost(const TextureFactoryIdentifier& aIdentifier);
+
   void BeginTransaction();
   void EndTransaction();
 
@@ -165,8 +167,8 @@ public:
    */
   MessageLoop * GetMessageLoop() const;
 
-  PCompositableChild* AllocPCompositable(const TextureInfo& aInfo, uint64_t* aID) MOZ_OVERRIDE;
-  bool DeallocPCompositable(PCompositableChild* aActor) MOZ_OVERRIDE;
+  PCompositableChild* AllocPCompositableChild(const TextureInfo& aInfo, uint64_t* aID) MOZ_OVERRIDE;
+  bool DeallocPCompositableChild(PCompositableChild* aActor) MOZ_OVERRIDE;
 
   /**
    * This must be called by the static function DeleteImageBridgeSync defined
@@ -175,11 +177,11 @@ public:
   ~ImageBridgeChild();
 
   virtual PGrallocBufferChild*
-  AllocPGrallocBuffer(const gfxIntSize&, const uint32_t&, const uint32_t&,
-                      MaybeMagicGrallocBufferHandle*) MOZ_OVERRIDE;
+  AllocPGrallocBufferChild(const gfxIntSize&, const uint32_t&, const uint32_t&,
+                           MaybeMagicGrallocBufferHandle*) MOZ_OVERRIDE;
 
   virtual bool
-  DeallocPGrallocBuffer(PGrallocBufferChild* actor) MOZ_OVERRIDE;
+  DeallocPGrallocBufferChild(PGrallocBufferChild* actor) MOZ_OVERRIDE;
 
   /**
    * Allocate a gralloc SurfaceDescriptor remotely.
@@ -199,7 +201,7 @@ public:
    */
   bool
   AllocSurfaceDescriptorGrallocNow(const gfxIntSize& aSize,
-                                   const uint32_t& aContent,
+                                   const uint32_t& aFormat,
                                    const uint32_t& aUsage,
                                    SurfaceDescriptor* aBuffer);
 
@@ -337,8 +339,9 @@ protected:
 
   CompositableTransaction* mTxn;
 
+  // ISurfaceAllocator
   virtual PGrallocBufferChild* AllocGrallocBuffer(const gfxIntSize& aSize,
-                                                  gfxASurface::gfxContentType aContent,
+                                                  uint32_t aFormat, uint32_t aUsage,
                                                   MaybeMagicGrallocBufferHandle* aHandle) MOZ_OVERRIDE;
 };
 

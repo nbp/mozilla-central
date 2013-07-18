@@ -111,6 +111,9 @@ public:
   TimeDuration operator*(const int64_t aMultiplier) const {
     return TimeDuration::FromTicks(mValue * int64_t(aMultiplier));
   }
+  TimeDuration operator/(const int64_t aDivisor) const {
+    return TimeDuration::FromTicks(mValue / aDivisor);
+  }
   double operator/(const TimeDuration& aOther) {
     return static_cast<double>(mValue) / aOther.mValue;
   }
@@ -207,7 +210,7 @@ public:
   /**
    * Initialize to the "null" moment
    */
-  TimeStamp() : mValue(0) {}
+  MOZ_CONSTEXPR TimeStamp() : mValue(0) {}
   // Default copy-constructor and assignment are OK
 
   /**

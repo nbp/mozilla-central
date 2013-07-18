@@ -10,8 +10,8 @@
 namespace mozilla {
 namespace dom {
 
-class HTMLElement : public nsGenericHTMLElement,
-                    public nsIDOMHTMLElement
+class HTMLElement MOZ_FINAL : public nsGenericHTMLElement,
+                              public nsIDOMHTMLElement
 {
 public:
   HTMLElement(already_AddRefed<nsINodeInfo> aNodeInfo);
@@ -45,7 +45,6 @@ protected:
 HTMLElement::HTMLElement(already_AddRefed<nsINodeInfo> aNodeInfo)
   : nsGenericHTMLElement(aNodeInfo)
 {
-  SetIsDOMBinding();
 }
 
 HTMLElement::~HTMLElement()
@@ -55,11 +54,9 @@ HTMLElement::~HTMLElement()
 NS_IMPL_ADDREF_INHERITED(HTMLElement, Element)
 NS_IMPL_RELEASE_INHERITED(HTMLElement, Element)
 
-NS_INTERFACE_TABLE_HEAD(HTMLElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE0(HTMLElement)
-  NS_HTML_CONTENT_INTERFACE_TABLE_TO_MAP_SEGUE(HTMLElement,
-                                               nsGenericHTMLElement)
-NS_HTML_CONTENT_INTERFACE_MAP_END
+NS_INTERFACE_MAP_BEGIN(HTMLElement)
+  NS_HTML_CONTENT_INTERFACES(nsGenericHTMLElement)
+NS_ELEMENT_INTERFACE_MAP_END
 
 NS_IMPL_ELEMENT_CLONE(HTMLElement)
 

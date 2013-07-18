@@ -239,13 +239,13 @@ ImageBridgeChild::Connect(CompositableClient* aCompositable)
 }
 
 PCompositableChild*
-ImageBridgeChild::AllocPCompositable(const TextureInfo& aInfo, uint64_t* aID)
+ImageBridgeChild::AllocPCompositableChild(const TextureInfo& aInfo, uint64_t* aID)
 {
   return new CompositableChild();
 }
 
 bool
-ImageBridgeChild::DeallocPCompositable(PCompositableChild* aActor)
+ImageBridgeChild::DeallocPCompositableChild(PCompositableChild* aActor)
 {
   delete aActor;
   return true;
@@ -480,6 +480,14 @@ void ImageBridgeChild::ConnectAsync(ImageBridgeParent* aParent)
                                                             this, aParent));
 }
 
+void
+ImageBridgeChild::IdentifyCompositorTextureHost(const TextureFactoryIdentifier& aIdentifier)
+{
+  if (sImageBridgeChildSingleton) {
+    sImageBridgeChildSingleton->IdentifyTextureHost(aIdentifier);
+  }
+}
+
 TemporaryRef<ImageClient>
 ImageBridgeChild::CreateImageClient(CompositableType aType)
 {
@@ -504,8 +512,6 @@ ImageBridgeChild::CreateImageClient(CompositableType aType)
 TemporaryRef<ImageClient>
 ImageBridgeChild::CreateImageClientNow(CompositableType aType)
 {
-  mCompositorBackend = LAYERS_OPENGL;
-
   RefPtr<ImageClient> client
     = ImageClient::CreateImageClient(aType, this, 0);
   MOZ_ASSERT(client, "failed to create ImageClient");
@@ -516,8 +522,8 @@ ImageBridgeChild::CreateImageClientNow(CompositableType aType)
 }
 
 PGrallocBufferChild*
-ImageBridgeChild::AllocPGrallocBuffer(const gfxIntSize&, const uint32_t&, const uint32_t&,
-                                      MaybeMagicGrallocBufferHandle*)
+ImageBridgeChild::AllocPGrallocBufferChild(const gfxIntSize&, const uint32_t&, const uint32_t&,
+                                           MaybeMagicGrallocBufferHandle*)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   return GrallocBufferActor::Create();
@@ -528,7 +534,7 @@ ImageBridgeChild::AllocPGrallocBuffer(const gfxIntSize&, const uint32_t&, const 
 }
 
 bool
-ImageBridgeChild::DeallocPGrallocBuffer(PGrallocBufferChild* actor)
+ImageBridgeChild::DeallocPGrallocBufferChild(PGrallocBufferChild* actor)
 {
 #ifdef MOZ_HAVE_SURFACEDESCRIPTORGRALLOC
   delete actor;
@@ -581,7 +587,7 @@ ImageBridgeChild::AllocSurfaceDescriptorGrallocNow(const gfxIntSize& aSize,
   GrallocBufferActor* gba = static_cast<GrallocBufferActor*>(gc);
   gba->InitFromHandle(handle.get_MagicGrallocBufferHandle());
 
-  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, aSize, /* external */ false);
+  *aBuffer = SurfaceDescriptorGralloc(nullptr, gc, aSize, /* external */ false, /* swapRB */ false);
   return true;
 #else
   NS_RUNTIMEABORT("No gralloc buffers for you");
@@ -748,13 +754,14 @@ ImageBridgeChild::DeallocShmem(ipc::Shmem& aShmem)
 
 PGrallocBufferChild*
 ImageBridgeChild::AllocGrallocBuffer(const gfxIntSize& aSize,
-                                     gfxASurface::gfxContentType aContent,
+                                     uint32_t aFormat,
+                                     uint32_t aUsage,
                                      MaybeMagicGrallocBufferHandle* aHandle)
 {
 #ifdef MOZ_WIDGET_GONK
   return SendPGrallocBufferConstructor(aSize,
-                                       aContent,
-                                       GRALLOC_USAGE_SW_READ_OFTEN | GRALLOC_USAGE_SW_WRITE_OFTEN,
+                                       aFormat,
+                                       aUsage,
                                        aHandle);
 #else
   NS_RUNTIMEABORT("not implemented");

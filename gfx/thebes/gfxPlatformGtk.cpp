@@ -9,6 +9,7 @@
 #endif
 
 #include "gfxPlatformGtk.h"
+#include "prenv.h"
 
 #include "nsUnicharUtils.h"
 #include "nsUnicodeProperties.h"
@@ -91,7 +92,7 @@ gfxPlatformGtk::gfxPlatformGtk()
     UpdateFontList();
 #endif
     uint32_t canvasMask = (1 << BACKEND_CAIRO) | (1 << BACKEND_SKIA);
-    uint32_t contentMask = (1 << BACKEND_CAIRO);
+    uint32_t contentMask = 0;
     InitBackendPrefs(canvasMask, contentMask);
 }
 
@@ -498,6 +499,17 @@ gfxPlatformGtk::GetScreenDepth() const
     return sDepth;
 }
 
+bool
+gfxPlatformGtk::SupportsOffMainThreadCompositing()
+{
+#ifdef MOZ_X11
+  return (PR_GetEnv("MOZ_USE_OMTC") != nullptr) ||
+         (PR_GetEnv("MOZ_OMTC_ENABLED") != nullptr);
+#else
+  return true;
+#endif
+}
+
 qcms_profile *
 gfxPlatformGtk::GetPlatformCMSOutputProfile()
 {
@@ -758,13 +770,13 @@ TemporaryRef<ScaledFont>
 gfxPlatformGtk::GetScaledFontForFont(DrawTarget* aTarget, gfxFont *aFont)
 {
     NativeFont nativeFont;
-    if (aTarget->GetType() == BACKEND_CAIRO) {
+
+    if (aTarget->GetType() == BACKEND_CAIRO || aTarget->GetType() == BACKEND_SKIA) {
         nativeFont.mType = NATIVE_FONT_CAIRO_FONT_FACE;
-        nativeFont.mFont = NULL;
-        return Factory::CreateScaledFontWithCairo(nativeFont, aFont->GetAdjustedSize(), aFont->GetCairoScaledFont());
+        nativeFont.mFont = aFont->GetCairoScaledFont();
+        return Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
     }
-    NS_ASSERTION(aFont->GetType() == gfxFont::FONT_TYPE_FT2, "Expecting Freetype font");
-    nativeFont.mType = NATIVE_FONT_SKIA_FONT_FACE;
-    nativeFont.mFont = static_cast<gfxFT2FontBase*>(aFont)->GetFontOptions();
-    return Factory::CreateScaledFontForNativeFont(nativeFont, aFont->GetAdjustedSize());
+
+    return NULL;
+
 }

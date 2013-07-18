@@ -16,21 +16,13 @@ ifndef _MSC_VER
 FAIL_ON_WARNINGS = 1
 endif # !_MSC_VER
 
-ifeq (cocoa,$(MOZ_WIDGET_TOOLKIT))
-CMMSRCS		+= \
-		nsPluginUtilsOSX.mm \
-		$(NULL)
-endif
-
 RESOURCES_HTML = \
 		$(srcdir)/folder.png \
 		$(NULL)
 
-FORCE_STATIC_LIB = 1
-
 include $(topsrcdir)/config/config.mk
-include $(topsrcdir)/ipc/chromium/chromium-config.mk
 include $(topsrcdir)/config/rules.mk
+include $(topsrcdir)/ipc/chromium/chromium-config.mk
 
 LOCAL_INCLUDES += \
 		-I$(srcdir) \
@@ -49,8 +41,8 @@ LOCAL_INCLUDES += \
 		$(MOZ_PIXMAN_CFLAGS) \
 		$(NULL)
 
-ifdef MOZ_ENABLE_GTK2
-CXXFLAGS += $(MOZ_GTK2_CFLAGS)
+ifdef MOZ_WIDGET_GTK
+CXXFLAGS += $(TK_CFLAGS)
 endif
 
 ifdef MOZ_ENABLE_QT

@@ -553,18 +553,19 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
       * this function is invoked on; and this function will always be called prior to syncViewportInfo.
       */
     public void setFirstPaintViewport(float offsetX, float offsetY, float zoom,
-            float pageLeft, float pageTop, float pageRight, float pageBottom,
             float cssPageLeft, float cssPageTop, float cssPageRight, float cssPageBottom) {
         synchronized (getLock()) {
             ImmutableViewportMetrics currentMetrics = getViewportMetrics();
 
             Tab tab = Tabs.getInstance().getSelectedTab();
 
+            RectF cssPageRect = new RectF(cssPageLeft, cssPageTop, cssPageRight, cssPageBottom);
+            RectF pageRect = RectUtils.scaleAndRound(cssPageRect, zoom);
+
             final ImmutableViewportMetrics newMetrics = currentMetrics
                 .setViewportOrigin(offsetX, offsetY)
                 .setZoomFactor(zoom)
-                .setPageRect(new RectF(pageLeft, pageTop, pageRight, pageBottom),
-                             new RectF(cssPageLeft, cssPageTop, cssPageRight, cssPageBottom))
+                .setPageRect(pageRect, cssPageRect)
                 .setIsRTL(tab.getIsRTL());
             // Since we have switched to displaying a different document, we need to update any
             // viewport-related state we have lying around. This includes mGeckoViewport and
@@ -690,9 +691,8 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
                 boolean isFirstPaint)
     {
         if (isFirstPaint) {
-            RectF pageRect = RectUtils.scale(new RectF(cssPageLeft, cssPageTop, cssPageRight, cssPageBottom), zoom);
-            setFirstPaintViewport(offsetX, offsetY, zoom, pageRect.left, pageRect.top, pageRect.right,
-                    pageRect.bottom, cssPageLeft, cssPageTop, cssPageRight, cssPageBottom);
+            setFirstPaintViewport(offsetX, offsetY, zoom,
+                                  cssPageLeft, cssPageTop, cssPageRight, cssPageBottom);
         }
 
         return syncViewportInfo(x, y, width, height, resolution, layersUpdated);
@@ -851,6 +851,21 @@ public class GeckoLayerClient implements LayerView.Listener, PanZoomTarget
     public void scrollBy(float dx, float dy) {
         // Set mViewportMetrics manually so the margin changes take.
         mViewportMetrics = mMarginsAnimator.scrollBy(mViewportMetrics, dx, dy);
+        viewportMetricsChanged(true);
+    }
+
+    /** Implementation of PanZoomTarget
+     * Notification that a subdocument has been scrolled by a certain amount.
+     * This is used here to make sure that the margins are still accessible
+     * during subdocument scrolling.
+     *
+     * You must hold the monitor while calling this.
+     */
+    @Override
+    public void onSubdocumentScrollBy(float dx, float dy) {
+        ImmutableViewportMetrics newMarginsMetrics =
+            mMarginsAnimator.scrollBy(mViewportMetrics, dx, dy);
+        mViewportMetrics = mViewportMetrics.setMarginsFrom(newMarginsMetrics);
         viewportMetricsChanged(true);
     }
 

@@ -44,6 +44,7 @@ var Browser = {
       messageManager.loadFrameScript("chrome://browser/content/Util.js", true);
       messageManager.loadFrameScript("chrome://browser/content/contenthandlers/Content.js", true);
       messageManager.loadFrameScript("chrome://browser/content/contenthandlers/FormHelper.js", true);
+      messageManager.loadFrameScript("chrome://browser/content/library/SelectionPrototype.js", true);
       messageManager.loadFrameScript("chrome://browser/content/contenthandlers/SelectionHandler.js", true);
       messageManager.loadFrameScript("chrome://browser/content/contenthandlers/ContextMenuHandler.js", true);
       messageManager.loadFrameScript("chrome://browser/content/contenthandlers/FindHandler.js", true);
@@ -72,9 +73,7 @@ var Browser = {
     BrowserTouchHandler.init();
     PopupBlockerObserver.init();
 
-    // Warning, total hack ahead. All of the real-browser related scrolling code
-    // lies in a pretend scrollbox here. Let's not land this as-is. Maybe it's time
-    // to redo all the dragging code.
+    // Init the touch scrollbox
     this.contentScrollbox = Elements.browsers;
     this.contentScrollboxScroller = {
       scrollBy: function(aDx, aDy) {
@@ -146,10 +145,6 @@ var Browser = {
     messageManager.addMessageListener("Browser:TapOnSelection", this);
     messageManager.addMessageListener("Browser:PluginClickToPlayClicked", this);
 
-    // Let everyone know what kind of mouse input we are
-    // starting with:
-    InputSourceHelper.fireUpdate();
-
     Task.spawn(function() {
       // Activation URIs come from protocol activations, secondary tiles, and file activations
       let activationURI = yield this.getShortcutOrURI(MetroUtils.activationURI);
@@ -197,6 +192,9 @@ var Browser = {
       } else {
         loadStartupURI();
       }
+
+      // Notify about our input type
+      InputSourceHelper.fireUpdate();
 
       // Broadcast a UIReady message so add-ons know we are finished with startup
       let event = document.createEvent("Events");
@@ -576,6 +574,7 @@ var Browser = {
     } else {
       // Update all of our UI to reflect the new tab's location
       BrowserUI.updateURI();
+      BrowserUI.update();
 
       let event = document.createEvent("Events");
       event.initEvent("TabSelect", true, false);
@@ -973,8 +972,8 @@ var Browser = {
 
   onAboutPolicyClick: function() {
     FlyoutPanelsUI.hide();
-    BrowserUI.newTab(Services.prefs.getCharPref("app.privacyURL"),
-                     Browser.selectedTab);
+    let linkStr = Services.urlFormatter.formatURLPref("app.privacyURL");
+    BrowserUI.newTab(linkStr, Browser.selectedTab);
   }
 
 };
@@ -1580,7 +1579,7 @@ Tab.prototype = {
 
     // Ensure that history is initialized
     history.QueryInterface(Ci.nsISHistoryInternal);
-    
+
     for (let i = 0, length = otherHistory.index; i <= length; i++)
       history.addEntry(otherHistory.getEntryAtIndex(i, false), true);
   },
