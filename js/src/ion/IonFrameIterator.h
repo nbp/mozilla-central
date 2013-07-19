@@ -11,6 +11,7 @@
 
 #include "jstypes.h"
 #include "ion/IonCode.h"
+#include "ion/Slots.h"
 #include "ion/SnapshotReader.h"
 
 class JSFunction;
@@ -239,8 +240,8 @@ class SnapshotIterator : public SnapshotReader
     IonScript *ionScript_;
 
   private:
-    bool hasLocation(const SnapshotReader::Location &loc);
-    uintptr_t fromLocation(const SnapshotReader::Location &loc);
+    bool hasLocation(const Slot::Location &loc);
+    uintptr_t fromLocation(const Slot::Location &loc);
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
     Value slotValue(const Slot &slot);
