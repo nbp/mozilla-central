@@ -28,9 +28,6 @@ static const uint32_t ShadowStackSpace = 32;
 static const uint32_t ShadowStackSpace = 0;
 #endif
 
-// An offset that is illegal for a local variable's stack allocation.
-static const int32_t INVALID_STACK_SLOT       = -1;
-
 class Registers {
   public:
     typedef JSC::X86Registers::RegisterID Code;
