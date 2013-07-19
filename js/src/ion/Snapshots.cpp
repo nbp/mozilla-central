@@ -180,6 +180,7 @@ static const uint32_t MIN_REG_FIELD_ESC    = 30;
 Slot
 SnapshotReader::readSlot()
 {
+    typedef Slot::Location Location;
     JS_ASSERT(slotsRead_ < slotCount_);
     IonSpew(IonSpew_Snapshots, "Reading slot %u", slotsRead_);
     slotsRead_++;
@@ -194,30 +195,30 @@ SnapshotReader::readSlot()
         if (code < MIN_REG_FIELD_ESC)
             return Slot(FloatRegister::FromCode(code));
         JS_ASSERT(code == ESC_REG_FIELD_INDEX);
-        return Slot(TYPED_STACK, type, Location::From(reader_.readSigned()));
+        return Slot(Slot::TYPED_STACK, type, Location::From(reader_.readSigned()));
 
       case JSVAL_TYPE_INT32:
       case JSVAL_TYPE_STRING:
       case JSVAL_TYPE_OBJECT:
       case JSVAL_TYPE_BOOLEAN:
         if (code < MIN_REG_FIELD_ESC)
-            return Slot(TYPED_REG, type, Location::From(Register::FromCode(code)));
+            return Slot(Slot::TYPED_REG, type, Location::From(Register::FromCode(code)));
         JS_ASSERT(code == ESC_REG_FIELD_INDEX);
-        return Slot(TYPED_STACK, type, Location::From(reader_.readSigned()));
+        return Slot(Slot::TYPED_STACK, type, Location::From(reader_.readSigned()));
 
       case JSVAL_TYPE_NULL:
         if (code == ESC_REG_FIELD_CONST)
-            return Slot(JS_NULL);
+            return Slot(Slot::JS_NULL);
         if (code == ESC_REG_FIELD_INDEX)
-            return Slot(JS_INT32, reader_.readSigned());
-        return Slot(JS_INT32, code);
+            return Slot(Slot::JS_INT32, reader_.readSigned());
+        return Slot(Slot::JS_INT32, code);
 
       case JSVAL_TYPE_UNDEFINED:
         if (code == ESC_REG_FIELD_CONST)
-            return Slot(JS_UNDEFINED);
+            return Slot(Slot::JS_UNDEFINED);
         if (code == ESC_REG_FIELD_INDEX)
-            return Slot(CONSTANT, reader_.readUnsigned());
-        return Slot(CONSTANT, code);
+            return Slot(Slot::CONSTANT, reader_.readUnsigned());
+        return Slot(Slot::CONSTANT, code);
 
       default:
       {
@@ -230,10 +231,10 @@ SnapshotReader::readSlot()
                 loc = Location::From(Register::FromCode(reg2));
             else
                 loc = Location::From(reader_.readSigned());
-            return Slot(TYPED_REG, type, loc);
+            return Slot(Slot::TYPED_REG, type, loc);
         }
 
-        Slot slot(UNTYPED);
+        Slot slot(Slot::UNTYPED);
 #ifdef JS_NUNBOX32
         switch (code) {
           case NUNBOX32_STACK_STACK:
