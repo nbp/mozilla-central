@@ -177,7 +177,7 @@ static const uint32_t ESC_REG_FIELD_INDEX  = 31;
 static const uint32_t ESC_REG_FIELD_CONST  = 30;
 static const uint32_t MIN_REG_FIELD_ESC    = 30;
 
-SnapshotReader::Slot
+Slot
 SnapshotReader::readSlot()
 {
     JS_ASSERT(slotsRead_ < slotCount_);
