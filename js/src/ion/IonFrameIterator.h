@@ -423,7 +423,7 @@ class InlineFrameIteratorMaybeGC
         return &v.toObject();
     }
 
-    Value maybeReadSlotByIndex(size_t index) {
+    Value maybeReadSlotByIndex(size_t index) const {
         SnapshotIterator s(si_);
         while (index--) {
             JS_ASSERT(s.moreSlots());
