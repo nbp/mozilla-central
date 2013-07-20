@@ -77,11 +77,6 @@ class SnapshotReader
     }
     Slot readSlot();
 
-    Value skip() {
-        readSlot();
-        return UndefinedValue();
-    }
-
     bool moreSlots() const {
         return slotsRead_ < slotCount_;
     }

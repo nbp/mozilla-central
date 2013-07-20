@@ -233,8 +233,9 @@ class IonBailoutIterator;
 
 // Reads frame information in snapshot-encoding order (that is, outermost frame
 // to innermost frame).
-class SnapshotIterator : public SnapshotReader
+class SnapshotIterator
 {
+    SnapshotReader snapshot_;
     IonJSFrameLayout *fp_;
     MachineState machine_;
     IonScript *ionScript_;
@@ -316,6 +317,48 @@ class SnapshotIterator : public SnapshotReader
             skip();
 
         return s;
+    }
+
+  public:
+    //
+    // dispatch to the SnapshotReader.
+    //
+
+    inline Slot readSlot() {
+        return snapshot_.readSlot();
+    }
+    inline Value skip() {
+        readSlot();
+        return UndefinedValue();
+    }
+
+    inline uint32_t slots() const {
+        return snapshot_.slots();
+    }
+    inline bool moreSlots() const {
+        return snapshot_.moreSlots();
+    }
+
+
+    inline void nextFrame() {
+        snapshot_.nextFrame();
+    }
+    inline uint32_t frameCount() const {
+        return snapshot_.frameCount();
+    }
+    inline bool moreFrames() const {
+        return snapshot_.moreFrames();
+    }
+
+  public:
+    inline uint32_t pcOffset() const {
+        return snapshot_.pcOffset();
+    }
+    inline bool resumeAfter() const {
+        return snapshot_.resumeAfter();
+    }
+    inline BailoutKind bailoutKind() const {
+        return snapshot_.bailoutKind();
     }
 };
 

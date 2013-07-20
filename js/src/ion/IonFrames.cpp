@@ -1120,8 +1120,8 @@ OsiIndex::returnPointDisplacement() const
 
 SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
                                    IonJSFrameLayout *fp, const MachineState &machine)
-  : SnapshotReader(ionScript->snapshots() + snapshotOffset,
-                   ionScript->snapshots() + ionScript->snapshotsSize()),
+  : snapshot_(ionScript->snapshots() + snapshotOffset,
+              ionScript->snapshots() + ionScript->snapshotsSize()),
     fp_(fp),
     machine_(machine),
     ionScript_(ionScript)
@@ -1130,8 +1130,8 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
 }
 
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
-  : SnapshotReader(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
-                   iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+  : snapshot_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
+              iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
     fp_(iter.jsFrame()),
     machine_(iter.machineState()),
     ionScript_(iter.ionScript())
@@ -1139,7 +1139,7 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
 }
 
 SnapshotIterator::SnapshotIterator()
-  : SnapshotReader(NULL, NULL),
+  : snapshot_(NULL, NULL),
     fp_(NULL),
     ionScript_(NULL)
 {
