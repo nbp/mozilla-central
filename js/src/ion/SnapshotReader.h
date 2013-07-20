@@ -86,6 +86,7 @@ class SnapshotReader
 
     void restart() {
         reader_.restart();
+        slotCount_ = slotsRead_ = 0;
         readSnapshotHeader();
         nextFrame();
     }
