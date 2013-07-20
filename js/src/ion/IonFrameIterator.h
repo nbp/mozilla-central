@@ -447,7 +447,7 @@ class InlineFrameIteratorMaybeGC
     void resetOn(const IonFrameIterator *iter);
 
   private:
-    void readFrameContext(SnapshotIterator &s, JSScript *script)
+    void readFrameContext(SnapshotIterator &s, JSScript *script) const
     {
         // skip slot for the scope chain
         s.skip();
@@ -463,7 +463,7 @@ class InlineFrameIteratorMaybeGC
     // Read formal argument of a frame.
     template <class Op>
     void readFormalFrameArgs(SnapshotIterator &s, Op &op,
-                             unsigned nformal, unsigned nactual)
+                             unsigned nformal, unsigned nactual) const
     {
         unsigned i = 0;
         unsigned effective_end = (nactual < nformal) ? nactual : nformal;
