@@ -26,7 +26,7 @@ InlineFrameIteratorMaybeGC<allowGC>::InlineFrameIteratorMaybeGC(
     script_(cx)
 {
     if (iter) {
-        start_ = SnapshotIterator(*iter);
+        si_ = SnapshotIterator(*iter);
         findNextFrame();
     }
 }

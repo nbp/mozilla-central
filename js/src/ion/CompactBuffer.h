@@ -29,6 +29,7 @@ class CompactBufferReader
 {
     const uint8_t *buffer_;
     const uint8_t *end_;
+    const uint8_t *start_;
 
     uint32_t readVariableLength() {
         uint32_t val = 0;
@@ -48,7 +49,8 @@ class CompactBufferReader
   public:
     CompactBufferReader(const uint8_t *start, const uint8_t *end)
       : buffer_(start),
-        end_(end)
+        end_(end),
+        start_(start)
     { }
     inline CompactBufferReader(const CompactBufferWriter &writer);
     uint8_t readByte() {
@@ -85,6 +87,10 @@ class CompactBufferReader
     bool more() const {
         JS_ASSERT(buffer_ <= end_);
         return buffer_ < end_;
+    }
+
+    void restart() {
+        buffer_ = start_;
     }
 };
 

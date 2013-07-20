@@ -83,6 +83,10 @@ class SnapshotReader
     uint32_t frameCount() const {
         return frameCount_;
     }
+
+    void restart() {
+        reader_.restart();
+    }
 };
 
 }

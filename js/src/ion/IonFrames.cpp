@@ -1287,7 +1287,7 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
     framesRead_ = 0;
 
     if (iter) {
-        start_ = SnapshotIterator(*iter);
+        si_ = SnapshotIterator(*iter);
         findNextFrame();
     }
 }
@@ -1300,7 +1300,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 {
     JS_ASSERT(more());
 
-    si_ = start_;
+    si_.restart();
 
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
@@ -1312,7 +1312,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
     // This unfortunately is O(n*m), because we must skip over outer frames
     // before reading inner ones.
-    unsigned remaining = start_.frameCount() - framesRead_ - 1;
+    unsigned remaining = si_.frameCount() - framesRead_ - 1;
     for (unsigned i = 0; i < remaining; i++) {
         JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
 

@@ -360,6 +360,11 @@ class SnapshotIterator
     inline BailoutKind bailoutKind() const {
         return snapshot_.bailoutKind();
     }
+
+  public:
+    inline void restart() {
+        snapshot_.restart();
+    }
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -368,7 +373,6 @@ template <AllowGC allowGC=CanGC>
 class InlineFrameIteratorMaybeGC
 {
     const IonFrameIterator *frame_;
-    SnapshotIterator start_;
     SnapshotIterator si_;
     unsigned framesRead_;
     typename MaybeRooted<JSFunction*, allowGC>::RootType callee_;
@@ -396,7 +400,7 @@ class InlineFrameIteratorMaybeGC
         script_(cx)
     {
         if (frame_) {
-            start_ = SnapshotIterator(*frame_);
+            si_ = SnapshotIterator(*frame_);
             // findNextFrame will iterate to the next frame and init. everything.
             // Therefore to settle on the same frame, we report one frame less readed.
             framesRead_ = iter->framesRead_ - 1;
@@ -405,7 +409,7 @@ class InlineFrameIteratorMaybeGC
     }
 
     bool more() const {
-        return frame_ && framesRead_ < start_.frameCount();
+        return frame_ && framesRead_ < si_.frameCount();
     }
     JSFunction *callee() const {
         JS_ASSERT(callee_);
