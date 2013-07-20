@@ -268,20 +268,6 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
-    Value maybeReadSlotByIndex(size_t index) {
-        while (index--) {
-            JS_ASSERT(moreSlots());
-            skip();
-        }
-
-        Value s = maybeRead(true);
-
-        while (moreSlots())
-            skip();
-
-        return s;
-    }
-
   public:
     //
     // dispatch to the SnapshotReader.
@@ -435,6 +421,21 @@ class InlineFrameIteratorMaybeGC
         Value v = s.read();
         JS_ASSERT(v.isObject());
         return &v.toObject();
+    }
+
+    Value maybeReadSlotByIndex(size_t index) {
+        SnapshotIterator s(si_);
+        while (index--) {
+            JS_ASSERT(s.moreSlots());
+            s.skip();
+        }
+
+        Value v = s.maybeRead(true);
+
+        while (s.moreSlots())
+            s.skip();
+
+        return v;
     }
 
     InlineFrameIteratorMaybeGC &operator++() {
