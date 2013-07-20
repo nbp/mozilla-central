@@ -1,6 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 4: Clean-up readFrameArgs. r=
+Subject: Bug 878503 - Part 5: Move readSlotByIndex to the inline frame iterator. r=
 
-Rename SnapshotIterator::readFrameArgs to
-InlineFrameIteratorMaybeGC::readFormalFrameArgs and simplify and factor the code
-inside InlineFrameIteratorMaybeGC::forEachCanonicalActualArg.
