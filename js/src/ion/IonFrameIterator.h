@@ -471,7 +471,7 @@ class InlineFrameIteratorMaybeGC
             // We are not always able to read values from the snapshots, some values
             // such as non-gc things may still be live in registers and cause an
             // error while reading the machine state.
-            Value v = maybeRead();
+            Value v = s.maybeRead();
             op(v);
         }
     }
@@ -524,7 +524,7 @@ class InlineFrameIteratorMaybeGC
 
             // Copy un-mutated overflow of arguments from the caller frame.
             for (; i < nactual; i++) {
-                Value v = maybeRead();
+                Value v = parent_s.maybeRead();
                 op(v);
             }
         } else {
