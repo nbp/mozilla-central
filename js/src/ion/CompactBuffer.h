@@ -90,6 +90,7 @@ class CompactBufferReader
     }
 
     void restart() {
+        JS_ASSERT(start_);
         buffer_ = start_;
     }
 };

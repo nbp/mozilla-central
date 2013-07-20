@@ -86,6 +86,8 @@ class SnapshotReader
 
     void restart() {
         reader_.restart();
+        readSnapshotHeader();
+        nextFrame();
     }
 };
 
