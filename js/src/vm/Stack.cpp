@@ -1200,9 +1200,8 @@ ScriptFrameIter::frameSlotValue(size_t index) const
       case JIT:
 #ifdef JS_ION
         if (data_.ionFrames_.isOptimizedJS()) {
-            ion::SnapshotIterator si(ionInlineFrames_.snapshotIterator());
             index += ionInlineFrames_.script()->nfixed;
-            return si.maybeReadSlotByIndex(index);
+            return ionInlineFrames_.maybeReadSlotByIndex(index);
         }
 
         index += data_.ionFrames_.script()->nfixed;
