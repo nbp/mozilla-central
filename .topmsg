@@ -1,3 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 2: Remove SnapshotReader inheritance.
+Subject: Bug 878503 - Part 3: Restart reading instead of making copies of Snapshot iterators. r=
 
