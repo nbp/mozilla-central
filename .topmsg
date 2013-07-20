@@ -1,3 +1,6 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 3: Restart reading instead of making copies of Snapshot iterators. r=
+Subject: Bug 878503 - Part 4: Clean-up readFrameArgs. r=
 
+Rename SnapshotIterator::readFrameArgs to
+InlineFrameIteratorMaybeGC::readFormalFrameArgs and simplify and factor the code
+inside InlineFrameIteratorMaybeGC::forEachCanonicalActualArg.
