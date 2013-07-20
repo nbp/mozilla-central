@@ -268,43 +268,6 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
-    template <class Op>
-    void readFrameArgs(Op &op, const Value *argv, Value *scopeChain, Value *thisv,
-                       unsigned start, unsigned formalEnd, unsigned iterEnd, JSScript *script)
-    {
-        if (scopeChain)
-            *scopeChain = read();
-        else
-            skip();
-
-        // Skip slot for arguments object.
-        if (script->argumentsHasVarBinding())
-            skip();
-
-        if (thisv)
-            *thisv = read();
-        else
-            skip();
-
-        unsigned i = 0;
-        if (formalEnd < start)
-            i = start;
-
-        for (; i < start; i++)
-            skip();
-        for (; i < formalEnd && i < iterEnd; i++) {
-            // We are not always able to read values from the snapshots, some values
-            // such as non-gc things may still be live in registers and cause an
-            // error while reading the machine state.
-            Value v = maybeRead();
-            op(v);
-        }
-        if (iterEnd >= formalEnd) {
-            for (; i < iterEnd; i++)
-                op(argv[i]);
-        }
-    }
-
     Value maybeReadSlotByIndex(size_t index) {
         while (index--) {
             JS_ASSERT(moreSlots());
@@ -431,52 +394,6 @@ class InlineFrameIteratorMaybeGC
         return frame_->numActualArgs();
     }
 
-    template <class Op>
-    void forEachCanonicalActualArg(JSContext *cx, Op op, unsigned start, unsigned count) const {
-        unsigned nactual = numActualArgs();
-        if (count == unsigned(-1))
-            count = nactual - start;
-
-        unsigned end = start + count;
-        unsigned nformal = callee()->nargs;
-
-        JS_ASSERT(start <= end && end <= nactual);
-
-        if (more()) {
-            // There is still a parent frame of this inlined frame.
-            // The not overflown arguments are taken from the inlined frame,
-            // because it will have the updated value when JSOP_SETARG is done.
-            // All arguments (also the overflown) are the last pushed values in the parent frame.
-            // To get the overflown arguments, we need to take them from there.
-
-            // Get the non overflown arguments
-            unsigned formal_end = (end < nformal) ? end : nformal;
-            SnapshotIterator s(si_);
-            s.readFrameArgs(op, NULL, NULL, NULL, start, nformal, formal_end, script());
-
-            // The overflown arguments are not available in current frame.
-            // They are the last pushed arguments in the parent frame of this inlined frame.
-            InlineFrameIteratorMaybeGC it(cx, this);
-            ++it;
-            unsigned argsObjAdj = it.script()->argumentsHasVarBinding() ? 1 : 0;
-            SnapshotIterator parent_s(it.snapshotIterator());
-
-            // Skip over all slots untill we get to the last slots (= arguments slots of callee)
-            // the +2 is for [this] and [scopechain], and maybe +1 for [argsObj]
-            JS_ASSERT(parent_s.slots() >= nactual + 2 + argsObjAdj);
-            unsigned skip = parent_s.slots() - nactual - 2 - argsObjAdj;
-            for (unsigned j = 0; j < skip; j++)
-                parent_s.skip();
-
-            // Get the overflown arguments
-            parent_s.readFrameArgs(op, NULL, NULL, NULL, nformal, nactual, end, it.script());
-        } else {
-            SnapshotIterator s(si_);
-            Value *argv = frame_->actualArgs();
-            s.readFrameArgs(op, argv, NULL, NULL, start, nformal, end, script());
-        }
-    }
-
     JSScript *script() const {
         return script_;
     }
@@ -528,6 +445,94 @@ class InlineFrameIteratorMaybeGC
     void dump() const;
 
     void resetOn(const IonFrameIterator *iter);
+
+  private:
+    void readFrameContext(SnapshotIterator &s, JSScript *script)
+    {
+        // skip slot for the scope chain
+        s.skip();
+
+        // Skip slot for arguments object.
+        if (script->argumentsHasVarBinding())
+            s.skip();
+
+        // skip slot for the |this|
+        s.skip();
+    }
+
+    // Read formal argument of a frame.
+    template <class Op>
+    void readFormalFrameArgs(SnapshotIterator &s, Op &op,
+                             unsigned nformal, unsigned nactual)
+    {
+        unsigned i = 0;
+        unsigned effective_end = (nactual < nformal) ? nactual : nformal;
+        for (; i < effective_end; i++) {
+            // We are not always able to read values from the snapshots, some values
+            // such as non-gc things may still be live in registers and cause an
+            // error while reading the machine state.
+            Value v = maybeRead();
+            op(v);
+        }
+    }
+
+  public:
+    template <class Op>
+    void forEachCanonicalActualArg(JSContext *cx, Op op, unsigned start, unsigned count) const {
+        // There is no other use case.
+        JS_ASSERT(start == 0 && count == unsigned(-1));
+        unsigned nactual = numActualArgs();
+        unsigned nformal = callee()->nargs;
+
+        // Get the non overflown arguments
+        SnapshotIterator s(si_);
+        readFrameContext(s, script());
+        readFormalFrameArgs(s, op, nformal, nactual);
+
+        // There is no overflow of argument, which means that we have recovered
+        // all actual arguments.
+        if (nactual <= nformal)
+            return;
+
+        if (more()) {
+            // There is still a parent frame of this inlined frame.
+            // The not overflown arguments are taken from the inlined frame,
+            // because it will have the updated value when JSOP_SETARG is done.
+            // All arguments (also the overflown) are the last pushed values in the parent frame.
+            // To get the overflown arguments, we need to take them from there.
+
+
+            // The overflown arguments are not available in current frame.
+            // They are the last pushed arguments in the parent frame of this inlined frame.
+            InlineFrameIteratorMaybeGC it(cx, this);
+            ++it;
+            SnapshotIterator parent_s(it.snapshotIterator());
+
+            // Skip over all slots except for the arguments of the callee in the
+            // caller frame. Skip over the [scope chain], [argsObj] and [this]
+            // which have already been recovered..
+            JS_ASSERT(parent_s.slots() >= nactual);
+            unsigned skip = parent_s.slots() - nactual;
+            for (unsigned j = 0; j < skip; j++)
+                parent_s.skip();
+
+            // Skip formal arguments which are already recovered from the
+            // callee frame.
+            unsigned i = 0;
+            for (; i < nformal; i++)
+                parent_s.skip();
+
+            // Copy un-mutated overflow of arguments from the caller frame.
+            for (; i < nactual; i++) {
+                Value v = maybeRead();
+                op(v);
+            }
+        } else {
+            Value *argv = frame_->actualArgs();
+            for (unsigned i = 0; i < nactual - nformal; i++)
+                op(argv[i]);
+        }
+    }
 
   private:
     InlineFrameIteratorMaybeGC() MOZ_DELETE;
