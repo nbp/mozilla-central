@@ -130,6 +130,31 @@ ToStackIndex(LAllocation *a)
 }
 
 bool
+CodeGeneratorShared::encode(LResumePoint *rp)
+{
+    if (rp->offset() != INVALID_RECOVER_OFFSET)
+        return true;
+
+    size_t nbFrames = rp->mir()->frameCount();
+    RecoverOffset offset = recovers_.startRecover(nbFrames);
+
+    IonSpew(IonSpew_Snapshots, "Encoding LResumePoint %p (offset %u): %u Frames.",
+            (void *)rp, offset, nbFrames);
+
+    for (LResumeFrame **it = rp->begin(); it != rp->end(); it++) {
+        MResumePoint *mir = (*it)->mir;
+        size_t pcOffset = mir->pc() - mir->block()->info().script()->code;
+        size_t numOperands = mir->numOperands();
+        recovers_.writeFrame(pcOffset, numOperands);
+    }
+
+    recovers_.endRecover();
+
+    rp->setOffset(offset);
+    return !recovers_.oom();
+}
+
+bool
 CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
                                  uint32_t *startIndex)
 {
@@ -230,42 +255,59 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
     if (snapshot->snapshotOffset() != INVALID_SNAPSHOT_OFFSET)
         return true;
 
-    uint32_t frameCount = snapshot->mir()->frameCount();
+    LResumePoint *rp = snapshot->resumePoint();
+    if (!encode(rp))
+        return false;
 
-    IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (frameCount %u)",
-            (void *)snapshot, frameCount);
-
-    MResumePoint::Mode mode = snapshot->mir()->mode();
+    MResumePoint::Mode mode = rp->mir()->mode();
     JS_ASSERT(mode != MResumePoint::Outer);
     bool resumeAfter = (mode == MResumePoint::ResumeAfter);
 
-    SnapshotOffset offset = snapshots_.startSnapshot(frameCount, snapshot->bailoutKind(),
-                                                     resumeAfter);
+    JS_ASSERT(snapshot->numSlots() == rp->numSlots());
+    SnapshotOffset offset = snapshots_.startSnapshot(snapshot->bailoutKind(),
+                                                     resumeAfter, rp->offset(),
+                                                     snapshot->numSlots());
+    IonSpew(IonSpew_Snapshots, "Encoding LSnapshot %p (offset %u, Recover offset: %u)",
+            (void *)snapshot, offset, rp->offset());
 
-    FlattenedMResumePointIter mirOperandIter(snapshot->mir());
-    if (!mirOperandIter.init())
-        return false;
+#ifdef TRACK_SNAPSHOTS
+    LInstruction *ins = instruction();
+
+    uint32_t pcOpcode = 0;
+    uint32_t lirOpcode = 0;
+    uint32_t lirId = 0;
+    uint32_t mirOpcode = 0;
+    uint32_t mirId = 0;
+
+    if (ins) {
+        lirOpcode = ins->op();
+        lirId = ins->id();
+        if (ins->mirRaw()) {
+            mirOpcode = ins->mirRaw()->op();
+            mirId = ins->mirRaw()->id();
+            if (ins->mirRaw()->trackedPc())
+                pcOpcode = *ins->mirRaw()->trackedPc();
+        }
+    }
+    snapshots_.trackFrame(pcOpcode, mirOpcode, mirId, lirOpcode, lirId);
+#endif
 
     uint32_t startIndex = 0;
-    for (MResumePoint **it = mirOperandIter.begin(), **end = mirOperandIter.end();
-         it != end;
-         ++it)
+    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it)
     {
-        MResumePoint *mir = *it;
+        MResumePoint *mir = (*it)->mir;
+#ifdef DEBUG
         MBasicBlock *block = mir->block();
-        JSFunction *fun = block->info().fun();
         JSScript *script = block->info().script();
         jsbytecode *pc = mir->pc();
         uint32_t exprStack = mir->stackDepth() - block->info().ninvoke();
-        snapshots_.startFrame(fun, script, pc, exprStack);
 
         // Ensure that all snapshot which are encoded can safely be used for
         // bailouts.
-        DebugOnly<jsbytecode *> bailPC = pc;
+        jsbytecode *bailPC = pc;
         if (mir->mode() == MResumePoint::ResumeAfter)
           bailPC = GetNextPc(pc);
 
-#ifdef DEBUG
         if (GetIonContext()->cx) {
             uint32_t stackDepth = js_ReconstructStackDepth(GetIonContext()->cx, script, bailPC);
             if (JSOp(*bailPC) == JSOP_FUNCALL) {
@@ -283,31 +325,8 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
         }
 #endif
 
-#ifdef TRACK_SNAPSHOTS
-        LInstruction *ins = instruction();
-
-        uint32_t pcOpcode = 0;
-        uint32_t lirOpcode = 0;
-        uint32_t lirId = 0;
-        uint32_t mirOpcode = 0;
-        uint32_t mirId = 0;
-
-        if (ins) {
-            lirOpcode = ins->op();
-            lirId = ins->id();
-            if (ins->mirRaw()) {
-                mirOpcode = ins->mirRaw()->op();
-                mirId = ins->mirRaw()->id();
-                if (ins->mirRaw()->trackedPc())
-                    pcOpcode = *ins->mirRaw()->trackedPc();
-            }
-        }
-        snapshots_.trackFrame(pcOpcode, mirOpcode, mirId, lirOpcode, lirId);
-#endif
-
         if (!encodeSlots(snapshot, mir, &startIndex))
             return false;
-        snapshots_.endFrame();
     }
 
     snapshots_.endSnapshot();

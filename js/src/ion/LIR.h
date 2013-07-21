@@ -876,6 +876,61 @@ class LCallInstructionHelper : public LInstructionHelper<Defs, Operands, Temps>
     }
 };
 
+struct LResumeFrame : public TempObject
+{
+    // Frame which will be resumed.
+    MResumePoint *mir;
+
+    // Index at which this frames start in the snapshot.
+    uint32_t startSlotIndex;
+};
+
+// An LRecover is similar to a resume point, except that it exhibit a linear
+// behavior and provides an interpretation for a LSnapshot having the same
+// number of slots.  As resume points can be used by multiple MIR nodes, an
+// LRecover can be referenced by multiple LSnapshots. During code generation,
+// LRecovers are compressed and saved in the compiled script.
+class LResumePoint : public TempObject
+{
+    RecoverOffset recoverOffset_;
+
+    // Resume point used to generate this recover structure.
+    MResumePoint *mir_;
+
+    // Ordered list of resume operations.
+    Vector<LResumeFrame *, 1, IonAllocPolicy> frames_;
+
+    // Number of slots stored in the snapshot.
+    uint32_t numSlots_;
+
+    LResumePoint(MResumePoint *mir);
+    bool init(MResumePoint *mir);
+
+  public:
+    static LResumePoint *New(MResumePoint *mir);
+
+    uint32_t numSlots() const {
+        return numSlots_;
+    }
+    MResumePoint *mir() const {
+        return mir_;
+    }
+
+    LResumeFrame **begin() {
+        return frames_.begin();
+    }
+    LResumeFrame **end() {
+        return frames_.end();
+    }
+
+    RecoverOffset offset() const {
+        return recoverOffset_;
+    }
+    void setOffset(RecoverOffset offset) {
+        recoverOffset_ = offset;
+    }
+};
+
 // An LSnapshot is the reflection of an MResumePoint in LIR. Unlike MResumePoints,
 // they cannot be shared, as they are filled in by the register allocator in
 // order to capture the precise low-level stack state in between an
@@ -886,16 +941,16 @@ class LSnapshot : public TempObject
   private:
     uint32_t numSlots_;
     LAllocation *slots_;
-    MResumePoint *mir_;
+    LResumePoint *rp_;
     SnapshotOffset snapshotOffset_;
     BailoutId bailoutId_;
     BailoutKind bailoutKind_;
 
-    LSnapshot(MResumePoint *mir, BailoutKind kind);
+    LSnapshot(LResumePoint *rp, BailoutKind kind);
     bool init(MIRGenerator *gen);
 
   public:
-    static LSnapshot *New(MIRGenerator *gen, MResumePoint *snapshot, BailoutKind kind);
+    static LSnapshot *New(MIRGenerator *gen, LResumePoint *rp, BailoutKind kind);
 
     size_t numEntries() const {
         return numSlots_;
@@ -923,8 +978,11 @@ class LSnapshot : public TempObject
         JS_ASSERT(i < numSlots_);
         slots_[i] = alloc;
     }
+    LResumePoint *resumePoint() const {
+        return rp_;
+    }
     MResumePoint *mir() const {
-        return mir_;
+        return rp_->mir();
     }
     SnapshotOffset snapshotOffset() const {
         return snapshotOffset_;

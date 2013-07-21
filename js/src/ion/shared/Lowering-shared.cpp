@@ -59,19 +59,15 @@ LIRGeneratorShared::lowerTypedPhiInput(MPhi *phi, uint32_t inputPosition, LBlock
 
 #ifdef JS_NUNBOX32
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LResumePoint *rp, BailoutKind kind)
 {
     LSnapshot *snapshot = LSnapshot::New(gen, rp, kind);
     if (!snapshot)
         return NULL;
 
-    FlattenedMResumePointIter iter(rp);
-    if (!iter.init())
-        return NULL;
-
     size_t i = 0;
-    for (MResumePoint **it = iter.begin(), **end = iter.end(); it != end; ++it) {
-        MResumePoint *mir = *it;
+    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it) {
+        MResumePoint *mir = (*it)->mir;
         for (size_t j = 0, e = mir->numOperands(); j < e; ++i, ++j) {
             MDefinition *ins = mir->getOperand(j);
 
@@ -111,19 +107,15 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKi
 #elif JS_PUNBOX64
 
 LSnapshot *
-LIRGeneratorShared::buildSnapshot(LInstruction *ins, MResumePoint *rp, BailoutKind kind)
+LIRGeneratorShared::buildSnapshot(LInstruction *ins, LResumePoint *rp, BailoutKind kind)
 {
     LSnapshot *snapshot = LSnapshot::New(gen, rp, kind);
     if (!snapshot)
         return NULL;
 
-    FlattenedMResumePointIter iter(rp);
-    if (!iter.init())
-        return NULL;
-
     size_t i = 0;
-    for (MResumePoint **it = iter.begin(), **end = iter.end(); it != end; ++it) {
-        MResumePoint *mir = *it;
+    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it) {
+        MResumePoint *mir = (*it)->mir;
         for (size_t j = 0, e = mir->numOperands(); j < e; ++i, ++j) {
             MDefinition *def = mir->getOperand(j);
 
@@ -152,7 +144,10 @@ LIRGeneratorShared::assignSnapshot(LInstruction *ins, BailoutKind kind)
     // it may add new instructions for emitted-at-use operands.
     JS_ASSERT(ins->id() == 0);
 
-    LSnapshot *snapshot = buildSnapshot(ins, lastResumePoint_, kind);
+    if (!lastRp_ || lastRp_->mir() != lastResumePoint_)
+        lastRp_ = LResumePoint::New(lastResumePoint_);
+
+    LSnapshot *snapshot = buildSnapshot(ins, lastRp_, kind);
     if (!snapshot)
         return false;
 
@@ -169,7 +164,10 @@ LIRGeneratorShared::assignSafepoint(LInstruction *ins, MInstruction *mir)
     ins->initSafepoint();
 
     MResumePoint *mrp = mir->resumePoint() ? mir->resumePoint() : lastResumePoint_;
-    LSnapshot *postSnapshot = buildSnapshot(ins, mrp, Bailout_Normal);
+    if (!lastRp_ || lastRp_->mir() != mrp)
+        lastRp_ = LResumePoint::New(mrp);
+
+    LSnapshot *postSnapshot = buildSnapshot(ins, lastRp_, Bailout_Normal);
     if (!postSnapshot)
         return false;
 

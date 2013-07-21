@@ -99,19 +99,49 @@ LBlock::getExitMoveGroup()
     return exitMoveGroup_;
 }
 
-static size_t
-TotalOperandCount(MResumePoint *mir)
+LResumePoint::LResumePoint(MResumePoint *mir)
+  : recoverOffset_(INVALID_RECOVER_OFFSET),
+    mir_(mir),
+    frames_(),
+    numSlots_(0)
+{ }
+
+bool
+LResumePoint::init(MResumePoint *mir)
 {
-    size_t accum = mir->numOperands();
-    while ((mir = mir->caller()))
-        accum += mir->numOperands();
-    return accum;
+    // Process resume points in reversed order.
+    if (mir->caller())
+        init(mir->caller());
+
+    LResumeFrame *frame = new LResumeFrame;
+    if (!frame)
+        return false;
+    frame->mir = mir;
+    frame->startSlotIndex = numSlots_;
+    numSlots_ += mir->numOperands();
+
+    if (!frames_.append(frame))
+        return false;
+    return true;
 }
 
-LSnapshot::LSnapshot(MResumePoint *mir, BailoutKind kind)
-  : numSlots_(TotalOperandCount(mir) * BOX_PIECES),
+LResumePoint *
+LResumePoint::New(MResumePoint *mir)
+{
+    LResumePoint *lir = new LResumePoint(mir);
+    if (!lir->init(lir->mir()))
+        return NULL;
+
+    IonSpew(IonSpew_Snapshots, "Generating resume point %p from MIR (%p)",
+            (void *)lir, (void *)mir);
+
+    return lir;
+}
+
+LSnapshot::LSnapshot(LResumePoint *rp, BailoutKind kind)
+  : numSlots_(rp->numSlots() * BOX_PIECES),
     slots_(NULL),
-    mir_(mir),
+    rp_(rp),
     snapshotOffset_(INVALID_SNAPSHOT_OFFSET),
     bailoutId_(INVALID_BAILOUT_ID),
     bailoutKind_(kind)
@@ -125,14 +155,14 @@ LSnapshot::init(MIRGenerator *gen)
 }
 
 LSnapshot *
-LSnapshot::New(MIRGenerator *gen, MResumePoint *mir, BailoutKind kind)
+LSnapshot::New(MIRGenerator *gen, LResumePoint *rp, BailoutKind kind)
 {
-    LSnapshot *snapshot = new LSnapshot(mir, kind);
+    LSnapshot *snapshot = new LSnapshot(rp, kind);
     if (!snapshot->init(gen))
         return NULL;
 
     IonSpew(IonSpew_Snapshots, "Generating LIR snapshot %p from MIR (%p)",
-            (void *)snapshot, (void *)mir);
+            (void *)snapshot, (void *)snapshot->mir());
 
     return snapshot;
 }

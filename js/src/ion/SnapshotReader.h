@@ -26,13 +26,12 @@ class SnapshotReader
 {
     CompactBufferReader reader_;
 
-    uint32_t pcOffset_;           // Offset from script->code.
+    RecoverOffset recoverOffset_;
+
     uint32_t slotCount_;          // Number of slots.
-    uint32_t frameCount_;
-    BailoutKind bailoutKind_;
-    uint32_t framesRead_;         // Number of frame headers that have been read.
     uint32_t slotsRead_;          // Number of slots that have been read.
-    bool resumeAfter_;
+    BailoutKind bailoutKind_;
+    bool lastFrameResumeAfter_;
 
 #ifdef TRACK_SNAPSHOTS
   private:
@@ -55,41 +54,84 @@ class SnapshotReader
   public:
     SnapshotReader(const uint8_t *buffer, const uint8_t *end);
 
-    uint32_t pcOffset() const {
-        return pcOffset_;
-    }
-    uint32_t slots() const {
-        return slotCount_;
+    RecoverOffset recoverOffset() const {
+        return recoverOffset_;
     }
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    bool resumeAfter() const {
-        if (moreFrames())
-            return false;
-        return resumeAfter_;
-    }
-    bool moreFrames() const {
-        return framesRead_ < frameCount_;
-    }
-    void nextFrame() {
-        readFrameHeader();
+    bool lastFrameResumeAfter() const {
+        return lastFrameResumeAfter_;
     }
     Slot readSlot();
 
+    size_t index() const {
+        return slotsRead_;
+    }
     bool moreSlots() const {
         return slotsRead_ < slotCount_;
-    }
-    uint32_t frameCount() const {
-        return frameCount_;
     }
 
     void restart() {
         reader_.restart();
-        slotCount_ = slotsRead_ = 0;
+        slotsRead_ = 0;
         readSnapshotHeader();
-        nextFrame();
     }
+};
+
+// A Recover reader reads the layout of stack and give a structure to the
+// content of the snapshot reader.
+class RecoverReader
+{
+    CompactBufferReader reader_;
+
+    uint32_t frameCount_;
+    uint32_t operandCount_;
+
+    uint32_t frameRead_;
+    uint32_t operandRead_;
+
+    uint32_t slotIndex_;
+    uint32_t pcOffset_;
+
+    void readRecoverHeader();
+    void readFrameHeader();
+    void init();
+
+  public:
+    RecoverReader(const uint8_t *buffer = NULL, const uint8_t *end = NULL);
+    RecoverReader(const IonScript *ion, RecoverOffset offset);
+
+    // Return the index of the operand within the snapshot.
+    size_t readOperandSlotIndex() {
+        JS_ASSERT(moreOperands());
+        return slotIndex_ + operandRead_++;
+    }
+    size_t numOperands() const {
+        return operandCount_;
+    }
+    bool moreOperands() const {
+        return operandRead_ < operandCount_;
+    }
+
+    void nextFrame() {
+        readFrameHeader();
+    }
+    size_t frameIndex() const {
+        return frameRead_;
+    }
+    size_t numFrames() const {
+        return frameCount_;
+    }
+    bool moreFrames() const {
+        return frameRead_ < frameCount_;
+    }
+
+    uint32_t pcOffset() const {
+        return pcOffset_;
+    }
+
+    void restart();
 };
 
 }

@@ -25,20 +25,17 @@ class SnapshotWriter
     // These are only used to assert sanity.
     uint32_t nslots_;
     uint32_t slotsWritten_;
-    uint32_t nframes_;
-    uint32_t framesWritten_;
     SnapshotOffset lastStart_;
 
     void writeSlotHeader(JSValueType type, uint32_t regCode);
 
   public:
-    SnapshotOffset startSnapshot(uint32_t frameCount, BailoutKind kind, bool resumeAfter);
-    void startFrame(JSFunction *fun, JSScript *script, jsbytecode *pc, uint32_t exprStack);
+    SnapshotOffset startSnapshot(BailoutKind kind, bool resumeAfter,
+                                 RecoverOffset offset, uint32_t numSlots);
 #ifdef TRACK_SNAPSHOTS
     void trackFrame(uint32_t pcOpcode, uint32_t mirOpcode, uint32_t mirId,
                                      uint32_t lirOpcode, uint32_t lirId);
 #endif
-    void endFrame();
 
     void addSlot(const FloatRegister &reg);
     void addSlot(JSValueType type, const Register &reg);
@@ -67,6 +64,33 @@ class SnapshotWriter
     }
     const uint8_t *buffer() const {
         return writer_.buffer();
+    }
+};
+
+// Collect the layout of the stack into a compacting buffer which is copied into
+// IonScript memory after code generation.
+class RecoverWriter
+{
+
+    CompactBufferWriter writer_;
+  public:
+
+    RecoverOffset startRecover(uint32_t frameCount);
+
+    void writeFrame(size_t pcOffset, size_t numOperands);
+
+    void endRecover() {
+    }
+
+    size_t size() const {
+        return writer_.length();
+    }
+    const uint8_t *buffer() const {
+        return writer_.buffer();
+    }
+
+    bool oom() const {
+        return writer_.oom() || writer_.length() >= MAX_BUFFER_SIZE;
     }
 };
 

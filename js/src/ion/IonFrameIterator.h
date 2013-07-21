@@ -236,6 +236,7 @@ class IonBailoutIterator;
 class SnapshotIterator
 {
     SnapshotReader snapshot_;
+    RecoverReader recover_;
     IonJSFrameLayout *fp_;
     MachineState machine_;
     IonScript *ionScript_;
@@ -270,10 +271,37 @@ class SnapshotIterator
 
   public:
     //
+    // dispatch to the RecoverReader.
+    //
+
+    inline uint32_t slots() const {
+        return recover_.numOperands();
+    }
+    inline bool moreSlots() const {
+        return recover_.moreOperands();
+    }
+
+    inline void nextFrame() {
+        recover_.nextFrame();
+    }
+    inline uint32_t frameCount() const {
+        return recover_.numFrames();
+    }
+    inline bool moreFrames() const {
+        return recover_.moreFrames();
+    }
+
+    inline uint32_t pcOffset() const {
+        return recover_.pcOffset();
+    }
+
+  public:
+    //
     // dispatch to the SnapshotReader.
     //
 
     inline Slot readSlot() {
+        recover_.readOperandSlotIndex();
         return snapshot_.readSlot();
     }
     inline Value skip() {
@@ -281,30 +309,10 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
-    inline uint32_t slots() const {
-        return snapshot_.slots();
-    }
-    inline bool moreSlots() const {
-        return snapshot_.moreSlots();
-    }
-
-
-    inline void nextFrame() {
-        snapshot_.nextFrame();
-    }
-    inline uint32_t frameCount() const {
-        return snapshot_.frameCount();
-    }
-    inline bool moreFrames() const {
-        return snapshot_.moreFrames();
-    }
-
-  public:
-    inline uint32_t pcOffset() const {
-        return snapshot_.pcOffset();
-    }
     inline bool resumeAfter() const {
-        return snapshot_.resumeAfter();
+        if (moreFrames())
+            return false;
+        return snapshot_.lastFrameResumeAfter();
     }
     inline BailoutKind bailoutKind() const {
         return snapshot_.bailoutKind();
@@ -313,6 +321,7 @@ class SnapshotIterator
   public:
     inline void restart() {
         snapshot_.restart();
+        recover_.restart();
     }
 };
 

@@ -1122,6 +1122,7 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
                                    IonJSFrameLayout *fp, const MachineState &machine)
   : snapshot_(ionScript->snapshots() + snapshotOffset,
               ionScript->snapshots() + ionScript->snapshotsSize()),
+    recover_(ionScript, snapshot_.recoverOffset()),
     fp_(fp),
     machine_(machine),
     ionScript_(ionScript)
@@ -1132,6 +1133,7 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
   : snapshot_(iter.ionScript()->snapshots() + iter.osiIndex()->snapshotOffset(),
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
+    recover_(iter.ionScript(), snapshot_.recoverOffset()),
     fp_(iter.jsFrame()),
     machine_(iter.machineState()),
     ionScript_(iter.ionScript())
@@ -1140,6 +1142,7 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
 
 SnapshotIterator::SnapshotIterator()
   : snapshot_(NULL, NULL),
+    recover_(),
     fp_(NULL),
     ionScript_(NULL)
 {
