@@ -1243,6 +1243,9 @@ SnapshotIterator::slotValue(const Slot &slot)
       case Slot::CONSTANT:
         return ionScript_->getConstant(slot.constantIndex());
 
+      case Slot::UNINITIALIZED:
+        MOZ_ASSUME_UNREACHABLE("Slot is not initialize.");
+
       default:
         MOZ_ASSUME_UNREACHABLE("huh?");
     }
