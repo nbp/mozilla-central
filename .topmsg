@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 8: Add constant qualifiers on SnapshotIterator methods. r=
+Subject: Bug 878503 - Part 9: Add RResumePoint to store slots instead of copying SnapshotIterators. r=
+
