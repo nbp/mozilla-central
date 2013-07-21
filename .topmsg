@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 6: Extract the LResumePoint structure out of Snapshots. r=
+Subject: Bug 878503 - Part 7: Recover frame slots in the SnapshotIterator. r=
