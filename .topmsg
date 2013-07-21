@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 7: Add Slot default constructor. r=
+Subject: Bug 878503 - Part 8: Add constant qualifiers on SnapshotIterator methods. r=
