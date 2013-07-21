@@ -64,6 +64,8 @@ class Slot
 
     enum SlotMode
     {
+        UNINITIALIZED = 0,  // Needed for the default constructor.
+
         CONSTANT,           // An index into the constant pool.
         DOUBLE_REG,         // Type is double, payload is in a register.
         TYPED_REG,          // Type is constant, payload is in a register.
@@ -97,6 +99,10 @@ class Slot
     };
 
   protected:
+    Slot()
+      : mode_(UNINITIALIZED)
+    { }
+
     Slot(SlotMode mode, JSValueType type, const Location &loc)
       : mode_(mode)
     {
@@ -161,6 +167,9 @@ class Slot
         return unknown_type_.value;
     }
 #endif
+    bool isInitialized() const {
+        return mode() != UNINITIALIZED;
+    }
 };
 
 } // namespace ion

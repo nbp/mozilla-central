@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 7: Recover frame slots in the SnapshotIterator. r=
+Subject: Bug 878503 - Part 7: Add Slot default constructor. r=
