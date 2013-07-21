@@ -1149,13 +1149,13 @@ SnapshotIterator::SnapshotIterator()
 }
 
 bool
-SnapshotIterator::hasLocation(const Slot::Location &loc)
+SnapshotIterator::hasLocation(const Slot::Location &loc) const
 {
     return loc.isStackSlot() || machine_.has(loc.reg());
 }
 
 uintptr_t
-SnapshotIterator::fromLocation(const Slot::Location &loc)
+SnapshotIterator::fromLocation(const Slot::Location &loc) const
 {
     if (loc.isStackSlot())
         return ReadFrameSlot(fp_, loc.stackSlot());
@@ -1180,7 +1180,7 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
 }
 
 bool
-SnapshotIterator::slotReadable(const Slot &slot)
+SnapshotIterator::slotReadable(const Slot &slot) const
 {
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
@@ -1202,7 +1202,7 @@ SnapshotIterator::slotReadable(const Slot &slot)
 }
 
 Value
-SnapshotIterator::slotValue(const Slot &slot)
+SnapshotIterator::slotValue(const Slot &slot) const
 {
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
@@ -1458,7 +1458,7 @@ IonFrameIterator::numActualArgs() const
 }
 
 void
-SnapshotIterator::warnUnreadableSlot()
+SnapshotIterator::warnUnreadableSlot() const
 {
     fprintf(stderr, "Warning! Tried to access unreadable IonMonkey slot (possible f.arguments).\n");
 }

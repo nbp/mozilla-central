@@ -242,13 +242,11 @@ class SnapshotIterator
     IonScript *ionScript_;
 
   private:
-    bool hasLocation(const Slot::Location &loc);
-    uintptr_t fromLocation(const Slot::Location &loc);
+    bool hasLocation(const Slot::Location &loc) const ;
+    uintptr_t fromLocation(const Slot::Location &loc) const;
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
-    Value slotValue(const Slot &slot);
-    bool slotReadable(const Slot &slot);
-    void warnUnreadableSlot();
+    void warnUnreadableSlot() const;
 
   public:
     SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
@@ -257,9 +255,14 @@ class SnapshotIterator
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
 
-    Value read() {
-        return slotValue(readSlot());
-    }
+    // Return the Value from the location indicated by the Slot.
+    Value slotValue(const Slot &slot) const;
+
+    // Determine if a slot indicates a readable location. A Value might not be
+    // readbale if it has been optimized out, in which case it can only be
+    // recovered during a bailout.
+    bool slotReadable(const Slot &slot) const;
+
     Value maybeRead(bool silentFailure = false) {
         Slot s = readSlot();
         if (slotReadable(s))
@@ -267,6 +270,16 @@ class SnapshotIterator
         if (!silentFailure)
             warnUnreadableSlot();
         return UndefinedValue();
+    }
+
+    // As soon as we can removed these functions, we should be able to split the
+    // SnapshotIterator in 2 parts, one for readings slots and one for reading
+    // Values.
+    Value read() {
+        return slotValue(readSlot());
+    }
+    void skip() {
+        readSlot();
     }
 
   public:
@@ -303,10 +316,6 @@ class SnapshotIterator
     inline Slot readSlot() {
         recover_.readOperandSlotIndex();
         return snapshot_.readSlot();
-    }
-    inline Value skip() {
-        readSlot();
-        return UndefinedValue();
     }
 
     inline bool resumeAfter() const {
