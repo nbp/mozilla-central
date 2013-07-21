@@ -332,9 +332,16 @@ IonFrameIterator::machineState() const
 static void
 CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t localSlot)
 {
-    const SnapshotIterator &si = frame.snapshotIterator();
-    const Slot *stackSlots = frame.resumePoint().stackSlotsBegin();
-    Value v = si.slotValue(stackSlots[localSlot]);
+    SnapshotIterator si = frame.snapshotIterator();
+
+    // Skip stack slots until we reach the iterator object.
+    uint32_t base = CountArgSlots(frame.script(), frame.maybeCallee()) + frame.script()->nfixed;
+    uint32_t skipSlots = base + localSlot - 1;
+
+    for (unsigned i = 0; i < skipSlots; i++)
+        si.skip();
+
+    Value v = si.read();
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1142,13 +1149,13 @@ SnapshotIterator::SnapshotIterator()
 }
 
 bool
-SnapshotIterator::hasLocation(const Slot::Location &loc) const
+SnapshotIterator::hasLocation(const Slot::Location &loc)
 {
     return loc.isStackSlot() || machine_.has(loc.reg());
 }
 
 uintptr_t
-SnapshotIterator::fromLocation(const Slot::Location &loc) const
+SnapshotIterator::fromLocation(const Slot::Location &loc)
 {
     if (loc.isStackSlot())
         return ReadFrameSlot(fp_, loc.stackSlot());
@@ -1173,7 +1180,7 @@ SnapshotIterator::FromTypedPayload(JSValueType type, uintptr_t payload)
 }
 
 bool
-SnapshotIterator::slotReadable(const Slot &slot) const
+SnapshotIterator::slotReadable(const Slot &slot)
 {
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
@@ -1195,7 +1202,7 @@ SnapshotIterator::slotReadable(const Slot &slot) const
 }
 
 Value
-SnapshotIterator::slotValue(const Slot &slot) const
+SnapshotIterator::slotValue(const Slot &slot)
 {
     switch (slot.mode()) {
       case Slot::DOUBLE_REG:
@@ -1293,43 +1300,6 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 template void InlineFrameIteratorMaybeGC<NoGC>::resetOn(const IonFrameIterator *iter);
 template void InlineFrameIteratorMaybeGC<CanGC>::resetOn(const IonFrameIterator *iter);
 
-bool
-RResumePoint::readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun)
-{
-    pcOffset_ = it.pcOffset();
-    resumeAfter_ = it.resumeAfter();
-
-    size_t loadedSlots = 0;
-
-    scopeChainSlot_ = it.readSlot();
-    loadedSlots++;
-
-    if (script->argumentsHasVarBinding()) {
-        argObjSlot_ = it.readSlot();
-        loadedSlots++;
-    } else {
-        argObjSlot_ = Slot();
-    }
-
-    if (fun) {
-        thisSlot_ = it.readSlot();
-        loadedSlots++;
-        nargs_ = fun->nargs;
-    } else {
-        thisSlot_ = Slot();
-        nargs_ = 0;
-    }
-
-    nfixed_ = script->nfixed;
-
-    slots_.clear();
-    if (!slots_.reserve(it.slots() - loadedSlots))
-        return false;
-    while (it.moreSlots())
-        slots_.infallibleAppend(it.readSlot());
-    return true;
-}
-
 template <AllowGC allowGC>
 void
 InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
@@ -1341,8 +1311,6 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // Read the initial frame.
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
-
-    rp_.readSlots(si_, script_, callee_);
     pc_ = script_->code + si_.pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
@@ -1364,9 +1332,19 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         JS_ASSERT(numActualArgs_ != 0xbadbad);
 
-         Value funval = si_.slotValue(rp_.calleeFunction(numActualArgs_));
+        // Skip over non-argument slots, as well as |this|.
+        unsigned skipCount = (si_.slots() - 1) - numActualArgs_ - 1;
+        for (unsigned j = 0; j < skipCount; j++)
+            si_.skip();
+
+        Value funval = si_.read();
+
+        // Skip extra slots.
+        while (si_.moreSlots())
+            si_.skip();
 
         si_.nextFrame();
+
         callee_ = &funval.toObject().as<JSFunction>();
 
         // Inlined functions may be clones that still point to the lazy script
@@ -1374,7 +1352,6 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         // exists though, just make sure the function points to it.
         script_ = callee_->existingScript();
 
-        rp_.readSlots(si_, script_, callee_);
         pc_ = script_->code + si_.pcOffset();
     }
 
@@ -1481,18 +1458,10 @@ IonFrameIterator::numActualArgs() const
 }
 
 void
-SnapshotIterator::warnUnreadableSlot() const
+SnapshotIterator::warnUnreadableSlot()
 {
     fprintf(stderr, "Warning! Tried to access unreadable IonMonkey slot (possible f.arguments).\n");
 }
-
-#ifdef DEBUG
-# define DUMP_VALUE(val, _) js_DumpValue(val)
-# define DUMP_OBJECT(obj, _) js_DumpObject(obj)
-#else
-# define DUMP_VALUE(_, txt)  fprintf(stderr, txt)
-# define DUMP_OBJECT(_, txt)  fprintf(stderr, txt)
-#endif
 
 struct DumpOp {
     DumpOp(unsigned int i) : i_(i) {}
@@ -1500,7 +1469,11 @@ struct DumpOp {
     unsigned int i_;
     void operator()(const Value& v) {
         fprintf(stderr, "  actual (arg %d): ", i_);
-        DUMP_VALUE(v, "?\n");
+#ifdef DEBUG
+        js_DumpValue(v);
+#else
+        fprintf(stderr, "?\n");
+#endif
         i_++;
     }
 };
@@ -1513,7 +1486,11 @@ IonFrameIterator::dumpBaseline() const
     fprintf(stderr, " JS Baseline frame\n");
     if (isFunctionFrame()) {
         fprintf(stderr, "  callee fun: ");
-        DUMP_OBJECT(callee(), "?\n");
+#ifdef DEBUG
+        js_DumpObject(callee());
+#else
+        fprintf(stderr, "?\n");
+#endif
     } else {
         fprintf(stderr, "  global frame, no callee\n");
     }
@@ -1535,8 +1512,12 @@ IonFrameIterator::dumpBaseline() const
 
     for (unsigned i = 0; i < frame->numValueSlots(); i++) {
         fprintf(stderr, "  slot %u: ", i);
+#ifdef DEBUG
         Value *v = frame->valueSlot(i);
-        DUMP_VALUE(*v, "?\n");
+        js_DumpValue(*v);
+#else
+        fprintf(stderr, "?\n");
+#endif
     }
 }
 
@@ -1553,7 +1534,11 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
     if (isFunctionFrame()) {
         isFunction = true;
         fprintf(stderr, "  callee fun: ");
-        DUMP_OBJECT(callee(), "?\n");
+#ifdef DEBUG
+        js_DumpObject(callee());
+#else
+        fprintf(stderr, "?\n");
+#endif
     } else {
         fprintf(stderr, "  global frame, no callee\n");
     }
@@ -1568,47 +1553,31 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
         numActualArgs();
     }
 
-    fprintf(stderr, "  slots: %u\n", si_.slots() - 1);
-    if (rp_.scopeChainSlot().isInitialized()) {
-        fprintf(stderr, "  scope chain: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.scopeChainSlot()), "?\n");
-    }
+    SnapshotIterator si = snapshotIterator();
+    fprintf(stderr, "  slots: %u\n", si.slots() - 1);
+    for (unsigned i = 0; i < si.slots() - 1; i++) {
+        if (isFunction) {
+            if (i == 0)
+                fprintf(stderr, "  scope chain: ");
+            else if (i == 1)
+                fprintf(stderr, "  this: ");
+            else if (i - 2 < callee()->nargs)
+                fprintf(stderr, "  formal (arg %d): ", i - 2);
+            else {
+                if (i - 2 == callee()->nargs && numActualArgs() > callee()->nargs) {
+                    DumpOp d(callee()->nargs);
+                    forEachCanonicalActualArg(GetIonContext()->cx, d, d.i_, numActualArgs() - d.i_);
+                }
 
-    if (rp_.argObjSlot().isInitialized()) {
-        fprintf(stderr, "  argument object: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.argObjSlot()), "?\n");
-    }
-
-    if (rp_.thisSlot().isInitialized()) {
-        fprintf(stderr, "  this: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.thisSlot()), "?\n");
-    }
-
-    {
-        const Slot *begin = rp_.formalArgsSlotsBegin();
-        const Slot *end = rp_.formalArgsSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  formal arg %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
-    }
-
-    {
-        const Slot *begin = rp_.fixedSlotsBegin();
-        const Slot *end = rp_.fixedSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  fixed slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
-    }
-
-    {
-        const Slot *begin = rp_.stackSlotsBegin();
-        const Slot *end = rp_.stackSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  stack slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+                fprintf(stderr, "  slot %d: ", i - 2 - callee()->nargs);
+            }
+        } else
+            fprintf(stderr, "  slot %u: ", i);
+#ifdef DEBUG
+        js_DumpValue(si.maybeRead());
+#else
+        fprintf(stderr, "?\n");
+#endif
     }
 
     fputc('\n', stderr);

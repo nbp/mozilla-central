@@ -1199,8 +1199,10 @@ ScriptFrameIter::frameSlotValue(size_t index) const
         break;
       case JIT:
 #ifdef JS_ION
-        if (data_.ionFrames_.isOptimizedJS())
+        if (data_.ionFrames_.isOptimizedJS()) {
+            index += ionInlineFrames_.script()->nfixed;
             return ionInlineFrames_.maybeReadSlotByIndex(index);
+        }
 
         index += data_.ionFrames_.script()->nfixed;
         return *data_.ionFrames_.baselineFrame()->valueSlot(index);
