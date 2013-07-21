@@ -99,10 +99,6 @@ class Slot
     };
 
   protected:
-    Slot()
-      : mode_(UNINITIALIZED)
-    { }
-
     Slot(SlotMode mode, JSValueType type, const Location &loc)
       : mode_(mode)
     {
@@ -125,6 +121,10 @@ class Slot
     }
 
   public:
+    Slot()
+      : mode_(UNINITIALIZED)
+    { }
+
     SlotMode mode() const {
         return mode_;
     }
