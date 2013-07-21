@@ -242,14 +242,11 @@ class SnapshotIterator
     IonScript *ionScript_;
 
   private:
-    bool hasLocation(const Slot::Location &loc);
-    uintptr_t fromLocation(const Slot::Location &loc);
+    bool hasLocation(const Slot::Location &loc) const;
+    uintptr_t fromLocation(const Slot::Location &loc) const;
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
-    Value slotValue(const Slot &slot);
-    bool slotReadable(const Slot &slot);
-    void warnUnreadableSlot();
-
+    void warnUnreadableSlot() const;
   public:
     SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
                      IonJSFrameLayout *fp, const MachineState &machine);
@@ -257,16 +254,32 @@ class SnapshotIterator
     SnapshotIterator(const IonBailoutIterator &iter);
     SnapshotIterator();
 
-    Value read() {
-        return slotValue(readSlot());
-    }
-    Value maybeRead(bool silentFailure = false) {
-        Slot s = readSlot();
-        if (slotReadable(s))
-            return slotValue(s);
+    // Return the Value from the location indicated by the Slot.
+    Value slotValue(const Slot &slot) const;
+
+    // Determine if a slot indicates a readable location. A Value might not be
+    // readbale if it has been optimized out, in which case it can only be
+    // recovered during a bailout.
+    bool slotReadable(const Slot &slot) const;
+
+    // Return the Value from the location indicated by the Slot or returns an
+    // Undefined value if the value is not readable.
+    Value maybeSlotValue(const Slot &slot, bool silentFailure = false) const {
+        if (slotReadable(slot))
+            return slotValue(slot);
         if (!silentFailure)
             warnUnreadableSlot();
         return UndefinedValue();
+    }
+
+    // This function should be removed soon, as it is only used by the bailout
+    // functions.  Moving the RResumePoint below the SnapshotIterator will give
+    // the ability to get rid of all these calls from the bailout path.
+    Value read() {
+        return slotValue(readSlot());
+    }
+    void skip() {
+        readSlot();
     }
 
   public:
@@ -304,10 +317,6 @@ class SnapshotIterator
         recover_.readOperandSlotIndex();
         return snapshot_.readSlot();
     }
-    inline Value skip() {
-        readSlot();
-        return UndefinedValue();
-    }
 
     inline bool resumeAfter() const {
         if (moreFrames())
@@ -325,6 +334,79 @@ class SnapshotIterator
     }
 };
 
+class RResumePoint
+{
+    typedef Vector<Slot, 16, SystemAllocPolicy> SlotVector;
+
+  public:
+    bool readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+
+    const Slot *slotsBegin() const {
+        return slots_.begin();
+    }
+    const Slot *slotsEnd() const {
+        return slots_.end();
+    }
+
+    const Slot *formalArgsSlotsBegin() const {
+        return slotsBegin();
+    }
+    const Slot *formalArgsSlotsEnd() const {
+        return formalArgsSlotsBegin() + nargs_;
+    }
+
+    const Slot *fixedSlotsBegin() const {
+        return formalArgsSlotsEnd();
+    }
+    const Slot *fixedSlotsEnd() const {
+        return fixedSlotsBegin() + nfixed_;
+    }
+
+    const Slot *stackSlotsBegin() const {
+        return fixedSlotsEnd();
+    }
+    const Slot *stackSlotsEnd() const {
+        return slotsEnd();
+    }
+
+    const Slot &calleeFunction(uint32_t nactual) const {
+        // +1: The function is located just before the arguments.
+        JS_ASSERT(slots_.length() >= nactual + 1);
+        return *(slotsEnd() - (nactual + 1));
+    }
+    const Slot *calleeActualArgsBegin(uint32_t nactual) const {
+        JS_ASSERT(slots_.length() >= nactual);
+        return slotsEnd() - nactual;
+    }
+    const Slot *calleeActualArgsEnd() const {
+        return slotsEnd();
+    }
+
+    const Slot &scopeChainSlot() const {
+        return scopeChainSlot_;
+    }
+    const Slot &argObjSlot() const {
+        return argObjSlot_;
+    }
+    const Slot &thisSlot() const {
+        return thisSlot_;
+    }
+
+  private:
+    // Meta data extracted from the snapshot iterator.
+    uint32_t pcOffset_;
+    uint32_t resumeAfter_;
+
+    // Slots used to hold the locations of the data needed to recover the frame.
+    Slot scopeChainSlot_;
+    Slot argObjSlot_;
+    Slot thisSlot_;
+
+    uint32_t nargs_;  // Number of formal arguments.
+    uint32_t nfixed_; // Number of fixed slots.
+    SlotVector slots_;
+};
+
 // Reads frame information in callstack order (that is, innermost frame to
 // outermost frame).
 template <AllowGC allowGC=CanGC>
@@ -337,6 +419,7 @@ class InlineFrameIteratorMaybeGC
     typename MaybeRooted<JSScript*, allowGC>::RootType script_;
     jsbytecode *pc_;
     uint32_t numActualArgs_;
+    RResumePoint rp_;
 
   private:
     void findNextFrame();
@@ -395,17 +478,18 @@ class InlineFrameIteratorMaybeGC
     jsbytecode *pc() const {
         return pc_;
     }
-    SnapshotIterator snapshotIterator() const {
+    const SnapshotIterator &snapshotIterator() const {
         return si_;
+    }
+    const RResumePoint &resumePoint() const {
+        return rp_;
     }
     bool isFunctionFrame() const;
     bool isConstructing() const;
 
     JSObject *scopeChain() const {
-        SnapshotIterator s(si_);
-
         // scopeChain
-        Value v = s.read();
+        Value v = si_.slotValue(rp_.scopeChainSlot());
         if (v.isObject()) {
             JS_ASSERT_IF(script()->hasAnalysis(), script()->analysis()->usesScopeChain());
             return &v.toObject();
@@ -415,36 +499,18 @@ class InlineFrameIteratorMaybeGC
     }
 
     JSObject *thisObject() const {
-        // JS_ASSERT(isConstructing(...));
-        SnapshotIterator s(si_);
-
-        // scopeChain
-        s.skip();
-
-        // Arguments object.
-        if (script()->argumentsHasVarBinding())
-            s.skip();
-
         // In strict modes, |this| may not be an object and thus may not be
         // readable which can either segv in read or trigger the assertion.
-        Value v = s.read();
+        Value v = si_.slotValue(rp_.thisSlot());
         JS_ASSERT(v.isObject());
         return &v.toObject();
     }
 
     Value maybeReadSlotByIndex(size_t index) const {
-        SnapshotIterator s(si_);
-        while (index--) {
-            JS_ASSERT(s.moreSlots());
-            s.skip();
-        }
-
-        Value v = s.maybeRead(true);
-
-        while (s.moreSlots())
-            s.skip();
-
-        return v;
+        const Slot &s = rp_.stackSlotsBegin()[index];
+        if (si_.slotReadable(s))
+            return si_.slotValue(s);
+        return UndefinedValue();
     }
 
     InlineFrameIteratorMaybeGC &operator++() {
@@ -457,31 +523,17 @@ class InlineFrameIteratorMaybeGC
     void resetOn(const IonFrameIterator *iter);
 
   private:
-    void readFrameContext(SnapshotIterator &s, JSScript *script) const
-    {
-        // skip slot for the scope chain
-        s.skip();
-
-        // Skip slot for arguments object.
-        if (script->argumentsHasVarBinding())
-            s.skip();
-
-        // skip slot for the |this|
-        s.skip();
-    }
-
     // Read formal argument of a frame.
     template <class Op>
-    void readFormalFrameArgs(SnapshotIterator &s, Op &op,
-                             unsigned nformal, unsigned nactual) const
+    void readFormalFrameArgs(Op &op, unsigned nformal, unsigned nactual) const
     {
-        unsigned i = 0;
         unsigned effective_end = (nactual < nformal) ? nactual : nformal;
-        for (; i < effective_end; i++) {
+        const Slot *formalArgsSlots = rp_.formalArgsSlotsBegin();
+        for (unsigned i = 0; i < effective_end; i++) {
             // We are not always able to read values from the snapshots, some values
             // such as non-gc things may still be live in registers and cause an
             // error while reading the machine state.
-            Value v = s.maybeRead();
+            Value v = si_.maybeSlotValue(formalArgsSlots[i]);
             op(v);
         }
     }
@@ -495,9 +547,7 @@ class InlineFrameIteratorMaybeGC
         unsigned nformal = callee()->nargs;
 
         // Get the non overflown arguments
-        SnapshotIterator s(si_);
-        readFrameContext(s, script());
-        readFormalFrameArgs(s, op, nformal, nactual);
+        readFormalFrameArgs(op, nformal, nactual);
 
         // There is no overflow of argument, which means that we have recovered
         // all actual arguments.
@@ -516,25 +566,11 @@ class InlineFrameIteratorMaybeGC
             // They are the last pushed arguments in the parent frame of this inlined frame.
             InlineFrameIteratorMaybeGC it(cx, this);
             ++it;
-            SnapshotIterator parent_s(it.snapshotIterator());
-
-            // Skip over all slots except for the arguments of the callee in the
-            // caller frame. Skip over the [scope chain], [argsObj] and [this]
-            // which have already been recovered..
-            JS_ASSERT(parent_s.slots() >= nactual);
-            unsigned skip = parent_s.slots() - nactual;
-            for (unsigned j = 0; j < skip; j++)
-                parent_s.skip();
-
-            // Skip formal arguments which are already recovered from the
-            // callee frame.
-            unsigned i = 0;
-            for (; i < nformal; i++)
-                parent_s.skip();
 
             // Copy un-mutated overflow of arguments from the caller frame.
-            for (; i < nactual; i++) {
-                Value v = parent_s.maybeRead();
+            const Slot *actualArgsSlots = it.rp_.calleeActualArgsBegin(nactual);
+            for (unsigned i = nformal; i < nactual; i++) {
+                Value v = si_.maybeSlotValue(actualArgsSlots[i]);
                 op(v);
             }
         } else {
