@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 13: Move RResumePoint into its own file. r=
+Subject: Bug 878503 - Part 14: Encode and decode the RResumePoint at the same location.
