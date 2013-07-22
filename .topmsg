@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 14: Encode and decode the RResumePoint at the same location.
+Subject: Bug 878503 - Part 15: Generalized RResumePoint to any instructions. r=
