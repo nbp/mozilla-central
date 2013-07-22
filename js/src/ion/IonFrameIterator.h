@@ -242,11 +242,12 @@ class SnapshotIterator
     IonScript *ionScript_;
 
   private:
-    bool hasLocation(const Slot::Location &loc) const;
+    bool hasLocation(const Slot::Location &loc) const ;
     uintptr_t fromLocation(const Slot::Location &loc) const;
     static Value FromTypedPayload(JSValueType type, uintptr_t payload);
 
     void warnUnreadableSlot() const;
+
   public:
     SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshotOffset,
                      IonJSFrameLayout *fp, const MachineState &machine);
@@ -272,9 +273,10 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
-    // This function should be removed soon, as it is only used by the bailout
-    // functions.  Moving the RResumePoint below the SnapshotIterator will give
-    // the ability to get rid of all these calls from the bailout path.
+    // As soon as we can removed these functions, we should be able to split the
+    // SnapshotIterator in 2 parts, one for readings slots and one for reading
+    // Values. Moving the RResumePoint below the SnapshotIterator should help at
+    // doing so.
     Value read() {
         return slotValue(readSlot());
     }
