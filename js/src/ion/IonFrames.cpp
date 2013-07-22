@@ -334,7 +334,7 @@ CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t loca
 {
     const SnapshotIterator &si = frame.snapshotIterator();
     const Slot *stackSlots = frame.resumePoint().stackSlotsBegin();
-    Value v = si.slotValue(stackSlots[localSlot]);
+    Value v = si.slotValue(stackSlots[localSlot - 1]);
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
