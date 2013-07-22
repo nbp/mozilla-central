@@ -1364,7 +1364,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         JS_ASSERT(numActualArgs_ != 0xbadbad);
 
-         Value funval = si_.slotValue(rp_.calleeFunction(numActualArgs_));
+        Value funval = si_.slotValue(rp_.calleeFunction(numActualArgs_));
 
         si_.nextFrame();
         callee_ = &funval.toObject().as<JSFunction>();
