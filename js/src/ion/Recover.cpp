@@ -8,10 +8,20 @@
 
 #include "jsfun.h"
 
+#include "ion/CompactBuffer.h"
+#include "ion/MIR.h"
+#include "ion/MIRGraph.h"
+#include "ion/SnapshotWriter.h"
 #include "ion/IonFrameIterator.h"
 
 using namespace js;
 using namespace js::ion;
+
+void
+RecoverWriter::writeRecover(const MResumePoint *rp)
+{
+    rp->writeRecover(writer_);
+}
 
 size_t
 SlotVector::length() const
@@ -34,10 +44,27 @@ SlotVector::operator [](size_t i) const
 }
 
 void
+MResumePoint::writeRecover(CompactBufferWriter &writer) const
+{
+    size_t pcOffset = pc() - block()->info().script()->code;
+    writer.writeUnsigned(pcOffset);
+    writer.writeUnsigned(numOperands());
+}
+
+RResumePoint::RResumePoint(CompactBufferReader &reader)
+{
+    JS_ASSERT(sizeof(*this) <= RInstructionMaxSize);
+    pcOffset_ = reader.readUnsigned();
+    numOperands_ = reader.readUnsigned();
+
+    IonSpew(IonSpew_Snapshots, "Recover ResumePoint: pc offset %u, noperands %u",
+            pcOffset_, numOperands_);
+}
+
+void
 RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
 {
     pcOffset_ = si.pcOffset();
-    resumeAfter_ = si.resumeAfter();
     scopeChainSlot_ = si.readSlot();
 
     if (script->argumentsHasVarBinding())

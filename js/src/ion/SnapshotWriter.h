@@ -67,6 +67,8 @@ class SnapshotWriter
     }
 };
 
+class MResumePoint;
+
 // Collect the layout of the stack into a compacting buffer which is copied into
 // IonScript memory after code generation.
 class RecoverWriter
@@ -77,7 +79,7 @@ class RecoverWriter
 
     RecoverOffset startRecover(uint32_t frameCount);
 
-    void writeFrame(size_t pcOffset, size_t numOperands);
+    void writeRecover(const MResumePoint *rp);
 
     void endRecover() {
     }

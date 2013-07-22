@@ -13,6 +13,7 @@
 namespace js {
 namespace ion {
 
+class CompactBufferReader;
 class SnapshotIterator;
 
 // Emulate a random access vector based on the forward iterator implemented by
@@ -38,7 +39,15 @@ class SlotVector
 class RResumePoint
 {
   public:
+    RResumePoint(CompactBufferReader &reader);
     void readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+
+    uint32_t pcOffset() const {
+        return pcOffset_;
+    }
+    size_t numOperands() const {
+        return numOperands_;
+    }
 
     size_t numFormalArgs() const {
         return startFixedSlots_ - startFormalArgs_;
@@ -87,8 +96,8 @@ class RResumePoint
 
   private:
     // Meta data extracted from the snapshot iterator.
+    uint32_t numOperands_;
     uint32_t pcOffset_;
-    uint32_t resumeAfter_;
 
     // Slots used to hold the locations of the data needed to recover the frame.
     Slot scopeChainSlot_;
@@ -98,7 +107,6 @@ class RResumePoint
     uint32_t startFormalArgs_; // Index at which formal args are starting.
     uint32_t startFixedSlots_; // Index at which fixed slots are starting.
     uint32_t startStackSlots_; // Index at which stack slots are starting.
-    uint32_t numOperands_;
     SlotVector slots_;
 };
 

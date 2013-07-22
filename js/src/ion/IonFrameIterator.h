@@ -240,17 +240,14 @@ class SnapshotIterator
 {
     SnapshotReader snapshot_;
     RecoverReader recover_;
+    size_t nextOperandIndex_;
+
     IonJSFrameLayout *fp_;
     MachineState machine_;
     IonScript *ionScript_;
 
     // State of the readers at the beginning of the frame.
     SnapshotReader::SlotPosition slotPos_;
-    RecoverReader::FramePosition framePos_;
-
-    // Recovered resume points, this need to be initialized by the frame
-    // interation process otherwise we cannot be read from it.
-    RResumePoint rp_;
 
   private:
     bool hasLocation(const Slot::Location &loc) const;
@@ -290,19 +287,20 @@ class SnapshotIterator
     //
 
     inline uint32_t slots() const {
-        return recover_.numOperands();
+        return resumePoint().numOperands();
     }
     inline size_t nextOperandIndex() const {
-        return recover_.nextOperandIndex();
+        return nextOperandIndex_;
     }
     inline bool moreSlots() const {
-        return recover_.moreOperands();
+        return nextOperandIndex_ < slots();
     }
 
     inline void nextFrame() {
         while (moreSlots())
             readSlot();
         recover_.nextFrame();
+        nextOperandIndex_ = 0;
         savePosition();
     }
     inline uint32_t frameCount() const {
@@ -313,7 +311,7 @@ class SnapshotIterator
     }
 
     inline uint32_t pcOffset() const {
-        return recover_.pcOffset();
+        return resumePoint().pcOffset();
     }
 
   public:
@@ -322,7 +320,8 @@ class SnapshotIterator
     //
 
     inline Slot readSlot() {
-        recover_.readOperandSlotIndex();
+        JS_ASSERT(moreSlots());
+        nextOperandIndex_++;
         return snapshot_.readSlot();
     }
 
@@ -337,10 +336,10 @@ class SnapshotIterator
 
   public:
     inline const RResumePoint &resumePoint() const {
-        return rp_;
+        return recover_.currentFrame();
     }
     inline RResumePoint &resumePoint() {
-        return rp_;
+        return recover_.currentFrame();
     }
 
   public:
@@ -353,13 +352,12 @@ class SnapshotIterator
     void resetOn(const IonFrameIterator &iter);
     void restartFrame() {
         snapshot_.restorePosition(slotPos_);
-        recover_.restorePosition(framePos_);
+        nextOperandIndex_ = 0;
     }
 
   private:
     void savePosition() {
         snapshot_.savePosition(slotPos_);
-        recover_.savePosition(framePos_);
     }
 
   private:

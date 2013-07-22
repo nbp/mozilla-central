@@ -9,6 +9,7 @@
 #include "jsscript.h"
 #include "ion/IonLinker.h"
 #include "ion/IonSpewer.h"
+#include "ion/Recover.h"
 #include "ion/SnapshotReader.h"
 #include "ion/SnapshotWriter.h"
 
@@ -488,11 +489,7 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
   : reader_(buffer, end),
     frameCount_(0),
-    operandCount_(0),
-    frameRead_(0),
-    operandRead_(0),
-    slotIndex_(0),
-    pcOffset_(0)
+    frameRead_(0)
 {
     if (!buffer)
         return;
@@ -502,11 +499,7 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
 RecoverReader::RecoverReader(const IonScript *ion, RecoverOffset offset)
   : reader_(ion->recovers() + offset, ion->recovers() + ion->recoversSize()),
     frameCount_(0),
-    operandCount_(0),
-    frameRead_(0),
-    operandRead_(0),
-    slotIndex_(0),
-    pcOffset_(0)
+    frameRead_(0)
 {
     init();
 }
@@ -537,9 +530,7 @@ void
 RecoverReader::readRecoverHeader()
 {
     frameCount_ = reader_.readUnsigned();
-    operandCount_ = 0;
     frameRead_ = 0;
-    slotIndex_ = 0;
     JS_ASSERT(frameCount_);
 }
 
@@ -548,14 +539,8 @@ RecoverReader::readFrameHeader()
 {
     JS_ASSERT(moreFrames());
     frameRead_++;
-    slotIndex_ += operandCount_;
 
-    pcOffset_ = reader_.readUnsigned();
-    operandCount_ = reader_.readUnsigned();
-    operandRead_ = 0;
-
-    IonSpew(IonSpew_Snapshots, "Recover ResumePoint: pc offset %u, noperands %u",
-            pcOffset_, operandCount_);
+    new (mem_.addr()) RResumePoint(reader_);
 }
 
 RecoverOffset
@@ -568,11 +553,4 @@ RecoverWriter::startRecover(uint32_t frameCount)
     JS_ASSERT(frameCount > 0);
     writer_.writeUnsigned(frameCount);
     return start;
-}
-
-void
-RecoverWriter::writeFrame(size_t pcOffset, size_t numOperands)
-{
-    writer_.writeUnsigned(pcOffset);
-    writer_.writeUnsigned(numOperands);
 }

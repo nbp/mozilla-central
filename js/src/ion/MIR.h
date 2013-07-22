@@ -7872,6 +7872,8 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
                 operands_[i].producer()->removeUse(&operands_[i]);
         }
     }
+
+    void writeRecover(CompactBufferWriter &writer) const;
 };
 
 class MIsCallable

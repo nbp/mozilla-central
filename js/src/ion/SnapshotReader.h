@@ -7,6 +7,8 @@
 #ifndef ion_SnapshotReader_h
 #define ion_SnapshotReader_h
 
+#include "mozilla/Util.h"
+
 #include "ion/CompactBuffer.h"
 #include "ion/IonTypes.h"
 #include "ion/IonCode.h"
@@ -100,6 +102,8 @@ class SnapshotReader
     }
 };
 
+class RResumePoint;
+
 // A Recover reader reads the layout of stack and give a structure to the
 // content of the snapshot reader.
 class RecoverReader
@@ -107,13 +111,9 @@ class RecoverReader
     CompactBufferReader reader_;
 
     uint32_t frameCount_;
-    uint32_t operandCount_;
-
     uint32_t frameRead_;
-    uint32_t operandRead_;
 
-    uint32_t slotIndex_;
-    uint32_t pcOffset_;
+    mozilla::AlignedStorage<RInstructionMaxSize> mem_;
 
     void readRecoverHeader();
     void readFrameHeader();
@@ -123,19 +123,11 @@ class RecoverReader
     RecoverReader(const uint8_t *buffer = NULL, const uint8_t *end = NULL);
     RecoverReader(const IonScript *ion, RecoverOffset offset);
 
-    // Return the index of the operand within the snapshot.
-    size_t readOperandSlotIndex() {
-        JS_ASSERT(moreOperands());
-        return slotIndex_ + operandRead_++;
+    const RResumePoint &currentFrame() const {
+        return *reinterpret_cast<const RResumePoint *>(mem_.addr());
     }
-    size_t numOperands() const {
-        return operandCount_;
-    }
-    size_t nextOperandIndex() const {
-        return operandRead_;
-    }
-    bool moreOperands() const {
-        return operandRead_ < operandCount_;
+    RResumePoint &currentFrame() {
+        return *reinterpret_cast<RResumePoint *>(mem_.addr());
     }
 
     void nextFrame() {
@@ -151,34 +143,13 @@ class RecoverReader
         return frameRead_ < frameCount_;
     }
 
-    uint32_t pcOffset() const {
-        return pcOffset_;
-    }
-
     void restart();
     void resetOn(const IonScript *ion, RecoverOffset offset);
 
-    class FramePosition {
-        friend class RecoverReader;
-
-        CompactBufferReader::BufferPosition reader_;
-        uint32_t frameCount_;
-        uint32_t frameRead_;
-    };
-
-    void savePosition(FramePosition &pos) {
-        reader_.savePosition(pos.reader_);
-        pos.frameCount_ = frameCount_;
-        pos.frameRead_ = frameRead_;
-    }
-
-    void restorePosition(FramePosition &pos) {
-        reader_.restorePosition(pos.reader_);
-        frameCount_ = pos.frameCount_;
-        operandCount_ = 0;
-        frameRead_ = pos.frameRead_;
-        operandRead_ = 0;
-    }
+  private:
+    // Forbid copy as we manipulate raw memory.
+    RecoverReader(const RecoverReader& other) MOZ_DELETE;
+    const RecoverReader& operator=(const RecoverReader& other) MOZ_DELETE;
 };
 
 }

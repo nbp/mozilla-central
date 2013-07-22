@@ -141,12 +141,8 @@ CodeGeneratorShared::encode(LResumePoint *rp)
     IonSpew(IonSpew_Snapshots, "Encoding LResumePoint %p (offset %u): %u Frames.",
             (void *)rp, offset, nbFrames);
 
-    for (LResumeFrame **it = rp->begin(); it != rp->end(); it++) {
-        MResumePoint *mir = (*it)->mir;
-        size_t pcOffset = mir->pc() - mir->block()->info().script()->code;
-        size_t numOperands = mir->numOperands();
-        recovers_.writeFrame(pcOffset, numOperands);
-    }
+    for (LResumeFrame **it = rp->begin(); it != rp->end(); it++)
+        recovers_.writeRecover((*it)->mir);
 
     recovers_.endRecover();
 
