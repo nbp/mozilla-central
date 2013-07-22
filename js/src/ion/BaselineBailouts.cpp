@@ -442,11 +442,11 @@ struct BaselineStackBuilder
 static bool
 InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 HandleFunction fun, HandleScript script, IonScript *ionScript,
-                RResumePoint &rp, SnapshotIterator &iter,
-                bool invalidate, BaselineStackBuilder &builder,
+                SnapshotIterator &iter, bool invalidate, BaselineStackBuilder &builder,
                 AutoValueVector &startFrameFormals, MutableHandleFunction nextCallee,
                 jsbytecode **callPC)
 {
+    const RResumePoint &rp = iter.resumePoint();
     uint32_t exprStackSlots = iter.slots() - (script->nfixed + CountArgSlots(script, fun));
 
     builder.resetFramePushed();
@@ -1113,7 +1113,7 @@ ion::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
         jsbytecode *callPC = NULL;
         RootedFunction nextCallee(cx, NULL);
         if (!InitFromBailout(cx, caller, callerPC, fun, scr, iter.ionScript(),
-                             rp, snapIter, invalidate, builder, startFrameFormals,
+                             snapIter, invalidate, builder, startFrameFormals,
                              &nextCallee, &callPC))
         {
             return BAILOUT_RETURN_FATAL_ERROR;
