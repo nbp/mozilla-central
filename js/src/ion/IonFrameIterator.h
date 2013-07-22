@@ -372,9 +372,9 @@ class RResumePoint
     }
 
     const Slot &calleeFunction(uint32_t nactual) const {
-        // +1: The function is located just before the arguments.
-        JS_ASSERT(slots_.length() >= nactual + 1);
-        return *(slotsEnd() - (nactual + 1));
+        // +2: The function is located just before the arguments and |this|.
+        JS_ASSERT(slots_.length() >= nactual + 2);
+        return *(slotsEnd() - (nactual + 2));
     }
     const Slot *calleeActualArgsBegin(uint32_t nactual) const {
         JS_ASSERT(slots_.length() >= nactual);
