@@ -602,7 +602,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
         }
 
         for (uint32_t i = 0; i < fun->nargs; i++) {
-            Value arg = iter.slotValue(rp.formalArgsSlotsBegin()[i]);
+            Value arg = iter.slotValue(rp.formalArg(i));
             IonSpew(IonSpew_BaselineBailouts, "      arg %d = %016llx",
                         (int) i, *((uint64_t *) &arg));
             if (callerPC) {
@@ -615,7 +615,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     }
 
     for (uint32_t i = 0; i < script->nfixed; i++) {
-        Value slot = iter.slotValue(rp.fixedSlotsBegin()[i]);
+        Value slot = iter.slotValue(rp.fixedSlot(i));
         if (!builder.writeValue(slot, "FixedValue"))
             return false;
     }
@@ -633,7 +633,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
             IonSpew(IonSpew_BaselineBailouts, "      [Return Override]");
             v = cx->runtime()->takeIonReturnOverride();
         } else {
-            v = iter.slotValue(rp.stackSlotsBegin()[i]);
+            v = iter.slotValue(rp.stackSlot(i));
         }
         if (!builder.writeValue(v, "StackValue"))
             return false;
