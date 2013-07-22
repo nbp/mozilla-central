@@ -111,6 +111,9 @@ class RecoverReader
     size_t numOperands() const {
         return operandCount_;
     }
+    size_t nextOperandIndex() const {
+        return operandRead_;
+    }
     bool moreOperands() const {
         return operandRead_ < operandCount_;
     }

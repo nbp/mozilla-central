@@ -292,11 +292,15 @@ class SnapshotIterator
     inline uint32_t slots() const {
         return recover_.numOperands();
     }
+    inline size_t nextOperandIndex() const {
+        return recover_.nextOperandIndex();
+    }
     inline bool moreSlots() const {
         return recover_.moreOperands();
     }
 
     inline void nextFrame() {
+        JS_ASSERT(!moreSlots());
         recover_.nextFrame();
     }
     inline uint32_t frameCount() const {
@@ -344,50 +348,57 @@ class SnapshotIterator
 
 class RResumePoint
 {
-    typedef Vector<Slot, 16, SystemAllocPolicy> SlotVector;
-
   public:
-    bool readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+    void readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
 
-    const Slot *slotsBegin() const {
-        return slots_.begin();
-    }
-    const Slot *slotsEnd() const {
-        return slots_.end();
-    }
-
-    const Slot *formalArgsSlotsBegin() const {
-        return slotsBegin();
-    }
-    const Slot *formalArgsSlotsEnd() const {
-        return formalArgsSlotsBegin() + nargs_;
+    void seekToSlot(SnapshotIterator &it, size_t i) const {
+        while (it.nextOperandIndex() < i)
+            it.readSlot();
+        JS_ASSERT(it.nextOperandIndex() == i);
     }
 
-    const Slot *fixedSlotsBegin() const {
-        return formalArgsSlotsEnd();
+    size_t numFormalArgs() const {
+        return startFixedSlots_ - startFormalArgs_;
     }
-    const Slot *fixedSlotsEnd() const {
-        return fixedSlotsBegin() + nfixed_;
-    }
-
-    const Slot *stackSlotsBegin() const {
-        return fixedSlotsEnd();
-    }
-    const Slot *stackSlotsEnd() const {
-        return slotsEnd();
+    Slot formalArg(SnapshotIterator &it, size_t i) const {
+        JS_ASSERT(startFormalArgs_ + i < startFixedSlots_);
+        JS_ASSERT(it.nextOperandIndex() == startFormalArgs_ + i);
+        return it.readSlot();
     }
 
-    const Slot &calleeFunction(uint32_t nactual) const {
+    size_t numFixedSlots() const {
+        return startStackSlots_ - startFixedSlots_;
+    }
+    Slot fixedSlot(SnapshotIterator &it, size_t i) const {
+        JS_ASSERT(startFixedSlots_ + i < startStackSlots_);
+        JS_ASSERT(it.nextOperandIndex() == startFixedSlots_ + i);
+        return it.readSlot();
+    }
+
+    void seekToStackSlot(SnapshotIterator &it, size_t i) const {
+        seekToSlot(it, startStackSlots_);
+    }
+    size_t numStackSlots() const {
+        return numOperands_ - startStackSlots_;
+    }
+    Slot stackSlot(SnapshotIterator &it, size_t i) const {
+        JS_ASSERT(startStackSlots_ + i < numOperands_);
+        JS_ASSERT(it.nextOperandIndex() == startStackSlots_ + i);
+        return it.readSlot();
+    }
+
+    Slot calleeFunction(SnapshotIterator &it, uint32_t nactual) const {
         // +2: The function is located just before the arguments and |this|.
-        JS_ASSERT(slots_.length() >= nactual + 2);
-        return *(slotsEnd() - (nactual + 2));
+        uint32_t funIndex = numOperands_ - (nactual + 2);
+        seekToSlot(it, funIndex);
+        Slot s = it.readSlot();
+        seekToSlot(it, numOperands_);
+        return s;
     }
-    const Slot *calleeActualArgsBegin(uint32_t nactual) const {
-        JS_ASSERT(slots_.length() >= nactual);
-        return slotsEnd() - nactual;
-    }
-    const Slot *calleeActualArgsEnd() const {
-        return slotsEnd();
+    size_t calleeActualArgsStackIndex(SnapshotIterator &it, uint32_t nactual) const {
+        uint32_t arg0Index = numOperands_ - nactual;
+        seekToSlot(it, arg0Index);
+        return arg0Index - startStackSlots_;
     }
 
     const Slot &scopeChainSlot() const {
@@ -410,9 +421,10 @@ class RResumePoint
     Slot argObjSlot_;
     Slot thisSlot_;
 
-    uint32_t nargs_;  // Number of formal arguments.
-    uint32_t nfixed_; // Number of fixed slots.
-    SlotVector slots_;
+    uint32_t startFormalArgs_; // Index at which formal args are starting.
+    uint32_t startFixedSlots_; // Index at which fixed slots are starting.
+    uint32_t startStackSlots_; // Index at which stack slots are starting.
+    uint32_t numOperands_;
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -515,7 +527,10 @@ class InlineFrameIteratorMaybeGC
     }
 
     Value maybeReadSlotByIndex(size_t index) const {
-        const Slot &s = rp_.stackSlotsBegin()[index];
+        SnapshotIterator si(si_);
+
+        rp_.seekToStackSlot(si, index);
+        Slot s = rp_.stackSlot(si, index);
         if (si_.slotReadable(s))
             return si_.slotValue(s);
         return UndefinedValue();
@@ -533,15 +548,15 @@ class InlineFrameIteratorMaybeGC
   private:
     // Read formal argument of a frame.
     template <class Op>
-    void readFormalFrameArgs(Op &op, unsigned nformal, unsigned nactual) const
+    void readFormalFrameArgs(SnapshotIterator &s, Op &op,
+                             unsigned nformal, unsigned nactual) const
     {
         unsigned effective_end = (nactual < nformal) ? nactual : nformal;
-        const Slot *formalArgsSlots = rp_.formalArgsSlotsBegin();
         for (unsigned i = 0; i < effective_end; i++) {
             // We are not always able to read values from the snapshots, some values
             // such as non-gc things may still be live in registers and cause an
             // error while reading the machine state.
-            Value v = si_.maybeSlotValue(formalArgsSlots[i]);
+            Value v = s.maybeSlotValue(rp_.formalArg(s, i));
             op(v);
         }
     }
@@ -549,13 +564,15 @@ class InlineFrameIteratorMaybeGC
   public:
     template <class Op>
     void forEachCanonicalActualArg(JSContext *cx, Op op, unsigned start, unsigned count) const {
+        SnapshotIterator s(si_);
+
         // There is no other use case.
         JS_ASSERT(start == 0 && count == unsigned(-1));
         unsigned nactual = numActualArgs();
         unsigned nformal = callee()->nargs;
 
         // Get the non overflown arguments
-        readFormalFrameArgs(op, nformal, nactual);
+        readFormalFrameArgs(s, op, nformal, nactual);
 
         // There is no overflow of argument, which means that we have recovered
         // all actual arguments.
@@ -576,9 +593,11 @@ class InlineFrameIteratorMaybeGC
             ++it;
 
             // Copy un-mutated overflow of arguments from the caller frame.
-            const Slot *actualArgsSlots = it.rp_.calleeActualArgsBegin(nactual);
-            for (unsigned i = nformal; i < nactual; i++) {
-                Value v = si_.maybeSlotValue(actualArgsSlots[i]);
+            size_t actualArgsIndex = it.rp_.calleeActualArgsStackIndex(it.si_, nactual);
+            it.rp_.seekToStackSlot(it.si_, actualArgsIndex + nformal);
+            for (size_t i = nformal; i < nactual; i++) {
+                Slot s = it.rp_.stackSlot(it.si_, actualArgsIndex + i);
+                Value v = it.si_.maybeSlotValue(s);
                 op(v);
             }
         } else {
