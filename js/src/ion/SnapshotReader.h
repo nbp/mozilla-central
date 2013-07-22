@@ -77,6 +77,7 @@ class SnapshotReader
         slotsRead_ = 0;
         readSnapshotHeader();
     }
+    void resetOn(const IonScript *ion, SnapshotOffset offset);
 };
 
 // A Recover reader reads the layout of stack and give a structure to the
@@ -132,6 +133,7 @@ class RecoverReader
     }
 
     void restart();
+    void resetOn(const IonScript *ion, RecoverOffset offset);
 };
 
 }

@@ -334,6 +334,12 @@ class SnapshotIterator
         snapshot_.restart();
         recover_.restart();
     }
+
+    void resetOn(const IonFrameIterator &iter);
+
+  private:
+    SnapshotIterator(const SnapshotIterator& other) MOZ_DELETE;
+    const SnapshotIterator& operator=(const SnapshotIterator& other) MOZ_DELETE;
 };
 
 class RResumePoint
@@ -443,7 +449,7 @@ class InlineFrameIteratorMaybeGC
         script_(cx)
     {
         if (frame_) {
-            si_ = SnapshotIterator(*frame_);
+            si_.resetOn(*frame_);
             // findNextFrame will iterate to the next frame and init. everything.
             // Therefore to settle on the same frame, we report one frame less readed.
             framesRead_ = iter->framesRead_ - 1;

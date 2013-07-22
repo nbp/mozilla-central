@@ -97,6 +97,14 @@ SnapshotReader::SnapshotReader(const uint8_t *buffer, const uint8_t *end)
     readSnapshotHeader();
 }
 
+void
+SnapshotReader::resetOn(const IonScript *ion, SnapshotOffset offset)
+{
+    reader_ = CompactBufferReader(ion->snapshots() + offset,
+                                  ion->snapshots() + ion->snapshotsSize());
+    restart();
+}
+
 static const uint32_t BAILOUT_KIND_SHIFT = 0;
 static const uint32_t BAILOUT_KIND_MASK = (1 << BAILOUT_KIND_BITS) - 1;
 static const uint32_t BAILOUT_RESUME_SHIFT = BAILOUT_KIND_SHIFT + BAILOUT_KIND_BITS;
@@ -501,6 +509,14 @@ RecoverReader::RecoverReader(const IonScript *ion, RecoverOffset offset)
     pcOffset_(0)
 {
     init();
+}
+
+void
+RecoverReader::resetOn(const IonScript *ion, RecoverOffset offset)
+{
+    reader_ = CompactBufferReader(ion->recovers() + offset,
+                                  ion->recovers() + ion->recoversSize());
+    restart();
 }
 
 void

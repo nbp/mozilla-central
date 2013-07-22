@@ -1141,6 +1141,16 @@ SnapshotIterator::SnapshotIterator()
 {
 }
 
+void
+SnapshotIterator::resetOn(const IonFrameIterator &iter)
+{
+    snapshot_.resetOn(iter.ionScript(), iter.osiIndex()->snapshotOffset());
+    recover_.resetOn(iter.ionScript(), snapshot_.recoverOffset());
+    fp_ = iter.jsFrame();
+    machine_ = iter.machineState();
+    ionScript_ = iter.ionScript();
+}
+
 bool
 SnapshotIterator::hasLocation(const Slot::Location &loc) const
 {
@@ -1286,7 +1296,7 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
     framesRead_ = 0;
 
     if (iter) {
-        si_ = SnapshotIterator(*iter);
+        si_.resetOn(*iter);
         findNextFrame();
     }
 }
