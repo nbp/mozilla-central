@@ -350,17 +350,6 @@ class SnapshotIterator
         return UndefinedValue();
     }
 
-    // As soon as we can removed these functions, we should be able to split the
-    // SnapshotIterator in 2 parts, one for readings slots and one for reading
-    // Values. Moving the RResumePoint below the SnapshotIterator should help at
-    // doing so.
-    Value read() {
-        return slotValue(readSlot());
-    }
-    void skip() {
-        readSlot();
-    }
-
   public:
     //
     // dispatch to the RecoverReader.
