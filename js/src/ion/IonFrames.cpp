@@ -1352,7 +1352,8 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     callee_ = frame_->maybeCallee();
     script_ = frame_->script();
 
-    rp_.readSlots(si_, script_, callee_);
+    RResumePoint &rp = si_.resumePoint();
+    rp.readSlots(si_, script_, callee_);
     pc_ = script_->code + si_.pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
@@ -1374,7 +1375,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         JS_ASSERT(numActualArgs_ != 0xbadbad);
 
-         Value funval = si_.slotValue(rp_.calleeFunction(numActualArgs_));
+         Value funval = si_.slotValue(rp.calleeFunction(numActualArgs_));
 
         si_.nextFrame();
         callee_ = &funval.toObject().as<JSFunction>();
@@ -1384,7 +1385,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         // exists though, just make sure the function points to it.
         script_ = callee_->existingScript();
 
-        rp_.readSlots(si_, script_, callee_);
+        rp.readSlots(si_, script_, callee_);
         pc_ = script_->code + si_.pcOffset();
     }
 
@@ -1578,25 +1579,27 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
         numActualArgs();
     }
 
+    const RResumePoint &rp = resumePoint();
+
     fprintf(stderr, "  slots: %u\n", si_.slots() - 1);
-    if (rp_.scopeChainSlot().isInitialized()) {
+    if (rp.scopeChainSlot().isInitialized()) {
         fprintf(stderr, "  scope chain: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.scopeChainSlot()), "?\n");
+        DUMP_VALUE(si_.maybeSlotValue(rp.scopeChainSlot()), "?\n");
     }
 
-    if (rp_.argObjSlot().isInitialized()) {
+    if (rp.argObjSlot().isInitialized()) {
         fprintf(stderr, "  argument object: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.argObjSlot()), "?\n");
+        DUMP_VALUE(si_.maybeSlotValue(rp.argObjSlot()), "?\n");
     }
 
-    if (rp_.thisSlot().isInitialized()) {
+    if (rp.thisSlot().isInitialized()) {
         fprintf(stderr, "  this: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.thisSlot()), "?\n");
+        DUMP_VALUE(si_.maybeSlotValue(rp.thisSlot()), "?\n");
     }
 
     {
-        const Slot *begin = rp_.formalArgsSlotsBegin();
-        const Slot *end = rp_.formalArgsSlotsEnd();
+        const Slot *begin = rp.formalArgsSlotsBegin();
+        const Slot *end = rp.formalArgsSlotsEnd();
         for (const Slot *it = begin; it != end; it++) {
             fprintf(stderr, "  formal arg %ld: ", it - begin);
             DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
@@ -1604,8 +1607,8 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
     }
 
     {
-        const Slot *begin = rp_.fixedSlotsBegin();
-        const Slot *end = rp_.fixedSlotsEnd();
+        const Slot *begin = rp.fixedSlotsBegin();
+        const Slot *end = rp.fixedSlotsEnd();
         for (const Slot *it = begin; it != end; it++) {
             fprintf(stderr, "  fixed slot %ld: ", it - begin);
             DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
@@ -1613,8 +1616,8 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
     }
 
     {
-        const Slot *begin = rp_.stackSlotsBegin();
-        const Slot *end = rp_.stackSlotsEnd();
+        const Slot *begin = rp.stackSlotsBegin();
+        const Slot *end = rp.stackSlotsEnd();
         for (const Slot *it = begin; it != end; it++) {
             fprintf(stderr, "  stack slot %ld: ", it - begin);
             DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");

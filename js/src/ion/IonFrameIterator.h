@@ -231,6 +231,79 @@ class IonFrameIterator
 class IonJSFrameLayout;
 class IonBailoutIterator;
 
+class RResumePoint
+{
+    typedef Vector<Slot, 16, SystemAllocPolicy> SlotVector;
+
+  public:
+    bool readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+
+    const Slot *slotsBegin() const {
+        return slots_.begin();
+    }
+    const Slot *slotsEnd() const {
+        return slots_.end();
+    }
+
+    const Slot *formalArgsSlotsBegin() const {
+        return slotsBegin();
+    }
+    const Slot *formalArgsSlotsEnd() const {
+        return formalArgsSlotsBegin() + nargs_;
+    }
+
+    const Slot *fixedSlotsBegin() const {
+        return formalArgsSlotsEnd();
+    }
+    const Slot *fixedSlotsEnd() const {
+        return fixedSlotsBegin() + nfixed_;
+    }
+
+    const Slot *stackSlotsBegin() const {
+        return fixedSlotsEnd();
+    }
+    const Slot *stackSlotsEnd() const {
+        return slotsEnd();
+    }
+
+    const Slot &calleeFunction(uint32_t nactual) const {
+        // +2: The function is located just before the arguments and |this|.
+        JS_ASSERT(slots_.length() >= nactual + 2);
+        return *(slotsEnd() - (nactual + 2));
+    }
+    const Slot *calleeActualArgsBegin(uint32_t nactual) const {
+        JS_ASSERT(slots_.length() >= nactual);
+        return slotsEnd() - nactual;
+    }
+    const Slot *calleeActualArgsEnd() const {
+        return slotsEnd();
+    }
+
+    const Slot &scopeChainSlot() const {
+        return scopeChainSlot_;
+    }
+    const Slot &argObjSlot() const {
+        return argObjSlot_;
+    }
+    const Slot &thisSlot() const {
+        return thisSlot_;
+    }
+
+  private:
+    // Meta data extracted from the snapshot iterator.
+    uint32_t pcOffset_;
+    uint32_t resumeAfter_;
+
+    // Slots used to hold the locations of the data needed to recover the frame.
+    Slot scopeChainSlot_;
+    Slot argObjSlot_;
+    Slot thisSlot_;
+
+    uint32_t nargs_;  // Number of formal arguments.
+    uint32_t nfixed_; // Number of fixed slots.
+    SlotVector slots_;
+};
+
 // Reads frame information in snapshot-encoding order (that is, outermost frame
 // to innermost frame).
 class SnapshotIterator
@@ -240,6 +313,10 @@ class SnapshotIterator
     IonJSFrameLayout *fp_;
     MachineState machine_;
     IonScript *ionScript_;
+
+    // Recovered resume points, this need to be initialized by the frame
+    // interation process otherwise we cannot be read from it.
+    RResumePoint rp_;
 
   private:
     bool hasLocation(const Slot::Location &loc) const ;
@@ -330,6 +407,14 @@ class SnapshotIterator
     }
 
   public:
+    inline const RResumePoint &resumePoint() const {
+        return rp_;
+    }
+    inline RResumePoint &resumePoint() {
+        return rp_;
+    }
+
+  public:
     inline void restart() {
         snapshot_.restart();
         recover_.restart();
@@ -340,79 +425,6 @@ class SnapshotIterator
   private:
     SnapshotIterator(const SnapshotIterator& other) MOZ_DELETE;
     const SnapshotIterator& operator=(const SnapshotIterator& other) MOZ_DELETE;
-};
-
-class RResumePoint
-{
-    typedef Vector<Slot, 16, SystemAllocPolicy> SlotVector;
-
-  public:
-    bool readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
-
-    const Slot *slotsBegin() const {
-        return slots_.begin();
-    }
-    const Slot *slotsEnd() const {
-        return slots_.end();
-    }
-
-    const Slot *formalArgsSlotsBegin() const {
-        return slotsBegin();
-    }
-    const Slot *formalArgsSlotsEnd() const {
-        return formalArgsSlotsBegin() + nargs_;
-    }
-
-    const Slot *fixedSlotsBegin() const {
-        return formalArgsSlotsEnd();
-    }
-    const Slot *fixedSlotsEnd() const {
-        return fixedSlotsBegin() + nfixed_;
-    }
-
-    const Slot *stackSlotsBegin() const {
-        return fixedSlotsEnd();
-    }
-    const Slot *stackSlotsEnd() const {
-        return slotsEnd();
-    }
-
-    const Slot &calleeFunction(uint32_t nactual) const {
-        // +2: The function is located just before the arguments and |this|.
-        JS_ASSERT(slots_.length() >= nactual + 2);
-        return *(slotsEnd() - (nactual + 2));
-    }
-    const Slot *calleeActualArgsBegin(uint32_t nactual) const {
-        JS_ASSERT(slots_.length() >= nactual);
-        return slotsEnd() - nactual;
-    }
-    const Slot *calleeActualArgsEnd() const {
-        return slotsEnd();
-    }
-
-    const Slot &scopeChainSlot() const {
-        return scopeChainSlot_;
-    }
-    const Slot &argObjSlot() const {
-        return argObjSlot_;
-    }
-    const Slot &thisSlot() const {
-        return thisSlot_;
-    }
-
-  private:
-    // Meta data extracted from the snapshot iterator.
-    uint32_t pcOffset_;
-    uint32_t resumeAfter_;
-
-    // Slots used to hold the locations of the data needed to recover the frame.
-    Slot scopeChainSlot_;
-    Slot argObjSlot_;
-    Slot thisSlot_;
-
-    uint32_t nargs_;  // Number of formal arguments.
-    uint32_t nfixed_; // Number of fixed slots.
-    SlotVector slots_;
 };
 
 // Reads frame information in callstack order (that is, innermost frame to
@@ -427,7 +439,6 @@ class InlineFrameIteratorMaybeGC
     typename MaybeRooted<JSScript*, allowGC>::RootType script_;
     jsbytecode *pc_;
     uint32_t numActualArgs_;
-    RResumePoint rp_;
 
   private:
     void findNextFrame();
@@ -490,14 +501,14 @@ class InlineFrameIteratorMaybeGC
         return si_;
     }
     const RResumePoint &resumePoint() const {
-        return rp_;
+        return si_.resumePoint();
     }
     bool isFunctionFrame() const;
     bool isConstructing() const;
 
     JSObject *scopeChain() const {
         // scopeChain
-        Value v = si_.slotValue(rp_.scopeChainSlot());
+        Value v = si_.slotValue(resumePoint().scopeChainSlot());
         if (v.isObject()) {
             JS_ASSERT_IF(script()->hasAnalysis(), script()->analysis()->usesScopeChain());
             return &v.toObject();
@@ -509,13 +520,13 @@ class InlineFrameIteratorMaybeGC
     JSObject *thisObject() const {
         // In strict modes, |this| may not be an object and thus may not be
         // readable which can either segv in read or trigger the assertion.
-        Value v = si_.slotValue(rp_.thisSlot());
+        Value v = si_.slotValue(resumePoint().thisSlot());
         JS_ASSERT(v.isObject());
         return &v.toObject();
     }
 
     Value maybeReadSlotByIndex(size_t index) const {
-        const Slot &s = rp_.stackSlotsBegin()[index];
+        const Slot &s = resumePoint().stackSlotsBegin()[index];
         if (si_.slotReadable(s))
             return si_.slotValue(s);
         return UndefinedValue();
@@ -536,7 +547,7 @@ class InlineFrameIteratorMaybeGC
     void readFormalFrameArgs(Op &op, unsigned nformal, unsigned nactual) const
     {
         unsigned effective_end = (nactual < nformal) ? nactual : nformal;
-        const Slot *formalArgsSlots = rp_.formalArgsSlotsBegin();
+        const Slot *formalArgsSlots = resumePoint().formalArgsSlotsBegin();
         for (unsigned i = 0; i < effective_end; i++) {
             // We are not always able to read values from the snapshots, some values
             // such as non-gc things may still be live in registers and cause an
@@ -576,7 +587,7 @@ class InlineFrameIteratorMaybeGC
             ++it;
 
             // Copy un-mutated overflow of arguments from the caller frame.
-            const Slot *actualArgsSlots = it.rp_.calleeActualArgsBegin(nactual);
+            const Slot *actualArgsSlots = it.resumePoint().calleeActualArgsBegin(nactual);
             for (unsigned i = nformal; i < nactual; i++) {
                 Value v = si_.maybeSlotValue(actualArgsSlots[i]);
                 op(v);
