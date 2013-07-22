@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 12: Remove skip & read from the SnapshotIterator. r=
+Subject: Bug 878503 - Part 13: Move RResumePoint to it own file. r=
