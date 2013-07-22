@@ -1,3 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 9: Add RResumePoint to store slots instead of copying SnapshotIterators. r=
-
+Subject: Bug 878503 - Part 10: Make SnapshotIterator non-copyable. r=
