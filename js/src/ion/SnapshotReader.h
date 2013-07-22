@@ -78,6 +78,26 @@ class SnapshotReader
         readSnapshotHeader();
     }
     void resetOn(const IonScript *ion, SnapshotOffset offset);
+
+    class SlotPosition {
+        friend class SnapshotReader;
+
+        CompactBufferReader::BufferPosition reader_;
+        uint32_t slotCount_;
+        uint32_t slotsRead_;
+    };
+
+    void savePosition(SlotPosition &pos) {
+        reader_.savePosition(pos.reader_);
+        pos.slotCount_ = slotCount_;
+        pos.slotsRead_ = slotsRead_;
+    }
+
+    void restorePosition(SlotPosition &pos) {
+        reader_.restorePosition(pos.reader_);
+        slotCount_ = pos.slotCount_;
+        slotsRead_ = pos.slotsRead_;
+    }
 };
 
 // A Recover reader reads the layout of stack and give a structure to the
@@ -137,6 +157,28 @@ class RecoverReader
 
     void restart();
     void resetOn(const IonScript *ion, RecoverOffset offset);
+
+    class FramePosition {
+        friend class RecoverReader;
+
+        CompactBufferReader::BufferPosition reader_;
+        uint32_t frameCount_;
+        uint32_t frameRead_;
+    };
+
+    void savePosition(FramePosition &pos) {
+        reader_.savePosition(pos.reader_);
+        pos.frameCount_ = frameCount_;
+        pos.frameRead_ = frameRead_;
+    }
+
+    void restorePosition(FramePosition &pos) {
+        reader_.restorePosition(pos.reader_);
+        frameCount_ = pos.frameCount_;
+        operandCount_ = 0;
+        frameRead_ = pos.frameRead_;
+        operandRead_ = 0;
+    }
 };
 
 }
