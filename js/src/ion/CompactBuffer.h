@@ -93,6 +93,20 @@ class CompactBufferReader
         JS_ASSERT(start_);
         buffer_ = start_;
     }
+
+    class BufferPosition {
+        friend class CompactBufferReader;
+
+        const uint8_t *buffer_;
+    };
+
+    void savePosition(BufferPosition &pos) {
+        pos.buffer_ = buffer_;
+    }
+
+    void restorePosition(BufferPosition &pos) {
+        buffer_ = pos.buffer_;
+    }
 };
 
 class CompactBufferWriter

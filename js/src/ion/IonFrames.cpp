@@ -332,9 +332,9 @@ IonFrameIterator::machineState() const
 static void
 CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t localSlot)
 {
-    const SnapshotIterator &si = frame.snapshotIterator();
-    const Slot *stackSlots = frame.resumePoint().stackSlotsBegin();
-    Value v = si.slotValue(stackSlots[localSlot - 1]);
+    const SnapshotIterator &s = frame.snapshotIterator();
+    const RResumePoint &rp = frame.resumePoint();
+    Value v = s.slotValue(rp.stackSlot(localSlot - 1));
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1121,6 +1121,7 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
     ionScript_(ionScript)
 {
     JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
+    savePosition();
 }
 
 SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
@@ -1131,6 +1132,7 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
     machine_(iter.machineState()),
     ionScript_(iter.ionScript())
 {
+    savePosition();
 }
 
 SnapshotIterator::SnapshotIterator()
@@ -1303,41 +1305,30 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 template void InlineFrameIteratorMaybeGC<NoGC>::resetOn(const IonFrameIterator *iter);
 template void InlineFrameIteratorMaybeGC<CanGC>::resetOn(const IonFrameIterator *iter);
 
-bool
-RResumePoint::readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun)
+void
+RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
 {
-    pcOffset_ = it.pcOffset();
-    resumeAfter_ = it.resumeAfter();
+    pcOffset_ = si.pcOffset();
+    resumeAfter_ = si.resumeAfter();
+    scopeChainSlot_ = si.readSlot();
 
-    size_t loadedSlots = 0;
-
-    scopeChainSlot_ = it.readSlot();
-    loadedSlots++;
-
-    if (script->argumentsHasVarBinding()) {
-        argObjSlot_ = it.readSlot();
-        loadedSlots++;
-    } else {
+    if (script->argumentsHasVarBinding())
+        argObjSlot_ = si.readSlot();
+    else
         argObjSlot_ = Slot();
-    }
 
+    size_t nargs = 0;
     if (fun) {
-        thisSlot_ = it.readSlot();
-        loadedSlots++;
-        nargs_ = fun->nargs;
-    } else {
+        thisSlot_ = si.readSlot();
+        nargs = fun->nargs;
+    } else
         thisSlot_ = Slot();
-        nargs_ = 0;
-    }
 
-    nfixed_ = script->nfixed;
-
-    slots_.clear();
-    if (!slots_.reserve(it.slots() - loadedSlots))
-        return false;
-    while (it.moreSlots())
-        slots_.infallibleAppend(it.readSlot());
-    return true;
+    startFormalArgs_ = si.nextOperandIndex();
+    startFixedSlots_ = startFormalArgs_ + nargs;
+    startStackSlots_ = startFixedSlots_ + script->nfixed;
+    numOperands_ = si.slots();
+    slots_.init(si);
 }
 
 template <AllowGC allowGC>
@@ -1597,31 +1588,19 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
         DUMP_VALUE(si_.maybeSlotValue(rp.thisSlot()), "?\n");
     }
 
-    {
-        const Slot *begin = rp.formalArgsSlotsBegin();
-        const Slot *end = rp.formalArgsSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  formal arg %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp.numFormalArgs(); i++) {
+        fprintf(stderr, "  formal arg %lu: ", i);
+        DUMP_VALUE(si_.maybeSlotValue(rp.formalArg(i)), "?\n");
     }
 
-    {
-        const Slot *begin = rp.fixedSlotsBegin();
-        const Slot *end = rp.fixedSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  fixed slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp.numFixedSlots(); i++) {
+        fprintf(stderr, "  fixed slot %lu: ", i);
+        DUMP_VALUE(si_.maybeSlotValue(rp.fixedSlot(i)), "?\n");
     }
 
-    {
-        const Slot *begin = rp.stackSlotsBegin();
-        const Slot *end = rp.stackSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  stack slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp.numStackSlots(); i++) {
+        fprintf(stderr, "  stack slot %lu: ", i);
+        DUMP_VALUE(si_.maybeSlotValue(rp.stackSlot(i)), "?\n");
     }
 
     fputc('\n', stderr);

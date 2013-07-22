@@ -46,6 +46,7 @@ SnapshotIterator::SnapshotIterator(const IonBailoutIterator &iter)
     machine_(iter.machineState()),
     ionScript_(iter.ionScript())
 {
+    savePosition();
 }
 
 void
