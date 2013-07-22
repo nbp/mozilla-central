@@ -1305,32 +1305,6 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 template void InlineFrameIteratorMaybeGC<NoGC>::resetOn(const IonFrameIterator *iter);
 template void InlineFrameIteratorMaybeGC<CanGC>::resetOn(const IonFrameIterator *iter);
 
-void
-RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
-{
-    pcOffset_ = si.pcOffset();
-    resumeAfter_ = si.resumeAfter();
-    scopeChainSlot_ = si.readSlot();
-
-    if (script->argumentsHasVarBinding())
-        argObjSlot_ = si.readSlot();
-    else
-        argObjSlot_ = Slot();
-
-    size_t nargs = 0;
-    if (fun) {
-        thisSlot_ = si.readSlot();
-        nargs = fun->nargs;
-    } else
-        thisSlot_ = Slot();
-
-    startFormalArgs_ = si.nextOperandIndex();
-    startFixedSlots_ = startFormalArgs_ + nargs;
-    startStackSlots_ = startFixedSlots_ + script->nfixed;
-    numOperands_ = si.slots();
-    slots_.init(si);
-}
-
 template <AllowGC allowGC>
 void
 InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()

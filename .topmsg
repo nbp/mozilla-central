@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 13: Merge the SlotVector into the SnapshotIterator. r=
+Subject: Bug 878503 - Part 13: Move RResumePoint into its own file. r=

@@ -13,6 +13,7 @@
 
 #include "jstypes.h"
 #include "ion/IonCode.h"
+#include "ion/Recover.h"
 #include "ion/Slots.h"
 #include "ion/SnapshotReader.h"
 
@@ -232,93 +233,6 @@ class IonFrameIterator
 
 class IonJSFrameLayout;
 class IonBailoutIterator;
-
-// Emulate a random access vector based on the forward iterator implemented by
-// the SnapshotIterator, assuming it is mostly used as a forward iterator.
-class SlotVector
-{
-  public:
-    SlotVector()
-      : si_(NULL)
-    { }
-
-    void init(SnapshotIterator &si) {
-        si_ = &si;
-    }
-
-    inline size_t length() const;
-    inline Slot operator [](size_t i) const;
-
-  private:
-    SnapshotIterator *si_;
-};
-
-class RResumePoint
-{
-  public:
-    void readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
-
-    size_t numFormalArgs() const {
-        return startFixedSlots_ - startFormalArgs_;
-    }
-    Slot formalArg(size_t i) const {
-        JS_ASSERT(i < numFormalArgs());
-        return slots_[startFormalArgs_ + i];
-    }
-
-    size_t numFixedSlots() const {
-        return startStackSlots_ - startFixedSlots_;
-    }
-    Slot fixedSlot(size_t i) const {
-        JS_ASSERT(i < numFixedSlots());
-        return slots_[startFixedSlots_ + i];
-    }
-
-    size_t numStackSlots() const {
-        return numOperands_ - startStackSlots_;
-    }
-    Slot stackSlot(size_t i) const {
-        JS_ASSERT(i < numStackSlots());
-        return slots_[startStackSlots_ + i];
-    }
-
-    Slot calleeFunction(uint32_t nactual) const {
-        // +2: The function is located just before the arguments and |this|.
-        uint32_t funIndex = numOperands_ - (nactual + 2);
-        Slot s = slots_[funIndex];
-        return s;
-    }
-    Slot calleeActualArgs(uint32_t nactual, size_t i) const {
-        size_t arg0Index = numOperands_ - nactual;
-        return slots_[arg0Index + i];
-    }
-
-    const Slot &scopeChainSlot() const {
-        return scopeChainSlot_;
-    }
-    const Slot &argObjSlot() const {
-        return argObjSlot_;
-    }
-    const Slot &thisSlot() const {
-        return thisSlot_;
-    }
-
-  private:
-    // Meta data extracted from the snapshot iterator.
-    uint32_t pcOffset_;
-    uint32_t resumeAfter_;
-
-    // Slots used to hold the locations of the data needed to recover the frame.
-    Slot scopeChainSlot_;
-    Slot argObjSlot_;
-    Slot thisSlot_;
-
-    uint32_t startFormalArgs_; // Index at which formal args are starting.
-    uint32_t startFixedSlots_; // Index at which fixed slots are starting.
-    uint32_t startStackSlots_; // Index at which stack slots are starting.
-    uint32_t numOperands_;
-    SlotVector slots_;
-};
 
 // Reads frame information in snapshot-encoding order (that is, outermost frame
 // to innermost frame).
@@ -629,26 +543,6 @@ class InlineFrameIteratorMaybeGC
 };
 typedef InlineFrameIteratorMaybeGC<CanGC> InlineFrameIterator;
 typedef InlineFrameIteratorMaybeGC<NoGC> InlineFrameIteratorNoGC;
-
-size_t
-SlotVector::length() const
-{
-    return si_->slots();
-}
-
-Slot
-SlotVector::operator [](size_t i) const
-{
-    SnapshotIterator &si = *const_cast<SlotVector *>(this)->si_;
-    JS_ASSERT(i < si.slots());
-    if (MOZ_LIKELY(si.nextOperandIndex() == i))
-        return si.readSlot();
-    if (MOZ_UNLIKELY(si.nextOperandIndex() > i))
-        si.restartFrame();
-    while (si.nextOperandIndex() < i)
-        si.readSlot();
-    return si.readSlot();
-}
 
 } // namespace ion
 } // namespace js

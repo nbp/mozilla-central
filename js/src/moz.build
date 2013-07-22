@@ -237,6 +237,7 @@ if CONFIG['ENABLE_ION']:
         'ParallelSafetyAnalysis.cpp',
         'ParallelFunctions.cpp',
         'RangeAnalysis.cpp',
+        'Recover.cpp',
         'RegisterAllocator.cpp',
         'Safepoints.cpp',
         'Snapshots.cpp',
