@@ -77,7 +77,7 @@ class RecoverWriter
     CompactBufferWriter writer_;
   public:
 
-    RecoverOffset startRecover(uint32_t frameCount);
+    RecoverOffset startRecover(uint32_t frameCount, uint32_t instCount);
 
     void writeRecover(const MResumePoint *rp);
 

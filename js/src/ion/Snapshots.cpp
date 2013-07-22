@@ -480,6 +480,7 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 //
 // RecoverOffset:
 //   Nb Frames
+//   Nb Instructions
 //   * {
 //     [vwu] bits [31-1]: pc offset
 //           bits 0:      resume after (flag)
@@ -488,8 +489,9 @@ SnapshotWriter::addConstantPoolSlot(uint32_t index)
 
 RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
   : reader_(buffer, end),
-    frameCount_(0),
-    frameRead_(0)
+    instructionCount_(0),
+    instructionRead_(0),
+    frameCount_(0)
 {
     if (!buffer)
         return;
@@ -498,8 +500,9 @@ RecoverReader::RecoverReader(const uint8_t *buffer, const uint8_t *end)
 
 RecoverReader::RecoverReader(const IonScript *ion, RecoverOffset offset)
   : reader_(ion->recovers() + offset, ion->recovers() + ion->recoversSize()),
-    frameCount_(0),
-    frameRead_(0)
+    instructionCount_(0),
+    instructionRead_(0),
+    frameCount_(0)
 {
     init();
 }
@@ -516,7 +519,7 @@ void
 RecoverReader::init()
 {
     readRecoverHeader();
-    readFrameHeader();
+    readInstructionHeader();
 }
 
 void
@@ -530,27 +533,30 @@ void
 RecoverReader::readRecoverHeader()
 {
     frameCount_ = reader_.readUnsigned();
-    frameRead_ = 0;
-    JS_ASSERT(frameCount_);
+    instructionCount_ = reader_.readUnsigned();
+    instructionRead_ = 0;
+    JS_ASSERT(instructionCount_);
 }
 
 void
-RecoverReader::readFrameHeader()
+RecoverReader::readInstructionHeader()
 {
-    JS_ASSERT(moreFrames());
-    frameRead_++;
+    JS_ASSERT(moreInstructions());
+    instructionRead_++;
 
     new (mem_.addr()) RResumePoint(reader_);
 }
 
 RecoverOffset
-RecoverWriter::startRecover(uint32_t frameCount)
+RecoverWriter::startRecover(uint32_t frameCount, uint32_t instCount)
 {
     RecoverOffset start = writer_.length();
-    IonSpew(IonSpew_Snapshots, "starting recover with frameCount %u",
-            frameCount);
+    IonSpew(IonSpew_Snapshots, "starting recover with instructionCount %u",
+            instCount);
 
     JS_ASSERT(frameCount > 0);
+    JS_ASSERT(instCount > frameCount);
     writer_.writeUnsigned(frameCount);
+    writer_.writeUnsigned(instCount);
     return start;
 }

@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 15: Generalized RResumePoint to any instructions. r=
+Subject: Bug 878503 - Part 15: Rename frame to instruction in the context of the RecoverReader. r=

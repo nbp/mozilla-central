@@ -136,7 +136,7 @@ CodeGeneratorShared::encode(LResumePoint *rp)
         return true;
 
     size_t nbFrames = rp->mir()->frameCount();
-    RecoverOffset offset = recovers_.startRecover(nbFrames);
+    RecoverOffset offset = recovers_.startRecover(nbFrames, nbFrames);
 
     IonSpew(IonSpew_Snapshots, "Encoding LResumePoint %p (offset %u): %u Frames.",
             (void *)rp, offset, nbFrames);

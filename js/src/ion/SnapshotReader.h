@@ -110,37 +110,43 @@ class RecoverReader
 {
     CompactBufferReader reader_;
 
+    uint32_t instructionCount_;
+    uint32_t instructionRead_;
+
     uint32_t frameCount_;
-    uint32_t frameRead_;
 
     mozilla::AlignedStorage<RInstructionMaxSize> mem_;
 
     void readRecoverHeader();
-    void readFrameHeader();
+    void readInstructionHeader();
     void init();
 
   public:
     RecoverReader(const uint8_t *buffer = NULL, const uint8_t *end = NULL);
     RecoverReader(const IonScript *ion, RecoverOffset offset);
 
-    const RResumePoint &currentFrame() const {
-        return *reinterpret_cast<const RResumePoint *>(mem_.addr());
-    }
-    RResumePoint &currentFrame() {
-        return *reinterpret_cast<RResumePoint *>(mem_.addr());
-    }
-
-    void nextFrame() {
-        readFrameHeader();
-    }
-    size_t frameIndex() const {
-        return frameRead_;
-    }
     size_t numFrames() const {
         return frameCount_;
     }
-    bool moreFrames() const {
-        return frameRead_ < frameCount_;
+
+    const RResumePoint &currentInstruction() const {
+        return *reinterpret_cast<const RResumePoint *>(mem_.addr());
+    }
+    RResumePoint &currentInstruction() {
+        return *reinterpret_cast<RResumePoint *>(mem_.addr());
+    }
+
+    void nextInstruction() {
+        readInstructionHeader();
+    }
+    size_t instructionIndex() const {
+        return instructionRead_;
+    }
+    size_t numInstructions() const {
+        return instructionCount_;
+    }
+    bool moreInstructions() const {
+        return instructionRead_ < instructionCount_;
     }
 
     void restart();

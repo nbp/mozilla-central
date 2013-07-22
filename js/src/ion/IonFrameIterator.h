@@ -296,18 +296,23 @@ class SnapshotIterator
         return nextOperandIndex_ < slots();
     }
 
-    inline void nextFrame() {
+    inline void nextInstruction() {
         while (moreSlots())
             readSlot();
-        recover_.nextFrame();
+        recover_.nextInstruction();
         nextOperandIndex_ = 0;
         savePosition();
+    }
+    inline void nextFrame() {
+        // Currently we only have frames as instructions.
+        nextInstruction();
     }
     inline uint32_t frameCount() const {
         return recover_.numFrames();
     }
     inline bool moreFrames() const {
-        return recover_.moreFrames();
+        // The last instruction is necessary a frame.
+        return recover_.moreInstructions();
     }
 
     inline uint32_t pcOffset() const {
@@ -336,10 +341,10 @@ class SnapshotIterator
 
   public:
     inline const RResumePoint &resumePoint() const {
-        return recover_.currentFrame();
+        return recover_.currentInstruction();
     }
     inline RResumePoint &resumePoint() {
-        return recover_.currentFrame();
+        return recover_.currentInstruction();
     }
 
   public:
