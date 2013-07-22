@@ -332,9 +332,10 @@ IonFrameIterator::machineState() const
 static void
 CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t localSlot)
 {
-    const SnapshotIterator &si = frame.snapshotIterator();
-    const Slot *stackSlots = frame.resumePoint().stackSlotsBegin();
-    Value v = si.slotValue(stackSlots[localSlot - 1]);
+    SnapshotIterator s(frame.snapshotIterator());
+    const RResumePoint &rp = frame.resumePoint();
+    rp.seekToStackSlot(s, localSlot - 1);
+    Value v = s.slotValue(rp.stackSlot(s, localSlot - 1));
     RootedObject obj(cx, &v.toObject());
 
     if (cx->isExceptionPending())
@@ -1293,41 +1294,29 @@ InlineFrameIteratorMaybeGC<allowGC>::resetOn(const IonFrameIterator *iter)
 template void InlineFrameIteratorMaybeGC<NoGC>::resetOn(const IonFrameIterator *iter);
 template void InlineFrameIteratorMaybeGC<CanGC>::resetOn(const IonFrameIterator *iter);
 
-bool
+void
 RResumePoint::readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun)
 {
     pcOffset_ = it.pcOffset();
     resumeAfter_ = it.resumeAfter();
-
-    size_t loadedSlots = 0;
-
     scopeChainSlot_ = it.readSlot();
-    loadedSlots++;
 
-    if (script->argumentsHasVarBinding()) {
+    if (script->argumentsHasVarBinding())
         argObjSlot_ = it.readSlot();
-        loadedSlots++;
-    } else {
+    else
         argObjSlot_ = Slot();
-    }
 
+    size_t nargs = 0;
     if (fun) {
         thisSlot_ = it.readSlot();
-        loadedSlots++;
-        nargs_ = fun->nargs;
-    } else {
+        nargs = fun->nargs;
+    } else
         thisSlot_ = Slot();
-        nargs_ = 0;
-    }
 
-    nfixed_ = script->nfixed;
-
-    slots_.clear();
-    if (!slots_.reserve(it.slots() - loadedSlots))
-        return false;
-    while (it.moreSlots())
-        slots_.infallibleAppend(it.readSlot());
-    return true;
+    startFormalArgs_ = it.nextOperandIndex();
+    startFixedSlots_ = startFormalArgs_ + nargs;
+    startStackSlots_ = startFixedSlots_ + script->nfixed;
+    numOperands_ = it.slots();
 }
 
 template <AllowGC allowGC>
@@ -1364,7 +1353,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
         JS_ASSERT(numActualArgs_ != 0xbadbad);
 
-        Value funval = si_.slotValue(rp_.calleeFunction(numActualArgs_));
+        Value funval = si_.slotValue(rp_.calleeFunction(si_, numActualArgs_));
 
         si_.nextFrame();
         callee_ = &funval.toObject().as<JSFunction>();
@@ -1568,47 +1557,37 @@ InlineFrameIteratorMaybeGC<allowGC>::dump() const
         numActualArgs();
     }
 
-    fprintf(stderr, "  slots: %u\n", si_.slots() - 1);
+    SnapshotIterator si(snapshotIterator());
+
+    fprintf(stderr, "  slots: %u\n", si.slots() - 1);
     if (rp_.scopeChainSlot().isInitialized()) {
         fprintf(stderr, "  scope chain: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.scopeChainSlot()), "?\n");
+        DUMP_VALUE(si.maybeSlotValue(rp_.scopeChainSlot()), "?\n");
     }
 
     if (rp_.argObjSlot().isInitialized()) {
         fprintf(stderr, "  argument object: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.argObjSlot()), "?\n");
+        DUMP_VALUE(si.maybeSlotValue(rp_.argObjSlot()), "?\n");
     }
 
     if (rp_.thisSlot().isInitialized()) {
         fprintf(stderr, "  this: ");
-        DUMP_VALUE(si_.maybeSlotValue(rp_.thisSlot()), "?\n");
+        DUMP_VALUE(si.maybeSlotValue(rp_.thisSlot()), "?\n");
     }
 
-    {
-        const Slot *begin = rp_.formalArgsSlotsBegin();
-        const Slot *end = rp_.formalArgsSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  formal arg %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp_.numFormalArgs(); i++) {
+        fprintf(stderr, "  formal arg %lu: ", i);
+        DUMP_VALUE(si.maybeSlotValue(rp_.formalArg(si, i)), "?\n");
     }
 
-    {
-        const Slot *begin = rp_.fixedSlotsBegin();
-        const Slot *end = rp_.fixedSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  fixed slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp_.numFixedSlots(); i++) {
+        fprintf(stderr, "  fixed slot %lu: ", i);
+        DUMP_VALUE(si.maybeSlotValue(rp_.fixedSlot(si, i)), "?\n");
     }
 
-    {
-        const Slot *begin = rp_.stackSlotsBegin();
-        const Slot *end = rp_.stackSlotsEnd();
-        for (const Slot *it = begin; it != end; it++) {
-            fprintf(stderr, "  stack slot %ld: ", it - begin);
-            DUMP_VALUE(si_.maybeSlotValue(*it), "?\n");
-        }
+    for (size_t i = 0; i < rp_.numStackSlots(); i++) {
+        fprintf(stderr, "  stack slot %lu: ", i);
+        DUMP_VALUE(si.maybeSlotValue(rp_.stackSlot(si, i)), "?\n");
     }
 
     fputc('\n', stderr);
