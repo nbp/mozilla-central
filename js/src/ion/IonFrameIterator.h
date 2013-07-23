@@ -321,8 +321,9 @@ class SnapshotIterator
             currentFrameIndex_++;
     }
     inline void nextFrame() {
-        // Currently we only have frames as instructions.
-        nextInstruction();
+        do {
+            nextInstruction();
+        } while(!isFrame());
     }
     inline uint32_t frameCount() const {
         return recover_.numFrames();

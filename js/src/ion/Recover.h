@@ -65,7 +65,11 @@ class RInstruction
   public:
     static RInstruction *dispatch(void *mem, CompactBufferReader &read);
 
+    // Return the number of operands which have to be read out of the snapshot.
     virtual size_t numOperands() const = 0;
+
+    // A resume an instruction and store the result of this operation back on
+    // the snapshot iterator by using the function setRecoveredValue.
     virtual bool resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const = 0;
 
     enum Kind {

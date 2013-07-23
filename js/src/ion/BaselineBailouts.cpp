@@ -1104,36 +1104,45 @@ ion::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
     RootedFunction fun(cx, callee);
     RootedScript scr(cx, iter.script());
     AutoValueVector startFrameFormals(cx);
+    AutoValueVector recoveredValues(cx);
+    snapIter.initRecoveredResults(&recoveredValues);
 
-    RResumePoint &rp = snapIter.resumePoint();
-    rp.readSlots(snapIter, scr, fun);
 
     while (true) {
-        IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
-        jsbytecode *callPC = NULL;
-        RootedFunction nextCallee(cx, NULL);
-        if (!InitFromBailout(cx, caller, callerPC, fun, scr, iter.ionScript(),
-                             snapIter, invalidate, builder, startFrameFormals,
-                             &nextCallee, &callPC))
-        {
-            return BAILOUT_RETURN_FATAL_ERROR;
+        if (snapIter.isFrame()) {
+            RResumePoint &rp = snapIter.resumePoint();
+            rp.readSlots(snapIter, scr, fun);
+
+            IonSpew(IonSpew_BaselineBailouts, "    FrameNo %d", frameNo);
+            jsbytecode *callPC = NULL;
+            RootedFunction nextCallee(cx, NULL);
+            if (!InitFromBailout(cx, caller, callerPC, fun, scr, iter.ionScript(),
+                                 snapIter, invalidate, builder, startFrameFormals,
+                                 &nextCallee, &callPC))
+            {
+                return BAILOUT_RETURN_FATAL_ERROR;
+            }
+
+            if (!snapIter.moreFrames()) {
+                JS_ASSERT(!callPC);
+                break;
+            }
+
+            JS_ASSERT(nextCallee);
+            JS_ASSERT(callPC);
+            caller = scr;
+            callerPC = callPC;
+            fun = nextCallee;
+            scr = fun->existingScript();
+
+            frameNo++;
+        } else {
+            RInstruction &op = snapIter.operation();
+            if (!op.resume(cx, snapIter, scr))
+                return BAILOUT_RETURN_FATAL_ERROR;
         }
 
-        if (!snapIter.moreFrames()) {
-            JS_ASSERT(!callPC);
-            break;
-        }
-
-        JS_ASSERT(nextCallee);
-        JS_ASSERT(callPC);
-        caller = scr;
-        callerPC = callPC;
-        fun = nextCallee;
-        scr = fun->existingScript();
-        snapIter.nextFrame();
-        rp.readSlots(snapIter, scr, fun);
-
-        frameNo++;
+        snapIter.nextInstruction();
     }
     IonSpew(IonSpew_BaselineBailouts, "  Done restoring frames");
     BailoutKind bailoutKind = snapIter.bailoutKind();
