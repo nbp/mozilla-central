@@ -539,7 +539,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 // If pcOffset == 0, we may have to push a new call object, so
                 // we leave scopeChain NULL and enter baseline code before the
                 // prologue.
-                if (iter.pcOffset() != 0 || iter.resumeAfter())
+                if (rp.pcOffset() != 0 || iter.resumeAfter())
                     scopeChain = fun->environment();
             } else {
                 // For global, compile-and-go scripts the scope chain is the
@@ -642,7 +642,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
     size_t endOfBaselineJSFrameStack = builder.framePushed();
 
     // Get the PC
-    jsbytecode *pc = script->code + iter.pcOffset();
+    jsbytecode *pc = script->code + rp.pcOffset();
     JSOp op = JSOp(*pc);
     bool resumeAfter = iter.resumeAfter();
 

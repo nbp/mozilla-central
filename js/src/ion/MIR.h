@@ -56,6 +56,14 @@ MIRType MIRTypeFromValue(const js::Value &vp)
     _(Guard)         /* Not removable if uses == 0 */                           \
     _(Folded)        /* Has constant folded uses not reflected in SSA */        \
                                                                                 \
+    /* The instruction has been marked as a recover instruction, it can only be
+     * used by resume points or other recover instructions and must provide a
+     * way to encode its data into the recover buffer such as the corresponding
+     * RInstruction can be executed.  A recover instruction should never depends
+     * on it-self.
+     */                                                                         \
+    _(Recovering)                                                               \
+                                                                                \
     /* The instruction has been marked dead for lazy removal from resume
      * points.
      */                                                                         \
@@ -197,6 +205,12 @@ class MNode : public TempObject
 
     inline MDefinition *toDefinition();
     inline MResumePoint *toResumePoint();
+
+    // Write an instruction into the buffer of the RecoverWriter. This stream is
+    // supposed to be decoded by the corresponding Recover instruction.
+    virtual void writeRecover(CompactBufferWriter &writer) const {
+        MOZ_ASSUME_UNREACHABLE("writeRecover should be overloaded");
+    }
 
   protected:
     // Sets an unset operand, updating use information.

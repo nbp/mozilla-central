@@ -136,12 +136,13 @@ CodeGeneratorShared::encode(LResumePoint *rp)
         return true;
 
     size_t nbFrames = rp->mir()->frameCount();
-    RecoverOffset offset = recovers_.startRecover(nbFrames, nbFrames);
+    size_t nbInstructions = rp->numInstructions();
+    RecoverOffset offset = recovers_.startRecover(nbFrames, nbInstructions);
 
-    IonSpew(IonSpew_Snapshots, "Encoding LResumePoint %p (offset %u): %u Frames.",
-            (void *)rp, offset, nbFrames);
+    IonSpew(IonSpew_Snapshots, "Encoding LResumePoint %p (offset %u): %u Frames, %u Instructions.",
+            (void *)rp, offset, nbFrames, nbInstructions);
 
-    for (LResumeFrame **it = rp->begin(); it != rp->end(); it++)
+    for (LRInstruction **it = rp->begin(); it != rp->end(); it++)
         recovers_.writeRecover((*it)->mir);
 
     recovers_.endRecover();
@@ -151,14 +152,23 @@ CodeGeneratorShared::encode(LResumePoint *rp)
 }
 
 bool
-CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
+CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, LRInstruction *ins,
                                  uint32_t *startIndex)
 {
-    IonSpew(IonSpew_Codegen, "Encoding %u of resume point %p's operands starting from %u",
-            resumePoint->numOperands(), (void *) resumePoint, *startIndex);
-    for (uint32_t slotno = 0, e = resumePoint->numOperands(); slotno < e; slotno++) {
+    MNode *rins = ins->mir;
+    size_t rOpIndex = 0;
+
+    IonSpew(IonSpew_Codegen, "Encoding %u of MIR node %p's operands starting from %u",
+            rins->numOperands(), (void *) rins, *startIndex);
+    for (uint32_t slotno = 0, e = rins->numOperands(); slotno < e; slotno++) {
         uint32_t i = slotno + *startIndex;
-        MDefinition *mir = resumePoint->getOperand(slotno);
+        MDefinition *mir = rins->getOperand(slotno);
+
+        if (mir->isRecovering()) {
+            size_t opIndex = ins->rOperandIndexes[rOpIndex];
+            snapshots_.addRecoverSlot(opIndex);
+            continue;
+        }
 
         if (mir->isPassArg())
             mir = mir->toPassArg()->getArgument();
@@ -241,7 +251,7 @@ CodeGeneratorShared::encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint,
       }
     }
 
-    *startIndex += resumePoint->numOperands();
+    *startIndex += rins->numOperands();
     return true;
 }
 
@@ -289,39 +299,41 @@ CodeGeneratorShared::encode(LSnapshot *snapshot)
 #endif
 
     uint32_t startIndex = 0;
-    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it)
+    for (LRInstruction **it = rp->begin(), **end = rp->end(); it != end; ++it)
     {
-        MResumePoint *mir = (*it)->mir;
 #ifdef DEBUG
-        MBasicBlock *block = mir->block();
-        JSScript *script = block->info().script();
-        jsbytecode *pc = mir->pc();
-        uint32_t exprStack = mir->stackDepth() - block->info().ninvoke();
+        if ((*it)->mir->isResumePoint()) {
+            MResumePoint *mir = (*it)->mir->toResumePoint();
+            MBasicBlock *block = mir->block();
+            JSScript *script = block->info().script();
+            jsbytecode *pc = mir->pc();
+            uint32_t exprStack = mir->stackDepth() - block->info().ninvoke();
 
-        // Ensure that all snapshot which are encoded can safely be used for
-        // bailouts.
-        jsbytecode *bailPC = pc;
-        if (mir->mode() == MResumePoint::ResumeAfter)
-          bailPC = GetNextPc(pc);
+            // Ensure that all snapshot which are encoded can safely be used for
+            // bailouts.
+            jsbytecode *bailPC = pc;
+            if (mir->mode() == MResumePoint::ResumeAfter)
+                bailPC = GetNextPc(pc);
 
-        if (GetIonContext()->cx) {
-            uint32_t stackDepth = js_ReconstructStackDepth(GetIonContext()->cx, script, bailPC);
-            if (JSOp(*bailPC) == JSOP_FUNCALL) {
-                // For fun.call(this, ...); the reconstructStackDepth will
-                // include the this. When inlining that is not included.
-                // So the exprStackSlots will be one less.
-                JS_ASSERT(stackDepth - exprStack <= 1);
-            } else if (JSOp(*bailPC) != JSOP_FUNAPPLY) {
-                // For fun.apply({}, arguments) the reconstructStackDepth will
-                // have stackdepth 4, but it could be that we inlined the
-                // funapply. In that case exprStackSlots, will have the real
-                // arguments in the slots and not be 4.
-                JS_ASSERT(exprStack == stackDepth);
+            if (GetIonContext()->cx) {
+                uint32_t stackDepth = js_ReconstructStackDepth(GetIonContext()->cx, script, bailPC);
+                if (JSOp(*bailPC) == JSOP_FUNCALL) {
+                    // For fun.call(this, ...); the reconstructStackDepth will
+                    // include the this. When inlining that is not included.
+                    // So the exprStackSlots will be one less.
+                    JS_ASSERT(stackDepth - exprStack <= 1);
+                } else if (JSOp(*bailPC) != JSOP_FUNAPPLY) {
+                    // For fun.apply({}, arguments) the reconstructStackDepth will
+                    // have stackdepth 4, but it could be that we inlined the
+                    // funapply. In that case exprStackSlots, will have the real
+                    // arguments in the slots and not be 4.
+                    JS_ASSERT(exprStack == stackDepth);
+                }
             }
         }
 #endif
 
-        if (!encodeSlots(snapshot, mir, &startIndex))
+        if (!encodeSlots(snapshot, *it, &startIndex))
             return false;
     }
 

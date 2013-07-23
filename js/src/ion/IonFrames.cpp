@@ -1117,9 +1117,11 @@ SnapshotIterator::SnapshotIterator(IonScript *ionScript, SnapshotOffset snapshot
               ionScript->snapshots() + ionScript->snapshotsSize()),
     recover_(ionScript, snapshot_.recoverOffset()),
     nextOperandIndex_(0),
+    currentFrameIndex_(0),
     fp_(fp),
     machine_(machine),
-    ionScript_(ionScript)
+    ionScript_(ionScript),
+    recovered_(NULL)
 {
     JS_ASSERT(snapshotOffset < ionScript->snapshotsSize());
     savePosition();
@@ -1130,9 +1132,11 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
     recover_(iter.ionScript(), snapshot_.recoverOffset()),
     nextOperandIndex_(0),
+    currentFrameIndex_(0),
     fp_(iter.jsFrame()),
     machine_(iter.machineState()),
-    ionScript_(iter.ionScript())
+    ionScript_(iter.ionScript()),
+    recovered_(NULL)
 {
     savePosition();
 }
@@ -1140,8 +1144,11 @@ SnapshotIterator::SnapshotIterator(const IonFrameIterator &iter)
 SnapshotIterator::SnapshotIterator()
   : snapshot_(NULL, NULL),
     recover_(),
+    nextOperandIndex_(0),
+    currentFrameIndex_(0),
     fp_(NULL),
-    ionScript_(NULL)
+    ionScript_(NULL),
+    recovered_(NULL)
 {
 }
 
@@ -1151,10 +1158,24 @@ SnapshotIterator::resetOn(const IonFrameIterator &iter)
     snapshot_.resetOn(iter.ionScript(), iter.osiIndex()->snapshotOffset());
     recover_.resetOn(iter.ionScript(), snapshot_.recoverOffset());
     nextOperandIndex_ = 0;
+    currentFrameIndex_ = 0,
     fp_ = iter.jsFrame();
     machine_ = iter.machineState();
     ionScript_ = iter.ionScript();
+    if (recovered_)
+        recovered_->clear();
 }
+
+void
+SnapshotIterator::initRecoveredResults(AutoValueVector *recovered)
+{
+    size_t reserve = recover_.numInstructions() - recover_.numFrames();
+    if (!reserve)
+        return;
+    recovered_->reserve(reserve);
+    recovered_ = recovered;
+}
+
 
 bool
 SnapshotIterator::hasLocation(const Slot::Location &loc) const
@@ -1204,6 +1225,9 @@ SnapshotIterator::slotReadable(const Slot &slot) const
           return hasLocation(slot.value());
 #endif
 
+      case Slot::RECOVER:
+        return !!recovered_;
+
       default:
         return true;
     }
@@ -1251,12 +1275,24 @@ SnapshotIterator::slotValue(const Slot &slot) const
       case Slot::CONSTANT:
         return ionScript_->getConstant(slot.constantIndex());
 
+      case Slot::RECOVER:
+        return (*recovered_)[slot.recoverIndex()];
+
       case Slot::UNINITIALIZED:
         MOZ_ASSUME_UNREACHABLE("Slot is not initialize.");
 
       default:
         MOZ_ASSUME_UNREACHABLE("huh?");
     }
+}
+
+void
+SnapshotIterator::setRecoveredValue(Value v)
+{
+    JS_ASSERT(!isFrame());
+    JS_ASSERT(recover_.instructionIndex() >= currentFrameIndex_);
+    size_t opIndex = recover_.instructionIndex() - currentFrameIndex_;
+    (*recovered_)[opIndex] = v;
 }
 
 IonScript *
@@ -1322,7 +1358,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
 
     RResumePoint &rp = si_.resumePoint();
     rp.readSlots(si_, script_, callee_);
-    pc_ = script_->code + si_.pcOffset();
+    pc_ = script_->code + rp.pcOffset();
 #ifdef DEBUG
     numActualArgs_ = 0xbadbad;
 #endif
@@ -1354,7 +1390,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         script_ = callee_->existingScript();
 
         rp.readSlots(si_, script_, callee_);
-        pc_ = script_->code + si_.pcOffset();
+        pc_ = script_->code + rp.pcOffset();
     }
 
     framesRead_++;

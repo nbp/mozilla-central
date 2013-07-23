@@ -217,7 +217,7 @@ class CodeGeneratorShared : public LInstructionVisitor
     // Encodes an LSnapshot into the compressed snapshot buffer, returning
     // false on failure.
     bool encode(LSnapshot *snapshot);
-    bool encodeSlots(LSnapshot *snapshot, MResumePoint *resumePoint, uint32_t *startIndex);
+    bool encodeSlots(LSnapshot *snapshot, LRInstruction *ins, uint32_t *startIndex);
 
     // Attempts to assign a BailoutId to a snapshot, if one isn't already set.
     // If the bailout table is full, this returns false, which is not a fatal

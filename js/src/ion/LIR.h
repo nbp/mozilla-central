@@ -876,13 +876,16 @@ class LCallInstructionHelper : public LInstructionHelper<Defs, Operands, Temps>
     }
 };
 
-struct LResumeFrame : public TempObject
+struct LRInstruction : public TempObject
 {
     // Frame which will be resumed.
-    MResumePoint *mir;
+    MNode *mir;
 
     // Index at which this frames start in the snapshot.
     uint32_t startSlotIndex;
+
+    // List of indexes of Recovering instructions.
+    Vector<size_t, 0, IonAllocPolicy> rOperandIndexes;
 };
 
 // An LRecover is similar to a resume point, except that it exhibit a linear
@@ -898,13 +901,15 @@ class LResumePoint : public TempObject
     MResumePoint *mir_;
 
     // Ordered list of resume operations.
-    Vector<LResumeFrame *, 1, IonAllocPolicy> frames_;
+    Vector<LRInstruction *, 1, IonAllocPolicy> instructions_;
 
     // Number of slots stored in the snapshot.
     uint32_t numSlots_;
 
     LResumePoint(MResumePoint *mir);
-    bool init(MResumePoint *mir);
+    bool pushGeneric(MNode *mir, size_t &numFrames);
+    bool pushDefinition(MDefinition *mir, size_t &numFrames);
+    bool init(MResumePoint *mir, size_t &numFrames);
 
   public:
     static LResumePoint *New(MResumePoint *mir);
@@ -912,15 +917,18 @@ class LResumePoint : public TempObject
     uint32_t numSlots() const {
         return numSlots_;
     }
+    uint32_t numInstructions() const {
+        return instructions_.length();
+    }
     MResumePoint *mir() const {
         return mir_;
     }
 
-    LResumeFrame **begin() {
-        return frames_.begin();
+    LRInstruction **begin() {
+        return instructions_.begin();
     }
-    LResumeFrame **end() {
-        return frames_.end();
+    LRInstruction **end() {
+        return instructions_.end();
     }
 
     RecoverOffset offset() const {

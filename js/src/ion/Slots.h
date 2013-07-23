@@ -73,7 +73,8 @@ class Slot
         UNTYPED,            // Type is not known.
         JS_UNDEFINED,       // UndefinedValue()
         JS_NULL,            // NullValue()
-        JS_INT32            // Int32Value(n)
+        JS_INT32,           // Int32Value(n)
+        RECOVER             // A Recover instruction index.
     };
 
   private:
@@ -116,7 +117,7 @@ class Slot
     Slot(SlotMode mode, uint32_t index)
       : mode_(mode)
     {
-        JS_ASSERT(mode == CONSTANT || mode == JS_INT32);
+        JS_ASSERT(mode == CONSTANT || mode == JS_INT32 || mode == RECOVER);
         value_ = index;
     }
 
@@ -134,6 +135,10 @@ class Slot
     }
     int32_t int32Value() const {
         JS_ASSERT(mode() == JS_INT32);
+        return value_;
+    }
+    uint32_t recoverIndex() const {
+        JS_ASSERT(mode() == RECOVER);
         return value_;
     }
     JSValueType knownType() const {

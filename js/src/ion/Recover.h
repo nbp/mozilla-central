@@ -15,6 +15,7 @@ namespace ion {
 
 class CompactBufferReader;
 class SnapshotIterator;
+class MNode;
 
 // Emulate a random access vector based on the forward iterator implemented by
 // the SnapshotIterator, assuming it is mostly used as a forward iterator.
@@ -36,16 +37,79 @@ class SlotVector
     SnapshotIterator *si_;
 };
 
-class RResumePoint
+#define RECOVER_KIND_LIST(_)                    \
+    _(ResumePoint)
+
+// Forward declarations of Cache kinds.
+#define FORWARD_DECLARE(kind) class R##kind;
+    RECOVER_KIND_LIST(FORWARD_DECLARE)
+#undef FORWARD_DECLARE
+
+// A Recover instruction is an instruction which is only executed when we need
+// to explore / restore the stack as it is expected to be by slower execution
+// mode.
+//
+// Recover instructions are encoded with the MIR function writeRecover and
+// extracted from the recover buffer with the RInstruction::dispatch function.
+// The dispatch function do a placement new on the memory given as argument with
+// the data read from the recover buffer. The constructor of each RInstruction
+// is in charge of reading its own data.
+//
+// A recover instruction must provide a resume function which is in charge to
+// read its operands and to store the resumed value.  A recover instruction
+// should only be resumed once.  Each RInstruction must provide a numOperands
+// function which should match the number of operands encoded by the
+// writeRInstructio method.
+class RInstruction
 {
   public:
-    RResumePoint(CompactBufferReader &reader);
+    static RInstruction *dispatch(void *mem, CompactBufferReader &read);
+
+    virtual size_t numOperands() const = 0;
+    virtual bool resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const = 0;
+
+    enum Kind {
+#   define DEFINE_RECOVER_KIND(op) Recover_##op,
+        RECOVER_KIND_LIST(DEFINE_RECOVER_KIND)
+#   undef DEFINE_RECOVER_KIND
+        Recover_Invalid
+    };
+
+    virtual Kind kind() const = 0;
+    virtual const char *recoverName() const = 0;
+
+#   define RECOVER_CASTS(ins)                   \
+    inline bool is##ins() const {               \
+        return kind() == Recover_##ins;         \
+    }                                           \
+                                                \
+    inline R##ins *to##ins();                   \
+    inline const R##ins *to##ins() const;
+
+    RECOVER_KIND_LIST(RECOVER_CASTS)
+#   undef RECOVER_CASTS
+};
+
+#define RECOVER_HEADER(ins)                     \
+    R##ins(CompactBufferReader &reader);        \
+    Kind kind() const {                         \
+        return RInstruction::Recover_##ins;     \
+    }                                           \
+    const char *recoverName() const {           \
+        return #ins;                            \
+    }
+
+class RResumePoint : public RInstruction
+{
+  public:
+    RECOVER_HEADER(ResumePoint)
     void readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
+    bool resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const;
 
     uint32_t pcOffset() const {
         return pcOffset_;
     }
-    size_t numOperands() const {
+    virtual size_t numOperands() const MOZ_FINAL MOZ_OVERRIDE {
         return numOperands_;
     }
 
@@ -109,6 +173,21 @@ class RResumePoint
     uint32_t startStackSlots_; // Index at which stack slots are starting.
     SlotVector slots_;
 };
+
+#undef RECOVER_HEADER
+
+#define RECOVER_CASTS(ins)                              \
+    R##ins *RInstruction::to##ins() {                   \
+        JS_ASSERT(is##ins());                           \
+        return static_cast<R##ins *>(this);             \
+    }                                                   \
+    const R##ins *RInstruction::to##ins() const {       \
+        JS_ASSERT(is##ins());                           \
+        return static_cast<const R##ins *>(this);       \
+    }
+
+    RECOVER_KIND_LIST(RECOVER_CASTS)
+#undef RECOVER_CASTS
 
 } // namespace ion
 } // namespace js

@@ -57,7 +57,9 @@ using namespace js::ion;
 //
 //         JSVAL_TYPE_UNDEFINED:
 //              Reg value:
-//                 0-29: Constant value, index n into ionScript->constants()
+//                 0-28: Constant value, index n into ionScript->constants()
+//                   29: Recover instruction, index [vwu] into the recovered
+//                       Values of the SnapshotIterator.
 //                   30: UndefinedValue()
 //                   31: Constant value, index [vwu] into
 //                       ionScript->constants()
@@ -158,10 +160,11 @@ static const uint32_t NUNBOX32_REG_REG     = 3;
 
 static const uint32_t MAX_TYPE_FIELD_VALUE = 7;
 
-static const uint32_t MAX_REG_FIELD_VALUE  = 31;
-static const uint32_t ESC_REG_FIELD_INDEX  = 31;
-static const uint32_t ESC_REG_FIELD_CONST  = 30;
-static const uint32_t MIN_REG_FIELD_ESC    = 30;
+static const uint32_t MAX_REG_FIELD_VALUE   = 31;
+static const uint32_t ESC_REG_FIELD_INDEX   = 31;
+static const uint32_t ESC_REG_FIELD_CONST   = 30;
+static const uint32_t ESC_REG_FIELD_RECOVER = 29;
+static const uint32_t MIN_REG_FIELD_ESC     = 29;
 
 Slot
 SnapshotReader::readSlot()
@@ -204,6 +207,8 @@ SnapshotReader::readSlot()
             return Slot(Slot::JS_UNDEFINED);
         if (code == ESC_REG_FIELD_INDEX)
             return Slot(Slot::CONSTANT, reader_.readUnsigned());
+        if (code == ESC_REG_FIELD_RECOVER)
+            return Slot(Slot::RECOVER, reader_.readUnsigned());
         return Slot(Slot::CONSTANT, code);
 
       default:
@@ -435,6 +440,15 @@ SnapshotWriter::addNullSlot()
 }
 
 void
+SnapshotWriter::addRecoverSlot(size_t opIndex)
+{
+    IonSpew(IonSpew_Snapshots, "    slot %u: null", slotsWritten_);
+
+    writeSlotHeader(JSVAL_TYPE_UNDEFINED, ESC_REG_FIELD_RECOVER);
+    writer_.writeUnsigned(opIndex);
+}
+
+void
 SnapshotWriter::endSnapshot()
 {
     // Check that the last write succeeded.
@@ -533,7 +547,7 @@ void
 RecoverReader::readRecoverHeader()
 {
     frameCount_ = reader_.readUnsigned();
-    instructionCount_ = reader_.readUnsigned();
+    instructionCount_ = reader_.readUnsigned() + frameCount_;
     instructionRead_ = 0;
     JS_ASSERT(instructionCount_);
 }
@@ -543,20 +557,22 @@ RecoverReader::readInstructionHeader()
 {
     JS_ASSERT(moreInstructions());
     instructionRead_++;
-
-    new (mem_.addr()) RResumePoint(reader_);
+    RInstruction::dispatch(mem_.addr(), reader_);
 }
 
 RecoverOffset
 RecoverWriter::startRecover(uint32_t frameCount, uint32_t instCount)
 {
     RecoverOffset start = writer_.length();
-    IonSpew(IonSpew_Snapshots, "starting recover with instructionCount %u",
-            instCount);
 
     JS_ASSERT(frameCount > 0);
-    JS_ASSERT(instCount > frameCount);
+    JS_ASSERT(instCount >= frameCount);
+    uint32_t opCount = instCount - frameCount;
+
+    IonSpew(IonSpew_Snapshots, "starting recover with %u frames and %u operations",
+            frameCount, opCount);
+
     writer_.writeUnsigned(frameCount);
-    writer_.writeUnsigned(instCount);
+    writer_.writeUnsigned(opCount);
     return start;
 }

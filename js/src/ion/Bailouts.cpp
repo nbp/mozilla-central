@@ -43,9 +43,11 @@ SnapshotIterator::SnapshotIterator(const IonBailoutIterator &iter)
               iter.ionScript()->snapshots() + iter.ionScript()->snapshotsSize()),
     recover_(iter.ionScript(), snapshot_.recoverOffset()),
     nextOperandIndex_(0),
+    currentFrameIndex_(0),
     fp_(iter.jsFrame()),
     machine_(iter.machineState()),
-    ionScript_(iter.ionScript())
+    ionScript_(iter.ionScript()),
+    recovered_(NULL)
 {
     savePosition();
 }

@@ -2847,6 +2847,11 @@ SpewResumePoint(MBasicBlock *block, MInstruction *ins, MResumePoint *resumePoint
 bool
 LIRGenerator::visitInstruction(MInstruction *ins)
 {
+    // Recovering instructions are not lowered, but they are encoded in the
+    // recover buffer such as they can be resumed on bailouts.
+    if (ins->isRecovering())
+        return true;
+
     if (!gen->ensureBallast())
         return false;
     if (!ins->accept(this))

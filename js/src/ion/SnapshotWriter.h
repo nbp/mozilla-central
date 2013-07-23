@@ -53,6 +53,7 @@ class SnapshotWriter
     void addSlot(const Register &value);
     void addSlot(int32_t valueStackSlot);
 #endif
+    void addRecoverSlot(size_t opIndex);
     void endSnapshot();
 
     bool oom() const {
@@ -67,19 +68,18 @@ class SnapshotWriter
     }
 };
 
-class MResumePoint;
+class MNode;
 
 // Collect the layout of the stack into a compacting buffer which is copied into
 // IonScript memory after code generation.
 class RecoverWriter
 {
-
     CompactBufferWriter writer_;
-  public:
 
+  public:
     RecoverOffset startRecover(uint32_t frameCount, uint32_t instCount);
 
-    void writeRecover(const MResumePoint *rp);
+    void writeRecover(const MNode *ins);
 
     void endRecover() {
     }

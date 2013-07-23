@@ -18,9 +18,9 @@ using namespace js;
 using namespace js::ion;
 
 void
-RecoverWriter::writeRecover(const MResumePoint *rp)
+RecoverWriter::writeRecover(const MNode *ins)
 {
-    rp->writeRecover(writer_);
+    ins->writeRecover(writer_);
 }
 
 size_t
@@ -43,9 +43,30 @@ SlotVector::operator [](size_t i) const
     return si.readSlot();
 }
 
+RInstruction *
+RInstruction::dispatch(void *mem, CompactBufferReader &reader)
+{
+    Kind type = Kind(reader.readUnsigned());
+    switch (type) {
+#define RECOVER_PLACEMENT_NEW(ins)              \
+      case Recover_##ins:                       \
+        return new (mem) R##ins(reader);
+
+    RECOVER_KIND_LIST(RECOVER_PLACEMENT_NEW)
+#undef RECOVER_PLACEMENT_NEW
+
+      default:
+        break;
+    }
+
+    MOZ_ASSUME_UNREACHABLE("Forgot to read/write an operand?");
+}
+
 void
 MResumePoint::writeRecover(CompactBufferWriter &writer) const
 {
+    writer.writeUnsigned(RInstruction::Recover_ResumePoint);
+
     size_t pcOffset = pc() - block()->info().script()->code;
     writer.writeUnsigned(pcOffset);
     writer.writeUnsigned(numOperands());
@@ -64,7 +85,6 @@ RResumePoint::RResumePoint(CompactBufferReader &reader)
 void
 RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
 {
-    pcOffset_ = si.pcOffset();
     scopeChainSlot_ = si.readSlot();
 
     if (script->argumentsHasVarBinding())
@@ -82,6 +102,11 @@ RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
     startFormalArgs_ = si.nextOperandIndex();
     startFixedSlots_ = startFormalArgs_ + nargs;
     startStackSlots_ = startFixedSlots_ + script->nfixed;
-    numOperands_ = si.slots();
     slots_.init(si);
+}
+
+bool
+RResumePoint::resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const
+{
+    MOZ_ASSUME_UNREACHABLE("Resume points are not operations.");
 }

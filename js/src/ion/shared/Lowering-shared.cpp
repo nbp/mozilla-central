@@ -67,9 +67,12 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LResumePoint *rp, BailoutKi
 
     size_t i = 0;
     for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it) {
-        MResumePoint *mir = (*it)->mir;
+        MNode *mir = (*it)->mir;
         for (size_t j = 0, e = mir->numOperands(); j < e; ++i, ++j) {
             MDefinition *ins = mir->getOperand(j);
+
+            if (ins->isRecovering())
+                continue;
 
             LAllocation *type = snapshot->typeOfSlot(i);
             LAllocation *payload = snapshot->payloadOfSlot(i);
@@ -114,10 +117,13 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LResumePoint *rp, BailoutKi
         return NULL;
 
     size_t i = 0;
-    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it) {
-        MResumePoint *mir = (*it)->mir;
+    for (LRInstruction **it = rp->begin(), **end = rp->end(); it != end; ++it) {
+        MNode *mir = (*it)->mir;
         for (size_t j = 0, e = mir->numOperands(); j < e; ++i, ++j) {
             MDefinition *def = mir->getOperand(j);
+
+            if (def->isRecovering())
+                continue;
 
             if (def->isPassArg())
                 def = def->toPassArg()->getArgument();

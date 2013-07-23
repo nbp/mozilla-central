@@ -241,10 +241,12 @@ class SnapshotIterator
     SnapshotReader snapshot_;
     RecoverReader recover_;
     size_t nextOperandIndex_;
+    size_t currentFrameIndex_;
 
     IonJSFrameLayout *fp_;
     MachineState machine_;
     IonScript *ionScript_;
+    AutoValueVector *recovered_;
 
     // State of the readers at the beginning of the frame.
     SnapshotReader::SlotPosition slotPos_;
@@ -282,12 +284,22 @@ class SnapshotIterator
     }
 
   public:
+    // Register the vector used to store the results of the recovered
+    // operations. SetRecoveredValue will fill this vector with each computed
+    // value, and slotValue will read out-of it to provide operation arguments
+    // and frame content.
+    void initRecoveredResults(AutoValueVector *);
+
+    // Set the recovered value of the current operation.
+    void setRecoveredValue(Value v);
+
+  public:
     //
     // dispatch to the RecoverReader.
     //
 
     inline uint32_t slots() const {
-        return resumePoint().numOperands();
+        return recover_.currentInstruction().numOperands();
     }
     inline size_t nextOperandIndex() const {
         return nextOperandIndex_;
@@ -296,12 +308,17 @@ class SnapshotIterator
         return nextOperandIndex_ < slots();
     }
 
+    inline bool isFrame() const {
+        return recover_.currentInstruction().isResumePoint();
+    }
     inline void nextInstruction() {
         while (moreSlots())
             readSlot();
         recover_.nextInstruction();
         nextOperandIndex_ = 0;
         savePosition();
+        if (isFrame())
+            currentFrameIndex_++;
     }
     inline void nextFrame() {
         // Currently we only have frames as instructions.
@@ -313,10 +330,6 @@ class SnapshotIterator
     inline bool moreFrames() const {
         // The last instruction is necessary a frame.
         return recover_.moreInstructions();
-    }
-
-    inline uint32_t pcOffset() const {
-        return resumePoint().pcOffset();
     }
 
   public:
@@ -341,9 +354,17 @@ class SnapshotIterator
 
   public:
     inline const RResumePoint &resumePoint() const {
-        return recover_.currentInstruction();
+        return *recover_.currentInstruction().toResumePoint();
     }
     inline RResumePoint &resumePoint() {
+        return *recover_.currentInstruction().toResumePoint();
+    }
+    inline const RInstruction &operation() const {
+        JS_ASSERT(!isFrame());
+        return recover_.currentInstruction();
+    }
+    inline RInstruction &operation() {
+        JS_ASSERT(!isFrame());
         return recover_.currentInstruction();
     }
 

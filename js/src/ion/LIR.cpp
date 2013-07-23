@@ -102,26 +102,64 @@ LBlock::getExitMoveGroup()
 LResumePoint::LResumePoint(MResumePoint *mir)
   : recoverOffset_(INVALID_RECOVER_OFFSET),
     mir_(mir),
-    frames_(),
+    instructions_(),
     numSlots_(0)
 { }
 
 bool
-LResumePoint::init(MResumePoint *mir)
+LResumePoint::pushGeneric(MNode *mir, size_t &numFrames)
+{
+    LRInstruction *recover = new LRInstruction;
+    size_t numOperands = mir->numOperands();
+    for (size_t i = 0; i < numOperands; i++) {
+        MDefinition *def = mir->getOperand(i);
+        if (!def->isRecovering())
+            continue;
+
+        size_t defIndex = 0;
+        if (!def->isInWorklist()) {
+            pushDefinition(def, numFrames);
+            defIndex = instructions_.length() - 1;
+        } else {
+            defIndex = instructions_.length() - 1;
+            while (instructions_[defIndex]->mir != def)
+                defIndex--;
+        }
+
+        JS_ASSERT(instructions_[defIndex]->mir == def);
+        size_t opIndex = defIndex - numFrames;
+        if (!recover->rOperandIndexes.append(opIndex))
+            return false;
+    }
+
+    if (!recover)
+        return false;
+    recover->mir = mir;
+    recover->startSlotIndex = numSlots_;
+    numSlots_ += numOperands;
+    if (!instructions_.append(recover))
+        return false;
+    return true;
+}
+
+bool
+LResumePoint::pushDefinition(MDefinition *mir, size_t &numFrames)
+{
+    JS_ASSERT(!mir->isInWorklist());
+    mir->setInWorklist();
+    return pushGeneric(mir, numFrames);
+}
+
+bool
+LResumePoint::init(MResumePoint *mir, size_t &numFrames)
 {
     // Process resume points in reversed order.
     if (mir->caller())
-        init(mir->caller());
+        init(mir->caller(), numFrames);
 
-    LResumeFrame *frame = new LResumeFrame;
-    if (!frame)
+    if (!pushGeneric(mir, numFrames))
         return false;
-    frame->mir = mir;
-    frame->startSlotIndex = numSlots_;
-    numSlots_ += mir->numOperands();
-
-    if (!frames_.append(frame))
-        return false;
+    numFrames++;
     return true;
 }
 
@@ -129,7 +167,8 @@ LResumePoint *
 LResumePoint::New(MResumePoint *mir)
 {
     LResumePoint *lir = new LResumePoint(mir);
-    if (!lir->init(lir->mir()))
+    size_t numFrames = 0;
+    if (!lir->init(lir->mir(), numFrames))
         return NULL;
 
     IonSpew(IonSpew_Snapshots, "Generating resume point %p from MIR (%p)",

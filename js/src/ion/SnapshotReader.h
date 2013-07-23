@@ -129,11 +129,11 @@ class RecoverReader
         return frameCount_;
     }
 
-    const RResumePoint &currentInstruction() const {
-        return *reinterpret_cast<const RResumePoint *>(mem_.addr());
+    const RInstruction &currentInstruction() const {
+        return *reinterpret_cast<const RInstruction *>(mem_.addr());
     }
-    RResumePoint &currentInstruction() {
-        return *reinterpret_cast<RResumePoint *>(mem_.addr());
+    RInstruction &currentInstruction() {
+        return *reinterpret_cast<RInstruction *>(mem_.addr());
     }
 
     void nextInstruction() {
