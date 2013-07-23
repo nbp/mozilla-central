@@ -7,6 +7,8 @@
 #ifndef jsion_recover_h__
 #define jsion_recover_h__
 
+#include "js/RootingAPI.h"
+
 #include "ion/IonTypes.h"
 #include "ion/Slots.h"
 
