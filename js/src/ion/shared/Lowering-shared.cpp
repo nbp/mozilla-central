@@ -66,7 +66,7 @@ LIRGeneratorShared::buildSnapshot(LInstruction *ins, LResumePoint *rp, BailoutKi
         return NULL;
 
     size_t i = 0;
-    for (LResumeFrame **it = rp->begin(), **end = rp->end(); it != end; ++it) {
+    for (LRInstruction **it = rp->begin(), **end = rp->end(); it != end; ++it) {
         MNode *mir = (*it)->mir;
         for (size_t j = 0, e = mir->numOperands(); j < e; ++i, ++j) {
             MDefinition *ins = mir->getOperand(j);
