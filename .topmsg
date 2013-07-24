@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 897606 - Part 1: Add ability to resume side effects. r=
+Subject: Bug 897606 - Part 2: Alias analysis add memory MUse and MPhi. r=
