@@ -7803,6 +7803,25 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
         Outer        // State before inlining.
     };
 
+    // Encapsulate a MDefinition which needs to be resumed before we return to
+    // the interpreter. This MDefinition does a side effect which might have
+    // been either moved down or removed (when proved non-observable outside the
+    // MIRGraph), but both the baseline code and the interpreter expect the side
+    // effect to have already been executed.
+    struct SideEffect : public TempObject
+    {
+        // Mark as friend to access the next link.
+        friend class MResumePoint;
+
+        SideEffect(SideEffect *list, MDefinition *def)
+          : definition(def),
+            next(list)
+        { }
+
+        MDefinition * const definition;
+        SideEffect * const next;
+    };
+
   private:
     friend class MBasicBlock;
 
@@ -7812,9 +7831,15 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
     MResumePoint *caller_;
     MInstruction *instruction_;
     Mode mode_;
+    SideEffect *sideEffects_;
 
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
     void inherit(MBasicBlock *state);
+
+    // Add a side effect definition in the list of side effects and optimize the
+    // number of allocation by reusing the list of existing side effects of the
+    // previous resume point.
+    bool addSideEffect(MDefinition *def, MResumePoint *previous);
 
   protected:
     // Initializes operands_ to an empty array of a fixed length.
@@ -7885,6 +7910,11 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
             if (operands_[i].hasProducer())
                 operands_[i].producer()->removeUse(&operands_[i]);
         }
+    }
+
+    bool addSideEffectUntil(MDefinition *def, MResumePoint *until);
+    SideEffect *getSideEffects() {
+        return sideEffects_;
     }
 
     void writeRecover(CompactBufferWriter &writer) const;

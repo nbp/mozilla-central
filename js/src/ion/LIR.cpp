@@ -151,12 +151,23 @@ LResumePoint::pushDefinition(MDefinition *mir, size_t &numFrames)
 }
 
 bool
+LResumePoint::pushSideEffect(MResumePoint::SideEffect *se, size_t &numFrames)
+{
+    if (!se)
+        return true;
+
+    return pushSideEffect(se->next, numFrames) &&
+           pushGeneric(se->definition, numFrames);
+}
+
+bool
 LResumePoint::init(MResumePoint *mir, size_t &numFrames)
 {
     // Process resume points in reversed order.
     if (mir->caller())
         init(mir->caller(), numFrames);
 
+    pushSideEffect(mir->getSideEffects(), numFrames);
     if (!pushGeneric(mir, numFrames))
         return false;
     numFrames++;

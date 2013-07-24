@@ -159,7 +159,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Adds a resume point to this block.
     void addResumePoint(MResumePoint *resume) {
-        resumePoints_.pushFront(resume);
+        resumePoints_.pushBack(resume);
     }
 
     // Adds a predecessor. Every predecessor must have the same exit stack

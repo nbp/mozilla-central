@@ -909,6 +909,7 @@ class LResumePoint : public TempObject
     LResumePoint(MResumePoint *mir);
     bool pushGeneric(MNode *mir, size_t &numFrames);
     bool pushDefinition(MDefinition *mir, size_t &numFrames);
+    bool pushSideEffect(MResumePoint::SideEffect *se, size_t &numFrames);
     bool init(MResumePoint *mir, size_t &numFrames);
 
   public:

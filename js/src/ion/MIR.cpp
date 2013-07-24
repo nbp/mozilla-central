@@ -1862,7 +1862,8 @@ MResumePoint::MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *cal
     pc_(pc),
     caller_(caller),
     instruction_(NULL),
-    mode_(mode)
+    mode_(mode),
+    sideEffects_(NULL)
 {
     block->addResumePoint(this);
 }
@@ -1878,6 +1879,53 @@ MResumePoint::inherit(MBasicBlock *block)
             def = def->toPassArg()->getArgument();
         setOperand(i, def);
     }
+}
+
+bool
+MResumePoint::addSideEffect(MDefinition *def, MResumePoint *previous)
+{
+    if (previous) {
+        // The previous resumption necessary contains the definition at the top
+        // of its list of side effects.
+        JS_ASSERT(previous->sideEffects_);
+        JS_ASSERT(previous->sideEffects_->definition == def);
+
+        // If we did the same operation on the previous resume point, then we
+        // can share the same list of side effect.
+        if (previous->sideEffects_->next == sideEffects_) {
+            sideEffects_ = previous->sideEffects_;
+            return true;
+        }
+    }
+
+    // The list of side effect is different than the previous instruction, just
+    // allocate a new side effect to encapsulate this MDefinition.
+    sideEffects_ = new SideEffect(sideEffects_, def);
+    if (!sideEffects_)
+        return false;
+    return true;
+}
+
+bool
+MResumePoint::addSideEffectUntil(MDefinition *def, MResumePoint *until)
+{
+    MResumePoint *prev = NULL;
+    MResumePoint *rp = this;
+
+    while (rp != until) {
+        if (!rp->addSideEffect(def, prev))
+            return false;
+
+        // Walk to the next resume point in the linear sequence of basic blocks.
+        prev = rp;
+        rp = static_cast<MResumePoint *>(prev->next);
+        if (!rp) {
+            JS_ASSERT(prev->block()->numSuccessors() == 1);
+            rp = *prev->block()->getSuccessor(0)->resumePointsBegin();
+        }
+    }
+
+    return true;
 }
 
 MDefinition *
