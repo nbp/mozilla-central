@@ -987,7 +987,7 @@ OptimizeMIR(MIRGenerator *mir)
     if (mir->shouldCancel("Renumber Blocks"))
         return false;
 
-    if (!BuildDominatorTree(graph))
+    if (!BuildDominatorTrees(graph))
         return false;
     // No spew: graph not changed.
 

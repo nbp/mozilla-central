@@ -67,7 +67,7 @@ UnreachableCodeElimination::removeUnmarkedBlocksAndCleanup()
     IonSpewPass("UCE-mid-point");
 
     // Pass 3: Recompute dominators and tweak phis.
-    BuildDominatorTree(graph_);
+    BuildDominatorTrees(graph_);
     if (redundantPhis_ && !EliminatePhis(mir_, graph_, ConservativeObservability))
         return false;
 

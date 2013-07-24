@@ -734,8 +734,8 @@ ComputeImmediateDominators(MIRGraph &graph)
 #endif
 }
 
-bool
-ion::BuildDominatorTree(MIRGraph &graph)
+static bool
+BuildDominatorTree(MIRGraph &graph)
 {
     ComputeImmediateDominators(graph);
 
@@ -887,8 +887,8 @@ ComputeImmediatePDominators(MIRGraph &graph)
 #endif
 }
 
-bool
-ion::BuildPostDominatorTree(MIRGraph &graph)
+static bool
+BuildPostDominatorTree(MIRGraph &graph)
 {
     ComputeImmediatePDominators(graph);
 
@@ -1714,4 +1714,10 @@ LinearSum::print(Sprinter &sp) const
         sp.printf("+%d", constant_);
     else if (constant_ < 0)
         sp.printf("%d", constant_);
+}
+
+bool
+ion::BuildDominatorTrees(MIRGraph &graph)
+{
+    return BuildDominatorTree(graph) && BuildPostDominatorTree(graph);
 }

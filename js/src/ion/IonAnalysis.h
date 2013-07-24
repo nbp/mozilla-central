@@ -42,10 +42,7 @@ bool
 RenumberBlocks(MIRGraph &graph);
 
 bool
-BuildDominatorTree(MIRGraph &graph);
-
-bool
-BuildPostDominatorTree(MIRGraph &graph);
+BuildDominatorTrees(MIRGraph &graph);
 
 bool
 BuildPhiReverseMapping(MIRGraph &graph);
