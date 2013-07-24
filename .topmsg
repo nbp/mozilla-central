@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 878503 - Part 16: Generalized RResumePoint to any instructions. r=
+Subject: Bug 897606 - Part 1: Add ability to resume side effects. r=
