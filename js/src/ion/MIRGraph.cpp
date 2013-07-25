@@ -211,18 +211,21 @@ MBasicBlock::NewPendingLoopHeader(MIRGraph &graph, CompileInfo &info,
 MBasicBlock *
 MBasicBlock::NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred)
 {
-    return MBasicBlock::New(graph, info, pred, pred->pc(), SPLIT_EDGE);
+    MBasicBlock *block = MBasicBlock::New(graph, info, pred, pred->pc(), SPLIT_EDGE);
+    block->loopDepth_ = pred->loopDepth;
+    return block;
 }
 
 MBasicBlock *
 MBasicBlock::NewParBailout(MIRGraph &graph, CompileInfo &info,
                            MBasicBlock *pred, jsbytecode *entryPc,
-                           MResumePoint *resumePoint)
+                           MResumePoint *resumePoint, uint32_t loopDepth)
 {
     MBasicBlock *block = new MBasicBlock(graph, info, entryPc, NORMAL);
 
     resumePoint->block_ = block;
     block->entryResumePoint_ = resumePoint;
+    block->loopDepth_ = loopDepth;
 
     if (!block->init())
         return NULL;

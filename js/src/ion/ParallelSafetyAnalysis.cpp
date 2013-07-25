@@ -463,7 +463,8 @@ ParallelSafetyVisitor::convertToBailout(MBasicBlock *block, MInstruction *ins)
 
         // create bailout block to insert on this edge
         MBasicBlock *bailBlock = MBasicBlock::NewParBailout(graph_, block->info(), pred,
-                                                            block->pc(), block->entryResumePoint());
+                                                            block->pc(), block->entryResumePoint(),
+                                                            block->loopDepth());
         if (!bailBlock)
             return false;
 
