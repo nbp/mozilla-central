@@ -295,6 +295,10 @@ JSONSpewer::spewMIR(MIRGraph *mir)
         beginObject();
 
         integerProperty("number", block->id());
+        if (block->immediateDominator()) {
+            integerProperty("dom", block->immediateDominator()->id());
+            integerProperty("pdom", block->immediatePDominator()->id());
+        }
 
         beginListProperty("attributes");
         if (block->isLoopBackedge())
