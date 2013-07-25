@@ -212,7 +212,7 @@ MBasicBlock *
 MBasicBlock::NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred)
 {
     MBasicBlock *block = MBasicBlock::New(graph, info, pred, pred->pc(), SPLIT_EDGE);
-    block->loopDepth_ = pred->loopDepth;
+    block->loopDepth_ = pred->loopDepth_;
     return block;
 }
 
