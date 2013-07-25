@@ -254,6 +254,8 @@ MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kin
     mark_(false),
     immediateDominator_(NULL),
     numDominated_(0),
+    immediatePDominator_(NULL),
+    numPDominated_(0),
     loopHeader_(NULL),
     trackedPc_(pc)
 #if defined (JS_ION_PERF)
