@@ -830,6 +830,7 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
             finger2 = ipdom;
         }
     }
+    JS_ASSERT(finger1 == finger2);
     return finger1;
 }
 
@@ -840,8 +841,26 @@ ComputeImmediatePDominators(MIRGraph &graph)
     for (PostorderIterator block = graph.poBegin(); block != graph.poEnd(); block++) {
         if (block->numSuccessors() == 0) {
             IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: exit.", block->id());
+            block->setImmediatePDominator(*block);
+            block->mark();
+        }
+
+        if (block->isMarked()) {
+            for (size_t i = 1; i < block->numPredecessors(); i++) {
+                MBasicBlock *pred = block->getPredecessor(i);
+                if (pred->id() < block->id())
+                    block->getPredecessor(i)->mark();
+            }
+        } else if (block->isLoopHeader()) {
+            // An Infinite loop has no exit edges, this means that it will not
+            // be marked by the post-order iteration. We need to mark such loop
+            // headers as if they were exit blocks such as we have a known
+            // immediate post-dominator.
+            IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: infinite loop.", block->id());
             (*block)->setImmediatePDominator(*block);
         }
+
+        block->unmark();
     }
 
     bool changed = true;
@@ -915,6 +934,7 @@ ComputeImmediatePDominators(MIRGraph &graph)
     // Assert that all blocks have post-dominator information.
     for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
         JS_ASSERT(block->immediatePDominator() != NULL);
+        JS_ASSERT(!block->isMarked());
     }
 #endif
 }
