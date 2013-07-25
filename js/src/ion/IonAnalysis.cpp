@@ -810,9 +810,9 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
     // In the original paper, the block ID comparisons are on the postorder index.
     // This implementation iterates in RPO, so the comparisons are reversed.
 
-    // For this function to be called, the block must have multiple predecessors.
-    // If a finger is then found to be self-dominating, it must therefore be
-    // reachable from multiple roots through non-intersecting control flow.
+    // For this function to be called, the block must have multiple successors.
+    // If a finger is then found to be self-post-dominating, it must therefore be
+    // reachable from multiple exits through non-intersecting control flow.
     // NULL is returned in this case, to denote an empty intersection.
 
     while (finger1->pid() != finger2->pid()) {
@@ -836,10 +836,12 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
 static void
 ComputeImmediatePDominators(MIRGraph &graph)
 {
-    // All exit blocks are a root and therefore only self-dominates.
-    MIRGraphExits &exits = *graph.exitAccumulator();
-    for (MBasicBlock **block = exits.begin(); block != exits.end(); block++) {
-        (*block)->setImmediateDominator(*block);
+    // All exit blocks are a root and therefore only self-post-dominates.
+    for (PostorderIterator block = graph.poBegin(); block != graph.poEnd(); block++) {
+        if (block->numSuccessors() == 0) {
+            IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: exit.", block->id());
+            (*block)->setImmediatePDominator(*block);
+        }
     }
 
     bool changed = true;
@@ -849,23 +851,25 @@ ComputeImmediatePDominators(MIRGraph &graph)
 
         PostorderIterator block = graph.poBegin();
 
-        // For each block in RPO, intersect all dominators.
+        // For each block in post-order, intersect all post-dominators.
         for (; block != graph.poEnd(); block++) {
-            // If a node has once been found to have no exclusive dominator,
-            // it will never have an exclusive dominator, so it may be skipped.
+            // If a node has once been found to have no exclusive
+            // post-dominator, it will never have an exclusive post-dominator,
+            // so it may be skipped.
             if (block->immediatePDominator() == *block)
                 continue;
 
             MBasicBlock *newIPdom = block->getSuccessor(0);
 
-            // Find the first common dominator.
+            // Find the first common post-dominator.
             for (size_t i = 1; i < block->numSuccessors(); i++) {
                 MBasicBlock *succ = block->getSuccessor(i);
                 if (succ->immediateDominator() != NULL)
                     newIPdom = IntersectPDominators(succ, newIPdom);
 
-                // If there is no common dominator, the block self-dominates.
+                // If there is no common post-dominator, the block self-post-dominates.
                 if (newIPdom == NULL) {
+                    IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: no common post-dominator.", block->id());
                     block->setImmediatePDominator(*block);
                     changed = true;
                     break;
@@ -873,6 +877,7 @@ ComputeImmediatePDominators(MIRGraph &graph)
             }
 
             if (newIPdom && block->immediatePDominator() != newIPdom) {
+                IonSpew(IonSpew_Abort, "[PDOM] Block %u is a post-dominated by Block %u.", block->id(), newIPdom->id());
                 block->setImmediatePDominator(newIPdom);
                 changed = true;
             }
@@ -880,7 +885,7 @@ ComputeImmediatePDominators(MIRGraph &graph)
     }
 
 #ifdef DEBUG
-    // Assert that all blocks have dominator information.
+    // Assert that all blocks have post-dominator information.
     for (MBasicBlockIterator block(graph.begin()); block != graph.end(); block++) {
         JS_ASSERT(block->immediatePDominator() != NULL);
     }
@@ -890,13 +895,13 @@ ComputeImmediatePDominators(MIRGraph &graph)
 static bool
 BuildPostDominatorTree(MIRGraph &graph)
 {
+    IonSpew(IonSpew_Abort, "[PDOM] BuildPostDominatorTree");
     ComputeImmediatePDominators(graph);
 
-    // Traversing through the graph in post-order means that every use
-    // of a definition is visited before the def itself. Since a def
-    // dominates its uses, by the time we reach a particular
-    // block, we have processed all of its dominated children, so
-    // block->numDominated() is accurate.
+    // Traversing through the graph in reverse post-order means that every
+    // definition is visited before it is used. Since a use post-dominates its
+    // definition, by the time we reach a particular block, we have processed
+    // all of its definitions, so block->numPDominated() is accurate.
     for (ReversePostorderIterator i(graph.rpoBegin()); i != graph.rpoEnd(); i++) {
         MBasicBlock *child = *i;
         MBasicBlock *parent = child->immediatePDominator();
@@ -912,16 +917,15 @@ BuildPostDominatorTree(MIRGraph &graph)
         parent->addNumPDominated(child->numPDominated() + 1);
     }
 
-    // Now, iterate through the dominator tree and annotate every
-    // block with its index in the pre-order traversal of the
-    // dominator tree.
+    // Now, iterate through the post-dominator tree and annotate every block
+    // with its index in the pre-order traversal of the post-dominator tree.
     Vector<MBasicBlock *, 1, IonAllocPolicy> worklist;
 
     // The index of the current block in the CFG traversal.
     size_t index = 0;
 
-    // Add all self-dominating blocks to the worklist.
-    // This includes all roots. Order does not matter.
+    // Add all self-post-dominating blocks to the worklist.
+    // This includes all exits. Order does not matter.
     for (MBasicBlockIterator i(graph.begin()); i != graph.end(); i++) {
         MBasicBlock *block = *i;
         if (block->immediatePDominator() == block) {
@@ -929,7 +933,7 @@ BuildPostDominatorTree(MIRGraph &graph)
                 return false;
         }
     }
-    // Starting from each self-dominating block, traverse the CFG in pre-order.
+    // Starting from each self-post-dominating block, traverse the CFG in pre-order.
     while (!worklist.empty()) {
         MBasicBlock *block = worklist.popCopy();
         block->setPDomIndex(index);
