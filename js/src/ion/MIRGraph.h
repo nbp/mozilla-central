@@ -421,29 +421,27 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
 
     // Post-Dominator
     MBasicBlock *immediatePDominator() const {
-        return immediateDominator_;
+        return immediatePDominator_;
     }
 
     void setImmediatePDominator(MBasicBlock *dom) {
-        immediateDominator_ = dom;
+        immediatePDominator_ = dom;
     }
 
-    MTest *immediatePDominatorBranch(BranchDirection *pdirection);
-
     size_t numImmediatelyPDominatedBlocks() const {
-        return immediatelyDominated_.length();
+        return immediatelyPDominated_.length();
     }
 
     MBasicBlock *getImmediatelyPDominatedBlock(size_t i) const {
-        return immediatelyDominated_[i];
+        return immediatelyPDominated_[i];
     }
 
     size_t numPDominated() const {
-        return numDominated_;
+        return numPDominated_;
     }
 
     void addNumPDominated(size_t n) {
-        numDominated_ += n;
+        numPDominated_ += n;
     }
 
     bool addImmediatelyPDominatedBlock(MBasicBlock *child);
