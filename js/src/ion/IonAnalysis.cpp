@@ -849,38 +849,65 @@ ComputeImmediatePDominators(MIRGraph &graph)
     while (changed) {
         changed = false;
 
-        PostorderIterator block = graph.poBegin();
+        PostorderIterator blockIt = graph.poBegin();
+        bool comeFromBackedge = false;
 
         // For each block in post-order, intersect all post-dominators.
-        for (; block != graph.poEnd(); block++) {
+        for (; blockIt != graph.poEnd(); ) {
+            MBasicBlock *block = *blockIt;
+
+            // Post-order iterators are not exactly what we want, because we
+            // visit the back edges before the loop headers.  So for each
+            // backedge that we encounter, we visit the loop header and come
+            // back on the backedge.  When we visit back the loop header without
+            // coming from the backedge, we just skip it.
+            if (!comeFromBackedge) {
+                if (blockIt->isLoopBackedge()) {
+                    comeFromBackedge = true;
+                    block = block->loopHeaderOfBackedge();
+                } else if (blockIt->isLoopHeader()) {
+                    blockIt++;
+                    continue;
+                }
+            } else {
+                JS_ASSERT(blockIt->isLoopBackedge());
+                comeFromBackedge = false;
+            }
+
             // If a node has once been found to have no exclusive
             // post-dominator, it will never have an exclusive post-dominator,
             // so it may be skipped.
-            if (block->immediatePDominator() == *block)
+            if (block->immediatePDominator() == block) {
+                if (!comeFromBackedge)
+                    blockIt++;
                 continue;
+            }
 
             MBasicBlock *newIPdom = block->getSuccessor(0);
 
             // Find the first common post-dominator.
             for (size_t i = 1; i < block->numSuccessors(); i++) {
                 MBasicBlock *succ = block->getSuccessor(i);
-                if (succ->immediateDominator() != NULL)
+                if (succ->immediatePDominator() != NULL)
                     newIPdom = IntersectPDominators(succ, newIPdom);
 
                 // If there is no common post-dominator, the block self-post-dominates.
                 if (newIPdom == NULL) {
                     IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: no common post-dominator.", block->id());
-                    block->setImmediatePDominator(*block);
+                    block->setImmediatePDominator(block);
                     changed = true;
                     break;
                 }
             }
 
             if (newIPdom && block->immediatePDominator() != newIPdom) {
-                IonSpew(IonSpew_Abort, "[PDOM] Block %u is a post-dominated by Block %u.", block->id(), newIPdom->id());
+                IonSpew(IonSpew_Abort, "[PDOM] Block %u is post-dominated by Block %u.", block->id(), newIPdom->id());
                 block->setImmediatePDominator(newIPdom);
                 changed = true;
             }
+
+            if (!comeFromBackedge)
+                blockIt++;
         }
     }
 
