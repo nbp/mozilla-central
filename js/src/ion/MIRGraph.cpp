@@ -863,6 +863,14 @@ MBasicBlock::dominates(MBasicBlock *other)
     return other->domIndex() >= low && other->domIndex() <= high;
 }
 
+bool
+MBasicBlock::pdominates(MBasicBlock *other)
+{
+    uint32_t high = pdomIndex() + numPDominated();
+    uint32_t low  = pdomIndex();
+    return other->pdomIndex() >= low && other->pdomIndex() <= high;
+}
+
 AbortReason
 MBasicBlock::setBackedge(MBasicBlock *pred)
 {
