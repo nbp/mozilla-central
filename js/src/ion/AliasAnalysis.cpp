@@ -244,3 +244,67 @@ AliasAnalysis::analyze()
     JS_ASSERT(loop_ == NULL);
     return true;
 }
+
+///////////////////////////////////////////////////////////////////////////////
+// Might alias functions for MIR Nodes
+///////////////////////////////////////////////////////////////////////////////
+
+bool
+MDefinition::mightAlias(MDefinition *store)
+{
+    // Return whether this load may depend on the specified store, given
+    // that the alias sets intersect. This may be refined to exclude
+    // possible aliasing in cases where alias set flags are too imprecise.
+    JS_ASSERT(!isEffectful() && store->isEffectful());
+    JS_ASSERT(getAliasSet().flags() & store->getAliasSet().flags());
+    return true;
+}
+
+bool
+MLoadFixedSlot::mightAlias(MDefinition *store)
+{
+    if (store->isStoreFixedSlot() && store->toStoreFixedSlot()->slot() != slot())
+        return false;
+    return true;
+}
+
+bool
+MLoadSlot::mightAlias(MDefinition *store)
+{
+    if (store->isStoreSlot() && store->toStoreSlot()->slot() != slot())
+        return false;
+    return true;
+}
+
+bool
+MGetPropertyPolymorphic::mightAlias(MDefinition *store)
+{
+    // Allow hoisting this instruction if the store does not write to a
+    // slot read by this instruction.
+
+    if (!store->isStoreFixedSlot() && !store->isStoreSlot())
+        return true;
+
+    for (size_t i = 0; i < numShapes(); i++) {
+        Shape *shape = this->shape(i);
+        if (shape->slot() < shape->numFixedSlots()) {
+            // Fixed slot.
+            uint32_t slot = shape->slot();
+            if (store->isStoreFixedSlot() && store->toStoreFixedSlot()->slot() != slot)
+                continue;
+            if (store->isStoreSlot())
+                continue;
+        } else {
+            // Dynamic slot.
+            uint32_t slot = shape->slot() - shape->numFixedSlots();
+            if (store->isStoreSlot() && store->toStoreSlot()->slot() != slot)
+                continue;
+            if (store->isStoreFixedSlot())
+                continue;
+        }
+
+        return true;
+    }
+
+    return false;
+}

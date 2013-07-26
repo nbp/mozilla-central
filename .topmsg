@@ -1,2 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 897606 - Part 3: Build memory dependency graph with Alias analysis. r=
+Subject: Bug 897606 - Part 3: Move mightAlias function to the Alias Analysis file. r=

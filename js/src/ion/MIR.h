@@ -551,14 +551,7 @@ class MDefinition : public MNode
     bool isEffectful() const {
         return getAliasSet().isStore();
     }
-    virtual bool mightAlias(MDefinition *store) {
-        // Return whether this load may depend on the specified store, given
-        // that the alias sets intersect. This may be refined to exclude
-        // possible aliasing in cases where alias set flags are too imprecise.
-        JS_ASSERT(!isEffectful() && store->isEffectful());
-        JS_ASSERT(getAliasSet().flags() & store->getAliasSet().flags());
-        return true;
-    }
+    virtual bool mightAlias(MDefinition *store);
 };
 
 // An MUseDefIterator walks over uses in a definition, skipping any use that is
