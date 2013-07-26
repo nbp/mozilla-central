@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 897606 - Part 3: Move mightAlias function to the Alias Analysis file. r=
+Subject: Bug 897606 - Part 4: Consider the CFG in Alias Analysis. r=
+
