@@ -803,6 +803,7 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
 {
     MBasicBlock *finger1 = block1;
     MBasicBlock *finger2 = block2;
+    IonSpew(IonSpew_Abort, "[PDOM] commonPDom(%u, %u)", finger1->id(), finger2->id());
 
     JS_ASSERT(finger1);
     JS_ASSERT(finger2);
@@ -818,115 +819,236 @@ IntersectPDominators(MBasicBlock *block1, MBasicBlock *block2)
     while (finger1->pid() != finger2->pid()) {
         while (finger1->pid() > finger2->pid()) {
             MBasicBlock *ipdom = finger1->immediatePDominator();
-            if (ipdom == finger1)
+            if (ipdom == finger1) {
+                IonSpew(IonSpew_Abort, "[PDOM] = NULL");
                 return NULL; // Empty intersection.
+            }
+            IonSpew(IonSpew_Abort, "[PDOM] = commonPDom(%u [%u], %u [%u])",
+                    finger1->id(), finger1->pid(),
+                    finger2->id(), finger2->pid());
             finger1 = ipdom;
         }
 
         while (finger2->pid() > finger1->pid()) {
             MBasicBlock *ipdom = finger2->immediatePDominator();
-            if (ipdom == finger2)
+            if (ipdom == finger2) {
+                IonSpew(IonSpew_Abort, "[PDOM] = NULL");
                 return NULL; // Empty intersection.
+            }
+            IonSpew(IonSpew_Abort, "[PDOM] = commonPDom(%u [%u], %u [%u])",
+                    finger1->id(), finger1->pid(),
+                    finger2->id(), finger2->pid());
             finger2 = ipdom;
         }
     }
     JS_ASSERT(finger1 == finger2);
+    IonSpew(IonSpew_Abort, "[PDOM] = %u", finger1->id());
     return finger1;
 }
 
-static void
-ComputeImmediatePDominators(MIRGraph &graph)
+typedef Vector<MBasicBlock *, 0, SystemAllocPolicy> BasicBlockVector;
+
+static bool
+ConstructInvertedGraphRPO(MIRGraph &graph, BasicBlockVector &worklist, BasicBlockVector &rpo)
 {
-    // All exit blocks are a root and therefore only self-post-dominates.
-    for (PostorderIterator block = graph.poBegin(); block != graph.poEnd(); block++) {
+    for (ReversePostorderIterator block = graph.rpoBegin(); block != graph.rpoEnd(); block++) {
+        // Set each block pid to its own rpo id. This would be used to locate
+        // the backedges of innermost infinite loops.
+        block->setPid(block->id());
+
+        // Append exit blocks to the ordered worklist, such as the last exit in
+        // post order becomes the first entry point in the inverted graph.
         if (block->numSuccessors() == 0) {
-            IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: exit.", block->id());
+            IonSpew(IonSpew_Abort, "[PDOM] ipdom(%u) = %u, exit block.",
+                    block->id(), block->id());
             block->setImmediatePDominator(*block);
             block->mark();
+            if (!worklist.append(*block))
+                return false;
         }
-
-        if (block->isMarked()) {
-            for (size_t i = 1; i < block->numPredecessors(); i++) {
-                MBasicBlock *pred = block->getPredecessor(i);
-                if (pred->id() < block->id())
-                    block->getPredecessor(i)->mark();
-            }
-        } else if (block->isLoopHeader()) {
-            // An Infinite loop has no exit edges, this means that it will not
-            // be marked by the post-order iteration. We need to mark such loop
-            // headers as if they were exit blocks such as we have a known
-            // immediate post-dominator.
-            IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: infinite loop.", block->id());
-            (*block)->setImmediatePDominator(*block);
-        }
-
-        block->unmark();
     }
 
+    // Push the highest RPO indexes to the predecessors. This way we will be
+    // able to locate the choice block which can fall in an infinite
+    // loop. Infinite loop would be identified by having identical id and pid.
     bool changed = true;
-
     while (changed) {
         changed = false;
-
-        PostorderIterator blockIt = graph.poBegin();
-        bool comeFromBackedge = false;
-
-        // For each block in post-order, intersect all post-dominators.
-        for (; blockIt != graph.poEnd(); ) {
-            MBasicBlock *block = *blockIt;
-
-            // Post-order iterators are not exactly what we want, because we
-            // visit the back edges before the loop headers.  So for each
-            // backedge that we encounter, we visit the loop header and come
-            // back on the backedge.  When we visit back the loop header without
-            // coming from the backedge, we just skip it.
-            if (!comeFromBackedge) {
-                if (blockIt->isLoopBackedge()) {
-                    comeFromBackedge = true;
-                    block = block->loopHeaderOfBackedge();
-                } else if (blockIt->isLoopHeader()) {
-                    blockIt++;
-                    continue;
+        for (PostorderIterator block = graph.poBegin(); block != graph.poEnd(); block++) {
+            for (size_t i = 0; i < block->numPredecessors(); i++) {
+                MBasicBlock *pred = block->getPredecessor(i);
+                if (pred->pid() < block->pid()) {
+                    pred->setPid(block->pid());
+                    changed = true;
                 }
-            } else {
-                JS_ASSERT(blockIt->isLoopBackedge());
-                comeFromBackedge = false;
+            }
+        }
+    }
+
+    // If the worklist is empty, this means that this MIRGraph has no exit
+    // block. Thus, just initialize the worklist with one block which is part of
+    // an infinite loop.
+    if (worklist.empty()) {
+        // Note that we push the highest id, and if there is no exit, the
+        // highest id is necessary a backedge / loopheader at the beginning of
+        // the postorder iteration.
+        PostorderIterator block = graph.poBegin();
+        JS_ASSERT(block->id() == block->pid());
+        IonSpew(IonSpew_Abort, "[PDOM] ipdom(%u) = %u, infinite loop.",
+                block->id(), block->id());
+        block->setImmediatePDominator(*block);
+        block->mark();
+        if (!worklist.append(*block))
+            return false;
+    }
+
+    // Compute the post-id such as it is a valid reverse post-order in the
+    // inverted graph.
+    size_t rpoPid = 0;
+    if (!rpo.reserve(graph.numBlocks()))
+        return false;
+
+    JS_ASSERT(!worklist.empty());
+    while (!worklist.empty()) {
+        MBasicBlock *block = worklist.back();
+
+        // Check if this basic block is a choice block which leads to an
+        // infinite loop which needs to be processed before this basic block,
+        // such as we keep the reverse post-order correct.
+        MBasicBlock *succ = NULL;
+        for (size_t i = 0; i < block->numSuccessors(); i++) {
+            succ = block->getSuccessor(i);
+            if (!succ->isMarked() && succ->pid() != block->pid())
+                break;
+            succ = NULL;
+        }
+
+        if (succ) {
+            // Walk the mir graph looking for the block identified by the
+            // successor.
+            PostorderIterator root = graph.poBegin();
+            for (; root != graph.poEnd(); root++) {
+                if (root->id() == succ->pid())
+                    break;
             }
 
-            // If a node has once been found to have no exclusive
-            // post-dominator, it will never have an exclusive post-dominator,
-            // so it may be skipped.
-            if (block->immediatePDominator() == block) {
-                if (!comeFromBackedge)
-                    blockIt++;
+            JS_ASSERT(!root->isMarked());
+            JS_ASSERT(block->id() < root->id());
+            IonSpew(IonSpew_Abort, "[PDOM] ipdom(%u) = %u, infinite loop.",
+                    root->id(), root->id());
+            root->setImmediatePDominator(*root);
+            root->mark();
+            if (!worklist.append(*root))
+                return false;
+            continue;
+        }
+
+        // The last element in the work list is the last reachable element, we
+        // can now pop it from the worklist and insert it in the rpo list.
+        worklist.popBack();
+        block->setPid(rpoPid++);
+        rpo.infallibleAppend(block);
+        IonSpew(IonSpew_Abort, "[PDOM] pid(%u) = %u", block->id(), block->pid());
+
+        // Insert all its non-marked predecessors into the worklist. The
+        // worklist is ordered such as we process the block in post-order by
+        // default.
+        for (size_t i = 0; i < block->numPredecessors(); i++) {
+            MBasicBlock *pred = block->getPredecessor(i);
+
+            // We have already visited this predecessor.
+            if (pred->isMarked())
+                continue;
+
+            pred->mark();
+
+            // Insert the predecessor in the ordered worklist.
+            if (worklist.empty() || worklist.back()->id() < pred->id()) {
+                if (!worklist.append(pred))
+                    return false;
                 continue;
             }
 
-            MBasicBlock *newIPdom = block->getSuccessor(0);
+            for (MBasicBlock **at = worklist.begin(); ; at++) {
+                JS_ASSERT(at != worklist.end());
+                if (pred->id() < (*at)->id()) {
+                    if (!worklist.insert(at, pred))
+                        return false;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Ensure that all basic blocks have been visited.
+    JS_ASSERT(rpoPid == graph.numBlocks());
+    for (MBasicBlock **block = rpo.begin(); block != rpo.end(); block++)
+        (*block)->unmark();
+
+    return true;
+}
+
+static bool
+ComputeImmediatePDominators(MIRGraph &graph)
+{
+    // The worklist is a list sorted by id used for indexing the inverted graph
+    // with reverse-post-order indexes.
+    BasicBlockVector worklist;
+    BasicBlockVector rpo;
+
+    if (!ConstructInvertedGraphRPO(graph, worklist, rpo))
+        return false;
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+
+        // For each block in post-order, intersect all post-dominators.
+        for (MBasicBlock **block = rpo.begin(); block != rpo.end(); block++) {
+            // If a node has once been found to have no exclusive
+            // post-dominator, it will never have an exclusive post-dominator,
+            // so it may be skipped.
+            if ((*block)->immediatePDominator() == *block)
+                continue;
+
+            // As opposed to the dominator computation, we cannot assume
+            // anything about the order of successors. The only safe assumption
+            // given by the RPO which is computed before is that we will at
+            // least have one non-NULL successor.
+            MBasicBlock *newIPdom = NULL;
+            for (size_t i = 0; i < (*block)->numSuccessors(); i++) {
+                MBasicBlock *succ = (*block)->getSuccessor(i);
+                if (succ->immediatePDominator() != NULL) {
+                    newIPdom = succ;
+                    break;
+                }
+            }
+            JS_ASSERT(newIPdom);
 
             // Find the first common post-dominator.
-            for (size_t i = 1; i < block->numSuccessors(); i++) {
-                MBasicBlock *succ = block->getSuccessor(i);
-                if (succ->immediatePDominator() != NULL)
-                    newIPdom = IntersectPDominators(succ, newIPdom);
+            for (size_t i = 0; i < (*block)->numSuccessors(); i++) {
+                MBasicBlock *succ = (*block)->getSuccessor(i);
+                if (succ->immediatePDominator() == NULL)
+                    continue;
+
+                newIPdom = IntersectPDominators(succ, newIPdom);
 
                 // If there is no common post-dominator, the block self-post-dominates.
                 if (newIPdom == NULL) {
-                    IonSpew(IonSpew_Abort, "[PDOM] Block %u is a self-post-dominated: no common post-dominator.", block->id());
-                    block->setImmediatePDominator(block);
+                    IonSpew(IonSpew_Abort, "[PDOM] ipdom(%u) = %u, no common post-dominator.",
+                            (*block)->id(), (*block)->id());
+                    (*block)->setImmediatePDominator(*block);
                     changed = true;
                     break;
                 }
             }
 
-            if (newIPdom && block->immediatePDominator() != newIPdom) {
-                IonSpew(IonSpew_Abort, "[PDOM] Block %u is post-dominated by Block %u.", block->id(), newIPdom->id());
-                block->setImmediatePDominator(newIPdom);
+            if (newIPdom && (*block)->immediatePDominator() != newIPdom) {
+                IonSpew(IonSpew_Abort, "[PDOM] ipdom(%u) = %u, post-dominated.",
+                        (*block)->id(), newIPdom->id());
+                (*block)->setImmediatePDominator(newIPdom);
                 changed = true;
             }
-
-            if (!comeFromBackedge)
-                blockIt++;
         }
     }
 
@@ -937,13 +1059,16 @@ ComputeImmediatePDominators(MIRGraph &graph)
         JS_ASSERT(!block->isMarked());
     }
 #endif
+
+    return true;
 }
 
 static bool
 BuildPostDominatorTree(MIRGraph &graph)
 {
     IonSpew(IonSpew_Abort, "[PDOM] BuildPostDominatorTree");
-    ComputeImmediatePDominators(graph);
+    if (!ComputeImmediatePDominators(graph))
+        return false;
 
     // Traversing through the graph in reverse post-order means that every
     // definition is visited before it is used. Since a use post-dominates its

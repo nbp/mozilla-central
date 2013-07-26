@@ -269,18 +269,21 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         domIndex_ = d;
     }
 
+    void setPid(uint32_t pid) {
+        pid_ = pid;
+    }
     uint32_t pid() const {
         // for IntersectPDominator, we need to consider loop-header as if it was
         // as the bottom of the loop, such as it would be both the dominator and
         // the post dominator.
-        return (isLoopHeader() ? backedge()->id() + 1 : id()) - loopDepth();
+        return pid_;
     }
     uint32_t pdomIndex() const {
         JS_ASSERT(!isDead());
-        return domIndex_;
+        return pdomIndex_;
     }
     void setPDomIndex(uint32_t d) {
-        domIndex_ = d;
+        pdomIndex_ = d;
     }
 
     MControlInstruction *lastIns() const {
@@ -534,6 +537,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     FixedList<MDefinition *> slots_;
     uint32_t stackPosition_;
     uint32_t id_;
+    uint32_t pid_;
     MControlInstruction *lastIns_;
     jsbytecode *pc_;
     uint32_t domIndex_; // Index in the dominator tree.
