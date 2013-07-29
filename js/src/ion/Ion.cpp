@@ -1164,6 +1164,12 @@ OptimizeMIR(MIRGenerator *mir)
     IonSpewPass("Bounds Check Elimination");
     AssertGraphCoherency(graph);
 
+    // This hase is removing all memory phi as that do not have any
+    // corresponding allocations.  This is easier to remove them than handling
+    // unnecessary memory phis in all LIR phases.
+    RemoveMemoryPhis(graph);
+    AssertGraphCoherency(graph);
+
     return true;
 }
 

@@ -56,6 +56,8 @@ class AliasAnalysis
     bool analyze();
 };
 
+void RemoveMemoryPhis(MIRGraph &graph);
+
 } // namespace js
 } // namespace ion
 

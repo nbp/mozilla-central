@@ -1327,9 +1327,12 @@ ion::AssertExtendedGraphCoherency(MIRGraph &graph)
         }
 
         uint32_t successorWithPhis = 0;
-        for (size_t i = 0; i < block->numSuccessors(); i++)
-            if (!block->getSuccessor(i)->phisEmpty())
-                successorWithPhis++;
+        for (size_t i = 0; i < block->numSuccessors(); i++) {
+            if (block->getSuccessor(i)->phisEmpty())
+                continue;
+
+            successorWithPhis++;
+        }
 
         JS_ASSERT(successorWithPhis <= 1);
         JS_ASSERT_IF(successorWithPhis, block->successorWithPhis() != NULL);

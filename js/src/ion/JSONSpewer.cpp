@@ -256,9 +256,19 @@ JSONSpewer::spewMDef(MDefinition *def)
         integerValue(def->getOperand(i)->id());
     endList();
 
+    beginListProperty("memInputs");
+    for (const MUse *i = def->memOperandsBegin(), *e = def->memOperandsEnd(); i < e; i++)
+        integerValue(i->producer()->id());
+    endList();
+
     beginListProperty("uses");
     for (MUseDefIterator use(def); use; use++)
         integerValue(use.def()->id());
+    endList();
+
+    beginListProperty("memUses");
+    for (MUseIterator use = def->memUsesBegin(); use != def->memUsesEnd(); use++)
+        integerValue(use->consumer()->toDefinition()->id());
     endList();
 
     bool isTruncated = false;

@@ -143,6 +143,12 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void setScopeChain(MDefinition *ins);
     void setArgumentsObject(MDefinition *ins);
 
+    // Manipulate the list of alias set.
+    bool initNumAliasSets(uint32_t num, MDefinition *store);
+    MDefinition *getAliasSetStore(uint32_t aliasSetId);
+    void setAliasSetStore(uint32_t aliasSetId, MDefinition *store);
+    void addAliasSetPhi(MPhi *phi);
+
     // Returns the top of the stack, then decrements the virtual stack pointer.
     MDefinition *pop();
     void popn(uint32_t n);

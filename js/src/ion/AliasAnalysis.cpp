@@ -57,27 +57,6 @@ AliasAnalysis::AliasAnalysis(MIRGenerator *mir, MIRGraph &graph)
 {
 }
 
-// Whether there might be a path from src to dest, excluding loop backedges. This is
-// approximate and really ought to depend on precomputed reachability information.
-static inline bool
-BlockMightReach(MBasicBlock *src, MBasicBlock *dest)
-{
-    while (src->id() <= dest->id()) {
-        if (src == dest)
-            return true;
-        switch (src->numSuccessors()) {
-          case 0:
-            return false;
-          case 1:
-            src = src->getSuccessor(0);
-            break;
-          default:
-            return true;
-        }
-    }
-    return false;
-}
-
 static void
 IonSpewDependency(MDefinition *load, MDefinition *store, const char *verb, const char *reason)
 {
@@ -102,6 +81,235 @@ IonSpewAliasInfo(const char *pre, MDefinition *ins, const char *post)
     fprintf(IonSpewFile, " %s\n", post);
 }
 
+bool
+MBasicBlock::initNumAliasSets(uint32_t num, MDefinition *store)
+{
+    if (slots_.length() < num) {
+        if (!slots_.growBy(num - slots_.length()))
+            return false;
+    } else if (slots_.length() > num) {
+        slots_.shrink(slots_.length() - num);
+    }
+
+    for (size_t i = 0; i < num; i++)
+        slots_[i] = store;
+
+    return true;
+}
+
+// Copied from Range Analysis.cpp
+static bool
+IsDominatedUse(MBasicBlock *block, MUse *use)
+{
+    MNode *n = use->consumer();
+    bool isPhi = n->isDefinition() && n->toDefinition()->isPhi();
+
+    if (isPhi)
+        return block->dominates(n->block()->getPredecessor(use->index()));
+
+    return block->dominates(n->block());
+}
+
+// Copied & Modified from Range Analysis.cpp
+static void
+ReplaceDominatedMemoryUsesWith(uint32_t aliasSetId, MDefinition *orig,
+                               MDefinition *dom, MBasicBlock *block)
+{
+    for (MUseIterator i(orig->memUsesBegin()); i != orig->memUsesEnd(); ) {
+        if (i->index() != aliasSetId) {
+            i++;
+            continue;
+        }
+
+        if (i->consumer() != dom && IsDominatedUse(block, *i))
+            i = i->consumer()->toDefinition()->replaceAliasSetDependency(i, dom);
+        else
+            i++;
+    }
+}
+
+void
+MBasicBlock::addAliasSetPhi(MPhi *phi)
+{
+    bool updatePredecessors = phis_.empty();
+    addPhi(phi);
+
+    if (!updatePredecessors)
+        return;
+
+    for (size_t i = 0; i < numPredecessors(); i++)
+        getPredecessor(i)->setSuccessorWithPhis(this, i);
+}
+
+void
+MBasicBlock::setAliasSetStore(uint32_t aliasSetId, MDefinition *store)
+{
+    slots_[aliasSetId] = store;
+}
+
+MDefinition *
+MBasicBlock::getAliasSetStore(uint32_t aliasSetId)
+{
+    return slots_[aliasSetId];
+}
+
+MUseIterator
+MDefinition::replaceAliasSetDependency(MUseIterator use, MDefinition *def)
+{
+    JS_ASSERT(def != NULL);
+
+    uint32_t aliasSetId = use->index();
+    MDefinition *prev = use->producer();
+
+    JS_ASSERT(prev == getAliasSetDependency(aliasSetId));
+    JS_ASSERT(use->consumer() == this);
+
+    if (prev == def)
+        return use;
+
+    MUseIterator result(prev->memUses_.removeAt(use));
+
+    // Set the operand by reusing the current index in the list of memory
+    // operands.
+    MUse *it = memOperands_.begin();
+    for (; ; it++) {
+        JS_ASSERT(it != memOperands_.end());
+        if (it->index() == aliasSetId)
+            break;
+    }
+    it->set(def, this, aliasSetId);
+    def->memUses_.pushFront(it);
+
+    return result;
+}
+
+bool
+MDefinition::setAliasSetDependency(uint32_t aliasSetId, MDefinition *mutator)
+{
+    MDefinition *prev = getAliasSetDependency(aliasSetId);
+    if (prev != NULL) {
+        if (prev == mutator)
+            return true;
+
+        // Set the operand by reusing the current index in the list of memory
+        // operands.
+        MUse *it = memOperands_.begin();
+        for (; ; it++) {
+            JS_ASSERT(it != memOperands_.end());
+            if (it->index() == aliasSetId)
+                break;
+        }
+        JS_ASSERT(it->producer() == prev);
+        it->set(mutator, this, aliasSetId);
+        mutator->memUses_.pushFront(it);
+
+        return true;
+    }
+
+    // We need to be careful with vector of MUse as resizing them implies that
+    // we need to remove them from their original location and add them back
+    // after they are copied into a larger array.
+    uint32_t index = memOperands_.length();
+    bool performingRealloc = !memOperands_.canAppendWithoutRealloc(1);
+
+    // Remove all MUses from all use lists, in case realloc() moves.
+    if (performingRealloc) {
+        for (uint32_t i = 0; i < index; i++) {
+            MUse *use = &memOperands_[i];
+            use->producer()->memUses_.remove(use);
+        }
+    }
+
+    // Create the last MUse.
+    if (!memOperands_.append(MUse(mutator, this, aliasSetId)))
+        return false;
+
+    // Add the back in case of realloc
+    if (performingRealloc) {
+        for (uint32_t i = 0; i < index; i++) {
+            MUse *use = &memOperands_[i];
+            use->producer()->memUses_.pushFront(use);
+        }
+    }
+
+    // Add the last MUse in the list of uses of the mutator.
+    mutator->memUses_.pushFront(&memOperands_[index]);
+
+    return true;
+}
+
+MDefinition *
+MDefinition::getAliasSetDependency(uint32_t aliasSetId)
+{
+    for (MUse *it = memOperands_.begin(); it != memOperands_.end(); it++) {
+        if (it->index() == aliasSetId)
+            return it->producer();
+    }
+
+    return NULL;
+}
+
+// Add the result of the current block into the destination block. Add Phi if
+// another block already added a different input to the destination block.
+static bool
+InheritEntryAliasSet(uint32_t aliasSetId, MBasicBlock *current, MBasicBlock *dest,
+                     MDefinition *initial, MDefinition *added)
+{
+    MDefinition *last = dest->getAliasSetStore(aliasSetId);
+    size_t currentId = current->id();
+
+    size_t predIndex = 0;
+    size_t visitedPred = 0;
+    for (size_t p = 0; p < dest->numPredecessors(); p++) {
+        MBasicBlock *pred = dest->getPredecessor(p);
+        if (pred == current) {
+            predIndex = p;
+            continue;
+        }
+
+        visitedPred += pred->id() < currentId;
+    }
+
+    if (!visitedPred) {
+        dest->setAliasSetStore(aliasSetId, added);
+        return true;
+    }
+
+    if (added == last)
+        return true;
+
+    if (!last->isPhi() || last->block() != dest) {
+        MPhi *phi = MPhi::New(aliasSetId);
+        if (!phi)
+            return false;
+        phi->setResultType(MIRType_None);
+        phi->setMemory();
+        phi->reserveLength(dest->numPredecessors());
+        for (size_t p = 0; p < dest->numPredecessors(); p++) {
+            MBasicBlock *pred = dest->getPredecessor(p);
+            if (pred->id() < currentId)
+                phi->addInput(last);
+            else if (pred == current)
+                phi->addInput(added);
+            else
+                phi->addInput(initial);
+        }
+        dest->addAliasSetPhi(phi);
+        dest->setAliasSetStore(aliasSetId, phi);
+
+        // If the block has already been visited, then we need to replace all
+        // dominated uses by the phi.  This case happen for loop back-edges.
+        if (current->id() >= dest->id())
+            ReplaceDominatedMemoryUsesWith(aliasSetId, last, phi, dest);
+
+        return true;
+    }
+
+    MPhi *phi = last->toPhi();
+    phi->replaceOperand(predIndex, added);
+    return true;
+}
+
 // This pass annotates every load instruction with the last store instruction
 // on which it depends. The algorithm is optimistic in that it ignores explicit
 // dependencies and only considers loads and stores.
@@ -119,12 +327,19 @@ IonSpewAliasInfo(const char *pre, MDefinition *ins, const char *post)
 bool
 AliasAnalysis::analyze()
 {
-    Array<MDefinitionVector, AliasSet::NumCategories> stores;
+    const size_t numAliasSets = AliasSet::NumCategories;
 
-    // Initialize to the first instruction.
+    // This vector is copied from the basic block alias sets at the beginning
+    // and merged into the successors of the basic block once we reach the end
+    // of it.
+    Array<MDefinition *, AliasSet::NumCategories> stores;
+
+    // Re-use the stack used to build the MIR Graph and their Phi nodes as a
+    // model of memory manipulated within each alias set.  Initialize all basic
+    // blocks with the first instruction.
     MDefinition *firstIns = *graph_.begin()->begin();
-    for (unsigned i=0; i < AliasSet::NumCategories; i++) {
-        if (!stores[i].append(firstIns))
+    for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
+        if (!block->initNumAliasSets(numAliasSets, firstIns))
             return false;
     }
 
@@ -137,11 +352,12 @@ AliasAnalysis::analyze()
         if (mir->shouldCancel("Alias Analysis (main loop)"))
             return false;
 
-        if (block->isLoopHeader()) {
-            IonSpew(IonSpew_Alias, "Processing loop header %d", block->id());
-            loop_ = new LoopAliasInfo(loop_, *block);
-        }
+        // Load the previous stores from the basic block slots.
+        for (size_t i = 0; i < numAliasSets; i++)
+            stores[i] = block->getAliasSetStore(i);
 
+        // Iterate over the definitions of the block and update the array with
+        // the latest store for each alias set.
         for (MDefinitionIterator def(*block); def; def++) {
             def->setId(newId++);
 
@@ -150,9 +366,12 @@ AliasAnalysis::analyze()
                 continue;
 
             if (set.isStore()) {
+                // Chain the stores by marking them as dependent on the previous
+                // stores.
                 for (AliasSetIterator iter(set); iter; iter++) {
-                    if (!stores[*iter].append(*def))
-                        return false;
+                    IonSpewDependency(*def, stores[*iter], "depends", "");
+                    def->setAliasSetDependency(*iter, stores[*iter]);
+                    stores[*iter] = *def;
                 }
 
                 if (IonSpewEnabled(IonSpew_Alias)) {
@@ -161,88 +380,40 @@ AliasAnalysis::analyze()
                     fprintf(IonSpewFile, " (flags %x)\n", set.flags());
                 }
             } else {
-                // Find the most recent store on which this instruction depends.
-                MDefinition *lastStore = firstIns;
-
+                // Mark load as dependent on the previous stores.
                 for (AliasSetIterator iter(set); iter; iter++) {
-                    MDefinitionVector &aliasedStores = stores[*iter];
-                    for (int i = aliasedStores.length() - 1; i >= 0; i--) {
-                        MDefinition *store = aliasedStores[i];
-                        if (def->mightAlias(store) && BlockMightReach(store->block(), *block)) {
-                            if (lastStore->id() < store->id())
-                                lastStore = store;
-                            break;
-                        }
-                    }
+                    IonSpewDependency(*def, stores[*iter], "depends", "");
+                    def->setAliasSetDependency(*iter, stores[*iter]);
                 }
 
-                def->setDependency(lastStore);
-                IonSpewDependency(*def, lastStore, "depends", "");
-
-                // If the last store was before the current loop, we assume this load
-                // is loop invariant. If a later instruction writes to the same location,
-                // we will fix this at the end of the loop.
-                if (loop_ && lastStore->id() < loop_->firstInstruction()->id()) {
-                    if (!loop_->addInvariantLoad(*def))
-                        return false;
-                }
             }
         }
 
-        if (block->isLoopBackedge()) {
-            JS_ASSERT(loop_->loopHeader() == block->loopHeaderOfBackedge());
-            IonSpew(IonSpew_Alias, "Processing loop backedge %d (header %d)", block->id(),
-                    loop_->loopHeader()->id());
-            LoopAliasInfo *outerLoop = loop_->outer();
-            MInstruction *firstLoopIns = *loop_->loopHeader()->begin();
-
-            const InstructionVector &invariant = loop_->invariantLoads();
-
-            for (unsigned i = 0; i < invariant.length(); i++) {
-                MDefinition *ins = invariant[i];
-                AliasSet set = ins->getAliasSet();
-                JS_ASSERT(set.isLoad());
-
-                bool hasAlias = false;
-                for (AliasSetIterator iter(set); iter; iter++) {
-                    MDefinitionVector &aliasedStores = stores[*iter];
-                    for (int i = aliasedStores.length() - 1;; i--) {
-                        MDefinition *store = aliasedStores[i];
-                        if (store->id() < firstLoopIns->id())
-                            break;
-                        if (ins->mightAlias(store)) {
-                            hasAlias = true;
-                            IonSpewDependency(ins, store, "aliases", "store in loop body");
-                            break;
-                        }
-                    }
-                    if (hasAlias)
-                        break;
-                }
-
-                if (hasAlias) {
-                    // This instruction depends on stores inside the loop body. Mark it as having a
-                    // dependency on the last instruction of the loop header. The last instruction is a
-                    // control instruction and these are never hoisted.
-                    MControlInstruction *controlIns = loop_->loopHeader()->lastIns();
-                    IonSpewDependency(ins, controlIns, "depends", "due to stores in loop body");
-                    ins->setDependency(controlIns);
-                } else {
-                    IonSpewAliasInfo("Load", ins, "does not depend on any stores in this loop");
-
-                    if (outerLoop && ins->dependency()->id() < outerLoop->firstInstruction()->id()) {
-                        IonSpewAliasInfo("Load", ins, "may be invariant in outer loop");
-                        if (!outerLoop->addInvariantLoad(ins))
-                            return false;
-                    }
-                }
-            }
-            loop_ = loop_->outer();
+        // Write the current memory status back into the succesors of the
+        // current basic blocks.  If needed, we will add a memory Phi node to
+        // merge the memory dependency in case we had multiple stores from
+        // different branches.
+        for (size_t s = 0; s < block->numSuccessors(); s++) {
+            MBasicBlock *succ = block->getSuccessor(s);
+            for (size_t i = 0; i < numAliasSets; i++)
+                InheritEntryAliasSet(i, *block, succ, firstIns, stores[i]);
         }
     }
 
-    JS_ASSERT(loop_ == NULL);
     return true;
+}
+
+void
+ion::RemoveMemoryPhis(MIRGraph &graph)
+{
+    for (ReversePostorderIterator block(graph.rpoBegin()); block != graph.rpoEnd(); block++) {
+        for (MPhiIterator it = block->phisBegin(); it != block->phisEnd(); ) {
+            if (it->isMemory())
+                it = block->discardPhiAt(it);
+            else
+                it++;
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////

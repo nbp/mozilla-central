@@ -300,12 +300,19 @@ class MDefinition : public MNode
     Range *range_;                 // Any computed range for this def.
     MIRType resultType_;           // Representation of result type.
     types::StackTypeSet *resultTypeSet_; // Optional refinement of the result type.
-    uint32_t flags_;                 // Bit flags.
-    union {
-        MDefinition *dependency_;  // Implicit dependency (store, call, etc.) of this instruction.
-                                   // Used by alias analysis, GVN and LICM.
-        uint32_t virtualRegister_;   // Used by lowering to map definitions to virtual registers.
-    };
+    uint32_t flags_;                // Bit flags.
+    uint32_t virtualRegister_;      // Used by lowering to map definitions to virtual registers.
+
+    // Track memory mutations and their uses/overwrite within the control-flow
+    // graph. A separated list of uses is made to avoid coliding with the
+    // data-flow, and to track memory mutations within an alias set.  As we
+    // refine the alias set with smaller set of definitions, we want to have a
+    // sparse use of the number of operands where the index of each operand
+    // represent the alias set.
+    InlineList<MUse> memUses_;      // Uses of the mutated memory.
+    Vector<MUse, 1, IonAllocPolicy> memOperands_; // Definitions which are
+                                    // potentially mutating the memory used by
+                                    // this instruction.
 
     // Track bailouts by storing the current pc in MIR instruction. Also used
     // for profiling and keeping track of what the last known pc was.
@@ -341,7 +348,6 @@ class MDefinition : public MNode
         resultType_(MIRType_None),
         resultTypeSet_(NULL),
         flags_(0),
-        dependency_(NULL),
         trackedPc_(NULL)
     { }
 
@@ -538,12 +544,36 @@ class MDefinition : public MNode
         resultTypeSet_ = types;
     }
 
+    // Register an MDefinition as being a potential mutator of the memory read
+    // by this instruction.
+    bool setAliasSetDependency(uint32_t aliasSetId, MDefinition *mutator);
+    MDefinition *getAliasSetDependency(uint32_t aliasSetId);
+    MUseIterator replaceAliasSetDependency(MUseIterator use, MDefinition *def);
+
     MDefinition *dependency() const {
-        return dependency_;
+        MDefinition *def = NULL;
+        for (const MUse *it = memOperands_.begin(); it < memOperands_.end(); it++) {
+            if (!def || def->id() > it->producer()->id())
+                def = it->producer();
+        }
+        return def;
     }
-    void setDependency(MDefinition *dependency) {
-        dependency_ = dependency;
+
+    // Returns the beginning of this definition's memory use chain.
+    MUseIterator memUsesBegin() const {
+        return memUses_.begin();
     }
+    MUseIterator memUsesEnd() const {
+        return memUses_.end();
+    }
+
+    const MUse *memOperandsBegin() const {
+        return memOperands_.begin();
+    }
+    const MUse *memOperandsEnd() const {
+        return memOperands_.end();
+    }
+
     virtual AliasSet getAliasSet() const {
         // Instructions are effectful by default.
         return AliasSet::Store(AliasSet::Any);
@@ -3654,6 +3684,7 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
     bool hasBackedgeType_;
     bool triedToSpecialize_;
     bool isIterator_;
+    bool isMemory_;
 
 #if DEBUG
     bool specialized_;
@@ -3664,7 +3695,8 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
       : slot_(slot),
         hasBackedgeType_(false),
         triedToSpecialize_(false),
-        isIterator_(false)
+        isIterator_(false),
+        isMemory_(false)
 #if DEBUG
         , specialized_(false)
         , capacity_(0)
@@ -3742,6 +3774,13 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
     }
     void setIterator() {
         isIterator_ = true;
+    }
+
+    bool isMemory() const {
+        return isMemory_;
+    }
+    void setMemory() {
+        isMemory_ = true;
     }
 
     AliasSet getAliasSet() const {
