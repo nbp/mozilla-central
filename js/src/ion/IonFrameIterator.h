@@ -351,6 +351,7 @@ class SnapshotIterator
     inline void restart() {
         snapshot_.restart();
         recover_.restart();
+        nextOperandIndex_ = 0;
         savePosition();
     }
 
