@@ -7,6 +7,8 @@
 #ifndef vm_ObjectImpl_inl_h
 #define vm_ObjectImpl_inl_h
 
+#include "vm/ObjectImpl.h"
+
 #include "mozilla/Assertions.h"
 
 #include "jscompartment.h"
@@ -15,13 +17,10 @@
 
 #include "gc/Heap.h"
 #include "gc/Marking.h"
-#include "js/TemplateLib.h"
-#include "vm/ObjectImpl.h"
+#include "vm/Interpreter.h"
+#include "vm/ProxyObject.h"
 
 #include "gc/Barrier-inl.h"
-#include "vm/Interpreter.h"
-#include "vm/ObjectImpl.h"
-#include "vm/ProxyObject.h"
 
 inline JSCompartment *
 js::ObjectImpl::compartment() const
@@ -162,7 +161,7 @@ js::ObjectImpl::inDictionaryMode() const
 JS_ALWAYS_INLINE JS::Zone *
 js::ObjectImpl::zone() const
 {
-    JS_ASSERT(InSequentialOrExclusiveParallelSection());
+    JS_ASSERT(CurrentThreadCanAccessZone(shape_->zone()));
     return shape_->zone();
 }
 
@@ -172,7 +171,7 @@ js::ObjectImpl::readBarrier(ObjectImpl *obj)
 #ifdef JSGC_INCREMENTAL
     Zone *zone = obj->zone();
     if (zone->needsBarrier()) {
-        MOZ_ASSERT(!zone->rt->isHeapMajorCollecting());
+        MOZ_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
         JSObject *tmp = obj->asObjectPtr();
         MarkObjectUnbarriered(zone->barrierTracer(), &tmp, "read barrier");
         MOZ_ASSERT(tmp == obj->asObjectPtr());
@@ -196,7 +195,7 @@ inline void
 js::ObjectImpl::privateWriteBarrierPost(void **pprivate)
 {
 #ifdef JSGC_GENERATIONAL
-    runtime()->gcStoreBuffer.putCell(reinterpret_cast<js::gc::Cell **>(pprivate));
+    runtimeFromAnyThread()->gcStoreBuffer.putCell(reinterpret_cast<js::gc::Cell **>(pprivate));
 #endif
 }
 
@@ -208,12 +207,12 @@ js::ObjectImpl::writeBarrierPre(ObjectImpl *obj)
      * This would normally be a null test, but TypeScript::global uses 0x1 as a
      * special value.
      */
-    if (IsNullTaggedPointer(obj) || !obj->runtime()->needsBarrier())
+    if (IsNullTaggedPointer(obj) || !obj->runtimeFromMainThread()->needsBarrier())
         return;
 
     Zone *zone = obj->zone();
     if (zone->needsBarrier()) {
-        MOZ_ASSERT(!zone->rt->isHeapMajorCollecting());
+        MOZ_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
         JSObject *tmp = obj->asObjectPtr();
         MarkObjectUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
         MOZ_ASSERT(tmp == obj->asObjectPtr());
@@ -227,7 +226,7 @@ js::ObjectImpl::writeBarrierPost(ObjectImpl *obj, void *addr)
 #ifdef JSGC_GENERATIONAL
     if (IsNullTaggedPointer(obj))
         return;
-    obj->runtime()->gcStoreBuffer.putCell((Cell **)addr);
+    obj->runtimeFromAnyThread()->gcStoreBuffer.putCell((Cell **)addr);
 #endif
 }
 
@@ -235,7 +234,7 @@ js::ObjectImpl::writeBarrierPost(ObjectImpl *obj, void *addr)
 js::ObjectImpl::writeBarrierPostRelocate(ObjectImpl *obj, void *addr)
 {
 #ifdef JSGC_GENERATIONAL
-    obj->runtime()->gcStoreBuffer.putRelocatableCell((Cell **)addr);
+    obj->runtimeFromAnyThread()->gcStoreBuffer.putRelocatableCell((Cell **)addr);
 #endif
 }
 
@@ -243,7 +242,7 @@ js::ObjectImpl::writeBarrierPostRelocate(ObjectImpl *obj, void *addr)
 js::ObjectImpl::writeBarrierPostRemove(ObjectImpl *obj, void *addr)
 {
 #ifdef JSGC_GENERATIONAL
-    obj->runtime()->gcStoreBuffer.removeRelocatableCell((Cell **)addr);
+    obj->runtimeFromAnyThread()->gcStoreBuffer.removeRelocatableCell((Cell **)addr);
 #endif
 }
 

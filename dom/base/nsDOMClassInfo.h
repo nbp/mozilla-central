@@ -211,7 +211,6 @@ public:
   static jsid sItem_id;
   static jsid sNamedItem_id;
   static jsid sEnumerate_id;
-  static jsid sNavigator_id;
   static jsid sTop_id;
   static jsid sDocument_id;
   static jsid sFrames_id;
@@ -379,32 +378,6 @@ public:
 };
 
 
-// Navigator scriptable helper
-
-class nsNavigatorSH : public nsDOMGenericSH
-{
-protected:
-  nsNavigatorSH(nsDOMClassInfoData* aData) : nsDOMGenericSH(aData)
-  {
-  }
-
-  virtual ~nsNavigatorSH()
-  {
-  }
-
-public:
-  NS_IMETHOD PreCreate(nsISupports *nativeObj, JSContext *cx,
-                       JSObject *globalObj, JSObject **parentObj) MOZ_OVERRIDE;
-  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
-
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData)
-  {
-    return new nsNavigatorSH(aData);
-  }
-};
-
 // Generic array scriptable helper
 
 class nsGenericArraySH : public nsDOMClassInfo
@@ -463,38 +436,6 @@ private:
 };
 
 
-// NamedArray helper
-
-class nsNamedArraySH : public nsArraySH
-{
-protected:
-  nsNamedArraySH(nsDOMClassInfoData* aData) : nsArraySH(aData)
-  {
-  }
-
-  virtual ~nsNamedArraySH()
-  {
-  }
-
-  NS_IMETHOD NewResolve(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                        JSObject *obj, jsid id, uint32_t flags,
-                        JSObject **objp, bool *_retval) MOZ_OVERRIDE;
-
-  virtual nsISupports* GetNamedItem(nsISupports *aNative,
-                                    const nsAString& aName,
-                                    nsWrapperCache **cache,
-                                    nsresult *aResult) = 0;
-
-public:
-  NS_IMETHOD GetProperty(nsIXPConnectWrappedNative *wrapper, JSContext *cx,
-                         JSObject *obj, jsid id, jsval *vp, bool *_retval) MOZ_OVERRIDE;
-
-private:
-  // Not implemented, nothing should create an instance of this class.
-  static nsIClassInfo *doCreate(nsDOMClassInfoData* aData);
-};
-
-
 // HTMLAllCollection
 
 extern JSClass sHTMLDocumentAllClass;
@@ -511,7 +452,7 @@ public:
   static JSBool DocumentAllNewResolve(JSContext *cx, JS::Handle<JSObject*> obj, JS::Handle<jsid> id,
                                       unsigned flags, JS::MutableHandle<JSObject*> objp);
   static void ReleaseDocument(JSFreeOp *fop, JSObject *obj);
-  static JSBool CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp);
+  static bool CallToGetPropMapper(JSContext *cx, unsigned argc, jsval *vp);
 };
 
 
