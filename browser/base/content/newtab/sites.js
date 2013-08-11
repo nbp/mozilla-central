@@ -131,7 +131,17 @@ Site.prototype = {
 
     if (this.isPinned())
       this._updateAttributes(true);
+    // request a staleness check for the thumbnail, which will cause page.js
+    // to be notified and call our refreshThumbnail() method.
+    PageThumbs.captureIfStale(this.url);
+    // but still display whatever thumbnail might be available now.
+    this.refreshThumbnail();
+  },
 
+  /**
+   * Refreshes the thumbnail for the site.
+   */
+  refreshThumbnail: function Site_refreshThumbnail() {
     let thumbnailURL = PageThumbs.getThumbnailURL(this.url);
     let thumbnail = this._querySelector(".newtab-thumbnail");
     thumbnail.style.backgroundImage = "url(" + thumbnailURL + ")";
@@ -180,9 +190,6 @@ Site.prototype = {
         break;
       case "dragstart":
         gDrag.start(this, aEvent);
-        break;
-      case "drag":
-        gDrag.drag(this, aEvent);
         break;
       case "dragend":
         gDrag.end(this, aEvent);

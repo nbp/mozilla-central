@@ -8,15 +8,16 @@
 #define vm_ThreadPool_h
 
 #include <stddef.h>
-#include "mozilla/StandardInteger.h"
-#include "js/Vector.h"
-#include "jsalloc.h"
+#include <stdint.h>
 
+#include "jsalloc.h"
 #ifdef JS_THREADSAFE
-#  include "prtypes.h"
-#  include "prlock.h"
-#  include "prcvar.h"
+# include "prcvar.h"
+# include "prlock.h"
+# include "prtypes.h"
 #endif
+
+#include "js/Vector.h"
 
 struct JSContext;
 struct JSRuntime;
@@ -69,7 +70,9 @@ class ThreadPool
     friend class ThreadPoolWorker;
 
     // Initialized at startup only:
+#if defined(JS_THREADSAFE) || defined(DEBUG)
     JSRuntime *const runtime_;
+#endif
     js::Vector<ThreadPoolWorker*, 8, SystemAllocPolicy> workers_;
 
     // Number of workers we will start, when we actually start them

@@ -18,12 +18,6 @@
 #include "jscntxt.h"
 #include "jsobj.h"
 
-#include "vm/DateTime.h"
-#include "vm/GlobalObject.h"
-#include "vm/Interpreter.h"
-#include "vm/Stack.h"
-#include "vm/StringBuffer.h"
-
 #if ENABLE_INTL_API
 #include "unicode/locid.h"
 #include "unicode/numsys.h"
@@ -36,6 +30,11 @@
 #include "unicode/ustring.h"
 #endif
 #include "unicode/utypes.h"
+#include "vm/DateTime.h"
+#include "vm/GlobalObject.h"
+#include "vm/Interpreter.h"
+#include "vm/Stack.h"
+#include "vm/StringBuffer.h"
 
 #include "jsobjinlines.h"
 
@@ -408,9 +407,9 @@ IntlInitialize(JSContext *cx, HandleObject obj, Handle<PropertyName*> initialize
 
     args.setCallee(initializerValue);
     args.setThis(NullValue());
-    args[0] = ObjectValue(*obj);
-    args[1] = locales;
-    args[2] = options;
+    args[0].setObject(*obj);
+    args[1].set(locales);
+    args[2].set(options);
 
     return Invoke(cx, args);
 }
@@ -474,7 +473,7 @@ GetInternals(JSContext *cx, HandleObject obj, MutableHandleObject internals)
 
     args.setCallee(getInternalsValue);
     args.setThis(NullValue());
-    args[0] = ObjectValue(*obj);
+    args[0].setObject(*obj);
 
     if (!Invoke(cx, args))
         return false;
@@ -560,7 +559,7 @@ static Class CollatorClass = {
 };
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 collator_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     vp->setString(cx->names().Collator);
@@ -586,11 +585,10 @@ static const JSFunctionSpec collator_methods[] = {
  * Spec: ECMAScript Internationalization API Specification, 10.1
  */
 static bool
-Collator(JSContext *cx, CallArgs args)
+Collator(JSContext *cx, CallArgs args, bool construct)
 {
     RootedObject obj(cx);
 
-    bool construct = args.isConstructing();
     if (!construct) {
         // 10.1.2.1 step 3
         JSObject *intl = cx->global()->getOrCreateIntlObject(cx);
@@ -639,19 +637,21 @@ Collator(JSContext *cx, CallArgs args)
     return true;
 }
 
-static JSBool
+static bool
 Collator(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return Collator(cx, args);
+    return Collator(cx, args, args.isConstructing());
 }
 
-JSBool
+bool
 js::intl_Collator(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() == 2);
-    return Collator(cx, args);
+    // intl_Collator is an intrinsic for self-hosted JavaScript, so it cannot
+    // be used with "new", but it still has to be treated as a constructor.
+    return Collator(cx, args, true);
 }
 
 static void
@@ -727,7 +727,7 @@ GlobalObject::initCollatorProto(JSContext *cx, Handle<GlobalObject*> global)
     return true;
 }
 
-JSBool
+bool
 js::intl_Collator_availableLocales(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -740,7 +740,7 @@ js::intl_Collator_availableLocales(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js::intl_availableCollations(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -973,7 +973,7 @@ intl_CompareStrings(JSContext *cx, UCollator *coll, HandleString str1, HandleStr
     return true;
 }
 
-JSBool
+bool
 js::intl_CompareStrings(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1042,7 +1042,7 @@ static Class NumberFormatClass = {
 };
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 numberFormat_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     vp->setString(cx->names().NumberFormat);
@@ -1068,10 +1068,9 @@ static const JSFunctionSpec numberFormat_methods[] = {
  * Spec: ECMAScript Internationalization API Specification, 11.1
  */
 static bool
-NumberFormat(JSContext *cx, CallArgs args)
+NumberFormat(JSContext *cx, CallArgs args, bool construct)
 {
     RootedObject obj(cx);
-    bool construct = args.isConstructing();
 
     if (!construct) {
         // 11.1.2.1 step 3
@@ -1121,19 +1120,22 @@ NumberFormat(JSContext *cx, CallArgs args)
     return true;
 }
 
-static JSBool
+static bool
 NumberFormat(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return NumberFormat(cx, args);
+    return NumberFormat(cx, args, args.isConstructing());
 }
 
-JSBool
+bool
 js::intl_NumberFormat(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() == 2);
-    return NumberFormat(cx, args);
+    // intl_NumberFormat is an intrinsic for self-hosted JavaScript, so it
+    // cannot be used with "new", but it still has to be treated as a
+    // constructor.
+    return NumberFormat(cx, args, true);
 }
 
 static void
@@ -1210,7 +1212,7 @@ GlobalObject::initNumberFormatProto(JSContext *cx, Handle<GlobalObject*> global)
     return true;
 }
 
-JSBool
+bool
 js::intl_NumberFormat_availableLocales(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1223,7 +1225,7 @@ js::intl_NumberFormat_availableLocales(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js::intl_numberingSystem(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1431,7 +1433,7 @@ intl_FormatNumber(JSContext *cx, UNumberFormat *nf, double x, MutableHandleValue
     return true;
 }
 
-JSBool
+bool
 js::intl_FormatNumber(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1496,7 +1498,7 @@ static Class DateTimeFormatClass = {
 };
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 dateTimeFormat_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     vp->setString(cx->names().DateTimeFormat);
@@ -1522,10 +1524,9 @@ static const JSFunctionSpec dateTimeFormat_methods[] = {
  * Spec: ECMAScript Internationalization API Specification, 12.1
  */
 static bool
-DateTimeFormat(JSContext *cx, CallArgs args)
+DateTimeFormat(JSContext *cx, CallArgs args, bool construct)
 {
     RootedObject obj(cx);
-    bool construct = args.isConstructing();
 
     if (!construct) {
         // 12.1.2.1 step 3
@@ -1575,19 +1576,22 @@ DateTimeFormat(JSContext *cx, CallArgs args)
     return true;
 }
 
-static JSBool
+static bool
 DateTimeFormat(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
-    return DateTimeFormat(cx, args);
+    return DateTimeFormat(cx, args, args.isConstructing());
 }
 
-JSBool
+bool
 js::intl_DateTimeFormat(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
     JS_ASSERT(args.length() == 2);
-    return DateTimeFormat(cx, args);
+    // intl_DateTimeFormat is an intrinsic for self-hosted JavaScript, so it
+    // cannot be used with "new", but it still has to be treated as a
+    // constructor.
+    return DateTimeFormat(cx, args, true);
 }
 
 static void
@@ -1663,7 +1667,7 @@ GlobalObject::initDateTimeFormatProto(JSContext *cx, Handle<GlobalObject*> globa
     return true;
 }
 
-JSBool
+bool
 js::intl_DateTimeFormat_availableLocales(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1690,7 +1694,7 @@ bcp47CalendarName(const char *icuName)
     return icuName;
 }
 
-JSBool
+bool
 js::intl_availableCalendars(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1755,7 +1759,7 @@ js::intl_availableCalendars(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js::intl_patternForSkeleton(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1916,7 +1920,7 @@ intl_FormatDateTime(JSContext *cx, UDateFormat *df, double x, MutableHandleValue
     return true;
 }
 
-JSBool
+bool
 js::intl_FormatDateTime(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1975,7 +1979,7 @@ Class js::IntlClass = {
 };
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 intl_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     vp->setString(cx->names().Intl);
