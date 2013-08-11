@@ -32,7 +32,7 @@ interface AudioContext : EventTarget {
     [Creator]
     AudioBufferSourceNode createBufferSource();
 
-    [Creator]
+    [Creator, Throws]
     MediaStreamAudioDestinationNode createMediaStreamDestination();
 
     [Creator, Throws]
@@ -42,6 +42,10 @@ interface AudioContext : EventTarget {
 
     [Creator]
     AnalyserNode createAnalyser();
+    [Creator, Throws]
+    MediaElementAudioSourceNode createMediaElementSource(HTMLMediaElement mediaElement);
+    [Creator, Throws]
+    MediaStreamAudioSourceNode createMediaStreamSource(MediaStream mediaStream);
     [Creator]
     GainNode createGain();
     [Creator, Throws]

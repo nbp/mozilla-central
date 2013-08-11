@@ -8,6 +8,8 @@ let Ci = Components.interfaces;
 let Cu = Components.utils;
 let Cr = Components.results;
 
+Cu.import("resource://gre/modules/PageThumbs.jsm");
+
 const kBrowserViewZoomLevelPrecision = 10000;
 
 // allow panning after this timeout on pages with registered touch listeners
@@ -16,11 +18,23 @@ const kSetInactiveStateTimeout = 100;
 
 const kDefaultMetadata = { autoSize: false, allowZoom: true, autoScale: true };
 
+const kTabThumbnailDelayCapture = 500;
+
+const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
+
 // Override sizeToContent in the main window. It breaks things (bug 565887)
 window.sizeToContent = function() {
   Cu.reportError("window.sizeToContent is not allowed in this window");
 }
 
+function getTabModalPromptBox(aWindow) {
+  let browser = Browser.getBrowserForWindow(aWindow);
+  return Browser.getTabModalPromptBox(browser);
+}
+
+/*
+ * Returns the browser for the currently displayed tab.
+ */
 function getBrowser() {
   return Browser.selectedBrowser;
 }
@@ -72,6 +86,7 @@ var Browser = {
     GestureModule.init();
     BrowserTouchHandler.init();
     PopupBlockerObserver.init();
+    APZCObserver.init();
 
     // Init the touch scrollbox
     this.contentScrollbox = Elements.browsers;
@@ -126,11 +141,20 @@ var Browser = {
     Util.forceOnline();
 
     // If this is an intial window launch the commandline handler passes us the default
-    // page as an argument. commandURL _should_ never be empty, but we protect against it
-    // below. However, we delay trying to get the fallback homepage until we really need it.
+    // page as an argument.
     let commandURL = null;
-    if (window.arguments && window.arguments[0])
-      commandURL = window.arguments[0];
+    try {
+      let argsObj = window.arguments[0].wrappedJSObject;
+      if (argsObj && argsObj.pageloadURL) {
+        // Talos tp-cmdline parameter
+        commandURL = argsObj.pageloadURL;
+      } else if (window.arguments && window.arguments[0]) {
+        // BrowserCLH paramerter
+        commandURL = window.arguments[0];
+      }
+    } catch (ex) {
+      Util.dumpLn(ex);
+    }
 
     messageManager.addMessageListener("DOMLinkAdded", this);
     messageManager.addMessageListener("MozScrolledAreaChanged", this);
@@ -235,6 +259,7 @@ var Browser = {
   },
 
   shutdown: function shutdown() {
+    APZCObserver.shutdown();
     BrowserUI.uninit();
     ContentAreaObserver.shutdown();
 
@@ -396,19 +421,68 @@ var Browser = {
     return this._tabs;
   },
 
-  getTabForBrowser: function getTabForBrowser(aBrowser) {
-    let tabs = this._tabs;
-    for (let i = 0; i < tabs.length; i++) {
-      if (tabs[i].browser == aBrowser)
-        return tabs[i];
-    }
-    return null;
+  getTabModalPromptBox: function(aBrowser) {
+    let browser = (aBrowser || getBrowser());
+    let stack = browser.parentNode;
+    let self = this;
+
+    let promptBox = {
+      appendPrompt : function(args, onCloseCallback) {
+          let newPrompt = document.createElementNS(XUL_NS, "tabmodalprompt");
+          stack.appendChild(newPrompt);
+          browser.setAttribute("tabmodalPromptShowing", true);
+          newPrompt.clientTop; // style flush to assure binding is attached
+
+          let tab = self.getTabForBrowser(browser);
+          tab = tab.chromeTab;
+
+          newPrompt.init(args, tab, onCloseCallback);
+          return newPrompt;
+      },
+
+      removePrompt : function(aPrompt) {
+          stack.removeChild(aPrompt);
+
+          let prompts = this.listPrompts();
+          if (prompts.length) {
+          let prompt = prompts[prompts.length - 1];
+              prompt.Dialog.setDefaultFocus();
+          } else {
+              browser.removeAttribute("tabmodalPromptShowing");
+              browser.focus();
+          }
+      },
+
+      listPrompts : function(aPrompt) {
+          let els = stack.getElementsByTagNameNS(XUL_NS, "tabmodalprompt");
+          // NodeList --> real JS array
+          let prompts = Array.slice(els);
+          return prompts;
+      },
+    };
+
+    return promptBox;
   },
 
   getBrowserForWindowId: function getBrowserForWindowId(aWindowId) {
     for (let i = 0; i < this.browsers.length; i++) {
       if (this.browsers[i].contentWindowId == aWindowId)
         return this.browsers[i];
+    }
+    return null;
+  },
+
+  getBrowserForWindow: function(aWindow) {
+    let windowID = aWindow.QueryInterface(Ci.nsIInterfaceRequestor)
+                          .getInterface(Ci.nsIDOMWindowUtils).currentInnerWindowID;
+    return this.getBrowserForWindowId(windowID);
+  },
+
+  getTabForBrowser: function getTabForBrowser(aBrowser) {
+    let tabs = this._tabs;
+    for (let i = 0; i < tabs.length; i++) {
+      if (tabs[i].browser == aBrowser)
+        return tabs[i];
     }
     return null;
   },
@@ -598,7 +672,7 @@ var Browser = {
 
   getNotificationBox: function getNotificationBox(aBrowser) {
     let browser = aBrowser || this.selectedBrowser;
-    return browser.parentNode;
+    return browser.parentNode.parentNode;
   },
 
   /**
@@ -969,13 +1043,6 @@ var Browser = {
         break;
     }
   },
-
-  onAboutPolicyClick: function() {
-    FlyoutPanelsUI.hide();
-    let linkStr = Services.urlFormatter.formatURLPref("app.privacyURL");
-    BrowserUI.newTab(linkStr, Browser.selectedTab);
-  }
-
 };
 
 Browser.MainDragger = function MainDragger() {
@@ -1205,6 +1272,10 @@ nsBrowserAccess.prototype = {
 
   isTabContentWindow: function(aWindow) {
     return Browser.browsers.some(function (browser) browser.contentWindow == aWindow);
+  },
+
+  get contentWindow() {
+    return Browser.selectedBrowser.contentWindow;
   }
 };
 
@@ -1376,8 +1447,7 @@ function getNotificationBox(aBrowser) {
 }
 
 function showDownloadManager(aWindowContext, aID, aReason) {
-  PanelUI.show("downloads-container");
-  // TODO: select the download with aID
+  // TODO: Bug 883962: Toggle the downloads infobar as our current "download manager".
 }
 
 function Tab(aURI, aParams, aOwner) {
@@ -1388,6 +1458,7 @@ function Tab(aURI, aParams, aOwner) {
   this._chromeTab = null;
   this._metadata = null;
   this._eventDeferred = null;
+  this._updateThumbnailTimeout = null;
 
   this.owner = aOwner || null;
 
@@ -1537,13 +1608,45 @@ Tab.prototype = {
       self._eventDeferred = null;
     }
     browser.addEventListener("pageshow", onPageShowEvent, true);
+    browser.messageManager.addMessageListener("Content:StateChange", this);
+    Services.obs.addObserver(this, "metro_viewstate_changed", false);
 
     if (aOwner)
       this._copyHistoryFrom(aOwner);
     this._loadUsingParams(browser, aURI, aParams);
   },
 
+  receiveMessage: function(aMessage) {
+    switch (aMessage.name) {
+      case "Content:StateChange":
+        // update the thumbnail now...
+        this.updateThumbnail();
+        // ...and in a little while to capture page after load.
+        if (aMessage.json.stateFlags & Ci.nsIWebProgressListener.STATE_STOP) {
+          clearTimeout(this._updateThumbnailTimeout);
+          this._updateThumbnailTimeout = setTimeout(() => {
+            this.updateThumbnail();
+          }, kTabThumbnailDelayCapture);
+        }
+        break;
+    }
+  },
+
+  observe: function BrowserUI_observe(aSubject, aTopic, aData) {
+    switch (aTopic) {
+      case "metro_viewstate_changed":
+        if (aData !== "snapped") {
+          this.updateThumbnail();
+        }
+        break;
+    }
+  },
+
   destroy: function destroy() {
+    this._browser.messageManager.removeMessageListener("Content:StateChange", this);
+    Services.obs.removeObserver(this, "metro_viewstate_changed", false);
+    clearTimeout(this._updateThumbnailTimeout);
+
     Elements.tabList.removeTab(this._chromeTab);
     this._chromeTab = null;
     this._destroyBrowser();
@@ -1615,7 +1718,11 @@ Tab.prototype = {
     browser.setAttribute("remote", (!useLocal && useRemote) ? "true" : "false");
 
     // Append the browser to the document, which should start the page load
-    notification.appendChild(browser);
+    let stack = document.createElementNS(XUL_NS, "stack");
+    stack.className = "browserStack";
+    stack.appendChild(browser);
+    stack.setAttribute("flex", "1");
+    notification.appendChild(stack);
     Elements.browsers.insertBefore(notification, aInsertBefore);
 
     // stop about:blank from loading
@@ -1748,8 +1855,8 @@ Tab.prototype = {
     return this.metadata.allowZoom && !Util.isURLEmpty(this.browser.currentURI.spec);
   },
 
-  updateThumbnailSource: function updateThumbnailSource() {
-    this._chromeTab.updateThumbnailSource(this._browser);
+  updateThumbnail: function updateThumbnail() {
+    PageThumbs.captureToCanvas(this.browser.contentWindow, this._chromeTab.thumbnailCanvas);
   },
 
   updateFavicon: function updateFavicon() {

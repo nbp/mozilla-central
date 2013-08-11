@@ -21,10 +21,6 @@ EXPORT_LIBRARY = 1
 
 MOZILLA_INTERNAL_API = 1
 
-ifeq ($(OS_ARCH),Linux)
-DEFINES += -DXP_LINUX
-endif
-
 ifeq (Darwin, $(OS_ARCH))
 CSRCS = mach_override.c
 endif
@@ -62,11 +58,6 @@ LOCAL_INCLUDES	= \
 		-I$(topsrcdir)/chrome/src \
 		-I$(srcdir)/../../docshell/base \
 		$(NULL)
-
-DISABLED_SDK_HEADERS =  \
-  nsXPCOM.h       \
-  nsXPCOMCID.h    \
-  $(NULL)
 
 GARBAGE         += $(XPCOM_GLUE_SRC_LCPPSRCS) $(XPCOM_GLUENS_SRC_LCPPSRCS)
 

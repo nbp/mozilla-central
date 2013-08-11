@@ -7,14 +7,14 @@
 /*
  * JS function support.
  */
-#include "jsfun.h"
 
-#include <string.h>
+#include "jsfuninlines.h"
 
 #include "mozilla/PodOperations.h"
 #include "mozilla/Util.h"
 
-#include "jstypes.h"
+#include <string.h>
+
 #include "jsapi.h"
 #include "jsarray.h"
 #include "jsatom.h"
@@ -23,26 +23,27 @@
 #include "jsproxy.h"
 #include "jsscript.h"
 #include "jsstr.h"
+#include "jstypes.h"
+#include "jswrapper.h"
 
 #include "builtin/Eval.h"
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/TokenStream.h"
 #include "gc/Marking.h"
-#include "vm/Interpreter.h"
-#include "vm/Shape.h"
-#include "vm/StringBuffer.h"
-#include "vm/Xdr.h"
-
-#include "jsfuninlines.h"
-#include "jsscriptinlines.h"
-
-#include "vm/Interpreter-inl.h"
-#include "vm/Stack-inl.h"
-
 #ifdef JS_ION
 #include "ion/Ion.h"
 #include "ion/IonFrameIterator.h"
 #endif
+#include "vm/Interpreter.h"
+#include "vm/Shape.h"
+#include "vm/StringBuffer.h"
+#include "vm/WrapperObject.h"
+#include "vm/Xdr.h"
+
+#include "jsscriptinlines.h"
+
+#include "vm/Interpreter-inl.h"
+#include "vm/Stack-inl.h"
 
 using namespace js;
 using namespace js::gc;
@@ -127,7 +128,7 @@ fun_getProperty(JSContext *cx, HandleObject obj_, HandleId id, MutableHandleValu
          * Censor the caller if we don't have full access to it.
          */
         RootedObject caller(cx, &vp.toObject());
-        if (caller->isWrapper() && !Wrapper::wrapperHandler(caller)->isSafeToUnwrap()) {
+        if (caller->is<WrapperObject>() && !Wrapper::wrapperHandler(caller)->isSafeToUnwrap()) {
             vp.setNull();
         } else if (caller->is<JSFunction>()) {
             JSFunction *callerFun = &caller->as<JSFunction>();
@@ -233,9 +234,9 @@ ResolveInterpretedFunctionPrototype(JSContext *cx, HandleObject obj)
     return proto;
 }
 
-static JSBool
-fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
-            MutableHandleObject objp)
+JSBool
+js::fun_resolve(JSContext *cx, HandleObject obj, HandleId id, unsigned flags,
+                MutableHandleObject objp)
 {
     if (!JSID_IS_ATOM(id))
         return true;
@@ -496,7 +497,7 @@ Class JSFunction::class_ = {
     JS_PropertyStub,         /* getProperty */
     JS_StrictPropertyStub,   /* setProperty */
     fun_enumerate,
-    (JSResolveOp)fun_resolve,
+    (JSResolveOp)js::fun_resolve,
     JS_ConvertStub,
     NULL,                    /* finalize    */
     NULL,                    /* checkAccess */
@@ -506,7 +507,7 @@ Class JSFunction::class_ = {
     fun_trace
 };
 
-JS_FRIEND_DATA(Class*) js::FunctionClassPtr = &JSFunction::class_;
+Class* const js::FunctionClassPtr = &JSFunction::class_;
 
 /* Find the body of a function (not including braces). */
 static bool
@@ -518,7 +519,7 @@ FindBody(JSContext *cx, HandleFunction fun, StableCharPtr chars, size_t length,
     options.setFileAndLine("internal-findBody", 0)
            .setVersion(fun->nonLazyScript()->getVersion());
     AutoKeepAtoms keepAtoms(cx->perThreadData);
-    TokenStream ts(cx, options, chars.get(), length, NULL, keepAtoms);
+    TokenStream ts(cx, options, chars.get(), length, NULL);
     int nest = 0;
     bool onward = true;
     // Skip arguments list.
@@ -758,7 +759,7 @@ fun_toStringHelper(JSContext *cx, HandleObject obj, unsigned indent)
     return FunctionToString(cx, fun, false, indent != JS_DONT_PRETTY_PRINT);
 }
 
-static JSBool
+static bool
 fun_toString(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -782,7 +783,7 @@ fun_toString(JSContext *cx, unsigned argc, Value *vp)
 }
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 fun_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -801,7 +802,7 @@ fun_toSource(JSContext *cx, unsigned argc, Value *vp)
 }
 #endif
 
-JSBool
+bool
 js_fun_call(JSContext *cx, unsigned argc, Value *vp)
 {
     RootedValue fval(cx, vp[1]);
@@ -823,7 +824,7 @@ js_fun_call(JSContext *cx, unsigned argc, Value *vp)
     /* Allocate stack space for fval, obj, and the args. */
     InvokeArgs args(cx);
     if (!args.init(argc))
-        return JS_FALSE;
+        return false;
 
     /* Push fval, thisv, and the args. */
     args.setCallee(fval);
@@ -857,7 +858,7 @@ PushBaselineFunApplyArguments(JSContext *cx, ion::IonFrameIterator &frame, Invok
 #endif
 
 /* ES5 15.3.4.3 */
-JSBool
+bool
 js_fun_apply(JSContext *cx, unsigned argc, Value *vp)
 {
     /* Step 1. */
@@ -1107,9 +1108,6 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
                 return false;
             }
 
-            // The cloned script will have reused the origin principals and
-            // filename from the original script, which may differ.
-            clonedScript->originPrincipals = lazy->originPrincipals();
             clonedScript->setSourceObject(lazy->sourceObject());
 
             fun->initAtom(script->function()->displayAtom());
@@ -1168,7 +1166,7 @@ JSFunction::createScriptForLazilyInterpretedFunction(JSContext *cx, HandleFuncti
 }
 
 /* ES5 15.3.4.5.1 and 15.3.4.5.2. */
-JSBool
+bool
 js::CallOrConstructBoundFunction(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1205,7 +1203,7 @@ js::CallOrConstructBoundFunction(JSContext *cx, unsigned argc, Value *vp)
 
     /* 15.3.4.5.1, 15.3.4.5.2 step 4. */
     for (unsigned i = 0; i < argslen; i++)
-        invokeArgs[i] = fun->getBoundFunctionArgument(i);
+        invokeArgs[i].set(fun->getBoundFunctionArgument(i));
     PodCopy(invokeArgs.array() + argslen, vp + 2, argc);
 
     /* 15.3.4.5.1, 15.3.4.5.2 step 5. */
@@ -1221,7 +1219,7 @@ js::CallOrConstructBoundFunction(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-static JSBool
+static bool
 fun_isGenerator(JSContext *cx, unsigned argc, Value *vp)
 {
     JSFunction *fun;
@@ -1242,7 +1240,7 @@ fun_isGenerator(JSContext *cx, unsigned argc, Value *vp)
 }
 
 /* ES5 15.3.4.5. */
-static JSBool
+static bool
 fun_bind(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1334,7 +1332,7 @@ const JSFunctionSpec js::function_methods[] = {
     JS_FS_END
 };
 
-JSBool
+bool
 js::Function(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1380,7 +1378,7 @@ js::Function(JSContext *cx, unsigned argc, Value *vp)
         size_t args_length = 0;
         for (unsigned i = 0; i < n; i++) {
             /* Collect the lengths for all the function-argument arguments. */
-            arg = ToString<CanGC>(cx, args.handleAt(i));
+            arg = ToString<CanGC>(cx, args[i]);
             if (!arg)
                 return false;
             args[i].setString(arg);
@@ -1443,7 +1441,7 @@ js::Function(JSContext *cx, unsigned argc, Value *vp)
          * compile the function body.
          */
         TokenStream ts(cx, options, collected_args.get(), args_length,
-                       /* strictModeGetter = */ NULL, keepAtoms);
+                       /* strictModeGetter = */ NULL);
 
         /* The argument string may be empty or contain no tokens. */
         TokenKind tt = ts.getToken();
@@ -1500,7 +1498,7 @@ js::Function(JSContext *cx, unsigned argc, Value *vp)
     if (!args.length())
         str = cx->runtime()->emptyString;
     else
-        str = ToString<CanGC>(cx, args.handleAt(args.length() - 1));
+        str = ToString<CanGC>(cx, args[args.length() - 1]);
     if (!str)
         return false;
     JSLinearString *linear = str->ensureLinear(cx);
@@ -1772,7 +1770,7 @@ JSObject::hasIdempotentProtoChain() const
             return false;
 
         JSResolveOp resolve = obj->getClass()->resolve;
-        if (resolve != JS_ResolveStub && resolve != (JSResolveOp) fun_resolve)
+        if (resolve != JS_ResolveStub && resolve != (JSResolveOp) js::fun_resolve)
             return false;
 
         if (obj->getOps()->lookupProperty || obj->getOps()->lookupGeneric || obj->getOps()->lookupElement)
