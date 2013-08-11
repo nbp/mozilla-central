@@ -103,7 +103,8 @@
                 oncommand="gBrowser.removeAllTabsBut(TabContextMenu.contextTab);"/>
       <menuseparator/>
       <menuitem id="context_undoCloseTab"
-                label="&undoCloseTab.label;"
+                singletablabel="&undoCloseTab.label;"
+                multipletablabel="&undoCloseTabs.label;"
                 accesskey="&undoCloseTab.accesskey;"
                 observes="History:UndoCloseTab"/>
       <menuitem id="context_closeTab" label="&closeTab.label;" accesskey="&closeTab.accesskey;"
@@ -504,6 +505,7 @@
             <image id="webapps-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="web-notifications-notification-icon" class="notification-anchor-icon" role="button"/>
+            <image id="alert-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="blocked-plugins-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="plugin-install-notification-icon" class="notification-anchor-icon" role="button"/>
             <image id="mixed-content-blocked-notification-icon" class="notification-anchor-icon" role="button"/>
@@ -1050,16 +1052,24 @@
     <hbox style="width: 100%;" pack="center"> <!-- Inner hbox needed due to bug 579776. -->
       <vbox id="full-screen-warning-message" align="center">
         <description id="full-screen-domain-text"/>
-        <description class="full-screen-description" value="&fullscreenExitHint.value;"/>
+        <description class="full-screen-description" value="&fullscreenExitHint2.value;"/>
         <vbox id="full-screen-approval-pane" align="center">
-          <description class="full-screen-description" value="&fullscreenApproval.value;"/>
           <hbox>
+#ifdef XP_UNIX
+            <button label="&fullscreenExitButton.label;"
+                    oncommand="FullScreen.setFullscreenAllowed(false);"
+                    class="full-screen-approval-button"/>
+            <button label="&fullscreenAllowButton.label;"
+                    oncommand="FullScreen.setFullscreenAllowed(true);"
+                    class="full-screen-approval-button"/>
+#else
             <button label="&fullscreenAllowButton.label;"
                     oncommand="FullScreen.setFullscreenAllowed(true);"
                     class="full-screen-approval-button"/>
             <button label="&fullscreenExitButton.label;"
                     oncommand="FullScreen.setFullscreenAllowed(false);"
                     class="full-screen-approval-button"/>
+#endif
           </hbox>
           <checkbox id="full-screen-remember-decision"/>
         </vbox>

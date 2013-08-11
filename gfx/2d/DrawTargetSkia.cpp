@@ -27,12 +27,6 @@
 #include "Tools.h"
 #include <algorithm>
 
-#ifdef ANDROID
-# define USE_SOFT_CLIPPING false
-#else
-# define USE_SOFT_CLIPPING true
-#endif
-
 namespace mozilla {
 namespace gfx {
 
@@ -82,24 +76,31 @@ public:
 };
 
 DrawTargetSkia::DrawTargetSkia()
+  : mSnapshot(nullptr)
 {
+#ifdef ANDROID
+  mSoftClipping = false;
+#else
+  mSoftClipping = true;
+#endif
 }
 
 DrawTargetSkia::~DrawTargetSkia()
 {
-  MOZ_ASSERT(mSnapshots.size() == 0);
 }
 
 TemporaryRef<SourceSurface>
 DrawTargetSkia::Snapshot()
 {
-  RefPtr<SourceSurfaceSkia> source = new SourceSurfaceSkia();
+  RefPtr<SourceSurfaceSkia> snapshot = mSnapshot;
+  if (!snapshot) {
+    snapshot = new SourceSurfaceSkia();
+    mSnapshot = snapshot;
+    if (!snapshot->InitFromCanvas(mCanvas.get(), mFormat, this))
+      return nullptr;
+  }
 
-  if (!source->InitFromCanvas(mCanvas.get(), mFormat, this))
-    return nullptr;
-
-  AppendSnapshot(source);
-  return source;
+  return snapshot;
 }
 
 void SetPaintPattern(SkPaint& aPaint, const Pattern& aPattern, Float aAlpha = 1.0)
@@ -650,6 +651,9 @@ DrawTargetSkia::InitWithGLContextAndGrGLInterface(GenericRefCountedBase* aGLCont
   mSize = aSize;
   mFormat = aFormat;
 
+  // Always use soft clipping when we're using GL
+  mSoftClipping = true;
+
   mGrGLInterface = aGrGLInterface;
   mGrGLInterface->fCallbackData = reinterpret_cast<GrGLInterfaceCallbackData>(this);
 
@@ -657,6 +661,7 @@ DrawTargetSkia::InitWithGLContextAndGrGLInterface(GenericRefCountedBase* aGLCont
   SkAutoTUnref<GrContext> gr(GrContext::Create(kOpenGL_GrBackend, backendContext));
   mGrContext = gr.get();
 
+  mGrContext->setTextureCacheLimits(128, 1024*1024*16);
 
   GrBackendRenderTargetDesc targetDescriptor;
 
@@ -722,7 +727,7 @@ DrawTargetSkia::ClearRect(const Rect &aRect)
   MarkChanged();
   SkPaint paint;
   mCanvas->save();
-  mCanvas->clipRect(RectToSkRect(aRect), SkRegion::kIntersect_Op, USE_SOFT_CLIPPING);
+  mCanvas->clipRect(RectToSkRect(aRect), SkRegion::kIntersect_Op, mSoftClipping);
   paint.setColor(SkColorSetARGB(0, 0, 0, 0));
   paint.setXfermodeMode(SkXfermode::kSrc_Mode);
   mCanvas->drawPaint(paint);
@@ -738,7 +743,7 @@ DrawTargetSkia::PushClip(const Path *aPath)
 
   const PathSkia *skiaPath = static_cast<const PathSkia*>(aPath);
   mCanvas->save(SkCanvas::kClip_SaveFlag);
-  mCanvas->clipPath(skiaPath->GetPath(), SkRegion::kIntersect_Op, USE_SOFT_CLIPPING);
+  mCanvas->clipPath(skiaPath->GetPath(), SkRegion::kIntersect_Op, mSoftClipping);
 }
 
 void
@@ -747,7 +752,7 @@ DrawTargetSkia::PushClipRect(const Rect& aRect)
   SkRect rect = RectToSkRect(aRect);
 
   mCanvas->save(SkCanvas::kClip_SaveFlag);
-  mCanvas->clipRect(rect, SkRegion::kIntersect_Op, USE_SOFT_CLIPPING);
+  mCanvas->clipRect(rect, SkRegion::kIntersect_Op, mSoftClipping);
 }
 
 void
@@ -770,31 +775,18 @@ DrawTargetSkia::CreateGradientStops(GradientStop *aStops, uint32_t aNumStops, Ex
 }
 
 void
-DrawTargetSkia::AppendSnapshot(SourceSurfaceSkia* aSnapshot)
-{
-  mSnapshots.push_back(aSnapshot);
-}
-
-void
-DrawTargetSkia::RemoveSnapshot(SourceSurfaceSkia* aSnapshot)
-{
-  std::vector<SourceSurfaceSkia*>::iterator iter = std::find(mSnapshots.begin(), mSnapshots.end(), aSnapshot);
-  if (iter != mSnapshots.end()) {
-    mSnapshots.erase(iter);
-  }
-}
-
-void
 DrawTargetSkia::MarkChanged()
 {
-  if (mSnapshots.size()) {
-    for (std::vector<SourceSurfaceSkia*>::iterator iter = mSnapshots.begin();
-         iter != mSnapshots.end(); iter++) {
-      (*iter)->DrawTargetWillChange();
-    }
-    // All snapshots will now have copied data.
-    mSnapshots.clear();
+  if (mSnapshot) {
+    mSnapshot->DrawTargetWillChange();
+    mSnapshot = nullptr;
   }
+}
+
+void
+DrawTargetSkia::SnapshotDestroyed()
+{
+  mSnapshot = nullptr;
 }
 
 }
