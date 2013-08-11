@@ -428,6 +428,7 @@ protected:
   //   may consider splitting these out into a subclass
   unsigned      mIsSticky : 1;
   unsigned      mInPermitUnload : 1;
+  unsigned      mInPermitUnloadPrompt: 1;
 
 #ifdef NS_PRINTING
   unsigned      mClosingWhilePrinting : 1;
@@ -1090,7 +1091,10 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
 {
   *aPermitUnload = true;
 
-  if (!mDocument || mInPermitUnload || mCallerIsClosingWindow) {
+  if (!mDocument
+   || mInPermitUnload
+   || mCallerIsClosingWindow
+   || mInPermitUnloadPrompt) {
     return NS_OK;
   }
 
@@ -1183,9 +1187,11 @@ nsDocumentViewer::PermitUnload(bool aCallerClosesWindow, bool *aPermitUnload)
                              (nsIPrompt::BUTTON_TITLE_IS_STRING * nsIPrompt::BUTTON_POS_1));
 
       nsAutoSyncOperation sync(mDocument);
+      mInPermitUnloadPrompt = true;
       rv = prompt->ConfirmEx(title, message, buttonFlags,
                              leaveLabel, stayLabel, nullptr, nullptr,
                              &dummy, &buttonPressed);
+      mInPermitUnloadPrompt = false;
       NS_ENSURE_SUCCESS(rv, rv);
 
       // Button 0 == leave, button 1 == stay
@@ -2490,7 +2496,7 @@ NS_IMETHODIMP nsDocumentViewer::SelectAll()
 
 NS_IMETHODIMP nsDocumentViewer::CopySelection()
 {
-  nsCopySupport::FireClipboardEvent(NS_COPY, mPresShell, nullptr);
+  nsCopySupport::FireClipboardEvent(NS_COPY, nsIClipboard::kGlobalClipboard, mPresShell, nullptr);
   return NS_OK;
 }
 
@@ -2962,6 +2968,80 @@ nsDocumentViewer::GetAuthorStyleDisabled(bool* aStyleDisabled)
   } else {
     *aStyleDisabled = false;
   }
+  return NS_OK;
+}
+
+static bool
+ExtResourceEmulateMedium(nsIDocument* aDocument, void* aClosure)
+{
+  nsIPresShell* shell = aDocument->GetShell();
+  if (shell) {
+    nsPresContext* ctxt = shell->GetPresContext();
+    if (ctxt) {
+      const nsAString* mediaType = static_cast<nsAString*>(aClosure);
+      ctxt->EmulateMedium(*mediaType);
+    }
+  }
+
+  return true;
+}
+
+static void
+ChildEmulateMedium(nsIMarkupDocumentViewer* aChild, void* aClosure)
+{
+  const nsAString* mediaType = static_cast<nsAString*>(aClosure);
+  aChild->EmulateMedium(*mediaType);
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::EmulateMedium(const nsAString& aMediaType)
+{
+  if (mPresContext) {
+    mPresContext->EmulateMedium(aMediaType);
+  }
+  CallChildren(ChildEmulateMedium, const_cast<nsAString*>(&aMediaType));
+
+  if (mDocument) {
+    mDocument->EnumerateExternalResources(ExtResourceEmulateMedium,
+                                          const_cast<nsAString*>(&aMediaType));
+  }
+
+  return NS_OK;
+}
+
+static bool
+ExtResourceStopEmulatingMedium(nsIDocument* aDocument, void* aClosure)
+{
+  nsIPresShell* shell = aDocument->GetShell();
+  if (shell) {
+    nsPresContext* ctxt = shell->GetPresContext();
+    if (ctxt) {
+      ctxt->StopEmulatingMedium();
+    }
+  }
+
+  return true;
+}
+
+static void
+ChildStopEmulatingMedium(nsIMarkupDocumentViewer* aChild, void* aClosure)
+{
+  aChild->StopEmulatingMedium();
+}
+
+NS_IMETHODIMP
+nsDocumentViewer::StopEmulatingMedium()
+{
+  if (mPresContext) {
+    mPresContext->StopEmulatingMedium();
+  }
+  CallChildren(ChildStopEmulatingMedium, nullptr);
+
+  if (mDocument) {
+    mDocument->EnumerateExternalResources(ExtResourceStopEmulatingMedium,
+                                          nullptr);
+  }
+
   return NS_OK;
 }
 

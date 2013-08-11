@@ -37,6 +37,7 @@ class mozIApplication;
 
 namespace mozilla {
 namespace dom {
+class ContentParent;
 class PBrowserParent;
 class TabParent;
 struct StructuredCloneData;
@@ -154,13 +155,7 @@ protected:
   nsFrameLoader(mozilla::dom::Element* aOwner, bool aNetworkCreated);
 
 public:
-  ~nsFrameLoader() {
-    mNeedsAsyncDestroy = true;
-    if (mMessageManager) {
-      mMessageManager->Disconnect();
-    }
-    nsFrameLoader::Destroy();
-  }
+  ~nsFrameLoader();
 
   bool AsyncScrollEnabled() const
   {
@@ -308,6 +303,13 @@ public:
    */
   nsView* GetDetachedSubdocView(nsIDocument** aContainerDoc) const;
 
+  /**
+   * Applies a new set of sandbox flags. These are merged with the sandbox
+   * flags from our owning content's owning document with a logical OR, this
+   * ensures that we can only add restrictions and never remove them.
+   */
+  void ApplySandboxFlags(uint32_t sandboxFlags);
+
 private:
 
   void SetOwnerContent(mozilla::dom::Element* aContent);
@@ -435,8 +437,9 @@ private:
   // doesn't necessarily correlate with docshell/document visibility.
   bool mVisible : 1;
 
-  // XXX leaking
-  nsCOMPtr<nsIObserver> mChildHost;
+  // The ContentParent associated with mRemoteBrowser.  This was added as a
+  // strong ref in bug 545237, and we're not sure if we can get rid of it.
+  nsRefPtr<mozilla::dom::ContentParent> mContentParent;
   RenderFrameParent* mCurrentRemoteFrame;
   TabParent* mRemoteBrowser;
 

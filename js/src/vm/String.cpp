@@ -6,6 +6,7 @@
 
 #include "vm/String-inl.h"
 
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/RangedPtr.h"
@@ -18,6 +19,7 @@ using namespace js;
 
 using mozilla::PodCopy;
 using mozilla::RangedPtr;
+using mozilla::RoundUpPow2;
 
 bool
 JSString::isShort() const
@@ -183,7 +185,12 @@ JSRope::getCharsNonDestructiveInternal(ThreadSafeContext *cx, ScopedJSFreePtr<js
      */
 
     size_t n = length();
-    jschar *s = cx->pod_malloc<jschar>(n + 1);
+    jschar *s;
+    if (cx)
+        s = cx->pod_malloc<jschar>(n + 1);
+    else
+        s = js_pod_malloc<jschar>(n + 1);
+
     if (!s)
         return false;
     jschar *pos = s;
@@ -399,7 +406,7 @@ JSRope::flatten(JSContext *maybecx)
 
 template <AllowGC allowGC>
 JSString *
-js::ConcatStrings(JSContext *cx,
+js::ConcatStrings(ThreadSafeContext *cx,
                   typename MaybeRooted<JSString*, allowGC>::HandleType left,
                   typename MaybeRooted<JSString*, allowGC>::HandleType right)
 {
@@ -422,16 +429,16 @@ js::ConcatStrings(JSContext *cx,
         JSShortString *str = js_NewGCShortString<allowGC>(cx);
         if (!str)
             return NULL;
-        const jschar *leftChars = left->getChars(cx);
-        if (!leftChars)
-            return NULL;
-        const jschar *rightChars = right->getChars(cx);
-        if (!rightChars)
+
+        ScopedThreadSafeStringInspector leftInspector(left);
+        ScopedThreadSafeStringInspector rightInspector(right);
+        if (!leftInspector.ensureChars(cx) || !rightInspector.ensureChars(cx))
             return NULL;
 
         jschar *buf = str->init(wholeLength);
-        PodCopy(buf, leftChars, leftLen);
-        PodCopy(buf + leftLen, rightChars, rightLen);
+        PodCopy(buf, leftInspector.chars(), leftLen);
+        PodCopy(buf + leftLen, rightInspector.chars(), rightLen);
+
         buf[wholeLength] = 0;
         return str;
     }
@@ -440,50 +447,10 @@ js::ConcatStrings(JSContext *cx,
 }
 
 template JSString *
-js::ConcatStrings<CanGC>(JSContext *cx, HandleString left, HandleString right);
+js::ConcatStrings<CanGC>(ThreadSafeContext *cx, HandleString left, HandleString right);
 
 template JSString *
-js::ConcatStrings<NoGC>(JSContext *cx, JSString *left, JSString *right);
-
-JSString *
-js::ConcatStringsPure(ThreadSafeContext *cx, JSString *left, JSString *right)
-{
-    JS_ASSERT_IF(!left->isAtom(), cx->isInsideCurrentZone(left));
-    JS_ASSERT_IF(!right->isAtom(), cx->isInsideCurrentZone(right));
-
-    size_t leftLen = left->length();
-    if (leftLen == 0)
-        return right;
-
-    size_t rightLen = right->length();
-    if (rightLen == 0)
-        return left;
-
-    size_t wholeLength = leftLen + rightLen;
-    if (!JSString::validateLength(NULL, wholeLength))
-        return NULL;
-
-    if (JSShortString::lengthFits(wholeLength)) {
-        JSShortString *str = js_NewGCShortString<NoGC>(cx);
-        if (!str)
-            return NULL;
-
-        jschar *buf = str->init(wholeLength);
-
-        ScopedThreadSafeStringInspector leftInspector(left);
-        ScopedThreadSafeStringInspector rightInspector(right);
-        if (!leftInspector.ensureChars(cx) || !rightInspector.ensureChars(cx))
-            return NULL;
-
-        PodCopy(buf, leftInspector.chars(), leftLen);
-        PodCopy(buf + leftLen, rightInspector.chars(), rightLen);
-
-        buf[wholeLength] = 0;
-        return str;
-    }
-
-    return JSRope::new_<NoGC>(cx, left, right, wholeLength);
-}
+js::ConcatStrings<NoGC>(ThreadSafeContext *cx, JSString *left, JSString *right);
 
 bool
 JSDependentString::getCharsZNonDestructive(ThreadSafeContext *cx, ScopedJSFreePtr<jschar> &out) const
@@ -658,7 +625,8 @@ const StaticStrings::SmallChar StaticStrings::toSmallChar[] = { R7(0) };
 bool
 StaticStrings::init(JSContext *cx)
 {
-    AutoEnterAtomsCompartment ac(cx);
+    AutoLockForExclusiveAccess lock(cx);
+    AutoCompartment ac(cx, cx->runtime()->atomsCompartment);
 
     for (uint32_t i = 0; i < UNIT_STATIC_LIMIT; i++) {
         jschar buffer[] = { jschar(i), '\0' };

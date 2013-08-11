@@ -52,7 +52,7 @@ const MOBILECONNECTIONINFO_CID =
 const MOBILENETWORKINFO_CID =
   Components.ID("{a6c8416c-09b4-46d1-bf29-6520d677d085}");
 const MOBILECELLINFO_CID =
-  Components.ID("{5e809018-68c0-4c54-af0b-2a9b8f748c45}");
+  Components.ID("{ae724dd4-ccaf-4006-98f1-6ce66a092464}");
 const VOICEMAILSTATUS_CID=
   Components.ID("{5467f2eb-e214-43ea-9b89-67711241ec8e}");
 const MOBILECFINFO_CID=
@@ -78,6 +78,7 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:VoicemailNotification",
   "RIL:VoicemailInfoChanged",
   "RIL:CallError",
+  "RIL:SuppSvcNotification",
   "RIL:CardLockResult",
   "RIL:CardLockRetryCount",
   "RIL:USSDReceived",
@@ -94,13 +95,17 @@ const RIL_IPC_MSG_NAMES = [
   "RIL:GetCallBarringOption",
   "RIL:SetCallWaitingOption",
   "RIL:GetCallWaitingOption",
+  "RIL:SetCallingLineIdRestriction",
+  "RIL:GetCallingLineIdRestriction",
   "RIL:CellBroadcastReceived",
   "RIL:CfStateChanged",
   "RIL:IccOpenChannel",
   "RIL:IccCloseChannel",
   "RIL:IccExchangeAPDU",
   "RIL:ReadIccContacts",
-  "RIL:UpdateIccContact"
+  "RIL:UpdateIccContact",
+  "RIL:SetRoamingPreference",
+  "RIL:GetRoamingPreference"
 ];
 
 XPCOMUtils.defineLazyServiceGetter(this, "cpmm",
@@ -179,7 +184,6 @@ MobileConnectionInfo.prototype = {
   emergencyCallsOnly: false,
   roaming: false,
   network: null,
-  lastKnownMcc: null,
   cell: null,
   type: null,
   signalStrength: null,
@@ -225,8 +229,13 @@ MobileCellInfo.prototype = {
 
   // nsIDOMMozMobileCellInfo
 
-  gsmLocationAreaCode: null,
-  gsmCellId: null
+  gsmLocationAreaCode: -1,
+  gsmCellId: -1,
+  cdmaBaseStationId: -1,
+  cdmaBaseStationLatitude: -2147483648,
+  cdmaBaseStationLongitude: -2147483648,
+  cdmaSystemId: -1,
+  cdmaNetworkId: -1
 };
 
 function VoicemailStatus() {}
@@ -352,15 +361,24 @@ function DOMMMIResult(result) {
   this.serviceCode = result.serviceCode;
   this.statusMessage = result.statusMessage;
   this.additionalInformation = result.additionalInformation;
-};
+}
 DOMMMIResult.prototype = {
   __exposedProps__: {serviceCode: 'r',
                      statusMessage: 'r',
                      additionalInformation: 'r'}
 };
 
-function DOMMMIError() {
+function DOMCLIRStatus(option) {
+  this.n = option.n;
+  this.m = option.m;
+}
+DOMCLIRStatus.prototype = {
+  __exposedProps__ : {n: 'r',
+                      m: 'r'}
 };
+
+function DOMMMIError() {
+}
 DOMMMIError.prototype = {
   classDescription: "DOMMMIError",
   classID:          DOMMMIERROR_CID,
@@ -379,7 +397,6 @@ DOMMMIError.prototype = {
 function RILContentHelper() {
   this.rilContext = {
     cardState:            RIL.GECKO_CARDSTATE_UNKNOWN,
-    retryCount:           0,
     networkSelectionMode: RIL.GECKO_NETWORK_SELECTION_UNKNOWN,
     iccInfo:              new IccInfo(),
     voiceConnectionInfo:  new MobileConnectionInfo(),
@@ -434,8 +451,7 @@ RILContentHelper.prototype = {
         cell = destInfo.cell = new MobileCellInfo();
       }
 
-      cell.gsmLocationAreaCode = srcCell.gsmLocationAreaCode;
-      cell.gsmCellId = srcCell.gsmCellId;
+      this.updateInfo(srcCell, cell);
     }
 
     let srcNetwork = srcInfo.network;
@@ -471,7 +487,6 @@ RILContentHelper.prototype = {
       return;
     }
     this.rilContext.cardState = rilContext.cardState;
-    this.rilContext.retryCount = rilContext.retryCount;
     this.rilContext.networkSelectionMode = rilContext.networkSelectionMode;
     this.updateInfo(rilContext.iccInfo, this.rilContext.iccInfo);
     this.updateConnectionInfo(rilContext.voice, this.rilContext.voiceConnectionInfo);
@@ -502,11 +517,6 @@ RILContentHelper.prototype = {
   get cardState() {
     let context = this.getRilContext();
     return context && context.cardState;
-  },
-
-  get retryCount() {
-    let context = this.getRilContext();
-    return context && context.retryCount;
   },
 
   get networkSelectionMode() {
@@ -609,6 +619,48 @@ RILContentHelper.prototype = {
 
     this._selectingNetwork = "automatic";
     cpmm.sendAsyncMessage("RIL:SelectNetworkAuto", {
+      clientId: 0,
+      data: {
+        requestId: requestId
+      }
+    });
+    return request;
+  },
+
+  setRoamingPreference: function setRoamingPreference(window, mode) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    if (!mode) {
+      this.dispatchFireRequestError(requestId, "InvalidParameter");
+      return request;
+    }
+
+    cpmm.sendAsyncMessage("RIL:SetRoamingPreference", {
+      clientId: 0,
+      data: {
+        requestId: requestId,
+        mode: mode
+      }
+    });
+    return request;
+  },
+
+  getRoamingPreference: function getRoamingPreference(window) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    cpmm.sendAsyncMessage("RIL:GetRoamingPreference", {
       clientId: 0,
       data: {
         requestId: requestId
@@ -1042,6 +1094,45 @@ RILContentHelper.prototype = {
     return request;
   },
 
+  getCallingLineIdRestriction: function getCallingLineIdRestriction(window) {
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    cpmm.sendAsyncMessage("RIL:GetCallingLineIdRestriction", {
+      clientId: 0,
+      data: {
+        requestId: requestId
+      }
+    });
+
+    return request;
+  },
+
+  setCallingLineIdRestriction:
+    function setCallingLineIdRestriction(window, clirMode) {
+
+    if (window == null) {
+      throw Components.Exception("Can't get window object",
+                                  Cr.NS_ERROR_UNEXPECTED);
+    }
+    let request = Services.DOMRequest.createRequest(window);
+    let requestId = this.getRequestId(request);
+
+    cpmm.sendAsyncMessage("RIL:SetCallingLineIdRestriction", {
+      clientId: 0,
+      data: {
+        requestId: requestId,
+        clirMode: clirMode
+      }
+    });
+
+    return request;
+  },
+
   _mobileConnectionListeners: null,
   _telephonyListeners: null,
   _cellBroadcastListeners: null,
@@ -1326,7 +1417,6 @@ RILContentHelper.prototype = {
     switch (msg.name) {
       case "RIL:CardStateChanged": {
         let data = msg.json.data;
-        this.rilContext.retryCount = data.retryCount;
         if (this.rilContext.cardState != data.cardState) {
           this.rilContext.cardState = data.cardState;
           this._deliverEvent("_iccListeners",
@@ -1386,6 +1476,11 @@ RILContentHelper.prototype = {
                            [data.callIndex, data.errorMsg]);
         break;
       }
+      case "RIL:SuppSvcNotification":
+        this._deliverEvent("_telephonyListeners",
+                           "supplementaryServiceNotification",
+                           [msg.json.callIndex, msg.json.notification]);
+        break;
       case "RIL:VoicemailNotification":
         this.handleVoicemailNotification(msg.json.data);
         break;
@@ -1435,10 +1530,11 @@ RILContentHelper.prototype = {
         this._deliverEvent("_iccListeners", "notifyStkSessionEnd", null);
         break;
       case "RIL:IccOpenChannel":
-        this.handleIccOpenChannel(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg,
+                                 msg.json.channel);
         break;
       case "RIL:IccCloseChannel":
-        this.handleIccCloseChannel(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
         break;
       case "RIL:IccExchangeAPDU":
         this.handleIccExchangeAPDU(msg.json);
@@ -1447,7 +1543,7 @@ RILContentHelper.prototype = {
         this.handleReadIccContacts(msg.json);
         break;
       case "RIL:UpdateIccContact":
-        this.handleUpdateIccContact(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
         break;
       case "RIL:DataError": {
         let data = msg.json.data;
@@ -1460,19 +1556,20 @@ RILContentHelper.prototype = {
         this.handleGetCallForwardingOption(msg.json);
         break;
       case "RIL:SetCallForwardingOption":
-        this.handleSetCallForwardingOption(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
         break;
       case "RIL:GetCallBarringOption":
         this.handleGetCallBarringOption(msg.json);
         break;
       case "RIL:SetCallBarringOption":
-        this.handleSetCallBarringOption(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
         break;
       case "RIL:GetCallWaitingOption":
-        this.handleGetCallWaitingOption(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg,
+                                 msg.json.enabled);
         break;
       case "RIL:SetCallWaitingOption":
-        this.handleSetCallWaitingOption(msg.json);
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
         break;
       case "RIL:CfStateChanged": {
         let data = msg.json.data;
@@ -1483,6 +1580,12 @@ RILContentHelper.prototype = {
                             data.timeSeconds, data.serviceClass]);
         break;
       }
+      case "RIL:GetCallingLineIdRestriction":
+        this.handleGetCallingLineIdRestriction(msg.json);
+        break;
+      case "RIL:SetCallingLineIdRestriction":
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
+        break;
       case "RIL:CellBroadcastReceived": {
         let message = new CellBroadcastMessage(msg.json.data);
         this._deliverEvent("_cellBroadcastListeners",
@@ -1490,6 +1593,13 @@ RILContentHelper.prototype = {
                            [message]);
         break;
       }
+      case "RIL:SetRoamingPreference":
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg, null);
+        break;
+      case "RIL:GetRoamingPreference":
+        this.handleSimpleRequest(msg.json.requestId, msg.json.errorMsg,
+                                 msg.json.mode);
+        break;
     }
   },
 
@@ -1522,19 +1632,19 @@ RILContentHelper.prototype = {
     callback.enumerateCallStateComplete();
   },
 
+  handleSimpleRequest: function handleSimpleRequest(requestId, errorMsg, result) {
+    if (errorMsg) {
+      this.fireRequestError(requestId, errorMsg);
+    } else {
+      this.fireRequestSuccess(requestId, result);
+    }
+  },
+
   handleGetAvailableNetworks: function handleGetAvailableNetworks(message) {
     debug("handleGetAvailableNetworks: " + JSON.stringify(message));
-
-    let requestId = message.requestId;
-    let request = this.takeRequest(requestId);
-    if (!request) {
-      debug("no DOMRequest found with request ID: " + requestId);
-      return;
-    }
-
     if (message.errorMsg) {
       debug("Received error from getAvailableNetworks: " + message.errorMsg);
-      Services.DOMRequest.fireError(request, message.errorMsg);
+      this.fireRequestError(message.requestId, message.errorMsg);
       return;
     }
 
@@ -1546,29 +1656,13 @@ RILContentHelper.prototype = {
       networks[i] = info;
     }
 
-    Services.DOMRequest.fireSuccess(request, networks);
+    this.fireRequestSuccess(message.requestId, networks);
   },
 
   handleSelectNetwork: function handleSelectNetwork(message, mode) {
     this._selectingNetwork = null;
     this.rilContext.networkSelectionMode = mode;
 
-    if (message.errorMsg) {
-      this.fireRequestError(message.requestId, message.errorMsg);
-    } else {
-      this.fireRequestSuccess(message.requestId, null);
-    }
-  },
-
-  handleIccOpenChannel: function handleIccOpenChannel(message) {
-    if (message.errorMsg) {
-      this.fireRequestError(message.requestId, message.errorMsg);
-    } else {
-      this.fireRequestSuccess(message.requestId, message.channel);
-    }
-  },
-
-  handleIccCloseChannel: function handleIccCloseChannel(message) {
     if (message.errorMsg) {
       this.fireRequestError(message.requestId, message.errorMsg);
     } else {
@@ -1614,14 +1708,6 @@ RILContentHelper.prototype = {
 
     this.fireRequestSuccess(message.requestId,
                             ObjectWrapper.wrap(result, window));
-  },
-
-  handleUpdateIccContact: function handleUpdateIccContact(message) {
-    if (message.errorMsg) {
-      this.fireRequestError(message.requestId, message.errorMsg);
-    } else {
-      this.fireRequestSuccess(message.requestId, null);
-    }
   },
 
   handleVoicemailNotification: function handleVoicemailNotification(message) {
@@ -1670,33 +1756,13 @@ RILContentHelper.prototype = {
   },
 
   handleGetCallForwardingOption: function handleGetCallForwardingOption(message) {
-    let requestId = message.requestId;
-    let request = this.takeRequest(requestId);
-    if (!request) {
-      return;
-    }
-
-    if (!message.success) {
-      Services.DOMRequest.fireError(request, message.errorMsg);
+    if (message.errorMsg) {
+      this.fireRequestError(message.requestId, message.errorMsg);
       return;
     }
 
     this._cfRulesToMobileCfInfo(message.rules);
-    Services.DOMRequest.fireSuccess(request, message.rules);
-  },
-
-  handleSetCallForwardingOption: function handleSetCallForwardingOption(message) {
-    let requestId = message.requestId;
-    let request = this.takeRequest(requestId);
-    if (!request) {
-      return;
-    }
-
-    if (!message.success) {
-      Services.DOMRequest.fireError(request, message.errorMsg);
-      return;
-    }
-    Services.DOMRequest.fireSuccess(request, null);
+    this.fireRequestSuccess(message.requestId, message.rules);
   },
 
   handleGetCallBarringOption: function handleGetCallBarringOption(message) {
@@ -1708,40 +1774,15 @@ RILContentHelper.prototype = {
     }
   },
 
-  handleSetCallBarringOption: function handleSetCallBarringOption(message) {
-    if (!message.success) {
+  handleGetCallingLineIdRestriction:
+    function handleGetCallingLineIdRestriction(message) {
+    if (message.errorMsg) {
       this.fireRequestError(message.requestId, message.errorMsg);
-    } else {
-      this.fireRequestSuccess(message.requestId, null);
-    }
-  },
-
-  handleGetCallWaitingOption: function handleGetCallWaitingOption(message) {
-    let requestId = message.requestId;
-    let request = this.takeRequest(requestId);
-    if (!request) {
       return;
     }
 
-    if (!message.success) {
-      Services.DOMRequest.fireError(request, message.errorMsg);
-      return;
-    }
-    Services.DOMRequest.fireSuccess(request, message.enabled);
-  },
-
-  handleSetCallWaitingOption: function handleSetCallWaitingOption(message) {
-    let requestId = message.requestId;
-    let request = this.takeRequest(requestId);
-    if (!request) {
-      return;
-    }
-
-    if (!message.success) {
-      Services.DOMRequest.fireError(request, message.errorMsg);
-      return;
-    }
-    Services.DOMRequest.fireSuccess(request, null);
+    let status = new DOMCLIRStatus(message);
+    this.fireRequestSuccess(message.requestId, status);
   },
 
   handleSendCancelMMI: function handleSendCancelMMI(message) {
