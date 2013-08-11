@@ -43,6 +43,13 @@ function scriptErrorFlagsToKind(aFlags) {
   return kind;
 }
 
+// Redeclare dbg_assert with a fatal behavior.
+function dbg_assert(cond, e) {
+  if (!cond) {
+    throw e;
+  }
+}
+
 // Register a console listener, so console messages don't just disappear
 // into the ether.
 let errorCount = 0;
@@ -157,8 +164,19 @@ function attachTestTabAndResume(aClient, aTitle, aCallback) {
  */
 function initTestDebuggerServer()
 {
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/root.js");
   DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
   DebuggerServer.addActors("resource://test/testactors.js");
+  // Allow incoming connections.
+  DebuggerServer.init(function () { return true; });
+}
+
+function initTestTracerServer()
+{
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/root.js");
+  DebuggerServer.addActors("resource://gre/modules/devtools/server/actors/script.js");
+  DebuggerServer.addActors("resource://test/testactors.js");
+  DebuggerServer.registerModule("devtools/server/actors/tracer");
   // Allow incoming connections.
   DebuggerServer.init(function () { return true; });
 }
@@ -323,3 +341,8 @@ TracingTransport.prototype = {
     }
   }
 };
+
+function StubTransport() { }
+StubTransport.prototype.ready = function () {};
+StubTransport.prototype.send  = function () {};
+StubTransport.prototype.close = function () {};

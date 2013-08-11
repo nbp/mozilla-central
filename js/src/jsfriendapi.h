@@ -10,8 +10,8 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "jsclass.h"
-#include "jspubtd.h"
 #include "jsprvtd.h"
+#include "jspubtd.h"
 
 #include "js/CallArgs.h"
 
@@ -204,8 +204,6 @@ JS_SetSourceHook(JSRuntime *rt, JS_SourceHook hook);
 
 namespace js {
 
-extern mozilla::ThreadLocal<PerThreadData *> TlsPerThreadData;
-
 inline JSRuntime *
 GetRuntime(const JSContext *cx)
 {
@@ -237,22 +235,9 @@ typedef bool
 extern JS_FRIEND_API(void)
 DumpHeapComplete(JSRuntime *rt, FILE *fp);
 
-class JS_FRIEND_API(AutoSwitchCompartment) {
-  private:
-    JSContext *cx;
-    JSCompartment *oldCompartment;
-  public:
-    AutoSwitchCompartment(JSContext *cx, JSCompartment *newCompartment
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-    AutoSwitchCompartment(JSContext *cx, JS::HandleObject target
-                          MOZ_GUARD_OBJECT_NOTIFIER_PARAM);
-    ~AutoSwitchCompartment();
-    MOZ_DECL_USE_GUARD_OBJECT_NOTIFIER
-};
-
 #ifdef OLD_GETTER_SETTER_METHODS
-JS_FRIEND_API(JSBool) obj_defineGetter(JSContext *cx, unsigned argc, js::Value *vp);
-JS_FRIEND_API(JSBool) obj_defineSetter(JSContext *cx, unsigned argc, js::Value *vp);
+JS_FRIEND_API(bool) obj_defineGetter(JSContext *cx, unsigned argc, js::Value *vp);
+JS_FRIEND_API(bool) obj_defineSetter(JSContext *cx, unsigned argc, js::Value *vp);
 #endif
 
 extern JS_FRIEND_API(bool)
@@ -395,13 +380,13 @@ struct Atom {
 
 // These are equal to |&{Function,Object,OuterWindow}ProxyObject::class_|.  Use
 // them in places where you don't want to #include vm/ProxyObject.h.
-extern JS_FRIEND_DATA(js::Class*) FunctionProxyClassPtr;
-extern JS_FRIEND_DATA(js::Class*) ObjectProxyClassPtr;
-extern JS_FRIEND_DATA(js::Class*) OuterWindowProxyClassPtr;
+extern JS_FRIEND_DATA(js::Class* const) FunctionProxyClassPtr;
+extern JS_FRIEND_DATA(js::Class* const) ObjectProxyClassPtr;
+extern JS_FRIEND_DATA(js::Class* const) OuterWindowProxyClassPtr;
 
 // This is equal to |&JSObject::class_|.  Use it in places where you don't want
 // to #include jsobj.h.
-extern JS_FRIEND_DATA(js::Class*) ObjectClassPtr;
+extern JS_FRIEND_DATA(js::Class* const) ObjectClassPtr;
 
 inline js::Class *
 GetObjectClass(JSObject *obj)
@@ -455,7 +440,10 @@ GetGlobalForObjectCrossCompartment(JSObject *obj);
 
 // For legacy consumers only. This whole concept is going away soon.
 JS_FRIEND_API(JSObject *)
-GetDefaultGlobalForContext(JSContext *cx);
+DefaultObjectForContextOrNull(JSContext *cx);
+
+JS_FRIEND_API(void)
+SetDefaultObjectForContext(JSContext *cx, JSObject *obj);
 
 JS_FRIEND_API(void)
 NotifyAnimationActivity(JSObject *obj);
@@ -507,7 +495,7 @@ GetObjectProto(JSContext *cx, JS::Handle<JSObject*> obj, JS::MutableHandle<JSObj
         clasp == js::OuterWindowProxyClassPtr ||
         clasp == js::FunctionProxyClassPtr)
     {
-        return JS_GetPrototype(cx, obj, proto.address());
+        return JS_GetPrototype(cx, obj, proto);
     }
 
     proto.set(reinterpret_cast<const shadow::Object*>(obj.get())->type->proto);
@@ -651,12 +639,9 @@ GetNativeStackLimit(JSContext *cx)
         }                                                                       \
     JS_END_MACRO
 
-#define JS_CHECK_RECURSION_WITH_EXTRA_DONT_REPORT(cx, extra, onerror)           \
+#define JS_CHECK_RECURSION_WITH_SP_DONT_REPORT(cx, sp, onerror)                 \
     JS_BEGIN_MACRO                                                              \
-        uint8_t stackDummy_;                                                    \
-        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(cx),                   \
-                                 &stackDummy_ - (extra)))                       \
-        {                                                                       \
+        if (!JS_CHECK_STACK_SIZE(js::GetNativeStackLimit(cx), sp)) {            \
             onerror;                                                            \
         }                                                                       \
     JS_END_MACRO
@@ -1491,6 +1476,10 @@ class JSJitGetterCallArgs : protected JS::MutableHandleValue
       : JS::MutableHandleValue(args.rval())
     {}
 
+    explicit JSJitGetterCallArgs(JS::Rooted<JS::Value>* rooted)
+      : JS::MutableHandleValue(rooted)
+    {}
+
     JS::MutableHandleValue rval() {
         return *this;
     }
@@ -1504,10 +1493,10 @@ class JSJitSetterCallArgs : protected JS::MutableHandleValue
 {
   public:
     explicit JSJitSetterCallArgs(const JS::CallArgs& args)
-      : JS::MutableHandleValue(args.handleAt(0))
+      : JS::MutableHandleValue(args[0])
     {}
 
-    JS::MutableHandleValue handleAt(unsigned i) {
+    JS::MutableHandleValue operator[](unsigned i) {
         MOZ_ASSERT(i == 0);
         return *this;
     }
@@ -1541,8 +1530,8 @@ class JSJitMethodCallArgs : protected JS::detail::CallArgsBase<JS::detail::NoUse
 
     unsigned length() const { return Base::length(); }
 
-    JS::MutableHandleValue handleAt(unsigned i) const {
-        return Base::handleAt(i);
+    JS::MutableHandleValue operator[](unsigned i) const {
+        return Base::operator[](i);
     }
 
     bool hasDefined(unsigned i) const {
@@ -1799,6 +1788,31 @@ extern JS_FRIEND_API(bool)
 CheckDefineProperty(JSContext *cx, HandleObject obj, HandleId id, HandleValue value,
                     PropertyOp getter, StrictPropertyOp setter, unsigned attrs);
 
+class ScriptSource;
+
+// An AsmJSModuleSourceDesc object holds a reference to the ScriptSource
+// containing an asm.js module as well as the [begin, end) range of the
+// module's chars within the ScriptSource.
+class AsmJSModuleSourceDesc
+{
+    ScriptSource *scriptSource_;
+    uint32_t bufStart_;
+    uint32_t bufEnd_;
+
+  public:
+    AsmJSModuleSourceDesc() : scriptSource_(NULL), bufStart_(UINT32_MAX), bufEnd_(UINT32_MAX) {}
+    void init(ScriptSource *scriptSource, uint32_t bufStart, uint32_t bufEnd);
+    ~AsmJSModuleSourceDesc();
+
+    ScriptSource *scriptSource() const { JS_ASSERT(scriptSource_ != NULL); return scriptSource_; }
+    uint32_t bufStart() const { JS_ASSERT(bufStart_ != UINT32_MAX); return bufStart_; }
+    uint32_t bufEnd() const { JS_ASSERT(bufStart_ != UINT32_MAX); return bufEnd_; }
+
+  private:
+    AsmJSModuleSourceDesc(const AsmJSModuleSourceDesc &) MOZ_DELETE;
+    void operator=(const AsmJSModuleSourceDesc &) MOZ_DELETE;
+};
+
 } /* namespace js */
 
 extern JS_FRIEND_API(JSBool)
@@ -1810,10 +1824,24 @@ js_ReportIsNotFunction(JSContext *cx, const JS::Value& v);
 
 #ifdef JSGC_GENERATIONAL
 extern JS_FRIEND_API(void)
-JS_StorePostBarrierCallback(JSContext* cx, void (*callback)(JSTracer *trc, void *key), void *key);
+JS_StoreObjectPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSObject *key, void *data);
+
+extern JS_FRIEND_API(void)
+JS_StoreStringPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSString *key, void *data);
 #else
 inline void
-JS_StorePostBarrierCallback(JSContext* cx, void (*callback)(JSTracer *trc, void *key), void *key) {}
+JS_StoreObjectPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSObject *key, void *data) {}
+
+inline void
+JS_StoreStringPostBarrierCallback(JSContext* cx,
+                                  void (*callback)(JSTracer *trc, void *key, void *data),
+                                  JSString *key, void *data) {}
 #endif /* JSGC_GENERATIONAL */
 
 #endif /* jsfriendapi_h */

@@ -18,7 +18,6 @@
 #elif defined(JS_CPU_ARM)
 # include "ion/arm/MacroAssembler-arm.h"
 #endif
-#include "ion/AsmJS.h"
 #include "ion/IonCompartment.h"
 #include "ion/IonInstrumentation.h"
 #include "ion/ParallelFunctions.h"
@@ -70,6 +69,10 @@ class MacroAssembler : public MacroAssemblerSpecific
     // actually emitted or not. If NULL, then no instrumentation is emitted.
     IonInstrumentation *sps_;
 
+    // Labels for handling exceptions and failures.
+    NonAssertingLabel sequentialFailureLabel_;
+    NonAssertingLabel parallelFailureLabel_;
+
   public:
     // If instrumentation should be emitted, then the sps parameter should be
     // provided, but otherwise it can be safely omitted to prevent all
@@ -107,6 +110,19 @@ class MacroAssembler : public MacroAssemblerSpecific
 #ifdef JS_CPU_ARM
         initWithAllocator();
         m_buffer.id = GetIonContext()->getNextAssemblerId();
+#endif
+    }
+
+    // asm.js compilation handles its own IonContet-pushing
+    struct AsmJSToken {};
+    MacroAssembler(AsmJSToken)
+      : enoughMemory_(true),
+        embedsNurseryPointers_(false),
+        sps_(NULL)
+    {
+#ifdef JS_CPU_ARM
+        initWithAllocator();
+        m_buffer.id = 0;
 #endif
     }
 
@@ -206,6 +222,12 @@ class MacroAssembler : public MacroAssemblerSpecific
         branchTest32(Assembler::Zero, reg, Imm32(0xFF), label);
     }
 
+    // Branches to |label| if |reg| is true. |reg| should be a C++ bool.
+    void branchIfTrueBool(const Register &reg, Label *label) {
+        // Note that C++ bool is only 1 byte, so ignore the higher-order bits.
+        branchTest32(Assembler::NonZero, reg, Imm32(0xFF), label);
+    }
+
     void loadObjPrivate(Register obj, uint32_t nfixed, Register dest) {
         loadPtr(Address(obj, JSObject::getPrivateDataOffset(nfixed)), dest);
     }
@@ -273,6 +295,11 @@ class MacroAssembler : public MacroAssemblerSpecific
     void storeCallResult(Register reg) {
         if (reg != ReturnReg)
             mov(ReturnReg, reg);
+    }
+
+    void storeCallFloatResult(const FloatRegister &reg) {
+        if (reg != ReturnFloatReg)
+            moveDouble(ReturnFloatReg, reg);
     }
 
     void storeCallResultValue(AnyRegister dest) {
@@ -480,10 +507,10 @@ class MacroAssembler : public MacroAssemblerSpecific
         Push(PreBarrierReg);
         computeEffectiveAddress(address, PreBarrierReg);
 
-        JSCompartment *compartment = GetIonContext()->compartment;
+        JSRuntime *runtime = GetIonContext()->runtime;
         IonCode *preBarrier = (type == MIRType_Shape)
-                              ? compartment->ionCompartment()->shapePreBarrier()
-                              : compartment->ionCompartment()->valuePreBarrier();
+                              ? runtime->ionRuntime()->shapePreBarrier()
+                              : runtime->ionRuntime()->valuePreBarrier();
 
         call(preBarrier);
         Pop(PreBarrierReg);
@@ -593,33 +620,28 @@ class MacroAssembler : public MacroAssemblerSpecific
         bind(&done);
     }
 
+    // Emit type case branch on tag matching if the type tag in the definition
+    // might actually be that type.
+    void branchEqualTypeIfNeeded(MIRType type, MDefinition *def, const Register &tag,
+                                 Label *label);
+
     // Inline allocation.
     void newGCThing(const Register &result, gc::AllocKind allocKind, Label *fail);
     void newGCThing(const Register &result, JSObject *templateObject, Label *fail);
     void newGCString(const Register &result, Label *fail);
     void newGCShortString(const Register &result, Label *fail);
 
-    void parNewGCThing(const Register &result,
-                       const Register &threadContextReg,
-                       const Register &tempReg1,
-                       const Register &tempReg2,
-                       gc::AllocKind allocKind,
-                       Label *fail);
-    void parNewGCThing(const Register &result,
-                       const Register &threadContextReg,
-                       const Register &tempReg1,
-                       const Register &tempReg2,
-                       JSObject *templateObject,
-                       Label *fail);
-    void parNewGCString(const Register &result,
-                        const Register &threadContextReg,
-                        const Register &tempReg1,
-                        const Register &tempReg2,
+    void newGCThingPar(const Register &result, const Register &slice,
+                       const Register &tempReg1, const Register &tempReg2,
+                       gc::AllocKind allocKind, Label *fail);
+    void newGCThingPar(const Register &result, const Register &slice,
+                       const Register &tempReg1, const Register &tempReg2,
+                       JSObject *templateObject, Label *fail);
+    void newGCStringPar(const Register &result, const Register &slice,
+                        const Register &tempReg1, const Register &tempReg2,
                         Label *fail);
-    void parNewGCShortString(const Register &result,
-                             const Register &threadContextReg,
-                             const Register &tempReg1,
-                             const Register &tempReg2,
+    void newGCShortStringPar(const Register &result, const Register &slice,
+                             const Register &tempReg1, const Register &tempReg2,
                              Label *fail);
     void initGCThing(const Register &obj, JSObject *templateObject);
 
@@ -630,8 +652,7 @@ class MacroAssembler : public MacroAssemblerSpecific
 
     // Checks the flags that signal that parallel code may need to interrupt or
     // abort.  Branches to fail in that case.
-    void parCheckInterruptFlags(const Register &tempReg,
-                                Label *fail);
+    void checkInterruptFlagsPar(const Register &tempReg, Label *fail);
 
     // If the IonCode that created this assembler needs to transition into the VM,
     // we want to store the IonCode on the stack in order to mark it during a GC.
@@ -713,12 +734,6 @@ class MacroAssembler : public MacroAssemblerSpecific
         MacroAssemblerSpecific::callWithABI(fun, result);
         reenterSPSFrame();
     }
-
-    void handleException() {
-        handleFailure(SequentialExecution);
-    }
-
-    void handleFailure(ExecutionMode executionMode);
 
     // see above comment for what is returned
     uint32_t callIon(const Register &callee) {
@@ -928,8 +943,33 @@ class MacroAssembler : public MacroAssemblerSpecific
         push(scratch);
     }
 
+  private:
+    void handleFailure(ExecutionMode executionMode);
+
+  public:
+    Label *exceptionLabel() {
+        // Exceptions are currently handled the same way as sequential failures.
+        return &sequentialFailureLabel_;
+    }
+
+    Label *failureLabel(ExecutionMode executionMode) {
+        switch (executionMode) {
+          case SequentialExecution: return &sequentialFailureLabel_;
+          case ParallelExecution: return &parallelFailureLabel_;
+          default: MOZ_ASSUME_UNREACHABLE("Unexpected execution mode");
+        }
+    }
+
+    void finish();
+
     void printf(const char *output);
     void printf(const char *output, Register value);
+
+#if JS_TRACE_LOGGING
+    void tracelogStart(JSScript *script);
+    void tracelogStop();
+    void tracelogLog(TraceLogging::Type type);
+#endif
 
     void convertInt32ValueToDouble(const Address &address, Register scratch, Label *done);
     void convertValueToDouble(ValueOperand value, FloatRegister output, Label *fail);
@@ -1005,28 +1045,6 @@ JSOpToCondition(JSOp op, bool isSigned)
         }
     }
 }
-
-typedef Vector<MIRType, 8> MIRTypeVector;
-
-class ABIArgIter
-{
-    ABIArgGenerator gen_;
-    const MIRTypeVector &types_;
-    unsigned i_;
-
-  public:
-    ABIArgIter(const MIRTypeVector &argTypes);
-
-    void operator++(int);
-    bool done() const { return i_ == types_.length(); }
-
-    ABIArg *operator->() { JS_ASSERT(!done()); return &gen_.current(); }
-    ABIArg &operator*() { JS_ASSERT(!done()); return gen_.current(); }
-
-    unsigned index() const { JS_ASSERT(!done()); return i_; }
-    MIRType mirType() const { JS_ASSERT(!done()); return types_[i_]; }
-    uint32_t stackBytesConsumedSoFar() const { return gen_.stackBytesConsumedSoFar(); }
-};
 
 } // namespace ion
 } // namespace js
