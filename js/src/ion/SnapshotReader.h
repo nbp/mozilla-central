@@ -10,8 +10,8 @@
 #include "mozilla/Util.h"
 
 #include "ion/CompactBuffer.h"
-#include "ion/IonTypes.h"
 #include "ion/IonCode.h"
+#include "ion/IonTypes.h"
 #include "ion/Slots.h"
 
 namespace js {
