@@ -677,7 +677,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
                 "      pushing %u expression stack slots before fixup",
                 pushedSlots);
         for (uint32_t i = 0; i < pushedSlots; i++) {
-            Value v = iter.read();
+            Value v = iter.slotValue(rp.stackSlot(i));
             if (!builder.writeValue(v, "StackValue"))
                 return false;
         }
@@ -721,7 +721,7 @@ InitFromBailout(JSContext *cx, HandleScript caller, jsbytecode *callerPC,
             if (!savedCallerArgs.resize(inlined_args))
                 return false;
             for (uint32_t i = 0; i < inlined_args; i++)
-                savedCallerArgs[i] = iter.read();
+                savedCallerArgs[i] = iter.slotValue(rp.stackSlot(pushedSlots + i));
 
             if (IsSetterPC(pc)) {
                 // We would love to just save all the arguments and leave them
