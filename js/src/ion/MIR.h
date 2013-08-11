@@ -348,6 +348,9 @@ class MDefinition : public MNode
         resultType_(MIRType_None),
         resultTypeSet_(NULL),
         flags_(0),
+        virtualRegister_(0),
+        memUses_(),
+        memOperands_(),
         trackedPc_(NULL)
     { }
 
@@ -564,14 +567,9 @@ class MDefinition : public MNode
     MDefinition *getAliasSetDependency(uint32_t aliasSetId);
     MUseIterator replaceAliasSetDependency(MUseIterator use, MDefinition *def);
 
-    MDefinition *dependency() const {
-        MDefinition *def = NULL;
-        for (const MUse *it = memOperands_.begin(); it < memOperands_.end(); it++) {
-            if (!def || def->id() > it->producer()->id())
-                def = it->producer();
-        }
-        return def;
-    }
+    // Legacy interface used by GVN and LICM to determine the nearest aliasing
+    // definition.
+    MDefinition *dependency() const;
 
     // Returns the beginning of this definition's memory use chain.
     MUseIterator memUsesBegin() const {

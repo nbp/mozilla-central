@@ -158,6 +158,30 @@ MBasicBlock::getAliasSetStore(uint32_t aliasSetId)
     return slots_[aliasSetId];
 }
 
+MDefinition *
+MDefinition::dependency() const {
+    MDefinition *def = NULL;
+    for (const MUse *it = memOperands_.begin(); it < memOperands_.end(); it++) {
+
+        if (def) {
+            // As we do not renumber the inserted phi, we work around that by
+            // checking if the producers are phis.
+            if (it->producer()->isPhi() && !def->isPhi() &&
+                it->producer()->block()->id() == def->block()->id())
+            {
+                continue;
+            }
+
+            if (it->producer()->id() < def->id())
+                continue;
+        }
+
+        def = it->producer();
+    }
+    return def;
+}
+
+
 MUseIterator
 MDefinition::replaceAliasSetDependency(MUseIterator use, MDefinition *def)
 {
