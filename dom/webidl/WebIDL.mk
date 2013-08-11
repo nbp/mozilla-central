@@ -9,6 +9,7 @@ generated_webidl_files = \
   $(NULL)
 
 preprocessed_webidl_files = \
+  Crypto.webidl \
   Navigator.webidl \
   $(NULL)
 
@@ -164,9 +165,15 @@ webidl_files = \
   HTMLTrackElement.webidl \
   HTMLUListElement.webidl \
   HTMLVideoElement.webidl \
+  IDBCursor.webidl \
   IDBDatabase.webidl \
   IDBFactory.webidl \
   IDBFileHandle.webidl \
+  IDBIndex.webidl \
+  IDBObjectStore.webidl \
+  IDBOpenDBRequest.webidl \
+  IDBRequest.webidl \
+  IDBTransaction.webidl \
   IDBVersionChangeEvent.webidl \
   ImageData.webidl \
   ImageDocument.webidl \
@@ -176,11 +183,13 @@ webidl_files = \
   LinkStyle.webidl \
   LocalMediaStream.webidl \
   Location.webidl \
+  MediaElementAudioSourceNode.webidl \
   MediaError.webidl \
   MediaRecorder.webidl \
   MediaSource.webidl \
   MediaStream.webidl \
   MediaStreamAudioDestinationNode.webidl \
+  MediaStreamAudioSourceNode.webidl \
   MediaStreamEvent.webidl \
   MediaStreamTrack.webidl \
   MessageEvent.webidl \
@@ -209,6 +218,7 @@ webidl_files = \
   PaintRequest.webidl \
   PaintRequestList.webidl \
   PannerNode.webidl \
+  ParentNode.webidl \
   Performance.webidl \
   PerformanceNavigation.webidl \
   PerformanceTiming.webidl \
@@ -219,6 +229,7 @@ webidl_files = \
   PositionError.webidl \
   ProcessingInstruction.webidl \
   Promise.webidl \
+  PushManager.webidl \
   Range.webidl \
   Rect.webidl \
   RGBColor.webidl \
@@ -360,6 +371,7 @@ webidl_files = \
   UndoManager.webidl \
   URL.webidl \
   URLUtils.webidl \
+  URLUtilsReadOnly.webidl \
   ValidityState.webidl \
   VideoPlaybackQuality.webidl \
   VideoStreamTrack.webidl \
@@ -368,6 +380,8 @@ webidl_files = \
   WebSocket.webidl \
   WheelEvent.webidl \
   Window.webidl \
+  WorkerLocation.webidl \
+  WorkerNavigator.webidl \
   XMLDocument.webidl \
   XMLHttpRequest.webidl \
   XMLHttpRequestEventTarget.webidl \
@@ -389,6 +403,7 @@ endif
 ifdef MOZ_WEBGL
 webidl_files += \
   WebGLRenderingContext.webidl \
+  WebGL2RenderingContext.webidl \
   $(NULL)
 endif
 
@@ -458,6 +473,7 @@ webidl_files += \
 ifdef MOZ_B2G_BT
 webidl_files += \
   BluetoothDeviceEvent.webidl \
+  BluetoothStatusChangedEvent.webidl \
   $(NULL)
 endif
 

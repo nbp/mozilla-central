@@ -7,13 +7,14 @@
 #ifndef jsscriptinlines_h
 #define jsscriptinlines_h
 
+#include "jsscript.h"
+
 #include "jsautooplen.h"
 #include "jscntxt.h"
 #include "jsfun.h"
 #include "jsopcode.h"
-#include "jsscript.h"
 
-#include "ion/AsmJS.h"
+#include "ion/AsmJSLink.h"
 #include "vm/GlobalObject.h"
 #include "vm/RegExpObject.h"
 #include "vm/Shape.h"
@@ -44,18 +45,6 @@ ScriptCounts::destroy(FreeOp *fop)
 {
     fop->free_(pcCountsVector);
     fop->delete_(ionCounts);
-}
-
-inline void
-MarkScriptBytecode(JSRuntime *rt, const jsbytecode *bytecode)
-{
-    /*
-     * As an invariant, a ScriptBytecodeEntry should not be 'marked' outside of
-     * a GC. Since SweepScriptBytecodes is only called during a full gc,
-     * to preserve this invariant, only mark during a full gc.
-     */
-    if (rt->gcIsFull)
-        SharedScriptData::fromBytecode(bytecode)->marked = true;
 }
 
 void
@@ -122,12 +111,12 @@ inline void
 JSScript::writeBarrierPre(JSScript *script)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!script || !script->runtime()->needsBarrier())
+    if (!script || !script->runtimeFromAnyThread()->needsBarrier())
         return;
 
     JS::Zone *zone = script->zone();
     if (zone->needsBarrier()) {
-        JS_ASSERT(!zone->rt->isHeapMajorCollecting());
+        JS_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
         JSScript *tmp = script;
         MarkScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
         JS_ASSERT(tmp == script);
@@ -139,12 +128,12 @@ JSScript::writeBarrierPre(JSScript *script)
 js::LazyScript::writeBarrierPre(js::LazyScript *lazy)
 {
 #ifdef JSGC_INCREMENTAL
-    if (!lazy)
+    if (!lazy || !lazy->runtimeFromAnyThread()->needsBarrier())
         return;
 
     JS::Zone *zone = lazy->zone();
     if (zone->needsBarrier()) {
-        JS_ASSERT(!zone->rt->isHeapMajorCollecting());
+        JS_ASSERT(!zone->runtimeFromMainThread()->isHeapMajorCollecting());
         js::LazyScript *tmp = lazy;
         MarkLazyScriptUnbarriered(zone->barrierTracer(), &tmp, "write barrier");
         JS_ASSERT(tmp == lazy);

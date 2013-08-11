@@ -4,42 +4,41 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsinfer.h"
+#include "jsinferinlines.h"
 
 #include "mozilla/DebugOnly.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 
+#ifdef __SUNPRO_CC
+#include <alloca.h>
+#endif
+
 #include "jsapi.h"
+#include "jscntxt.h"
 #include "jsfriendapi.h"
 #include "jsgc.h"
 #include "jsobj.h"
 #include "jsscript.h"
-#include "jscntxt.h"
 #include "jsstr.h"
 #include "jsworkers.h"
 #include "prmjtime.h"
 
+#include "gc/Marking.h"
 #ifdef JS_ION
 #include "ion/BaselineJIT.h"
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
 #endif
-#include "gc/Marking.h"
 #include "js/MemoryMetrics.h"
 #include "vm/Shape.h"
 
 #include "jsanalyzeinlines.h"
 #include "jsatominlines.h"
 #include "jsgcinlines.h"
-#include "jsinferinlines.h"
-#include "jsopcodeinlines.h"
 #include "jsobjinlines.h"
+#include "jsopcodeinlines.h"
 #include "jsscriptinlines.h"
-
-#ifdef __SUNPRO_CC
-#include <alloca.h>
-#endif
 
 using namespace js;
 using namespace js::gc;
@@ -706,7 +705,7 @@ StackTypeSet::addGetProperty(JSContext *cx, JSScript *script, jsbytecode *pc,
      * GetProperty constraints are normally used with property read input type
      * sets, except for array_pop/array_shift special casing.
      */
-    JS_ASSERT(js_CodeSpec[*pc].format & JOF_INVOKE);
+    JS_ASSERT(IsCallPC(pc));
 
     add(cx, cx->analysisLifoAlloc().new_<TypeConstraintGetProperty>(script, pc, target, id));
 }
@@ -2858,7 +2857,7 @@ TypeCompartment::monitorBytecode(JSContext *cx, JSScript *script, uint32_t offse
     ScriptAnalysis *analysis = script->analysis();
     jsbytecode *pc = script->code + offset;
 
-    JS_ASSERT_IF(returnOnly, js_CodeSpec[*pc].format & JOF_INVOKE);
+    JS_ASSERT_IF(returnOnly, IsCallPC(pc));
 
     Bytecode &code = analysis->getCode(pc);
 
@@ -2869,7 +2868,7 @@ TypeCompartment::monitorBytecode(JSContext *cx, JSScript *script, uint32_t offse
               returnOnly ? " returnOnly" : "", script->id(), offset);
 
     /* Dynamically monitor this call to keep track of its result types. */
-    if (js_CodeSpec[*pc].format & JOF_INVOKE)
+    if (IsCallPC(pc))
         code.monitoredTypesReturn = true;
 
     if (returnOnly)
@@ -3132,10 +3131,8 @@ struct types::ArrayTableKey
 };
 
 void
-TypeCompartment::fixArrayType(JSContext *cx, JSObject *obj)
+TypeCompartment::setTypeToHomogenousArray(JSContext *cx, JSObject *obj, Type elementType)
 {
-    AutoEnterAnalysis enter(cx);
-
     if (!arrayTypeTable) {
         arrayTypeTable = cx->new_<ArrayTypeTable>();
         if (!arrayTypeTable || !arrayTypeTable->init()) {
@@ -3144,6 +3141,38 @@ TypeCompartment::fixArrayType(JSContext *cx, JSObject *obj)
             return;
         }
     }
+
+    ArrayTableKey key;
+    key.type = elementType;
+    key.proto = obj->getProto();
+    ArrayTypeTable::AddPtr p = arrayTypeTable->lookupForAdd(key);
+
+    if (p) {
+        obj->setType(p->value);
+    } else {
+        /* Make a new type to use for future arrays with the same elements. */
+        RootedObject objProto(cx, obj->getProto());
+        TypeObject *objType = newTypeObject(cx, &ArrayObject::class_, objProto);
+        if (!objType) {
+            cx->compartment()->types.setPendingNukeTypes(cx);
+            return;
+        }
+        obj->setType(objType);
+
+        if (!objType->unknownProperties())
+            objType->addPropertyType(cx, JSID_VOID, elementType);
+
+        if (!arrayTypeTable->relookupOrAdd(p, key, objType)) {
+            cx->compartment()->types.setPendingNukeTypes(cx);
+            return;
+        }
+    }
+}
+
+void
+TypeCompartment::fixArrayType(JSContext *cx, JSObject *obj)
+{
+    AutoEnterAnalysis enter(cx);
 
     /*
      * If the array is of homogenous type, pick a type object which will be
@@ -3169,42 +3198,31 @@ TypeCompartment::fixArrayType(JSContext *cx, JSObject *obj)
         }
     }
 
-    ArrayTableKey key;
-    key.type = type;
-    key.proto = obj->getProto();
-    ArrayTypeTable::AddPtr p = arrayTypeTable->lookupForAdd(key);
+    setTypeToHomogenousArray(cx, obj, type);
+}
 
-    if (p) {
-        obj->setType(p->value);
-    } else {
-        Rooted<Type> origType(cx, type);
-        /* Make a new type to use for future arrays with the same elements. */
-        RootedObject objProto(cx, obj->getProto());
-        Rooted<TypeObject*> objType(cx, newTypeObject(cx, &ArrayObject::class_, objProto));
-        if (!objType) {
-            cx->compartment()->types.setPendingNukeTypes(cx);
-            return;
-        }
-        obj->setType(objType);
-
-        if (!objType->unknownProperties())
-            objType->addPropertyType(cx, JSID_VOID, type);
-
-        // The key's fields may have been moved by moving GC and therefore the
-        // AddPtr is now invalid. ArrayTypeTable's equality and hashcodes
-        // operators use only the two fields (type and proto) directly, so we
-        // can just conditionally update them here.
-        if (type != origType || key.proto != obj->getProto()) {
-            key.type = origType;
-            key.proto = obj->getProto();
-            p = arrayTypeTable->lookupForAdd(key);
-        }
-
-        if (!arrayTypeTable->relookupOrAdd(p, key, objType)) {
-            cx->compartment()->types.setPendingNukeTypes(cx);
-            return;
-        }
+void
+types::FixRestArgumentsType(ExclusiveContext *cxArg, JSObject *obj)
+{
+    if (cxArg->isJSContext()) {
+        JSContext *cx = cxArg->asJSContext();
+        if (cx->typeInferenceEnabled())
+            cx->compartment()->types.fixRestArgumentsType(cx, obj);
     }
+}
+
+void
+TypeCompartment::fixRestArgumentsType(JSContext *cx, JSObject *obj)
+{
+    AutoEnterAnalysis enter(cx);
+
+    /*
+     * Tracking element types for rest argument arrays is not worth it, but we
+     * still want it to be known that it's a dense array.
+     */
+    JS_ASSERT(obj->is<ArrayObject>());
+
+    setTypeToHomogenousArray(cx, obj, Type::UnknownType());
 }
 
 /*
@@ -6383,11 +6401,11 @@ TypeCompartment::sweep(FreeOp *fop)
         for (ArrayTypeTable::Enum e(*arrayTypeTable); !e.empty(); e.popFront()) {
             const ArrayTableKey &key = e.front().key;
             JS_ASSERT(e.front().value->proto == key.proto);
-            JS_ASSERT(!key.type.isSingleObject());
+            JS_ASSERT(key.type.isUnknown() || !key.type.isSingleObject());
 
             bool remove = false;
             TypeObject *typeObject = NULL;
-            if (key.type.isTypeObject()) {
+            if (!key.type.isUnknown() && key.type.isTypeObject()) {
                 typeObject = key.type.typeObject();
                 if (IsTypeObjectAboutToBeFinalized(&typeObject))
                     remove = true;
@@ -6527,7 +6545,8 @@ TypeCompartment::sweepCompilerOutputs(FreeOp *fop, bool discardConstraints)
 void
 JSCompartment::sweepNewTypeObjectTable(TypeObjectSet &table)
 {
-    gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_TABLES_TYPE_OBJECT);
+    gcstats::AutoPhase ap(runtimeFromMainThread()->gcStats,
+                          gcstats::PHASE_SWEEP_TABLES_TYPE_OBJECT);
 
     JS_ASSERT(zone()->isGCSweeping());
     if (table.initialized()) {
@@ -6838,7 +6857,7 @@ TypeZone::sweep(FreeOp *fop, bool releaseTypes)
 {
     JS_ASSERT(zone()->isGCSweeping());
 
-    JSRuntime *rt = zone()->rt;
+    JSRuntime *rt = fop->runtime();
 
     /*
      * Clear the analysis pool, but don't release its data yet. While
