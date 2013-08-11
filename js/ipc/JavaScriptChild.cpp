@@ -7,6 +7,7 @@
 
 #include "JavaScriptChild.h"
 #include "mozilla/dom/ContentChild.h"
+#include "mozilla/dom/BindingUtils.h"
 #include "nsContentUtils.h"
 #include "xpcprivate.h"
 #include "jsfriendapi.h"
@@ -91,7 +92,7 @@ JavaScriptChild::makeId(JSContext *cx, JSObject *obj, ObjectId *idp)
 
     if (!objects_.add(id, obj))
         return false;
-    if (!ids_.add(obj, id))
+    if (!ids_.add(cx, obj, id))
         return false;
 
     *idp = id;
@@ -250,13 +251,18 @@ JavaScriptChild::AnswerDefineProperty(const ObjectId &objId, const nsString &id,
     if (!convertGeckoStringToId(cx, id, &internedId))
         return fail(cx, rs);
 
-    JSPropertyDescriptor desc;
-    if (!toDescriptor(cx, descriptor, &desc))
+    Rooted<JSPropertyDescriptor> desc(cx);
+    if (!toDescriptor(cx, descriptor, desc.address()))
         return false;
 
-    RootedValue v(cx, desc.value);
-    if (!js::CheckDefineProperty(cx, obj, internedId, v, desc.getter, desc.setter, desc.attrs) ||
-        !JS_DefinePropertyById(cx, obj, internedId, v, desc.getter, desc.setter, desc.attrs))
+    if (!js::CheckDefineProperty(cx, obj, internedId, desc.value(), desc.getter(),
+                                 desc.setter(), desc.attributes()))
+    {
+        return fail(cx, rs);
+    }
+
+    if (!JS_DefinePropertyById(cx, obj, internedId, desc.value(), desc.getter(),
+                               desc.setter(), desc.attributes()))
     {
         return fail(cx, rs);
     }
@@ -271,6 +277,8 @@ JavaScriptChild::AnswerDelete(const ObjectId &objId, const nsString &id, ReturnS
     AutoSafeJSContext cx;
     JSAutoRequest request(cx);
 
+    *success = false;
+
     RootedObject obj(cx, findObject(objId));
     if (!obj)
         return false;
@@ -281,14 +289,8 @@ JavaScriptChild::AnswerDelete(const ObjectId &objId, const nsString &id, ReturnS
     if (!convertGeckoStringToId(cx, id, &internedId))
         return fail(cx, rs);
 
-    RootedValue v(cx);
-    if (!JS_DeletePropertyById2(cx, obj, internedId, v.address()))
+    if (!JS_DeletePropertyById2(cx, obj, internedId, success))
         return fail(cx, rs);
-
-    JSBool b;
-    if (!JS_ValueToBoolean(cx, v, &b))
-        return fail(cx, rs);
-    *success = !!b;
 
     return ok(rs);
 }
@@ -298,6 +300,8 @@ JavaScriptChild::AnswerHas(const ObjectId &objId, const nsString &id, ReturnStat
 {
     AutoSafeJSContext cx;
     JSAutoRequest request(cx);
+
+    *bp = false;
 
     RootedObject obj(cx, findObject(objId));
     if (!obj)
@@ -322,6 +326,8 @@ JavaScriptChild::AnswerHasOwn(const ObjectId &objId, const nsString &id, ReturnS
 {
     AutoSafeJSContext cx;
     JSAutoRequest request(cx);
+
+    *bp = false;
 
     RootedObject obj(cx, findObject(objId));
     if (!obj)
@@ -366,7 +372,7 @@ JavaScriptChild::AnswerGet(const ObjectId &objId, const ObjectId &receiverId, co
     if (!convertGeckoStringToId(cx, id, &internedId))
         return fail(cx, rs);
 
-    JS::Value val;
+    JS::Rooted<JS::Value> val(cx);
     if (!JS_ForwardGetPropertyTo(cx, obj, internedId, receiver, &val))
         return fail(cx, rs);
 
@@ -408,7 +414,7 @@ JavaScriptChild::AnswerSet(const ObjectId &objId, const ObjectId &receiverId, co
     if (!toValue(cx, value, &val))
         return fail(cx, rs);
 
-    if (!JS_SetPropertyById(cx, obj, internedId, val.address()))
+    if (!JS_SetPropertyById(cx, obj, internedId, val))
         return fail(cx, rs);
 
     if (!toVariant(cx, val, result))
@@ -434,7 +440,7 @@ JavaScriptChild::AnswerIsExtensible(const ObjectId &objId, ReturnStatus *rs, boo
         return fail(cx, rs);
 
     *result = !!extensible;
-    return true;
+    return ok(rs);
 }
 
 bool
@@ -488,7 +494,7 @@ JavaScriptChild::AnswerCall(const ObjectId &objId, const nsTArray<JSParam> &argv
     uint32_t oldOpts =
         JS_SetOptions(cx, JS_GetOptions(cx) | JSOPTION_DONT_REPORT_UNCAUGHT);
 
-    jsval rval;
+    RootedValue rval(cx);
     bool success = JS::Call(cx, vals[1], vals[0], vals.length() - 2, vals.begin() + 2, &rval);
 
     JS_SetOptions(cx, oldOpts);
@@ -510,7 +516,7 @@ JavaScriptChild::AnswerCall(const ObjectId &objId, const nsTArray<JSParam> &argv
     for (size_t i = 0; i < outobjects.length(); i++) {
         RootedObject obj(cx, &outobjects[i].toObject());
 
-        jsval v;
+        RootedValue v(cx);
         JSBool found;
         if (JS_HasProperty(cx, obj, "value", &found)) {
             if (!JS_GetProperty(cx, obj, "value", &v))
@@ -548,7 +554,6 @@ JavaScriptChild::AnswerObjectClassIs(const ObjectId &objId, const uint32_t &clas
     JSAutoCompartment comp(cx, obj);
 
     *result = js_ObjectClassIs(cx, obj, (js::ESClassValue)classValue);
-
     return true;
 }
 
@@ -588,7 +593,7 @@ JavaScriptChild::AnswerGetPropertyNames(const ObjectId &objId, const uint32_t &f
     for (size_t i = 0; i < props.length(); i++) {
         nsString name;
         if (!convertIdToGeckoString(cx, props.handleAt(i), &name))
-            return false;
+            return fail(cx, rs);
 
         names->AppendElement(name);
     }
@@ -603,6 +608,8 @@ JavaScriptChild::AnswerInstanceOf(const ObjectId &objId, const JSIID &iid, Retur
     AutoSafeJSContext cx;
     JSAutoRequest request(cx);
 
+    *instanceof = false;
+
     RootedObject obj(cx, findObject(objId));
     if (!obj)
         return false;
@@ -615,6 +622,30 @@ JavaScriptChild::AnswerInstanceOf(const ObjectId &objId, const JSIID &iid, Retur
     nsresult rv = xpc::HasInstance(cx, obj, &nsiid, instanceof);
     if (rv != NS_OK)
         return fail(cx, rs);
+
+    return ok(rs);
+}
+
+bool
+JavaScriptChild::AnswerDOMInstanceOf(const ObjectId &objId, const int &prototypeID,
+                                     const int &depth,
+                                     ReturnStatus *rs, bool *instanceof)
+{
+    AutoSafeJSContext cx;
+    JSAutoRequest request(cx);
+
+    *instanceof = false;
+
+    RootedObject obj(cx, findObject(objId));
+    if (!obj)
+        return false;
+
+    JSAutoCompartment comp(cx, obj);
+
+    JSBool tmp;
+    if (!mozilla::dom::InterfaceHasInstance(cx, prototypeID, depth, obj, &tmp))
+        return fail(cx, rs);
+    *instanceof = tmp;
 
     return ok(rs);
 }

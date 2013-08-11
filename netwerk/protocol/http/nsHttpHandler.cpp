@@ -18,7 +18,7 @@
 #include "nsIDOMConnection.h"
 #include "nsIDOMWindow.h"
 #include "nsIDOMNavigator.h"
-#include "nsIDOMNavigatorNetwork.h"
+#include "nsIMozNavigatorNetwork.h"
 #include "nsINetworkProperties.h"
 #include "nsIHttpChannel.h"
 #include "nsIURL.h"
@@ -98,6 +98,7 @@ static NS_DEFINE_CID(kSocketProviderServiceCID, NS_SOCKETPROVIDERSERVICE_CID);
 #define BROWSER_PREF_PREFIX     "browser.cache."
 #define DONOTTRACK_HEADER_ENABLED "privacy.donottrackheader.enabled"
 #define DONOTTRACK_HEADER_VALUE   "privacy.donottrackheader.value"
+#define DONOTTRACK_VALUE_UNSET    2
 #ifdef MOZ_TELEMETRY_ON_BY_DEFAULT
 #define TELEMETRY_ENABLED        "toolkit.telemetry.enabledPreRelease"
 #else
@@ -235,6 +236,13 @@ nsHttpHandler::~nsHttpHandler()
         mPipelineTestTimer = nullptr;
     }
 
+    if (!mDoNotTrackEnabled) {
+        Telemetry::Accumulate(Telemetry::DNT_USAGE, DONOTTRACK_VALUE_UNSET);
+    }
+    else {
+        Telemetry::Accumulate(Telemetry::DNT_USAGE, mDoNotTrackValue);
+    }
+
     gHttpHandler = nullptr;
 }
 
@@ -309,12 +317,8 @@ nsHttpHandler::Init()
 #ifdef ANDROID
     mProductSub.AssignLiteral(MOZILLA_UAVERSION);
 #else
-    mProductSub.AssignLiteral(MOZ_UA_BUILDID);
+    mProductSub.AssignLiteral("20100101");
 #endif
-    if (mProductSub.IsEmpty() && appInfo)
-        appInfo->GetPlatformBuildID(mProductSub);
-    if (mProductSub.Length() > 8)
-        mProductSub.SetLength(8);
 
 #if DEBUG
     // dump user agent prefs
@@ -479,12 +483,12 @@ nsHttpHandler::GetStreamConverterService(nsIStreamConverterService **result)
     return NS_OK;
 }
 
-nsIStrictTransportSecurityService*
-nsHttpHandler::GetSTSService()
+nsISiteSecurityService*
+nsHttpHandler::GetSSService()
 {
-    if (!mSTSService)
-      mSTSService = do_GetService(NS_STSSERVICE_CONTRACTID);
-    return mSTSService;
+    if (!mSSService)
+      mSSService = do_GetService(NS_SSSERVICE_CONTRACTID);
+    return mSSService;
 }
 
 nsICookieService *
@@ -1502,13 +1506,13 @@ nsHttpHandler::SetAcceptEncodings(const char *aAcceptEncodings)
 // nsHttpHandler::nsISupports
 //-----------------------------------------------------------------------------
 
-NS_IMPL_THREADSAFE_ISUPPORTS6(nsHttpHandler,
-                              nsIHttpProtocolHandler,
-                              nsIProxiedProtocolHandler,
-                              nsIProtocolHandler,
-                              nsIObserver,
-                              nsISupportsWeakReference,
-                              nsISpeculativeConnect)
+NS_IMPL_ISUPPORTS6(nsHttpHandler,
+                   nsIHttpProtocolHandler,
+                   nsIProxiedProtocolHandler,
+                   nsIProtocolHandler,
+                   nsIObserver,
+                   nsISupportsWeakReference,
+                   nsISpeculativeConnect)
 
 //-----------------------------------------------------------------------------
 // nsHttpHandler::nsIProtocolHandler
@@ -1834,9 +1838,9 @@ NS_IMETHODIMP
 nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
                                   nsIInterfaceRequestor *aCallbacks)
 {
-    nsIStrictTransportSecurityService* stss = gHttpHandler->GetSTSService();
+    nsISiteSecurityService* sss = gHttpHandler->GetSSService();
     bool isStsHost = false;
-    if (!stss)
+    if (!sss)
         return NS_OK;
 
     nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(aCallbacks);
@@ -1844,7 +1848,8 @@ nsHttpHandler::SpeculativeConnect(nsIURI *aURI,
     if (loadContext && loadContext->UsePrivateBrowsing())
         flags |= nsISocketProvider::NO_PERMANENT_STORAGE;
     nsCOMPtr<nsIURI> clone;
-    if (NS_SUCCEEDED(stss->IsStsURI(aURI, flags, &isStsHost)) && isStsHost) {
+    if (NS_SUCCEEDED(sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS,
+                                      aURI, flags, &isStsHost)) && isStsHost) {
         if (NS_SUCCEEDED(aURI->Clone(getter_AddRefs(clone)))) {
             clone->SetScheme(NS_LITERAL_CSTRING("https"));
             aURI = clone.get();
@@ -1906,7 +1911,7 @@ nsHttpHandler::TickleWifi(nsIInterfaceRequestor *cb)
 
     nsCOMPtr<nsIDOMNavigator> domNavigator;
     domWindow->GetNavigator(getter_AddRefs(domNavigator));
-    nsCOMPtr<nsIDOMMozNavigatorNetwork> networkNavigator =
+    nsCOMPtr<nsIMozNavigatorNetwork> networkNavigator =
         do_QueryInterface(domNavigator);
     if (!networkNavigator)
         return;
@@ -1939,12 +1944,12 @@ nsHttpHandler::TickleWifi(nsIInterfaceRequestor *cb)
 // nsHttpsHandler implementation
 //-----------------------------------------------------------------------------
 
-NS_IMPL_THREADSAFE_ISUPPORTS5(nsHttpsHandler,
-                              nsIHttpProtocolHandler,
-                              nsIProxiedProtocolHandler,
-                              nsIProtocolHandler,
-                              nsISupportsWeakReference,
-                              nsISpeculativeConnect)
+NS_IMPL_ISUPPORTS5(nsHttpsHandler,
+                   nsIHttpProtocolHandler,
+                   nsIProxiedProtocolHandler,
+                   nsIProtocolHandler,
+                   nsISupportsWeakReference,
+                   nsISpeculativeConnect)
 
 nsresult
 nsHttpsHandler::Init()

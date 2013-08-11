@@ -83,6 +83,12 @@ if gl_provider == 'CGL':
     CMMSRCS += [
         "GLContextProvider%s.mm" % (gl_provider),
     ]
+    EXPORTS += [
+        'SharedSurfaceIO.h',
+    ]
+    CPP_SOURCES += [
+        'SharedSurfaceIO.cpp',
+    ]
 else:
     CPP_SOURCES += [
         'GLContextProvider%s.cpp' % gl_provider,
@@ -95,6 +101,7 @@ if gl_provider == 'EGL':
 
 CPP_SOURCES += [
     'GLContext.cpp',
+    'GLContextExtensionGroupQueries.cpp',
     'GLContextTypes.cpp',
     'GLContextUtils.cpp',
     'GLLibraryLoader.cpp',

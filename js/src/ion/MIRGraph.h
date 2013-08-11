@@ -10,9 +10,10 @@
 // This file declares the data structures used to build a control-flow graph
 // containing MIR.
 
-#include "ion/IonAllocPolicy.h"
-#include "ion/MIRGenerator.h"
 #include "ion/FixedList.h"
+#include "ion/IonAllocPolicy.h"
+#include "ion/MIR.h"
+#include "ion/MIRGenerator.h"
 
 namespace js {
 namespace ion {
@@ -76,9 +77,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     static MBasicBlock *NewPendingLoopHeader(MIRGraph &graph, CompileInfo &info,
                                              MBasicBlock *pred, jsbytecode *entryPc);
     static MBasicBlock *NewSplitEdge(MIRGraph &graph, CompileInfo &info, MBasicBlock *pred);
-    static MBasicBlock *NewParBailout(MIRGraph &graph, CompileInfo &info,
-                                      MBasicBlock *pred, jsbytecode *entryPc,
-                                      MResumePoint *resumePoint, uint32_t loopDepth);
+    static MBasicBlock *NewAbortPar(MIRGraph &graph, CompileInfo &info,
+                                    MBasicBlock *pred, jsbytecode *entryPc,
+                                    MResumePoint *resumePoint, uint32_t loopDepth);
 
     bool dominates(MBasicBlock *other);
     bool pdominates(MBasicBlock *other);
@@ -596,6 +597,7 @@ class MIRGraph
     Vector<JSScript *, 4, IonAllocPolicy> scripts_;
 
     size_t numBlocks_;
+    bool hasTryBlock_;
 
   public:
     MIRGraph(TempAllocator *alloc)
@@ -605,7 +607,8 @@ class MIRGraph
         idGen_(0),
         osrBlock_(NULL),
         osrStart_(NULL),
-        numBlocks_(0)
+        numBlocks_(0),
+        hasTryBlock_(false)
     { }
 
     template <typename T>
@@ -728,13 +731,18 @@ class MIRGraph
         return scripts_.begin();
     }
 
-    // The ParSlice is an instance of ForkJoinSlice*, it carries
-    // "per-helper-thread" information.  So as not to modify the
-    // calling convention for parallel code, we obtain the current
-    // slice from thread-local storage.  This helper method will
-    // lazilly insert an MParSlice instruction in the entry block and
-    // return the definition.
-    MDefinition *parSlice();
+    bool hasTryBlock() const {
+        return hasTryBlock_;
+    }
+    void setHasTryBlock() {
+        hasTryBlock_ = true;
+    }
+
+    // The per-thread context. So as not to modify the calling convention for
+    // parallel code, we obtain the current slice from thread-local storage.
+    // This helper method will lazilly insert an MForkJoinSlice instruction in
+    // the entry block and return the definition.
+    MDefinition *forkJoinSlice();
 
     void dump(FILE *fp);
 };
