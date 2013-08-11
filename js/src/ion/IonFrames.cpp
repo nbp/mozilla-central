@@ -4,11 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "ion/IonFrames.h"
+#include "ion/IonFrames-inl.h"
 
+#include "jsfun.h"
 #include "jsobj.h"
 #include "jsscript.h"
-#include "jsfun.h"
+
 #include "gc/Marking.h"
 #include "ion/BaselineFrame.h"
 #include "ion/BaselineIC.h"
@@ -26,7 +27,6 @@
 #include "jsfuninlines.h"
 
 #include "ion/IonFrameIterator-inl.h"
-#include "ion/IonFrames-inl.h"
 #include "vm/Probes-inl.h"
 
 namespace js {
@@ -351,7 +351,8 @@ CloseLiveIterator(JSContext *cx, const InlineFrameIterator &frame, uint32_t loca
 }
 
 static void
-CloseLiveIterators(JSContext *cx, const InlineFrameIterator &frame)
+HandleExceptionIon(JSContext *cx, const InlineFrameIterator &frame, ResumeFromException *rfe,
+                   bool *overrecursed)
 {
     RootedScript script(cx, frame.script());
     jsbytecode *pc = frame.pc();
@@ -369,20 +370,63 @@ CloseLiveIterators(JSContext *cx, const InlineFrameIterator &frame)
         if (pcOffset >= tn->start + tn->length)
             continue;
 
-        if (tn->kind != JSTRY_ITER)
-            continue;
+        switch (tn->kind) {
+          case JSTRY_ITER: {
+            JS_ASSERT(JSOp(*(script->main() + tn->start + tn->length)) == JSOP_ENDITER);
+            JS_ASSERT(tn->stackDepth > 0);
 
-        JS_ASSERT(JSOp(*(script->main() + tn->start + tn->length)) == JSOP_ENDITER);
-        JS_ASSERT(tn->stackDepth > 0);
+            uint32_t localSlot = tn->stackDepth;
+            CloseLiveIterator(cx, frame, localSlot);
+            break;
+          }
 
-        uint32_t localSlot = tn->stackDepth;
-        CloseLiveIterator(cx, frame, localSlot);
+          case JSTRY_LOOP:
+            break;
+
+          case JSTRY_CATCH:
+            if (cx->isExceptionPending()) {
+                // Bailout at the start of the catch block.
+                jsbytecode *catchPC = script->main() + tn->start + tn->length;
+
+                ExceptionBailoutInfo excInfo;
+                excInfo.frameNo = frame.frameNo();
+                excInfo.resumePC = catchPC;
+                excInfo.numExprSlots = tn->stackDepth;
+
+                BaselineBailoutInfo *info = NULL;
+                uint32_t retval = ExceptionHandlerBailout(cx, frame, excInfo, &info);
+
+                if (retval == BAILOUT_RETURN_OK) {
+                    JS_ASSERT(info);
+                    rfe->kind = ResumeFromException::RESUME_BAILOUT;
+                    rfe->target = cx->runtime()->ionRuntime()->getBailoutTail()->raw();
+                    rfe->bailoutInfo = info;
+                    return;
+                }
+
+                // Bailout failed. If there was a fatal error, clear the
+                // exception to turn this into an uncatchable error. If the
+                // overrecursion check failed, continue popping all inline
+                // frames and have the caller report an overrecursion error.
+                JS_ASSERT(!info);
+                cx->clearPendingException();
+
+                if (retval == BAILOUT_RETURN_OVERRECURSED)
+                    *overrecursed = true;
+                else
+                    JS_ASSERT(retval == BAILOUT_RETURN_FATAL_ERROR);
+            }
+            break;
+
+          default:
+            MOZ_ASSUME_UNREACHABLE("Unexpected try note");
+        }
     }
 }
 
 static void
-HandleException(JSContext *cx, const IonFrameIterator &frame, ResumeFromException *rfe,
-                bool *calledDebugEpilogue)
+HandleExceptionBaseline(JSContext *cx, const IonFrameIterator &frame, ResumeFromException *rfe,
+                        bool *calledDebugEpilogue)
 {
     JS_ASSERT(frame.isBaselineJS());
     JS_ASSERT(!*calledDebugEpilogue);
@@ -512,12 +556,15 @@ HandleException(ResumeFromException *rfe)
 
     IonFrameIterator iter(cx->mainThread().ionTop);
     while (!iter.isEntry()) {
+        bool overrecursed = false;
         if (iter.isOptimizedJS()) {
             // Search each inlined frame for live iterator objects, and close
             // them.
             InlineFrameIterator frames(cx, &iter);
             for (;;) {
-                CloseLiveIterators(cx, frames);
+                HandleExceptionIon(cx, frames, rfe, &overrecursed);
+                if (rfe->kind != ResumeFromException::RESUME_ENTRY_FRAME)
+                    return;
 
                 // When profiling, each frame popped needs a notification that
                 // the function has exited, so invoke the probe that a function
@@ -537,7 +584,7 @@ HandleException(ResumeFromException *rfe)
             // It's invalid to call DebugEpilogue twice for the same frame.
             bool calledDebugEpilogue = false;
 
-            HandleException(cx, iter, rfe, &calledDebugEpilogue);
+            HandleExceptionBaseline(cx, iter, rfe, &calledDebugEpilogue);
             if (rfe->kind != ResumeFromException::RESUME_ENTRY_FRAME)
                 return;
 
@@ -576,6 +623,11 @@ HandleException(ResumeFromException *rfe)
             EnsureExitFrame(current);
             cx->mainThread().ionTop = (uint8_t *)current;
         }
+
+        if (overrecursed) {
+            // We hit an overrecursion error during bailout. Report it now.
+            js_ReportOverRecursed(cx);
+        }
     }
 
     rfe->stackPointer = iter.fp();
@@ -600,7 +652,7 @@ HandleParallelFailure(ResumeFromException *rfe)
 
     while (!iter.isEntry()) {
         if (iter.isScripted())
-            PropagateParallelAbort(iter.script(), iter.script());
+            PropagateAbortPar(iter.script(), iter.script());
         ++iter;
     }
 
@@ -1317,7 +1369,7 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
     // before reading inner ones.
     unsigned remaining = si_.frameCount() - framesRead_ - 1;
     for (unsigned i = 0; i < remaining; i++) {
-        JS_ASSERT(js_CodeSpec[*pc_].format & JOF_INVOKE);
+        JS_ASSERT(IsIonInlinablePC(pc_));
 
         // Recover the number of actual arguments from the script.
         if (JSOp(*pc_) != JSOP_FUNAPPLY)
@@ -1325,6 +1377,10 @@ InlineFrameIteratorMaybeGC<allowGC>::findNextFrame()
         if (JSOp(*pc_) == JSOP_FUNCALL) {
             JS_ASSERT(GET_ARGC(pc_) > 0);
             numActualArgs_ = GET_ARGC(pc_) - 1;
+        } else if (IsGetterPC(pc_)) {
+            numActualArgs_ = 0;
+        } else if (IsSetterPC(pc_)) {
+            numActualArgs_ = 1;
         }
 
         JS_ASSERT(numActualArgs_ != 0xbadbad);
@@ -1394,7 +1450,7 @@ InlineFrameIteratorMaybeGC<allowGC>::isConstructing() const
             return false;
 
         // In the case of a JS frame, look up the pc from the snapshot.
-        JS_ASSERT(js_CodeSpec[*parent.pc()].format & JOF_INVOKE);
+        JS_ASSERT(IsCallPC(parent.pc()));
 
         return (JSOp)*parent.pc() == JSOP_NEW;
     }
@@ -1422,7 +1478,7 @@ IonFrameIterator::isConstructing() const
         if (IsGetterPC(inlinedParent.pc()) || IsSetterPC(inlinedParent.pc()))
             return false;
 
-        JS_ASSERT(js_CodeSpec[*inlinedParent.pc()].format & JOF_INVOKE);
+        JS_ASSERT(IsCallPC(inlinedParent.pc()));
 
         return (JSOp)*inlinedParent.pc() == JSOP_NEW;
     }
@@ -1435,7 +1491,7 @@ IonFrameIterator::isConstructing() const
         if (IsGetterPC(pc) || IsSetterPC(pc))
             return false;
 
-        JS_ASSERT(js_CodeSpec[*pc].format & JOF_INVOKE);
+        JS_ASSERT(IsCallPC(pc));
 
         return JSOp(*pc) == JSOP_NEW;
     }

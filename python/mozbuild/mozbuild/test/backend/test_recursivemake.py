@@ -5,12 +5,13 @@
 from __future__ import unicode_literals
 
 import os
-import time
 
-from mozpack.manifests import PurgeManifest
+from mozpack.manifests import (
+    InstallManifest,
+    PurgeManifest,
+)
 from mozunit import main
 
-from mozbuild.backend.configenvironment import ConfigEnvironment
 from mozbuild.backend.recursivemake import RecursiveMakeBackend
 from mozbuild.frontend.emitter import TreeMetadataEmitter
 from mozbuild.frontend.reader import BuildReader
@@ -147,6 +148,9 @@ class TestRecursiveMakeBackend(BackendTester):
                 'CMMSRCS += bar.mm',
                 'CMMSRCS += foo.mm',
             ],
+            'CPP_UNIT_TESTS': [
+                'CPP_UNIT_TESTS += foo.cpp',
+            ],
             'CSRCS': [
                 'CSRCS += bar.c',
                 'CSRCS += foo.c',
@@ -162,6 +166,14 @@ class TestRecursiveMakeBackend(BackendTester):
             'EXTRA_PP_COMPONENTS': [
                 'EXTRA_PP_COMPONENTS += bar.pp.js',
                 'EXTRA_PP_COMPONENTS += foo.pp.js',
+            ],
+            'EXTRA_JS_MODULES': [
+                'EXTRA_JS_MODULES += bar.jsm',
+                'EXTRA_JS_MODULES += foo.jsm',
+            ],
+            'EXTRA_PP_JS_MODULES': [
+                'EXTRA_PP_JS_MODULES += bar.pp.jsm',
+                'EXTRA_PP_JS_MODULES += foo.pp.jsm',
             ],
             'GTEST_CMMSRCS': [
                 'GTEST_CMMSRCS += test1.mm',
@@ -248,7 +260,7 @@ class TestRecursiveMakeBackend(BackendTester):
         ])
 
         # EXPORTS files should appear in the dist_include purge manifest.
-        m = PurgeManifest.from_path(os.path.join(env.topobjdir,
+        m = PurgeManifest(path=os.path.join(env.topobjdir,
             '_build_manifests', 'purge', 'dist_include'))
         self.assertIn('foo.h', m.entries)
         self.assertIn('mozilla/mozilla1.h', m.entries)
@@ -300,7 +312,7 @@ class TestRecursiveMakeBackend(BackendTester):
             full = os.path.join(purge_dir, e)
             self.assertTrue(os.path.exists(full))
 
-        m = PurgeManifest.from_path(os.path.join(purge_dir, 'dist_bin'))
+        m = PurgeManifest(path=os.path.join(purge_dir, 'dist_bin'))
         self.assertEqual(m.relpath, 'dist/bin')
 
     def test_old_purge_manifest_deleted(self):
@@ -311,11 +323,31 @@ class TestRecursiveMakeBackend(BackendTester):
         manifest_path = os.path.join(purge_dir, 'old_manifest')
         os.makedirs(purge_dir)
         m = PurgeManifest()
-        m.write_file(manifest_path)
+        m.write(path=manifest_path)
 
         self.assertTrue(os.path.exists(manifest_path))
         self._consume('stub0', RecursiveMakeBackend, env)
         self.assertFalse(os.path.exists(manifest_path))
+
+    def test_install_manifests_written(self):
+        env, objs = self._emit('stub0')
+        backend = RecursiveMakeBackend(env)
+
+        m = InstallManifest()
+        backend._install_manifests['testing'] = m
+        m.add_symlink(__file__, 'self')
+        backend.consume(objs)
+
+        man_dir = os.path.join(env.topobjdir, '_build_manifests', 'install')
+        self.assertTrue(os.path.isdir(man_dir))
+
+        expected = ['testing']
+        for e in expected:
+            full = os.path.join(man_dir, e)
+            self.assertTrue(os.path.exists(full))
+
+            m2 = InstallManifest(path=full)
+            self.assertEqual(m, m2)
 
     def test_ipdl_sources(self):
         """Test that IPDL_SOURCES are written to ipdlsrcs.mk correctly."""
