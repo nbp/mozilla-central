@@ -7,19 +7,22 @@
 #ifndef vm_Runtime_h
 #define vm_Runtime_h
 
+#include "mozilla/Atomics.h"
 #include "mozilla/LinkedList.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
+#include "mozilla/TemplateLib.h"
+#include "mozilla/ThreadLocal.h"
 
-#include <string.h>
 #include <setjmp.h>
+#include <string.h>
 
 #include "jsapi.h"
-#include "jsfriendapi.h"
-#include "jsprvtd.h"
 #include "jsatom.h"
 #include "jsclist.h"
+#include "jsfriendapi.h"
 #include "jsgc.h"
+#include "jsprvtd.h"
 
 #include "ds/FixedSizeHash.h"
 #include "ds/LifoAlloc.h"
@@ -27,6 +30,7 @@
 #include "gc/Nursery.h"
 #include "gc/Statistics.h"
 #include "gc/StoreBuffer.h"
+#include "ion/AsmJSSignalHandlers.h"
 #include "js/HashTable.h"
 #include "js/Vector.h"
 #include "vm/DateTime.h"
@@ -40,6 +44,13 @@
 #pragma warning(push)
 #pragma warning(disable:4355) /* Silence warning about "this" used in base member initializer list */
 #endif
+
+namespace js {
+
+/* Thread Local Storage slot for storing the runtime for a thread. */
+extern mozilla::ThreadLocal<PerThreadData*> TlsPerThreadData;
+
+} // namespace js
 
 struct DtoaState;
 
@@ -446,14 +457,15 @@ namespace js {
  * JSRuntime as the field |mainThread|.  During Parallel JS sections,
  * however, there will be one instance per worker thread.
  */
-class PerThreadData : public js::PerThreadDataFriendFields
+class PerThreadData : public PerThreadDataFriendFields,
+                      public mozilla::LinkedListElement<PerThreadData>
 {
     /*
      * Backpointer to the full shared JSRuntime* with which this
      * thread is associated.  This is private because accessing the
      * fields of this runtime can provoke race conditions, so the
      * intention is that access will be mediated through safe
-     * functions like |associatedWith()| below.
+     * functions like |runtimeFromMainThread| and |associatedWith()| below.
      */
     JSRuntime *runtime_;
 
@@ -555,8 +567,11 @@ class PerThreadData : public js::PerThreadDataFriendFields
     ~PerThreadData();
 
     bool init();
+    void addToThreadList();
+    void removeFromThreadList();
 
     bool associatedWith(const JSRuntime *rt) { return runtime_ == rt; }
+    inline JSRuntime *runtimeFromMainThread();
 };
 
 template<class Client>
@@ -612,7 +627,7 @@ struct MallocProvider
 
     template <class T>
     T *pod_malloc(size_t numElems) {
-        if (numElems & js::tl::MulOverflowMask<sizeof(T)>::result) {
+        if (numElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
             Client *client = static_cast<Client *>(this);
             client->reportAllocationOverflow();
             return NULL;
@@ -622,7 +637,7 @@ struct MallocProvider
 
     template <class T>
     T *pod_calloc(size_t numElems, JSCompartment *comp = NULL, JSContext *cx = NULL) {
-        if (numElems & js::tl::MulOverflowMask<sizeof(T)>::result) {
+        if (numElems & mozilla::tl::MulOverflowMask<sizeof(T)>::value) {
             Client *client = static_cast<Client *>(this);
             client->reportAllocationOverflow();
             return NULL;
@@ -639,6 +654,8 @@ class MarkingValidator;
 
 typedef Vector<JS::Zone *, 1, SystemAllocPolicy> ZoneVector;
 
+class AutoLockForExclusiveAccess;
+
 } // namespace js
 
 struct JSRuntime : public JS::shadow::Runtime,
@@ -654,7 +671,13 @@ struct JSRuntime : public JS::shadow::Runtime,
      * sizeof(js::shadow::Runtime). See
      * PerThreadDataFriendFields::getMainThread.
      */
-    js::PerThreadData   mainThread;
+    js::PerThreadData mainThread;
+
+    /*
+     * List of per-thread data in the runtime, including mainThread. Currently
+     * this does not include instances of PerThreadData created for PJS.
+     */
+    mozilla::LinkedList<js::PerThreadData> threadList;
 
     /*
      * If non-zero, we were been asked to call the operation callback as soon
@@ -711,6 +734,45 @@ struct JSRuntime : public JS::shadow::Runtime,
 #endif
     }
 
+#ifdef JS_THREADSAFE
+  private:
+    /*
+     * Lock taken when using per-runtime or per-zone data that could otherwise
+     * be accessed simultaneously by both the main thread and another thread
+     * with an ExclusiveContext.
+     *
+     * Locking this only occurs if there is actually a thread other than the
+     * main thread with an ExclusiveContext which could access such data.
+     */
+    PRLock *exclusiveAccessLock;
+    mozilla::DebugOnly<PRThread *> exclusiveAccessOwner;
+    mozilla::DebugOnly<bool> mainThreadHasExclusiveAccess;
+
+    /* Number of non-main threads with an ExclusiveContext. */
+    size_t numExclusiveThreads;
+
+    friend class js::AutoLockForExclusiveAccess;
+
+  public:
+#endif // JS_THREADSAFE
+
+    bool currentThreadHasExclusiveAccess() {
+#if defined(JS_THREADSAFE) && defined(DEBUG)
+        return (!numExclusiveThreads && mainThreadHasExclusiveAccess) ||
+            exclusiveAccessOwner == PR_GetCurrentThread();
+#else
+        return true;
+#endif
+    }
+
+    bool exclusiveThreadsPresent() const {
+#ifdef JS_THREADSAFE
+        return numExclusiveThreads > 0;
+#else
+        return false;
+#endif
+    }
+
     /* Default compartment. */
     JSCompartment       *atomsCompartment;
 
@@ -738,19 +800,10 @@ struct JSRuntime : public JS::shadow::Runtime,
     void *ownerThread() const { return ownerThread_; }
     void clearOwnerThread();
     void setOwnerThread();
-    JS_FRIEND_API(void) abortIfWrongThread() const;
-#ifdef DEBUG
-    JS_FRIEND_API(void) assertValidThread() const;
-#else
-    void assertValidThread() const {}
-#endif
   private:
-    void                *ownerThread_;
+    void *ownerThread_;
+    friend bool js::CurrentThreadCanAccessRuntime(JSRuntime *rt);
   public:
-#else
-  public:
-    void abortIfWrongThread() const {}
-    void assertValidThread() const {}
 #endif
 
     /* Temporary arena pool used while compiling and decompiling. */
@@ -861,6 +914,7 @@ struct JSRuntime : public JS::shadow::Runtime,
 
     /* Context create/destroy callback. */
     JSContextCallback   cxCallback;
+    void               *cxCallbackData;
 
     /* Compartment destroy callback. */
     JSDestroyCompartmentCallback destroyCompartmentCallback;
@@ -1378,7 +1432,13 @@ struct JSRuntime : public JS::shadow::Runtime,
     // their callee.
     js::Value            ionReturnOverride_;
 
+    static mozilla::Atomic<size_t> liveRuntimesCount;
+
   public:
+    static bool hasLiveRuntimes() {
+        return liveRuntimesCount > 0;
+    }
+
     bool hasIonReturnOverride() const {
         return !ionReturnOverride_.isMagic();
     }
@@ -1624,6 +1684,13 @@ PerThreadData::setIonStackLimit(uintptr_t limit)
     ionStackLimit = limit;
 }
 
+inline JSRuntime *
+PerThreadData::runtimeFromMainThread()
+{
+    JS_ASSERT(js::CurrentThreadCanAccessRuntime(runtime_));
+    return runtime_;
+}
+
 /************************************************************************/
 
 static JS_ALWAYS_INLINE void
@@ -1712,6 +1779,40 @@ class RuntimeAllocPolicy
     void free_(void *p) { js_free(p); }
     void reportAllocOverflow() const {}
 };
+
+/*
+ * Enumerate all the per thread data in a runtime.
+ */
+class ThreadDataIter {
+    PerThreadData *iter;
+
+public:
+    explicit inline ThreadDataIter(JSRuntime *rt);
+
+    bool done() const {
+        return !iter;
+    }
+
+    void next() {
+        JS_ASSERT(!done());
+        iter = iter->getNext();
+    }
+
+    PerThreadData *get() const {
+        JS_ASSERT(!done());
+        return iter;
+    }
+
+    operator PerThreadData *() const {
+        return get();
+    }
+
+    PerThreadData *operator ->() const {
+        return get();
+    }
+};
+
+extern const JSSecurityCallbacks NullSecurityCallbacks;
 
 } /* namespace js */
 

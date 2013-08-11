@@ -15,11 +15,6 @@ MSVC_ENABLE_PGO := 1
 MOZILLA_INTERNAL_API =1
 LIBXUL_LIBRARY = 1
 
-# TODO: we do this in crashreporter and storage/src too, should be centralized
-ifeq ($(OS_ARCH),Linux)
-DEFINES += -DXP_LINUX
-endif
-
 CSRCS = \
 		nsErrorAssertsC.c \
 		$(NULL)
@@ -31,25 +26,6 @@ CSRCS		+= pure_api.c
 endif
 
 endif #if OS_ARCH == WINNT
-
-DISABLED_SDK_HEADERS     = \
-		nsAutoPtr.h \
-		nsError.h \
-		ErrorList.h \
-		ErrorListCxxDefines.h \
-		ErrorListCDefines.h \
-		nsISupportsBase.h \
-		nscore.h \
-		nsAtomicRefcnt.h \
-		nsCycleCollector.h \
-		nsObjCExceptions.h \
-
-ifeq ($(OS_ARCH),WINNT)
-DISABLED_SDK_HEADERS += \
-		nsWindowsHelpers.h \
-		$(NULL)
-endif
-
 
 include $(topsrcdir)/config/config.mk
 include $(topsrcdir)/config/rules.mk

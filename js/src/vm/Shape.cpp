@@ -6,7 +6,10 @@
 
 /* JS symbol tables. */
 
+#include "vm/Shape-inl.h"
+
 #include "mozilla/DebugOnly.h"
+#include "mozilla/MathAlgorithms.h"
 #include "mozilla/PodOperations.h"
 
 #include "jsapi.h"
@@ -15,12 +18,10 @@
 #include "jsobj.h"
 
 #include "js/HashTable.h"
-#include "vm/Shape.h"
 
 #include "jscntxtinlines.h"
 #include "jsobjinlines.h"
 
-#include "vm/Shape-inl.h"
 #include "vm/Runtime-inl.h"
 
 using namespace js;
@@ -28,6 +29,7 @@ using namespace js::gc;
 
 using mozilla::DebugOnly;
 using mozilla::PodZero;
+using mozilla::CeilingLog2Size;
 
 bool
 ShapeTable::init(ExclusiveContext *cx, Shape *lastProp)
@@ -39,7 +41,7 @@ ShapeTable::init(ExclusiveContext *cx, Shape *lastProp)
      * event, let's try to grow, overallocating to hold at least twice the
      * current population.
      */
-    uint32_t sizeLog2 = JS_CEILING_LOG2W(2 * entryCount);
+    uint32_t sizeLog2 = CeilingLog2Size(2 * entryCount);
     if (sizeLog2 < MIN_SIZE_LOG2)
         sizeLog2 = MIN_SIZE_LOG2;
 
@@ -1267,7 +1269,8 @@ BaseShape::getUnowned(ExclusiveContext *cx, const StackBaseShape &base)
 void
 JSCompartment::sweepBaseShapeTable()
 {
-    gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_TABLES_BASE_SHAPE);
+    gcstats::AutoPhase ap(runtimeFromMainThread()->gcStats,
+                          gcstats::PHASE_SWEEP_TABLES_BASE_SHAPE);
 
     if (baseShapes.initialized()) {
         for (BaseShapeSet::Enum e(baseShapes); !e.empty(); e.popFront()) {
@@ -1464,7 +1467,8 @@ JSCompartment::markAllInitialShapeTableEntries(JSTracer *trc)
 void
 JSCompartment::sweepInitialShapeTable()
 {
-    gcstats::AutoPhase ap(rt->gcStats, gcstats::PHASE_SWEEP_TABLES_INITIAL_SHAPE);
+    gcstats::AutoPhase ap(runtimeFromMainThread()->gcStats,
+                          gcstats::PHASE_SWEEP_TABLES_INITIAL_SHAPE);
 
     if (initialShapes.initialized()) {
         for (InitialShapeSet::Enum e(initialShapes); !e.empty(); e.popFront()) {

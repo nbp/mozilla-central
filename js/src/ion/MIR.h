@@ -18,14 +18,14 @@
 #include "jsinfer.h"
 #include "jslibmath.h"
 
-#include "ion/TypePolicy.h"
-#include "ion/IonAllocPolicy.h"
-#include "ion/InlineList.h"
-#include "ion/MOpcodes.h"
-#include "ion/IonMacroAssembler.h"
 #include "ion/Bailouts.h"
-#include "ion/FixedList.h"
 #include "ion/CompilerRoot.h"
+#include "ion/FixedList.h"
+#include "ion/InlineList.h"
+#include "ion/IonAllocPolicy.h"
+#include "ion/IonMacroAssembler.h"
+#include "ion/MOpcodes.h"
+#include "ion/TypePolicy.h"
 #include "vm/ScopeObject.h"
 
 namespace js {
@@ -361,6 +361,12 @@ class MDefinition : public MNode
     // For LICM.
     virtual bool neverHoist() const { return false; }
 
+    // Also for LICM. Test whether this definition is likely to be a call, which
+    // would clobber all or many of the floating-point registers, such that
+    // hoisting floating-point constants out of containing loops isn't likely to
+    // be worthwhile.
+    virtual bool possiblyCalls() const { return false; }
+
     void setTrackedPc(jsbytecode *pc) {
         trackedPc_ = pc;
     }
@@ -369,6 +375,11 @@ class MDefinition : public MNode
         return trackedPc_;
     }
 
+    // Warning: Range analysis is removing the bit-operations such as '| 0' at
+    // the end of the transformations. Using this function to analyse any
+    // operands after the truncate phase of the range analysis will lead to
+    // errors. Instead, one should define the collectRangeInfo() to set the
+    // right set of flags which are dependent on the range of the inputs.
     Range *range() const {
         return range_;
     }
@@ -377,10 +388,10 @@ class MDefinition : public MNode
     }
 
     virtual HashNumber valueHash() const;
-    virtual bool congruentTo(MDefinition* const &ins) const {
+    virtual bool congruentTo(MDefinition *ins) const {
         return false;
     }
-    bool congruentIfOperandsEqual(MDefinition * const &ins) const;
+    bool congruentIfOperandsEqual(MDefinition *ins) const;
     virtual MDefinition *foldsTo(bool useValueNumbers);
     virtual void analyzeEdgeCasesForward();
     virtual void analyzeEdgeCasesBackward();
@@ -391,8 +402,11 @@ class MDefinition : public MNode
     bool earlyAbortCheck();
 
     // Compute an absolute or symbolic range for the value of this node.
-    // Ranges are only computed for definitions whose type is int32.
     virtual void computeRange() {
+    }
+
+    // Collect information from the truncated ranges.
+    virtual void collectRangeInfo() {
     }
 
     MNode::Kind kind() const {
@@ -704,6 +718,174 @@ class MUnaryInstruction : public MAryInstruction<1>
     }
 };
 
+class MBinaryInstruction : public MAryInstruction<2>
+{
+  protected:
+    MBinaryInstruction(MDefinition *left, MDefinition *right)
+    {
+        setOperand(0, left);
+        setOperand(1, right);
+    }
+
+  public:
+    MDefinition *lhs() const {
+        return getOperand(0);
+    }
+    MDefinition *rhs() const {
+        return getOperand(1);
+    }
+
+  protected:
+    HashNumber valueHash() const
+    {
+        MDefinition *lhs = getOperand(0);
+        MDefinition *rhs = getOperand(1);
+
+        return op() ^ lhs->valueNumber() ^ rhs->valueNumber();
+    }
+    void swapOperands() {
+        MDefinition *temp = getOperand(0);
+        replaceOperand(0, getOperand(1));
+        replaceOperand(1, temp);
+    }
+
+    bool congruentTo(MDefinition *ins) const
+    {
+        if (op() != ins->op())
+            return false;
+
+        if (type() != ins->type())
+            return false;
+
+        if (isEffectful() || ins->isEffectful())
+            return false;
+
+        MDefinition *left = getOperand(0);
+        MDefinition *right = getOperand(1);
+        MDefinition *tmp;
+
+        if (isCommutative() && left->valueNumber() > right->valueNumber()) {
+            tmp = right;
+            right = left;
+            left = tmp;
+        }
+
+        MBinaryInstruction *bi = static_cast<MBinaryInstruction *>(ins);
+        MDefinition *insLeft = bi->getOperand(0);
+        MDefinition *insRight = bi->getOperand(1);
+        if (isCommutative() && insLeft->valueNumber() > insRight->valueNumber()) {
+            tmp = insRight;
+            insRight = insLeft;
+            insLeft = tmp;
+        }
+
+        return (left->valueNumber() == insLeft->valueNumber()) &&
+               (right->valueNumber() == insRight->valueNumber());
+    }
+
+    // Return true if the operands to this instruction are both unsigned,
+    // in which case any wrapping operands were replaced with the underlying
+    // int32 operands.
+    bool tryUseUnsignedOperands();
+};
+
+class MTernaryInstruction : public MAryInstruction<3>
+{
+  protected:
+    MTernaryInstruction(MDefinition *first, MDefinition *second, MDefinition *third)
+    {
+        setOperand(0, first);
+        setOperand(1, second);
+        setOperand(2, third);
+    }
+
+  protected:
+    HashNumber valueHash() const
+    {
+        MDefinition *first = getOperand(0);
+        MDefinition *second = getOperand(1);
+        MDefinition *third = getOperand(2);
+
+        return op() ^ first->valueNumber() ^ second->valueNumber() ^ third->valueNumber();
+    }
+
+    bool congruentTo(MDefinition *ins) const
+    {
+        if (op() != ins->op())
+            return false;
+
+        if (type() != ins->type())
+            return false;
+
+        if (isEffectful() || ins->isEffectful())
+            return false;
+
+        MTernaryInstruction *ter = static_cast<MTernaryInstruction *>(ins);
+        MDefinition *first = getOperand(0);
+        MDefinition *second = getOperand(1);
+        MDefinition *third = getOperand(2);
+        MDefinition *insFirst = ter->getOperand(0);
+        MDefinition *insSecond = ter->getOperand(1);
+        MDefinition *insThird = ter->getOperand(2);
+
+        return first->valueNumber() == insFirst->valueNumber() &&
+               second->valueNumber() == insSecond->valueNumber() &&
+               third->valueNumber() == insThird->valueNumber();
+    }
+};
+
+class MQuaternaryInstruction : public MAryInstruction<4>
+{
+  protected:
+    MQuaternaryInstruction(MDefinition *first, MDefinition *second,
+                           MDefinition *third, MDefinition *fourth)
+    {
+        setOperand(0, first);
+        setOperand(1, second);
+        setOperand(2, third);
+        setOperand(3, fourth);
+    }
+
+  protected:
+    HashNumber valueHash() const
+    {
+        MDefinition *first = getOperand(0);
+        MDefinition *second = getOperand(1);
+        MDefinition *third = getOperand(2);
+        MDefinition *fourth = getOperand(3);
+
+        return op() ^ first->valueNumber() ^ second->valueNumber() ^
+                      third->valueNumber() ^ fourth->valueNumber();
+    }
+
+    bool congruentTo(MDefinition *ins) const
+    {
+        if (op() != ins->op())
+            return false;
+
+        if (type() != ins->type())
+            return false;
+
+        if (isEffectful() || ins->isEffectful())
+            return false;
+
+        MQuaternaryInstruction *qua = static_cast<MQuaternaryInstruction *>(ins);
+        MDefinition *first = getOperand(0);
+        MDefinition *second = getOperand(1);
+        MDefinition *third = getOperand(2);
+        MDefinition *fourth = getOperand(3);
+        MDefinition *insFirst = qua->getOperand(0);
+        MDefinition *insSecond = qua->getOperand(1);
+        MDefinition *insThird = qua->getOperand(2);
+        MDefinition *insFourth = qua->getOperand(3);
+
+        return first->valueNumber() == insFirst->valueNumber() &&
+               second->valueNumber() == insSecond->valueNumber() &&
+               third->valueNumber() == insThird->valueNumber() &&
+               fourth->valueNumber() == insFourth->valueNumber();
+    }
+};
+
 // Generates an LSnapshot without further effect.
 class MStart : public MNullaryInstruction
 {
@@ -790,7 +972,7 @@ class MConstant : public MNullaryInstruction
     void printOpcode(FILE *fp) const;
 
     HashNumber valueHash() const;
-    bool congruentTo(MDefinition * const &ins) const;
+    bool congruentTo(MDefinition *ins) const;
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
@@ -824,7 +1006,7 @@ class MParameter : public MNullaryInstruction
     void printOpcode(FILE *fp) const;
 
     HashNumber valueHash() const;
-    bool congruentTo(MDefinition * const &ins) const;
+    bool congruentTo(MDefinition *ins) const;
 };
 
 class MCallee : public MNullaryInstruction
@@ -839,12 +1021,40 @@ class MCallee : public MNullaryInstruction
   public:
     INSTRUCTION_HEADER(Callee)
 
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
 
     static MCallee *New() {
         return new MCallee();
+    }
+    AliasSet getAliasSet() const {
+        return AliasSet::None();
+    }
+};
+
+// MForceUse exists to force the use of a resumePoint-recorded
+// instruction at a later point in time, so that the contents don't get
+// discarded when inlining.
+class MForceUse : public MUnaryInstruction
+{
+  public:
+    MForceUse(MDefinition *input)
+      : MUnaryInstruction(input)
+    {
+        setGuard();
+        setResultType(MIRType_None);
+    }
+
+  public:
+    INSTRUCTION_HEADER(ForceUse)
+
+    bool congruentTo(MDefinition *ins) const {
+        return false;
+    }
+
+    static MForceUse *New(MDefinition *input) {
+        return new MForceUse(input);
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
@@ -1142,6 +1352,9 @@ class MThrow
     virtual AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MNewParallelArray : public MNullaryInstruction
@@ -1268,22 +1481,21 @@ class MNewObject : public MNullaryInstruction
 };
 
 // Could be allocating either a new array or a new object.
-class MParNew : public MUnaryInstruction
+class MNewPar : public MUnaryInstruction
 {
     CompilerRootObject templateObject_;
 
   public:
-    INSTRUCTION_HEADER(ParNew);
+    INSTRUCTION_HEADER(NewPar);
 
-    MParNew(MDefinition *parSlice,
-            JSObject *templateObject)
-      : MUnaryInstruction(parSlice),
+    MNewPar(MDefinition *slice, JSObject *templateObject)
+      : MUnaryInstruction(slice),
         templateObject_(templateObject)
     {
         setResultType(MIRType_Object);
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 
@@ -1292,13 +1504,13 @@ class MParNew : public MUnaryInstruction
     }
 };
 
-// Could be allocating either a new array or a new object.
-class MParBailout : public MAryControlInstruction<0, 0>
+// Abort parallel execution.
+class MAbortPar : public MAryControlInstruction<0, 0>
 {
   public:
-    INSTRUCTION_HEADER(ParBailout);
+    INSTRUCTION_HEADER(AbortPar);
 
-    MParBailout()
+    MAbortPar()
       : MAryControlInstruction<0, 0>()
     {
         setResultType(MIRType_Undefined);
@@ -1343,6 +1555,41 @@ class MInitProp
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
+};
+
+class MInitPropGetterSetter
+  : public MBinaryInstruction,
+    public MixPolicy<ObjectPolicy<0>, ObjectPolicy<1> >
+{
+    CompilerRootPropertyName name_;
+
+    MInitPropGetterSetter(MDefinition *obj, PropertyName *name, MDefinition *value)
+      : MBinaryInstruction(obj, value),
+        name_(name)
+    { }
+
+  public:
+    INSTRUCTION_HEADER(InitPropGetterSetter)
+
+    static MInitPropGetterSetter *New(MDefinition *obj, PropertyName *name, MDefinition *value) {
+        return new MInitPropGetterSetter(obj, name, value);
+    }
+
+    MDefinition *object() const {
+        return getOperand(0);
+    }
+    MDefinition *value() const {
+        return getOperand(1);
+    }
+    PropertyName *name() const {
+        return name_;
+    }
+    TypePolicy *typePolicy() {
+        return this;
+    }
 };
 
 class MInitElem
@@ -1371,6 +1618,38 @@ class MInitElem
         return getOperand(1);
     }
     MDefinition *getValue() const {
+        return getOperand(2);
+    }
+    TypePolicy *typePolicy() {
+        return this;
+    }
+    bool possiblyCalls() const {
+        return true;
+    }
+};
+
+class MInitElemGetterSetter
+  : public MTernaryInstruction,
+    public Mix3Policy<ObjectPolicy<0>, BoxPolicy<1>, ObjectPolicy<2> >
+{
+    MInitElemGetterSetter(MDefinition *obj, MDefinition *id, MDefinition *value)
+      : MTernaryInstruction(obj, id, value)
+    { }
+
+  public:
+    INSTRUCTION_HEADER(InitElemGetterSetter)
+
+    static MInitElemGetterSetter *New(MDefinition *obj, MDefinition *id, MDefinition *value) {
+        return new MInitElemGetterSetter(obj, id, value);
+    }
+
+    MDefinition *object() const {
+        return getOperand(0);
+    }
+    MDefinition *idValue() const {
+        return getOperand(1);
+    }
+    MDefinition *value() const {
         return getOperand(2);
     }
     TypePolicy *typePolicy() {
@@ -1529,6 +1808,10 @@ class MCall
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::Any);
     }
+
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 // fun.apply(self, arguments)
@@ -1573,6 +1856,27 @@ class MApplyArgs
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
+};
+
+class MBail : public MNullaryInstruction
+{
+  protected:
+    MBail()
+    {
+        setGuard();
+    }
+
+  public:
+    INSTRUCTION_HEADER(Bail)
+
+    static MBail *
+    New() {
+        return new MBail();
+    }
+
 };
 
 class MGetDynamicName
@@ -1605,6 +1909,9 @@ class MGetDynamicName
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 // Bailout if the input string contains 'arguments'
@@ -1634,6 +1941,9 @@ class MFilterArguments
 
     TypePolicy *typePolicy() {
         return this;
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -1679,176 +1989,12 @@ class MCallDirectEval
         return this;
     }
 
+    bool possiblyCalls() const {
+        return true;
+    }
+
   private:
     jsbytecode *pc_;
-};
-
-class MBinaryInstruction : public MAryInstruction<2>
-{
-  protected:
-    MBinaryInstruction(MDefinition *left, MDefinition *right)
-    {
-        setOperand(0, left);
-        setOperand(1, right);
-    }
-
-  public:
-    MDefinition *lhs() const {
-        return getOperand(0);
-    }
-    MDefinition *rhs() const {
-        return getOperand(1);
-    }
-
-  protected:
-    HashNumber valueHash() const
-    {
-        MDefinition *lhs = getOperand(0);
-        MDefinition *rhs = getOperand(1);
-
-        return op() ^ lhs->valueNumber() ^ rhs->valueNumber();
-    }
-    void swapOperands() {
-        MDefinition *temp = getOperand(0);
-        replaceOperand(0, getOperand(1));
-        replaceOperand(1, temp);
-    }
-
-    bool congruentTo(MDefinition *const &ins) const
-    {
-        if (op() != ins->op())
-            return false;
-
-        if (type() != ins->type())
-            return false;
-
-        if (isEffectful() || ins->isEffectful())
-            return false;
-
-        MDefinition *left = getOperand(0);
-        MDefinition *right = getOperand(1);
-        MDefinition *tmp;
-
-        if (isCommutative() && left->valueNumber() > right->valueNumber()) {
-            tmp = right;
-            right = left;
-            left = tmp;
-        }
-
-        MBinaryInstruction *bi = static_cast<MBinaryInstruction *>(ins);
-        MDefinition *insLeft = bi->getOperand(0);
-        MDefinition *insRight = bi->getOperand(1);
-        if (isCommutative() && insLeft->valueNumber() > insRight->valueNumber()) {
-            tmp = insRight;
-            insRight = insLeft;
-            insLeft = tmp;
-        }
-
-        return (left->valueNumber() == insLeft->valueNumber()) &&
-               (right->valueNumber() == insRight->valueNumber());
-    }
-
-    // Return true if the operands to this instruction are both unsigned,
-    // in which case any wrapping operands were replaced with the underlying
-    // int32 operands.
-    bool tryUseUnsignedOperands();
-};
-
-class MTernaryInstruction : public MAryInstruction<3>
-{
-  protected:
-    MTernaryInstruction(MDefinition *first, MDefinition *second, MDefinition *third)
-    {
-        setOperand(0, first);
-        setOperand(1, second);
-        setOperand(2, third);
-    }
-
-  protected:
-    HashNumber valueHash() const
-    {
-        MDefinition *first = getOperand(0);
-        MDefinition *second = getOperand(1);
-        MDefinition *third = getOperand(2);
-
-        return op() ^ first->valueNumber() ^ second->valueNumber() ^ third->valueNumber();
-    }
-
-    bool congruentTo(MDefinition *const &ins) const
-    {
-        if (op() != ins->op())
-            return false;
-
-        if (type() != ins->type())
-            return false;
-
-        if (isEffectful() || ins->isEffectful())
-            return false;
-
-        MTernaryInstruction *ter = static_cast<MTernaryInstruction *>(ins);
-        MDefinition *first = getOperand(0);
-        MDefinition *second = getOperand(1);
-        MDefinition *third = getOperand(2);
-        MDefinition *insFirst = ter->getOperand(0);
-        MDefinition *insSecond = ter->getOperand(1);
-        MDefinition *insThird = ter->getOperand(2);
-
-        return first->valueNumber() == insFirst->valueNumber() &&
-               second->valueNumber() == insSecond->valueNumber() &&
-               third->valueNumber() == insThird->valueNumber();
-    }
-};
-
-class MQuaternaryInstruction : public MAryInstruction<4>
-{
-  protected:
-    MQuaternaryInstruction(MDefinition *first, MDefinition *second,
-                           MDefinition *third, MDefinition *fourth)
-    {
-        setOperand(0, first);
-        setOperand(1, second);
-        setOperand(2, third);
-        setOperand(3, fourth);
-    }
-
-  protected:
-    HashNumber valueHash() const
-    {
-        MDefinition *first = getOperand(0);
-        MDefinition *second = getOperand(1);
-        MDefinition *third = getOperand(2);
-        MDefinition *fourth = getOperand(3);
-
-        return op() ^ first->valueNumber() ^ second->valueNumber() ^
-                      third->valueNumber() ^ fourth->valueNumber();
-    }
-
-    bool congruentTo(MDefinition *const &ins) const
-    {
-        if (op() != ins->op())
-            return false;
-
-        if (type() != ins->type())
-            return false;
-
-        if (isEffectful() || ins->isEffectful())
-            return false;
-
-        MQuaternaryInstruction *qua = static_cast<MQuaternaryInstruction *>(ins);
-        MDefinition *first = getOperand(0);
-        MDefinition *second = getOperand(1);
-        MDefinition *third = getOperand(2);
-        MDefinition *fourth = getOperand(3);
-        MDefinition *insFirst = qua->getOperand(0);
-        MDefinition *insSecond = qua->getOperand(1);
-        MDefinition *insThird = qua->getOperand(2);
-        MDefinition *insFourth = qua->getOperand(3);
-
-        return first->valueNumber() == insFirst->valueNumber() &&
-               second->valueNumber() == insSecond->valueNumber() &&
-               third->valueNumber() == insThird->valueNumber() &&
-               fourth->valueNumber() == insFourth->valueNumber();
-    }
 };
 
 class MCompare
@@ -1970,7 +2116,7 @@ class MCompare
     void printOpcode(FILE *fp) const;
 
   protected:
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!MBinaryInstruction::congruentTo(ins))
             return false;
         return compareType() == ins->toCompare()->compareType() &&
@@ -2006,7 +2152,7 @@ class MBox : public MUnaryInstruction
         return new MBox(ins);
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2085,7 +2231,7 @@ class MUnbox : public MUnaryInstruction, public BoxInputsPolicy
     bool fallible() const {
         return mode() != Infallible;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isUnbox() || ins->toUnbox()->mode() != mode())
             return false;
         return congruentIfOperandsEqual(ins);
@@ -2212,6 +2358,9 @@ class MCreateThisWithProto
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 // Caller-side allocation of |this| for |new|:
@@ -2244,6 +2393,9 @@ class MCreateThis
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 // Eager initialization of arguments object.
@@ -2274,6 +2426,9 @@ class MCreateArgumentsObject
 
     TypePolicy *typePolicy() {
         return this;
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -2368,6 +2523,9 @@ class MRunOncePrologue
 
     static MRunOncePrologue *New() {
         return new MRunOncePrologue();
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -2491,7 +2649,7 @@ class MToDouble
     }
 
     MDefinition *foldsTo(bool useValueNumbers);
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isToDouble() || ins->toToDouble()->conversion() != conversion())
             return false;
         return congruentIfOperandsEqual(ins);
@@ -2523,7 +2681,7 @@ class MAsmJSUnsignedToDouble
     }
 
     MDefinition *foldsTo(bool useValueNumbers);
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2565,7 +2723,7 @@ class MToInt32 : public MUnaryInstruction
         canBeNegativeZero_ = negativeZero;
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
 
@@ -2597,7 +2755,7 @@ class MTruncateToInt32 : public MUnaryInstruction
 
     MDefinition *foldsTo(bool useValueNumbers);
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2627,7 +2785,7 @@ class MToString : public MUnaryInstruction
 
     MDefinition *foldsTo(bool useValueNumbers);
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2660,7 +2818,7 @@ class MBitNot
     MDefinition *foldsTo(bool useValueNumbers);
     void infer();
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2756,7 +2914,7 @@ class MBinaryBitwiseInstruction
     virtual MDefinition *foldIfEqual()  = 0;
     virtual void infer(BaselineInspector *inspector, jsbytecode *pc);
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -2970,7 +3128,7 @@ class MBinaryArithInstruction
         setResultType(MIRType_Int32);
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return MBinaryInstruction::congruentTo(ins);
     }
     AliasSet getAliasSet() const {
@@ -3019,7 +3177,7 @@ class MMinMax
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isMinMax())
             return false;
         if (isMax() != ins->toMinMax()->isMax())
@@ -3056,7 +3214,8 @@ class MAbs
     }
     static MAbs *NewAsmJS(MDefinition *num, MIRType type) {
         MAbs *ins = new MAbs(num, type);
-        ins->implicitTruncate_ = true;
+        if (type == MIRType_Int32)
+            ins->implicitTruncate_ = true;
         return ins;
     }
     MDefinition *num() const {
@@ -3065,7 +3224,7 @@ class MAbs
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     bool fallible() const;
@@ -3103,7 +3262,7 @@ class MSqrt
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
 
@@ -3142,12 +3301,16 @@ class MAtan2
         return this;
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -3176,7 +3339,7 @@ class MPow
     MDefinition *power() const {
         return rhs();
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     TypePolicy *typePolicy() {
@@ -3184,6 +3347,9 @@ class MPow
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -3204,7 +3370,7 @@ class MPowHalf
     static MPowHalf *New(MDefinition *input) {
         return new MPowHalf(input);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     TypePolicy *typePolicy() {
@@ -3231,6 +3397,10 @@ class MRandom : public MNullaryInstruction
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -3288,7 +3458,7 @@ class MMathFunction
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isMathFunction())
             return false;
         if (ins->toMathFunction()->function() != function())
@@ -3298,6 +3468,10 @@ class MMathFunction
 
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -3510,10 +3684,12 @@ class MDiv : public MBinaryArithInstruction
 class MMod : public MBinaryArithInstruction
 {
     bool unsigned_;
+    bool canBeNegativeDividend_;
 
     MMod(MDefinition *left, MDefinition *right, MIRType type)
       : MBinaryArithInstruction(left, right),
-        unsigned_(false)
+        unsigned_(false),
+        canBeNegativeDividend_(true)
     {
         if (type != MIRType_Value)
             specialization_ = type;
@@ -3538,7 +3714,10 @@ class MMod : public MBinaryArithInstruction
         MOZ_ASSUME_UNREACHABLE("not used");
     }
 
-    bool canBeNegativeDividend() const;
+    bool canBeNegativeDividend() const {
+        JS_ASSERT(specialization_ == MIRType_Int32);
+        return canBeNegativeDividend_;
+    }
     bool canBeDivideByZero() const;
     bool canBePowerOfTwoDivisor() const;
 
@@ -3550,6 +3729,7 @@ class MMod : public MBinaryArithInstruction
 
     void computeRange();
     bool truncate();
+    void collectRangeInfo();
 };
 
 class MConcat
@@ -3572,7 +3752,7 @@ class MConcat
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -3580,29 +3760,29 @@ class MConcat
     }
 };
 
-class MParConcat
+class MConcatPar
   : public MTernaryInstruction,
     public MixPolicy<StringPolicy<1>, StringPolicy<2> >
 {
-    MParConcat(MDefinition *parSlice, MDefinition *left, MDefinition *right)
-      : MTernaryInstruction(parSlice, left, right)
+    MConcatPar(MDefinition *slice, MDefinition *left, MDefinition *right)
+      : MTernaryInstruction(slice, left, right)
     {
         setMovable();
         setResultType(MIRType_String);
     }
 
   public:
-    INSTRUCTION_HEADER(ParConcat)
+    INSTRUCTION_HEADER(ConcatPar)
 
-    static MParConcat *New(MDefinition *parSlice, MDefinition *left, MDefinition *right) {
-        return new MParConcat(parSlice, left, right);
+    static MConcatPar *New(MDefinition *slice, MDefinition *left, MDefinition *right) {
+        return new MConcatPar(slice, left, right);
     }
 
-    static MParConcat *New(MDefinition *parSlice, MConcat *concat) {
-        return New(parSlice, concat->lhs(), concat->rhs());
+    static MConcatPar *New(MDefinition *slice, MConcat *concat) {
+        return New(slice, concat->lhs(), concat->rhs());
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
     MDefinition *lhs() const {
@@ -3615,7 +3795,7 @@ class MParConcat
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -3767,7 +3947,7 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
 
     MDefinition *foldsTo(bool useValueNumbers);
 
-    bool congruentTo(MDefinition * const &ins) const;
+    bool congruentTo(MDefinition *ins) const;
 
     bool isIterator() const {
         return isIterator_;
@@ -3896,39 +4076,39 @@ class MCheckOverRecursed : public MNullaryInstruction
 
 // Check the current frame for over-recursion past the global stack limit.
 // Uses the per-thread recursion limit.
-class MParCheckOverRecursed : public MUnaryInstruction
+class MCheckOverRecursedPar : public MUnaryInstruction
 {
   public:
-    INSTRUCTION_HEADER(ParCheckOverRecursed);
+    INSTRUCTION_HEADER(CheckOverRecursedPar);
 
-    MParCheckOverRecursed(MDefinition *parForkJoinSlice)
-      : MUnaryInstruction(parForkJoinSlice)
+    MCheckOverRecursedPar(MDefinition *slice)
+      : MUnaryInstruction(slice)
     {
         setResultType(MIRType_None);
         setGuard();
         setMovable();
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 };
 
 // Check for an interrupt (or rendezvous) in parallel mode.
-class MParCheckInterrupt : public MUnaryInstruction
+class MCheckInterruptPar : public MUnaryInstruction
 {
   public:
-    INSTRUCTION_HEADER(ParCheckInterrupt);
+    INSTRUCTION_HEADER(CheckInterruptPar);
 
-    MParCheckInterrupt(MDefinition *parForkJoinSlice)
-      : MUnaryInstruction(parForkJoinSlice)
+    MCheckInterruptPar(MDefinition *slice)
+      : MUnaryInstruction(slice)
     {
         setResultType(MIRType_None);
         setGuard();
         setMovable();
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 };
@@ -3981,7 +4161,9 @@ class MDefVar : public MUnaryInstruction
     MDefinition *scopeChain() const {
         return getOperand(0);
     }
-
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MDefFun : public MUnaryInstruction
@@ -4006,6 +4188,9 @@ class MDefFun : public MUnaryInstruction
     }
     MDefinition *scopeChain() const {
         return getOperand(0);
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -4040,6 +4225,9 @@ class MRegExp : public MNullaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MRegExpTest
@@ -4070,6 +4258,10 @@ class MRegExpTest
 
     TypePolicy *typePolicy() {
         return this;
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -4104,15 +4296,14 @@ class MLambda
     }
 };
 
-class MParLambda
+class MLambdaPar
   : public MBinaryInstruction,
     public SingleObjectPolicy
 {
     CompilerRootFunction fun_;
 
-    MParLambda(MDefinition *parSlice,
-               MDefinition *scopeChain, JSFunction *fun)
-      : MBinaryInstruction(parSlice, scopeChain), fun_(fun)
+    MLambdaPar(MDefinition *slice, MDefinition *scopeChain, JSFunction *fun)
+      : MBinaryInstruction(slice, scopeChain), fun_(fun)
     {
         JS_ASSERT(!fun->hasSingletonType());
         JS_ASSERT(!types::UseNewTypeForClone(fun));
@@ -4121,21 +4312,17 @@ class MParLambda
     }
 
   public:
-    INSTRUCTION_HEADER(ParLambda);
+    INSTRUCTION_HEADER(LambdaPar);
 
-    static MParLambda *New(MDefinition *parSlice,
-                           MDefinition *scopeChain, JSFunction *fun) {
-        return new MParLambda(parSlice, scopeChain, fun);
+    static MLambdaPar *New(MDefinition *slice, MDefinition *scopeChain, JSFunction *fun) {
+        return new MLambdaPar(slice, scopeChain, fun);
     }
 
-    static MParLambda *New(MDefinition *parSlice,
-                           MLambda *originalInstruction) {
-        return New(parSlice,
-                   originalInstruction->scopeChain(),
-                   originalInstruction->fun());
+    static MLambdaPar *New(MDefinition *slice, MLambda *lambda) {
+        return New(slice, lambda->scopeChain(), lambda->fun());
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 
@@ -4203,7 +4390,7 @@ class MSlots
     MDefinition *object() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4236,7 +4423,7 @@ class MElements
     MDefinition *object() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4273,7 +4460,7 @@ class MConstantElements : public MNullaryInstruction
         return (HashNumber)(size_t) value_;
     }
 
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return ins->isConstantElements() && ins->toConstantElements()->value() == value();
     }
 
@@ -4304,7 +4491,7 @@ class MConvertElementsToDoubles
     MDefinition *elements() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4350,7 +4537,7 @@ class MMaybeToDoubleElement
     MDefinition *value() const {
         return getOperand(1);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4379,7 +4566,7 @@ class MInitializedLength
     MDefinition *elements() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4432,7 +4619,7 @@ class MArrayLength
     MDefinition *elements() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4465,7 +4652,7 @@ class MTypedArrayLength
     MDefinition *object() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4500,7 +4687,7 @@ class MTypedArrayElements
     MDefinition *object() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -4603,7 +4790,7 @@ class MBoundsCheck
     void setMaximum(int32_t n) {
         maximum_ = n;
     }
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isBoundsCheck())
             return false;
         MBoundsCheck *other = ins->toBoundsCheck();
@@ -4994,6 +5181,9 @@ class MArrayConcat
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MLoadTypedArrayElement
@@ -5087,7 +5277,9 @@ class MLoadTypedArrayElementHole
 };
 
 // Load a value fallibly or infallibly from a statically known typed array.
-class MLoadTypedArrayElementStatic : public MUnaryInstruction
+class MLoadTypedArrayElementStatic
+  : public MUnaryInstruction,
+    public IntPolicy<0>
 {
     MLoadTypedArrayElementStatic(TypedArrayObject *typedArray, MDefinition *ptr)
       : MUnaryInstruction(ptr), typedArray_(typedArray), fallible_(true)
@@ -5124,6 +5316,10 @@ class MLoadTypedArrayElementStatic : public MUnaryInstruction
 
     void setInfallible() {
         fallible_ = false;
+    }
+
+    TypePolicy *typePolicy() {
+        return this;
     }
 
     void computeRange();
@@ -5190,6 +5386,7 @@ class MStoreTypedArrayElement
     void setRacy() {
         racy_ = true;
     }
+    bool isOperandTruncated(size_t index) const;
 };
 
 class MStoreTypedArrayElementHole
@@ -5252,6 +5449,7 @@ class MStoreTypedArrayElementHole
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::TypedArrayElement);
     }
+    bool isOperandTruncated(size_t index) const;
 };
 
 // Store a value infallibly to a statically known typed array.
@@ -5279,6 +5477,11 @@ class MStoreTypedArrayElementStatic :
     }
 
     ArrayBufferView::ViewType viewType() const { return JS_GetArrayBufferViewType(typedArray_); }
+    bool isFloatArray() const {
+        return (viewType() == ArrayBufferView::TYPE_FLOAT32 ||
+                viewType() == ArrayBufferView::TYPE_FLOAT64);
+    }
+
     void *base() const;
     size_t length() const;
 
@@ -5287,6 +5490,7 @@ class MStoreTypedArrayElementStatic :
     AliasSet getAliasSet() const {
         return AliasSet::Store(AliasSet::TypedArrayElement);
     }
+    bool isOperandTruncated(size_t index) const;
 };
 
 // Compute an "effective address", i.e., a compound computation of the form:
@@ -5349,7 +5553,7 @@ class MClampToUint8
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -5389,7 +5593,7 @@ class MLoadFixedSlot
     size_t slot() const {
         return slot_;
     }
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isLoadFixedSlot())
             return false;
         if (slot() != ins->toLoadFixedSlot()->slot())
@@ -5510,7 +5714,7 @@ class InlinePropertyTable : public TempObject
     void trimTo(AutoObjectVector &targets, Vector<bool> &choiceSet);
 
     // Ensure that the InlinePropertyTable's domain is a subset of |targets|.
-    void trimToAndMaybePatchTargets(AutoObjectVector &targets, AutoObjectVector &originals);
+    void trimToTargets(AutoObjectVector &targets);
 };
 
 class MGetPropertyCache
@@ -5580,7 +5784,7 @@ class MGetPropertyCache
     }
     TypePolicy *typePolicy() { return this; }
 
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!idempotent_)
             return false;
         if (!ins->isGetPropertyCache())
@@ -5637,7 +5841,7 @@ class MGetPropertyPolymorphic
         return new MGetPropertyPolymorphic(obj, name);
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isGetPropertyPolymorphic())
             return false;
         if (name() != ins->toGetPropertyPolymorphic()->name())
@@ -6153,7 +6357,7 @@ class MGuardShape
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isGuardShape())
             return false;
         if (shape() != ins->toGuardShape()->shape())
@@ -6205,7 +6409,7 @@ class MGuardObjectType
     bool bailOnEquality() const {
         return bailOnEquality_;
     }
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isGuardObjectType())
             return false;
         if (typeObject() != ins->toGuardObjectType()->typeObject())
@@ -6250,7 +6454,7 @@ class MGuardClass
     const Class *getClass() const {
         return class_;
     }
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isGuardClass())
             return false;
         if (getClass() != ins->toGuardClass()->getClass())
@@ -6295,7 +6499,7 @@ class MLoadSlot
         return slot_;
     }
 
-    bool congruentTo(MDefinition * const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!ins->isLoadSlot())
             return false;
         if (slot() != ins->toLoadSlot()->slot())
@@ -6344,22 +6548,26 @@ class MFunctionEnvironment
 
 // Loads the current js::ForkJoinSlice*.
 // Only applicable in ParallelExecution.
-class MParSlice
+class MForkJoinSlice
   : public MNullaryInstruction
 {
   public:
-    MParSlice()
+    MForkJoinSlice()
         : MNullaryInstruction()
     {
         setResultType(MIRType_ForkJoinSlice);
     }
 
-    INSTRUCTION_HEADER(ParSlice);
+    INSTRUCTION_HEADER(ForkJoinSlice);
 
     AliasSet getAliasSet() const {
         // Indicate that this instruction reads nothing, stores nothing.
         // (For all intents and purposes)
         return AliasSet::None();
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -6484,6 +6692,9 @@ class MCallGetIntrinsicValue : public MNullaryInstruction
     }
     AliasSet getAliasSet() const {
         return AliasSet::None();
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -6629,6 +6840,9 @@ class MCallSetProperty
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MSetPropertyCache
@@ -6722,6 +6936,9 @@ class MCallGetProperty
             return AliasSet::Store(AliasSet::Any);
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 // Inline call to handle lhs[rhs]. The first input is a Value so that this
@@ -6745,6 +6962,9 @@ class MCallGetElement
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MCallSetElement
@@ -6765,6 +6985,9 @@ class MCallSetElement
 
     TypePolicy *typePolicy() {
         return this;
+    }
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -6804,6 +7027,9 @@ class MCallInitElementArray
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MSetDOMProperty
@@ -6842,6 +7068,10 @@ class MSetDOMProperty
 
     TypePolicy *typePolicy() {
         return this;
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -6902,7 +7132,7 @@ class MGetDOMProperty
         return this;
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         if (!isDomPure())
             return false;
 
@@ -6928,6 +7158,9 @@ class MGetDOMProperty
         return AliasSet::Store(AliasSet::Any);
     }
 
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MStringLength
@@ -6956,7 +7189,7 @@ class MStringLength
     MDefinition *string() const {
         return getOperand(0);
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -7138,6 +7371,9 @@ class MIn
     TypePolicy *typePolicy() {
         return this;
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 
@@ -7147,12 +7383,14 @@ class MInArray
     public ObjectPolicy<3>
 {
     bool needsHoleCheck_;
+    bool needsNegativeIntCheck_;
 
     MInArray(MDefinition *elements, MDefinition *index,
              MDefinition *initLength, MDefinition *object,
              bool needsHoleCheck)
       : MQuaternaryInstruction(elements, index, initLength, object),
-        needsHoleCheck_(needsHoleCheck)
+        needsHoleCheck_(needsHoleCheck),
+        needsNegativeIntCheck_(true)
     {
         setResultType(MIRType_Boolean);
         setMovable();
@@ -7186,13 +7424,17 @@ class MInArray
     bool needsHoleCheck() const {
         return needsHoleCheck_;
     }
-    bool needsNegativeIntCheck() const;
+    bool needsNegativeIntCheck() const {
+        return needsNegativeIntCheck_;
+    }
+    void collectRangeInfo();
     AliasSet getAliasSet() const {
         return AliasSet::Load(AliasSet::Element);
     }
     TypePolicy *typePolicy() {
         return this;
     }
+
 };
 
 // Implementation for instanceof operator with specific rhs.
@@ -7255,7 +7497,7 @@ class MArgumentsLength : public MNullaryInstruction
         return new MArgumentsLength();
     }
 
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -7290,7 +7532,7 @@ class MGetArgument
     TypePolicy *typePolicy() {
         return this;
     }
-    bool congruentTo(MDefinition *const &ins) const {
+    bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
     AliasSet getAliasSet() const {
@@ -7348,16 +7590,19 @@ class MRest
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
-class MParRest
+class MRestPar
   : public MBinaryInstruction,
     public MRestCommon,
     public IntPolicy<1>
 {
-    MParRest(MDefinition *parSlice, MDefinition *numActuals, unsigned numFormals,
+    MRestPar(MDefinition *slice, MDefinition *numActuals, unsigned numFormals,
              JSObject *templateObject)
-      : MBinaryInstruction(parSlice, numActuals),
+      : MBinaryInstruction(slice, numActuals),
         MRestCommon(numFormals, templateObject)
     {
         setResultType(MIRType_Object);
@@ -7365,17 +7610,18 @@ class MParRest
     }
 
   public:
-    INSTRUCTION_HEADER(ParRest);
+    INSTRUCTION_HEADER(RestPar);
 
-    static MParRest *New(MDefinition *parSlice, MDefinition *numActuals, unsigned numFormals,
+    static MRestPar *New(MDefinition *slice, MDefinition *numActuals, unsigned numFormals,
                          JSObject *templateObject) {
-        return new MParRest(parSlice, numActuals, numFormals, templateObject);
+        return new MRestPar(slice, numActuals, numFormals, templateObject);
     }
-    static MParRest *New(MDefinition *parSlice, MRest *rest) {
-        return new MParRest(parSlice, rest->numActuals(), rest->numFormals(), rest->templateObject());
+    static MRestPar *New(MDefinition *slice, MRest *rest) {
+        return new MRestPar(slice, rest->numActuals(), rest->numFormals(),
+                            rest->templateObject());
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
     MDefinition *numActuals() const {
@@ -7388,15 +7634,18 @@ class MParRest
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
-class MParWriteGuard
+// Guard on an object being allocated in the current slice.
+class MGuardThreadLocalObject
   : public MBinaryInstruction,
     public ObjectPolicy<1>
 {
-    MParWriteGuard(MDefinition *parThreadContext,
-                   MDefinition *obj)
-      : MBinaryInstruction(parThreadContext, obj)
+    MGuardThreadLocalObject(MDefinition *slice, MDefinition *obj)
+      : MBinaryInstruction(slice, obj)
     {
         setResultType(MIRType_None);
         setGuard();
@@ -7404,12 +7653,12 @@ class MParWriteGuard
     }
 
   public:
-    INSTRUCTION_HEADER(ParWriteGuard);
+    INSTRUCTION_HEADER(GuardThreadLocalObject);
 
-    static MParWriteGuard *New(MDefinition *parThreadContext, MDefinition *obj) {
-        return new MParWriteGuard(parThreadContext, obj);
+    static MGuardThreadLocalObject *New(MDefinition *slice, MDefinition *obj) {
+        return new MGuardThreadLocalObject(slice, obj);
     }
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
     MDefinition *object() const {
@@ -7421,27 +7670,8 @@ class MParWriteGuard
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
-};
-
-class MParDump
-  : public MUnaryInstruction,
-    public BoxPolicy<0>
-{
-  public:
-    INSTRUCTION_HEADER(ParDump);
-
-    MParDump(MDefinition *v)
-      : MUnaryInstruction(v)
-    {
-        setResultType(MIRType_None);
-    }
-
-    MDefinition *value() const {
-        return getOperand(0);
-    }
-
-    TypePolicy *typePolicy() {
-        return this;
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -7482,7 +7712,7 @@ class MTypeBarrier
         return this;
     }
 
-    bool congruentTo(MDefinition * const &def) const {
+    bool congruentTo(MDefinition *def) const {
         return false;
     }
     BailoutKind bailoutKind() const {
@@ -7583,6 +7813,9 @@ class MNewSlots : public MNullaryInstruction
     AliasSet getAliasSet() const {
         return AliasSet::None();
     }
+    bool possiblyCalls() const {
+        return true;
+    }
 };
 
 class MNewDeclEnvObject : public MNullaryInstruction
@@ -7645,35 +7878,31 @@ class MNewCallObject : public MUnaryInstruction
     }
 };
 
-class MParNewCallObject : public MBinaryInstruction
+class MNewCallObjectPar : public MBinaryInstruction
 {
     CompilerRootObject templateObj_;
 
-    MParNewCallObject(MDefinition *parSlice,
-                      JSObject *templateObj, MDefinition *slots)
-        : MBinaryInstruction(parSlice, slots),
+    MNewCallObjectPar(MDefinition *slice, JSObject *templateObj, MDefinition *slots)
+        : MBinaryInstruction(slice, slots),
           templateObj_(templateObj)
     {
         setResultType(MIRType_Object);
     }
 
   public:
-    INSTRUCTION_HEADER(ParNewCallObject);
+    INSTRUCTION_HEADER(NewCallObjectPar);
 
-    static MParNewCallObject *New(MDefinition *parSlice,
-                                  JSObject *templateObj,
-                                  MDefinition *slots) {
-        return new MParNewCallObject(parSlice, templateObj, slots);
+    static MNewCallObjectPar *New(MDefinition *slice, JSObject *templateObj,
+                                  MDefinition *slots)
+    {
+        return new MNewCallObjectPar(slice, templateObj, slots);
     }
 
-    static MParNewCallObject *New(MDefinition *parSlice,
-                                  MNewCallObject *originalInstruction) {
-        return New(parSlice,
-                   originalInstruction->templateObject(),
-                   originalInstruction->slots());
+    static MNewCallObjectPar *New(MDefinition *slice, MNewCallObject *callObj) {
+        return New(slice, callObj->templateObject(), callObj->slots());
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 
@@ -7794,23 +8023,21 @@ class MEnclosingScope : public MLoadFixedSlot
 // Creates a dense array of the given length.
 //
 // Note: the template object should be an *empty* dense array!
-class MParNewDenseArray : public MBinaryInstruction
+class MNewDenseArrayPar : public MBinaryInstruction
 {
     CompilerRootObject templateObject_;
 
   public:
-    INSTRUCTION_HEADER(ParNewDenseArray);
+    INSTRUCTION_HEADER(NewDenseArrayPar);
 
-    MParNewDenseArray(MDefinition *parSlice,
-                      MDefinition *length,
-                      JSObject *templateObject)
-      : MBinaryInstruction(parSlice, length),
+    MNewDenseArrayPar(MDefinition *slice, MDefinition *length, JSObject *templateObject)
+      : MBinaryInstruction(slice, length),
         templateObject_(templateObject)
     {
         setResultType(MIRType_Object);
     }
 
-    MDefinition *parSlice() const {
+    MDefinition *forkJoinSlice() const {
         return getOperand(0);
     }
 
@@ -7820,6 +8047,10 @@ class MParNewDenseArray : public MBinaryInstruction
 
     JSObject *templateObject() const {
         return templateObject_;
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
@@ -8326,6 +8557,10 @@ class MAsmJSCall MOZ_FINAL : public MInstruction
     }
     size_t spIncrement() const {
         return spIncrement_;
+    }
+
+    bool possiblyCalls() const {
+        return true;
     }
 };
 
