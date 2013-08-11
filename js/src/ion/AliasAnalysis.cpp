@@ -257,7 +257,8 @@ MDefinition::getAliasSetDependency(uint32_t aliasSetId)
 // Add the result of the current block into the destination block. Add Phi if
 // another block already added a different input to the destination block.
 static bool
-InheritEntryAliasSet(uint32_t aliasSetId, MBasicBlock *current, MBasicBlock *dest,
+InheritEntryAliasSet(MIRGraph &graph, uint32_t aliasSetId,
+                     MBasicBlock *current, MBasicBlock *dest,
                      MDefinition *initial, MDefinition *added)
 {
     MDefinition *last = dest->getAliasSetStore(aliasSetId);
@@ -303,9 +304,22 @@ InheritEntryAliasSet(uint32_t aliasSetId, MBasicBlock *current, MBasicBlock *des
         dest->setAliasSetStore(aliasSetId, phi);
 
         // If the block has already been visited, then we need to replace all
-        // dominated uses by the phi.  This case happen for loop back-edges.
-        if (current->id() >= dest->id())
+        // dominated uses by the phi.  This case happen for loop back-edges.  We
+        // also need to update the inherited entries of the successors of
+        // dominated blocks to handle outer loops.
+        if (current->id() >= dest->id()) {
             ReplaceDominatedMemoryUsesWith(aliasSetId, last, phi, dest);
+
+            for (ReversePostorderIterator block(graph.rpoBegin(dest)); *block != current; block++) {
+                if (!dest->dominates(*block))
+                    continue;
+
+                for (size_t s = 0; s < block->numSuccessors(); s++) {
+                    MBasicBlock *succ = block->getSuccessor(s);
+                    InheritEntryAliasSet(graph, aliasSetId, *block, succ, initial, phi);
+                }
+            }
+        }
 
         return true;
     }
@@ -401,7 +415,7 @@ AliasAnalysis::analyze()
         for (size_t s = 0; s < block->numSuccessors(); s++) {
             MBasicBlock *succ = block->getSuccessor(s);
             for (size_t i = 0; i < numAliasSets; i++)
-                InheritEntryAliasSet(i, *block, succ, firstIns, stores[i]);
+                InheritEntryAliasSet(graph_, i, *block, succ, firstIns, stores[i]);
         }
     }
 
