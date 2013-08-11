@@ -4,18 +4,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ion/Bailouts.h"
+
 #include "jsanalyze.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsinfer.h"
 
-#include "ion/Bailouts.h"
-#include "ion/SnapshotReader.h"
+#include "ion/BaselineJIT.h"
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
 #include "ion/IonSpewer.h"
+#include "ion/SnapshotReader.h"
 #include "vm/Interpreter.h"
-#include "ion/BaselineJIT.h"
 
 #include "vm/Stack-inl.h"
 
@@ -140,6 +141,44 @@ ion::InvalidationBailout(InvalidationBailoutStack *sp, size_t *frameSizeOut,
     return retval;
 }
 
+IonBailoutIterator::IonBailoutIterator(const JitActivationIterator &activations,
+                                       const IonFrameIterator &frame)
+  : IonFrameIterator(activations),
+    machine_(frame.machineState())
+{
+    returnAddressToFp_ = frame.returnAddressToFp();
+    topIonScript_ = frame.ionScript();
+    const OsiIndex *osiIndex = frame.osiIndex();
+
+    current_ = (uint8_t *) frame.fp();
+    type_ = IonFrame_OptimizedJS;
+    topFrameSize_ = frame.frameSize();
+    snapshotOffset_ = osiIndex->snapshotOffset();
+}
+
+uint32_t
+ion::ExceptionHandlerBailout(JSContext *cx, const InlineFrameIterator &frame,
+                             const ExceptionBailoutInfo &excInfo,
+                             BaselineBailoutInfo **bailoutInfo)
+{
+    JS_ASSERT(cx->isExceptionPending());
+
+    cx->mainThread().ionTop = NULL;
+    JitActivationIterator jitActivations(cx->runtime());
+    IonBailoutIterator iter(jitActivations, frame.frame());
+    JitActivation *activation = jitActivations.activation()->asJit();
+
+    *bailoutInfo = NULL;
+    uint32_t retval = BailoutIonToBaseline(cx, activation, iter, true, bailoutInfo, &excInfo);
+    JS_ASSERT(retval == BAILOUT_RETURN_OK ||
+              retval == BAILOUT_RETURN_FATAL_ERROR ||
+              retval == BAILOUT_RETURN_OVERRECURSED);
+
+    JS_ASSERT((retval == BAILOUT_RETURN_OK) == (*bailoutInfo != NULL));
+
+    return retval;
+}
+
 // Initialize the decl env Object, call object, and any arguments obj of the current frame.
 bool
 ion::EnsureHasScopeObjects(JSContext *cx, AbstractFramePtr fp)
@@ -156,19 +195,26 @@ ion::EnsureHasScopeObjects(JSContext *cx, AbstractFramePtr fp)
 bool
 ion::CheckFrequentBailouts(JSContext *cx, JSScript *script)
 {
-    // Invalidate if this script keeps bailing out without invalidation. Next time
-    // we compile this script LICM will be disabled.
+    if (script->hasIonScript()) {
+        // Invalidate if this script keeps bailing out without invalidation. Next time
+        // we compile this script LICM will be disabled.
+        IonScript *ionScript = script->ionScript();
 
-    if (script->hasIonScript() &&
-        script->ionScript()->numBailouts() >= js_IonOptions.frequentBailoutThreshold &&
-        !script->hadFrequentBailouts)
-    {
-        script->hadFrequentBailouts = true;
+        if (ionScript->numBailouts() >= js_IonOptions.frequentBailoutThreshold &&
+            !script->hadFrequentBailouts)
+        {
+            script->hadFrequentBailouts = true;
 
-        IonSpew(IonSpew_Invalidate, "Invalidating due to too many bailouts");
+            IonSpew(IonSpew_Invalidate, "Invalidating due to too many bailouts");
 
-        if (!Invalidate(cx, script))
-            return false;
+            if (!Invalidate(cx, script))
+                return false;
+        } else {
+            // If we keep bailing out to handle exceptions, invalidate and
+            // forbid compilation.
+            if (ionScript->numExceptionBailouts() >= js_IonOptions.exceptionBailoutThreshold)
+                ForbidCompilation(cx, script);
+        }
     }
 
     return true;

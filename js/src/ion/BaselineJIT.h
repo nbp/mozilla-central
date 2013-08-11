@@ -14,11 +14,10 @@
 #include "jscntxt.h"
 #include "jscompartment.h"
 
+#include "ds/LifoAlloc.h"
+#include "ion/Bailouts.h"
 #include "ion/IonCode.h"
 #include "ion/IonMacroAssembler.h"
-#include "ion/Bailouts.h"
-
-#include "ds/LifoAlloc.h"
 
 namespace js {
 namespace ion {
@@ -327,7 +326,8 @@ struct BaselineBailoutInfo
 
 uint32_t
 BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIterator &iter,
-                     bool invalidate, BaselineBailoutInfo **bailoutInfo);
+                     bool invalidate, BaselineBailoutInfo **bailoutInfo,
+                     const ExceptionBailoutInfo *exceptionInfo = NULL);
 
 // Mark baseline scripts on the stack as active, so that they are not discarded
 // during GC.

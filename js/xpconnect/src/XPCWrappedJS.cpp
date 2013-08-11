@@ -8,7 +8,6 @@
 
 #include "xpcprivate.h"
 #include "nsCxPusher.h"
-#include "nsAtomicRefcnt.h"
 #include "nsContentUtils.h"
 #include "nsProxyRelease.h"
 #include "nsThreadUtils.h"
@@ -20,9 +19,8 @@ using namespace mozilla;
 // NOTE: much of the fancy footwork is done in xpcstubs.cpp
 
 NS_IMETHODIMP
-NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::TraverseImpl
-   (NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS) *that, void *p,
-    nsCycleCollectionTraversalCallback &cb)
+NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::Traverse
+   (void *p, nsCycleCollectionTraversalCallback &cb)
 {
     nsISupports *s = static_cast<nsISupports*>(p);
     NS_ASSERTION(CheckForRightISupports(s),
@@ -67,6 +65,8 @@ NS_CYCLE_COLLECTION_CLASSNAME(nsXPCWrappedJS)::TraverseImpl
 
     return NS_OK;
 }
+
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXPCWrappedJS)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXPCWrappedJS)
     tmp->Unlink();
@@ -157,7 +157,7 @@ nsXPCWrappedJS::AddRef(void)
 {
     if (!MOZ_LIKELY(NS_IsMainThread() || NS_IsCycleCollectorThread()))
         MOZ_CRASH();
-    nsrefcnt cnt = NS_AtomicIncrementRefcnt(mRefCnt);
+    nsrefcnt cnt = ++mRefCnt;
     NS_LOG_ADDREF(this, cnt, "nsXPCWrappedJS", sizeof(*this));
 
     if (2 == cnt && IsValid()) {
@@ -197,7 +197,7 @@ nsXPCWrappedJS::Release(void)
 
 do_decrement:
 
-    nsrefcnt cnt = NS_AtomicDecrementRefcnt(mRefCnt);
+    nsrefcnt cnt = --mRefCnt;
     NS_LOG_RELEASE(this, cnt, "nsXPCWrappedJS");
 
     if (0 == cnt) {
@@ -275,7 +275,7 @@ CheckMainThreadOnly(nsXPCWrappedJS *aWrapper)
 
 // static
 nsresult
-nsXPCWrappedJS::GetNewOrUsed(JSObject* aJSObj,
+nsXPCWrappedJS::GetNewOrUsed(JS::HandleObject jsObj,
                              REFNSIID aIID,
                              nsISupports* aOuter,
                              nsXPCWrappedJS** wrapperResult)
@@ -285,7 +285,6 @@ nsXPCWrappedJS::GetNewOrUsed(JSObject* aJSObj,
         MOZ_CRASH();
 
     AutoJSContext cx;
-    JS::RootedObject jsObj(cx, aJSObj);
     JSObject2WrappedJSMap* map;
     nsXPCWrappedJS* root = nullptr;
     nsXPCWrappedJS* wrapper = nullptr;

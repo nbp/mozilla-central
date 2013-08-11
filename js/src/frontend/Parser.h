@@ -10,6 +10,7 @@
 /*
  * JS parser definitions.
  */
+
 #include "jsprvtd.h"
 #include "jspubtd.h"
 
@@ -100,13 +101,23 @@ struct ParseContext : public GenericParseContext
     StmtInfoPC      *topScopeStmt;  /* top lexical scope statement */
     Rooted<StaticBlockObject *> blockChain;
                                     /* compile time block scope chain */
+    Node            maybeFunction;  /* sc->isFunctionBox, the pn where pn->pn_funbox == sc */
 
     const unsigned  staticLevel;    /* static compilation unit nesting level */
 
-    uint32_t        parenDepth;     /* nesting depth of parens that might turn out
-                                       to be generator expressions */
-    uint32_t        yieldCount;     /* number of |yield| tokens encountered at
-                                       non-zero depth in current paren tree */
+    // Functions start off being parsed as NotGenerator.
+    // NotGenerator transitions to LegacyGenerator on parsing "yield" in JS 1.7.
+    enum GeneratorParseMode { NotGenerator, LegacyGenerator };
+    GeneratorParseMode generatorParseMode;
+
+    // lastYieldOffset stores the offset of the last yield that was parsed.
+    // NoYieldOffset is its initial value.
+    static const uint32_t NoYieldOffset = UINT32_MAX;
+    uint32_t         lastYieldOffset;
+
+    bool isGenerator() const { return generatorParseMode != NotGenerator; }
+    bool isLegacyGenerator() const { return generatorParseMode == LegacyGenerator; }
+
     Node            blockNode;      /* parse node for a block with let declarations
                                        (block with its own lexical scope)  */
   private:
@@ -190,11 +201,6 @@ struct ParseContext : public GenericParseContext
     bool generateFunctionBindings(ExclusiveContext *cx, LifoAlloc &alloc,
                                   InternalHandle<Bindings*> bindings) const;
 
-  public:
-    uint32_t         yieldOffset;   /* offset of a yield expression that might
-                                       be an error if we turn out to be inside
-                                       a generator expression.  Zero means
-                                       there isn't one. */
   private:
     ParseContext    **parserPC;     /* this points to the Parser's active pc
                                        and holds either |this| or one of
@@ -233,7 +239,8 @@ struct ParseContext : public GenericParseContext
     bool            inDeclDestructuring:1;
 
     ParseContext(Parser<ParseHandler> *prs, GenericParseContext *parent,
-                 SharedContext *sc, Directives *newDirectives,
+                 Node maybeFunction, SharedContext *sc,
+                 Directives *newDirectives,
                  unsigned staticLevel, uint32_t bodyid)
       : GenericParseContext(parent, sc),
         bodyid(0),           // initialized in init()
@@ -241,14 +248,14 @@ struct ParseContext : public GenericParseContext
         topStmt(NULL),
         topScopeStmt(NULL),
         blockChain(prs->context),
+        maybeFunction(maybeFunction),
         staticLevel(staticLevel),
-        parenDepth(0),
-        yieldCount(0),
+        generatorParseMode(NotGenerator),
+        lastYieldOffset(NoYieldOffset),
         blockNode(ParseHandler::null()),
         decls_(prs->context, prs->alloc),
         args_(prs->context),
         vars_(prs->context),
-        yieldOffset(0),
         parserPC(&prs->pc),
         oldpc(prs->pc),
         lexdeps(prs->context),
@@ -295,7 +302,8 @@ struct ParseContext : public GenericParseContext
 template <typename ParseHandler>
 inline
 Directives::Directives(ParseContext<ParseHandler> *parent)
-  : strict_(parent->sc->strict)
+  : strict_(parent->sc->strict),
+    asmJS_(parent->useAsmOrInsideUseAsm())
 {}
 
 template <typename ParseHandler>
@@ -327,6 +335,7 @@ class Parser : private AutoGCRooter, public StrictModeGetter
     ParseContext<ParseHandler> *pc;
 
     SourceCompressionToken *sct;        /* compression token for aborting */
+    ScriptSource        *ss;
 
     /* Root atoms and objects allocated for the parsed tree. */
     AutoKeepAtoms       keepAtoms;
@@ -340,7 +349,10 @@ class Parser : private AutoGCRooter, public StrictModeGetter
      * is not known whether the parse succeeds or fails, this bit is set and
      * the parse will return false.
      */
-    bool abortedSyntaxParse;
+    bool abortedSyntaxParse:1;
+
+    /* Unexpected end of input, i.e. TOK_EOF not at top-level. */
+    bool isUnexpectedEOF_:1;
 
     typedef typename ParseHandler::Node Node;
     typedef typename ParseHandler::DefinitionNode DefinitionNode;
@@ -363,6 +375,26 @@ class Parser : private AutoGCRooter, public StrictModeGetter
            LazyScript *lazyOuterFunction);
     ~Parser();
 
+    // A Parser::Mark is the extension of the LifoAlloc::Mark to the entire
+    // Parser's state. Note: clients must still take care that any ParseContext
+    // that points into released ParseNodes is destroyed.
+    class Mark
+    {
+        friend class Parser;
+        LifoAlloc::Mark mark;
+        ObjectBox *traceListHead;
+    };
+    Mark mark() const {
+        Mark m;
+        m.mark = alloc.mark();
+        m.traceListHead = traceListHead;
+        return m;
+    }
+    void release(Mark m) {
+        alloc.release(m.mark);
+        traceListHead = m.traceListHead;
+    }
+
     friend void js::frontend::MarkParser(JSTracer *trc, AutoGCRooter *parser);
 
     const char *getFilename() const { return tokenStream.getFilename(); }
@@ -379,7 +411,7 @@ class Parser : private AutoGCRooter, public StrictModeGetter
      */
     ObjectBox *newObjectBox(JSObject *obj);
     ModuleBox *newModuleBox(Module *module, ParseContext<ParseHandler> *pc);
-    FunctionBox *newFunctionBox(JSFunction *fun, ParseContext<ParseHandler> *pc,
+    FunctionBox *newFunctionBox(Node fn, JSFunction *fun, ParseContext<ParseHandler> *pc,
                                 Directives directives);
 
     /*
@@ -397,6 +429,8 @@ class Parser : private AutoGCRooter, public StrictModeGetter
         abortedSyntaxParse = false;
     }
 
+    bool isUnexpectedEOF() const { return isUnexpectedEOF_; }
+
   private:
     Parser *thisForCtor() { return this; }
 
@@ -409,7 +443,7 @@ class Parser : private AutoGCRooter, public StrictModeGetter
 
     /* Public entry points for parsing. */
     Node statement(bool canHaveDirectives = false);
-    bool maybeParseDirective(Node pn, bool *cont);
+    bool maybeParseDirective(Node list, Node pn, bool *cont);
 
     // Parse a function, given only its body. Used for the Function constructor.
     Node standaloneFunctionBody(HandleFunction fun, const AutoNameVector &formals,
@@ -586,6 +620,8 @@ class Parser : private AutoGCRooter, public StrictModeGetter
                        FunctionSyntaxKind kind = Expression);
 
     TokenPos pos() const { return tokenStream.currentToken().pos; }
+
+    bool asmJS(Node list);
 
     friend class CompExprTransplanter;
     friend class GenexpGuard<ParseHandler>;

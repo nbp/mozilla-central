@@ -7,9 +7,9 @@
 #ifndef ion_IonSpewer_h
 #define ion_IonSpewer_h
 
-#include <stdarg.h>
-
 #include "mozilla/DebugOnly.h"
+
+#include <stdarg.h>
 
 #include "ion/C1Spewer.h"
 #include "ion/JSONSpewer.h"
@@ -24,6 +24,8 @@ namespace ion {
     /* Information about compiled scripts */\
     _(Scripts)                              \
     /* Information during MIR building */   \
+    _(Logs)                                 \
+    /* Info about failing to log script */  \
     _(MIR)                                  \
     /* Information during alias analysis */ \
     _(Alias)                                \

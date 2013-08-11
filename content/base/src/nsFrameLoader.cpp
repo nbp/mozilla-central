@@ -294,6 +294,15 @@ nsFrameLoader::nsFrameLoader(Element* aOwner, bool aNetworkCreated)
   ResetPermissionManagerStatus();
 }
 
+nsFrameLoader::~nsFrameLoader()
+{
+  mNeedsAsyncDestroy = true;
+  if (mMessageManager) {
+    mMessageManager->Disconnect();
+  }
+  nsFrameLoader::Destroy();
+}
+
 nsFrameLoader*
 nsFrameLoader::Create(Element* aOwner, bool aNetworkCreated)
 {
@@ -452,23 +461,6 @@ nsFrameLoader::ReallyStartLoadingInternal()
   nsCOMPtr<nsIDocShellLoadInfo> loadInfo;
   mDocShell->CreateLoadInfo(getter_AddRefs(loadInfo));
   NS_ENSURE_TRUE(loadInfo, NS_ERROR_FAILURE);
-
-  // Does this frame have a parent which is already sandboxed or is this
-  // an <iframe> with a sandbox attribute?
-  uint32_t sandboxFlags = 0;
-  uint32_t parentSandboxFlags = mOwnerContent->OwnerDoc()->GetSandboxFlags();
-
-  HTMLIFrameElement* iframe = HTMLIFrameElement::FromContent(mOwnerContent);
-
-  if (iframe) {
-    sandboxFlags = iframe->GetSandboxFlags();
-  }
-
-  if (sandboxFlags || parentSandboxFlags) {
-    // The child can only add restrictions, never remove them.
-    sandboxFlags |= parentSandboxFlags;
-    mDocShell->SetSandboxFlags(sandboxFlags);
-  }
 
   // If this frame is sandboxed with respect to origin we will set it up with
   // a null principal later in nsDocShell::DoURILoad.
@@ -1111,9 +1103,9 @@ nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
   nsCOMPtr<nsPIDOMWindow> ourWindow = do_GetInterface(ourDocshell);
   nsCOMPtr<nsPIDOMWindow> otherWindow = do_GetInterface(otherDocshell);
 
-  nsCOMPtr<nsIDOMElement> ourFrameElement =
+  nsCOMPtr<Element> ourFrameElement =
     ourWindow->GetFrameElementInternal();
-  nsCOMPtr<nsIDOMElement> otherFrameElement =
+  nsCOMPtr<Element> otherFrameElement =
     otherWindow->GetFrameElementInternal();
 
   nsCOMPtr<EventTarget> ourChromeEventHandler =
@@ -1560,6 +1552,15 @@ nsFrameLoader::MaybeCreateDocShell()
   mDocShell = do_CreateInstance("@mozilla.org/docshell;1");
   NS_ENSURE_TRUE(mDocShell, NS_ERROR_FAILURE);
 
+  // Apply sandbox flags even if our owner is not an iframe, as this copies
+  // flags from our owning content's owning document.
+  uint32_t sandboxFlags = 0;
+  HTMLIFrameElement* iframe = HTMLIFrameElement::FromContent(mOwnerContent);
+  if (iframe) {
+    sandboxFlags = iframe->GetSandboxFlags();
+  }
+  ApplySandboxFlags(sandboxFlags);
+
   if (!mNetworkCreated) {
     if (mDocShell) {
       mDocShell->SetCreatedDynamically(true);
@@ -1639,7 +1640,7 @@ nsFrameLoader::MaybeCreateDocShell()
   // the right chrome event handler.
 
   // Tell the window about the frame that hosts it.
-  nsCOMPtr<nsIDOMElement> frame_element(do_QueryInterface(mOwnerContent));
+  nsCOMPtr<Element> frame_element = mOwnerContent;
   NS_ASSERTION(frame_element, "frame loader owner element not a DOM element!");
 
   nsCOMPtr<nsPIDOMWindow> win_private(do_GetInterface(mDocShell));
@@ -2047,14 +2048,17 @@ nsFrameLoader::TryRemoteBrowser()
                                  eCaseMatters)) {
     scrollingBehavior = ASYNC_PAN_ZOOM;
   }
+
+  bool rv = true;
   if (ownApp) {
-    context.SetTabContextForAppFrame(ownApp, containingApp, scrollingBehavior);
+    rv = context.SetTabContextForAppFrame(ownApp, containingApp, scrollingBehavior);
   } else if (OwnerIsBrowserFrame()) {
     // The |else| above is unnecessary; OwnerIsBrowserFrame() implies !ownApp.
-    context.SetTabContextForBrowserFrame(containingApp, scrollingBehavior);
+    rv = context.SetTabContextForBrowserFrame(containingApp, scrollingBehavior);
   }
+  NS_ENSURE_TRUE(rv, false);
 
-  nsCOMPtr<nsIDOMElement> ownerElement = do_QueryInterface(mOwnerContent);
+  nsCOMPtr<Element> ownerElement = mOwnerContent;
   mRemoteBrowser = ContentParent::CreateBrowserOrApp(context, ownerElement);
   if (mRemoteBrowser) {
     nsCOMPtr<nsIDocShellTreeItem> rootItem;
@@ -2067,7 +2071,7 @@ nsFrameLoader::TryRemoteBrowser()
     rootChromeWin->GetBrowserDOMWindow(getter_AddRefs(browserDOMWin));
     mRemoteBrowser->SetBrowserDOMWindow(browserDOMWin);
 
-    mChildHost = mRemoteBrowser->Manager();
+    mContentParent = mRemoteBrowser->Manager();
   }
   return true;
 }
@@ -2457,6 +2461,18 @@ nsFrameLoader::GetDetachedSubdocView(nsIDocument** aContainerDoc) const
 {
   NS_IF_ADDREF(*aContainerDoc = mContainerDocWhileDetached);
   return mDetachedSubdocViews;
+}
+
+void
+nsFrameLoader::ApplySandboxFlags(uint32_t sandboxFlags)
+{
+  if (mDocShell) {
+    uint32_t parentSandboxFlags = mOwnerContent->OwnerDoc()->GetSandboxFlags();
+
+    // The child can only add restrictions, never remove them.
+    sandboxFlags |= parentSandboxFlags;
+    mDocShell->SetSandboxFlags(sandboxFlags);
+  }
 }
 
 /* virtual */ void

@@ -31,7 +31,7 @@ public:
     uint32_t mStatus;
     nsCString mStatusText;
     uint16_t mReadyState;
-    jsval mResponse;
+    JS::Heap<JS::Value> mResponse;
     nsresult mResponseTextResult;
     nsresult mStatusResult;
     nsresult mResponseResult;
@@ -44,7 +44,7 @@ public:
   };
 
 private:
-  JSObject* mJSObject;
+  JS::Heap<JSObject*> mJSObject;
   XMLHttpRequestUpload* mUpload;
   WorkerPrivate* mWorkerPrivate;
   nsRefPtr<Proxy> mProxy;
@@ -176,12 +176,12 @@ public:
   }
 
   void
-  Send(ArrayBuffer& aBody, ErrorResult& aRv) {
+  Send(const ArrayBuffer& aBody, ErrorResult& aRv) {
     return Send(aBody.Obj(), aRv);
   }
 
   void
-  Send(ArrayBufferView& aBody, ErrorResult& aRv) {
+  Send(const ArrayBufferView& aBody, ErrorResult& aRv) {
     return Send(aBody.Obj(), aRv);
   }
 
