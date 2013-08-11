@@ -202,10 +202,83 @@ MemoryReportRequestParent::~MemoryReportRequestParent()
     MOZ_COUNT_DTOR(MemoryReportRequestParent);
 }
 
+/**
+ * A memory reporter for ContentParent objects themselves.
+ */
+class ContentParentMemoryReporter MOZ_FINAL : public nsIMemoryMultiReporter
+{
+public:
+    NS_DECL_ISUPPORTS
+    NS_DECL_NSIMEMORYMULTIREPORTER
+    NS_MEMORY_REPORTER_MALLOC_SIZEOF_FUN(MallocSizeOf)
+};
+
+NS_IMPL_ISUPPORTS1(ContentParentMemoryReporter, nsIMemoryMultiReporter)
+
+NS_IMETHODIMP
+ContentParentMemoryReporter::GetName(nsACString& aName)
+{
+    aName.AssignLiteral("ContentParents");
+    return NS_OK;
+}
+
+NS_IMETHODIMP
+ContentParentMemoryReporter::CollectReports(nsIMemoryMultiReporterCallback* cb,
+                                            nsISupports* aClosure)
+{
+    nsAutoTArray<ContentParent*, 16> cps;
+    ContentParent::GetAllEvenIfDead(cps);
+
+    for (uint32_t i = 0; i < cps.Length(); i++) {
+        ContentParent* cp = cps[i];
+        AsyncChannel* channel = cp->GetIPCChannel();
+
+        nsString friendlyName;
+        cp->FriendlyName(friendlyName);
+
+        cp->AddRef();
+        nsrefcnt refcnt = cp->Release();
+
+        const char* channelStr = "no channel";
+        uint32_t numQueuedMessages = 0;
+        if (channel) {
+            if (channel->Unsound_IsClosed()) {
+                channelStr = "closed channel";
+            } else {
+                channelStr = "open channel";
+            }
+            numQueuedMessages = channel->Unsound_NumQueuedMessages();
+        }
+
+        nsPrintfCString path("queued-ipc-messages/content-parent"
+                             "(%s, pid=%d, %s, 0x%p, refcnt=%d)",
+                             NS_ConvertUTF16toUTF8(friendlyName).get(),
+                             cp->Pid(), channelStr, cp, refcnt);
+
+        NS_NAMED_LITERAL_CSTRING(desc,
+            "The number of unset IPC messages held in this ContentParent's "
+            "channel.  A large value here might indicate that we're leaking "
+            "messages.  Similarly, a ContentParent object for a process that's no "
+            "longer running could indicate that we're leaking ContentParents.");
+
+        nsresult rv = cb->Callback(/* process */ EmptyCString(),
+                                   path,
+                                   nsIMemoryReporter::KIND_OTHER,
+                                   nsIMemoryReporter::UNITS_COUNT,
+                                   numQueuedMessages,
+                                   desc,
+                                   aClosure);
+
+        NS_ENSURE_SUCCESS(rv, rv);
+    }
+
+    return NS_OK;
+}
+
 nsDataHashtable<nsStringHashKey, ContentParent*>* ContentParent::sAppContentParents;
 nsTArray<ContentParent*>* ContentParent::sNonAppContentParents;
 nsTArray<ContentParent*>* ContentParent::sPrivateContent;
-LinkedList<ContentParent> ContentParent::sContentParents;
+StaticAutoPtr<LinkedList<ContentParent> > ContentParent::sContentParents;
 
 // This is true when subprocess launching is enabled.  This is the
 // case between StartUp() and ShutDown() or JoinAllSubprocesses().
@@ -265,6 +338,9 @@ ContentParent::StartUp()
     if (XRE_GetProcessType() != GeckoProcessType_Default) {
         return;
     }
+
+    nsRefPtr<ContentParentMemoryReporter> mr = new ContentParentMemoryReporter();
+    NS_RegisterMemoryMultiReporter(mr);
 
     sCanLaunchSubprocesses = true;
 
@@ -385,7 +461,7 @@ PrivilegesForApp(mozIApplication* aApp)
 }
 
 /*static*/ ProcessPriority
-ContentParent::GetInitialProcessPriority(nsIDOMElement* aFrameElement)
+ContentParent::GetInitialProcessPriority(Element* aFrameElement)
 {
     // Frames with mozapptype == critical which are expecting a system message
     // get FOREGROUND_HIGH priority.  All other frames get FOREGROUND priority.
@@ -394,10 +470,8 @@ ContentParent::GetInitialProcessPriority(nsIDOMElement* aFrameElement)
         return PROCESS_PRIORITY_FOREGROUND;
     }
 
-    nsAutoString appType;
-    nsCOMPtr<Element> frameElement = do_QueryInterface(aFrameElement);
-    frameElement->GetAttr(kNameSpaceID_None, nsGkAtoms::mozapptype, appType);
-    if (appType != NS_LITERAL_STRING("critical")) {
+    if (!aFrameElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::mozapptype,
+                                    NS_LITERAL_STRING("critical"), eCaseMatters)) {
         return PROCESS_PRIORITY_FOREGROUND;
     }
 
@@ -414,7 +488,7 @@ ContentParent::GetInitialProcessPriority(nsIDOMElement* aFrameElement)
 
 /*static*/ TabParent*
 ContentParent::CreateBrowserOrApp(const TabContext& aContext,
-                                  nsIDOMElement* aFrameElement)
+                                  Element* aFrameElement)
 {
     if (!sCanLaunchSubprocesses) {
         return nullptr;
@@ -515,7 +589,28 @@ ContentParent::GetAll(nsTArray<ContentParent*>& aArray)
 {
     aArray.Clear();
 
-    for (ContentParent* cp = sContentParents.getFirst(); cp;
+    if (!sContentParents) {
+        return;
+    }
+
+    for (ContentParent* cp = sContentParents->getFirst(); cp;
+         cp = cp->getNext()) {
+        if (cp->mIsAlive) {
+            aArray.AppendElement(cp);
+        }
+    }
+}
+
+void
+ContentParent::GetAllEvenIfDead(nsTArray<ContentParent*>& aArray)
+{
+    aArray.Clear();
+
+    if (!sContentParents) {
+        return;
+    }
+
+    for (ContentParent* cp = sContentParents->getFirst(); cp;
          cp = cp->getNext()) {
         aArray.AppendElement(cp);
     }
@@ -648,7 +743,7 @@ NS_IMPL_ISUPPORTS1(SystemMessageHandledListener,
 } // anonymous namespace
 
 void
-ContentParent::MaybeTakeCPUWakeLock(nsIDOMElement* aFrameElement)
+ContentParent::MaybeTakeCPUWakeLock(Element* aFrameElement)
 {
     // Take the CPU wake lock on behalf of this processs if it's expecting a
     // system message.  We'll release the CPU lock once the message is
@@ -730,32 +825,46 @@ ContentParent::TransformPreallocatedIntoApp(const nsAString& aAppManifestURL,
 }
 
 void
-ContentParent::ShutDownProcess(bool aFromActorDestroyed)
+ContentParent::ShutDownProcess(bool aCloseWithError)
 {
-  if (!mIsDestroyed) {
-    mIsDestroyed = true;
-
     const InfallibleTArray<PIndexedDBParent*>& idbParents =
-      ManagedPIndexedDBParent();
+        ManagedPIndexedDBParent();
     for (uint32_t i = 0; i < idbParents.Length(); ++i) {
-      static_cast<IndexedDBParent*>(idbParents[i])->Disconnect();
+        static_cast<IndexedDBParent*>(idbParents[i])->Disconnect();
     }
 
-    if (aFromActorDestroyed) {
-      // If ActorDestroyed() is calling this method but mIsDestroyed was false,
-      // we're in an error state.
-      AsyncChannel* channel = GetIPCChannel();
-      if (channel) {
-        channel->CloseWithError();
-      }
-    } else {
-      // Close() can only be called once: It kicks off the destruction sequence.
-      Close();
+    // If Close() fails with an error, we'll end up back in this function, but
+    // with aCloseWithError = true.  It's important that we call
+    // CloseWithError() in this case; see bug 895204.
+
+    if (!aCloseWithError && !mCalledClose) {
+        // Close() can only be called once: It kicks off the destruction
+        // sequence.
+        mCalledClose = true;
+        Close();
     }
-  }
-  // NB: must MarkAsDead() here so that this isn't accidentally
-  // returned from Get*() while in the midst of shutdown.
-  MarkAsDead();
+
+    if (aCloseWithError && !mCalledCloseWithError) {
+        AsyncChannel* channel = GetIPCChannel();
+        if (channel) {
+            mCalledCloseWithError = true;
+            channel->CloseWithError();
+        }
+    }
+
+    // NB: must MarkAsDead() here so that this isn't accidentally
+    // returned from Get*() while in the midst of shutdown.
+    MarkAsDead();
+
+    // A ContentParent object might not get freed until after XPCOM shutdown has
+    // shut down the cycle collector.  But by then it's too late to release any
+    // CC'ed objects, so we need to null them out here, while we still can.  See
+    // bug 899761.
+    mMemoryReporters.Clear();
+    if (mMessageManager) {
+      mMessageManager->Disconnect();
+      mMessageManager = nullptr;
+    }
 }
 
 void
@@ -786,11 +895,6 @@ ContentParent::MarkAsDead()
     }
 
     mIsAlive = false;
-
-    // Remove from sContentParents.
-    if (isInList()) {
-         remove();
-    }
 }
 
 void
@@ -899,7 +1003,9 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
 #endif
     }
 
-    mMessageManager->Disconnect();
+    if (ppm) {
+      ppm->Disconnect();
+    }
 
     // clear the child memory reporters
     InfallibleTArray<MemoryReport> empty;
@@ -960,7 +1066,7 @@ ContentParent::ActorDestroy(ActorDestroyReason why)
     // If the child process was terminated due to a SIGKIL, ShutDownProcess
     // might not have been called yet.  We must call it to ensure that our
     // channel is closed, etc.
-    ShutDownProcess(/* aForce = */ true);
+    ShutDownProcess(/* closeWithError */ true);
 
     MessageLoop::current()->
         PostTask(FROM_HERE,
@@ -1067,16 +1173,20 @@ ContentParent::ContentParent(mozIApplication* aApp,
     , mForceKillTask(nullptr)
     , mNumDestroyingTabs(0)
     , mIsAlive(true)
-    , mIsDestroyed(false)
     , mSendPermissionUpdates(false)
     , mIsForBrowser(aIsForBrowser)
+    , mCalledClose(false)
+    , mCalledCloseWithError(false)
 {
     // No more than one of !!aApp, aIsForBrowser, and aIsForPreallocated should
     // be true.
     MOZ_ASSERT(!!aApp + aIsForBrowser + aIsForPreallocated <= 1);
 
     // Insert ourselves into the global linked list of ContentParent objects.
-    sContentParents.insertBack(this);
+    if (!sContentParents) {
+        sContentParents = new LinkedList<ContentParent>();
+    }
+    sContentParents->insertBack(this);
 
     if (aApp) {
         aApp->GetManifestURL(mAppManifestURL);
@@ -1133,9 +1243,11 @@ ContentParent::ContentParent(mozIApplication* aApp,
     if (gAppData) {
         nsCString version(gAppData->version);
         nsCString buildID(gAppData->buildID);
+        nsCString name(gAppData->name);
+        nsCString UAName(gAppData->UAName);
 
         //Sending all information to content process
-        unused << SendAppInfo(version, buildID);
+        unused << SendAppInfo(version, buildID, name, UAName);
     }
 }
 
@@ -1175,6 +1287,15 @@ bool
 ContentParent::IsForApp()
 {
     return !mAppManifestURL.IsEmpty();
+}
+
+int32_t
+ContentParent::Pid()
+{
+    if (!mSubprocess || !mSubprocess->GetChildProcessHandle()) {
+        return -1;
+    }
+    return base::GetProcId(mSubprocess->GetChildProcessHandle());
 }
 
 bool
@@ -1468,10 +1589,10 @@ ContentParent::RecvRecordingDeviceEvents(const nsString& aRecordingStatus)
     return true;
 }
 
-NS_IMPL_THREADSAFE_ISUPPORTS3(ContentParent,
-                              nsIObserver,
-                              nsIThreadObserver,
-                              nsIDOMGeoPositionCallback)
+NS_IMPL_ISUPPORTS3(ContentParent,
+                   nsIObserver,
+                   nsIThreadObserver,
+                   nsIDOMGeoPositionCallback)
 
 NS_IMETHODIMP
 ContentParent::Observe(nsISupports* aSubject,
@@ -1479,7 +1600,7 @@ ContentParent::Observe(nsISupports* aSubject,
                        const PRUnichar* aData)
 {
     if (!strcmp(aTopic, "xpcom-shutdown") && mSubprocess) {
-        ShutDownProcess(/* force */ false);
+        ShutDownProcess(/* closeWithError */ false);
         NS_ASSERTION(!mSubprocess, "Close should have nulled mSubprocess");
     }
 
@@ -1655,7 +1776,15 @@ ContentParent::AllocPBrowserParent(const IPCTabContext& aContext,
         return nullptr;
     }
 
-    TabParent* parent = new TabParent(this, TabContext(aContext));
+    MaybeInvalidTabContext tc(aContext);
+    if (!tc.IsValid()) {
+        NS_ERROR(nsPrintfCString("Child passed us an invalid TabContext.  (%s)  "
+                                 "Aborting AllocPBrowserParent.",
+                                 tc.GetInvalidReason()).get());
+        return nullptr;
+    }
+
+    TabParent* parent = new TabParent(this, tc.GetTabContext());
 
     // We release this ref in DeallocPBrowserParent()
     NS_ADDREF(parent);
@@ -1797,6 +1926,12 @@ ContentParent::KillHard()
         FROM_HERE,
         NewRunnableFunction(&ProcessWatcher::EnsureProcessTerminated,
                             OtherProcess(), /*force=*/true));
+    //We do clean-up here 
+    MessageLoop::current()->PostDelayedTask(
+        FROM_HERE,
+        NewRunnableMethod(this, &ContentParent::ShutDownProcess,
+                          /* closeWithError */ true),
+        3000);
 }
 
 bool

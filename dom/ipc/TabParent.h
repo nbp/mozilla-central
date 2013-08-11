@@ -29,7 +29,6 @@ struct JSContext;
 class JSObject;
 class mozIApplication;
 class nsFrameLoader;
-class nsIDOMElement;
 class nsIURI;
 class CpowHolder;
 
@@ -47,6 +46,7 @@ class RenderFrameParent;
 namespace dom {
 
 class ClonedMessageData;
+class Element;
 struct StructuredCloneData;
 
 class ContentDialogParent : public PContentDialogParent {};
@@ -63,8 +63,8 @@ class TabParent : public PBrowserParent
 public:
     TabParent(ContentParent* aManager, const TabContext& aContext);
     virtual ~TabParent();
-    nsIDOMElement* GetOwnerElement() { return mFrameElement; }
-    void SetOwnerElement(nsIDOMElement* aElement);
+    Element* GetOwnerElement() const { return mFrameElement; }
+    void SetOwnerElement(Element* aElement);
 
     /**
      * Get the mozapptype attribute from this TabParent's owner DOM element.
@@ -153,6 +153,7 @@ public:
                                      const int32_t& aFocusChange);
     virtual bool RecvSetCursor(const uint32_t& aValue);
     virtual bool RecvSetBackgroundColor(const nscolor& aValue);
+    virtual bool RecvSetStatus(const uint32_t& aType, const nsString& aStatus);
     virtual bool RecvGetDPI(float* aValue);
     virtual bool RecvGetDefaultScale(double* aValue);
     virtual bool RecvGetWidgetNativeData(WindowsHandle* aValue);
@@ -254,7 +255,7 @@ protected:
                               const nsCString& aASCIIOrigin,
                               bool* aAllowed);
 
-    nsIDOMElement* mFrameElement;
+    Element* mFrameElement;
     nsCOMPtr<nsIBrowserDOMWindow> mBrowserDOMWindow;
 
     struct DelayedDialogData

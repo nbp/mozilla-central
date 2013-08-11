@@ -54,15 +54,6 @@ public:
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  // nsIDOMNode
-  NS_FORWARD_NSIDOMNODE_TO_NSINODE
-
-  // nsIDOMElement
-  NS_FORWARD_NSIDOMELEMENT_TO_GENERIC
-
-  // nsIDOMHTMLElement
-  NS_FORWARD_NSIDOMHTMLELEMENT_TO_GENERIC
-
   // nsIDOMHTMLCanvasElement
   NS_DECL_NSIDOMHTMLCANVASELEMENT
 
@@ -100,10 +91,16 @@ public:
                      : JS::UndefinedValue();
     aRv = ToDataURL(aType, params, aCx, aDataURL);
   }
-  void ToBlob(nsIFileCallback* aCallback, const nsAString& aType,
+  void ToBlob(JSContext* aCx,
+              nsIFileCallback* aCallback,
+              const nsAString& aType,
+              const Optional<JS::Handle<JS::Value> >& aParams,
               ErrorResult& aRv)
   {
-    aRv = ToBlob(aCallback, aType);
+    JS::Value params = aParams.WasPassed()
+                     ? aParams.Value()
+                     : JS::UndefinedValue();
+    aRv = ToBlob(aCallback, aType, params, aCx);
   }
 
   bool MozOpaque() const
@@ -218,8 +215,6 @@ public:
 
   nsresult GetContext(const nsAString& aContextId, nsISupports** aContext);
 
-  virtual nsIDOMNode* AsDOMNode() MOZ_OVERRIDE { return this; }
-
 protected:
   virtual JSObject* WrapNode(JSContext* aCx,
                              JS::Handle<JSObject*> aScope) MOZ_OVERRIDE;
@@ -227,6 +222,11 @@ protected:
   nsIntSize GetWidthHeight();
 
   nsresult UpdateContext(JSContext* aCx, JS::Handle<JS::Value> options);
+  nsresult ParseParams(JSContext* aCx,
+                       const nsAString& aType,
+                       const JS::Value& aEncoderOptions,
+                       nsAString& aParams,
+                       bool* usingCustomParseOptions);
   nsresult ExtractData(const nsAString& aType,
                        const nsAString& aOptions,
                        nsIInputStream** aStream,

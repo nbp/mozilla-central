@@ -2,13 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "jsapi-tests/tests.h"
-
 #include "jsclass.h"
+
+#include "jsapi-tests/tests.h"
 
 int count = 0;
 
-static JSBool
+static bool
 IterNext(JSContext *cx, unsigned argc, jsval *vp)
 {
     if (count++ == 100)
@@ -41,8 +41,8 @@ js::Class HasCustomIterClass = {
     NULL,
     NULL, /* checkAccess */
     NULL, /* call */
-    NULL, /* construct */
     NULL, /* hasInstance */
+    NULL, /* construct */
     NULL, /* mark */
     {
         NULL,       /* outerObject */
@@ -52,7 +52,7 @@ js::Class HasCustomIterClass = {
     }
 };
 
-JSBool
+bool
 IterClassConstructor(JSContext *cx, unsigned argc, jsval *vp)
 {
     JSObject *obj = JS_NewObjectForConstructor(cx, Jsvalify(&HasCustomIterClass), vp);

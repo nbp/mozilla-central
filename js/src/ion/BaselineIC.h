@@ -14,10 +14,10 @@
 #include "jsgc.h"
 #include "jsopcode.h"
 #include "jsproxy.h"
-#include "ion/BaselineJIT.h"
-#include "ion/BaselineRegisters.h"
 
 #include "gc/Heap.h"
+#include "ion/BaselineJIT.h"
+#include "ion/BaselineRegisters.h"
 
 namespace js {
 namespace ion {
@@ -200,6 +200,9 @@ class ICFallbackStub;
 class ICEntry
 {
   private:
+    // A pointer to the baseline IC stub for this instruction.
+    ICStub *firstStub_;
+
     // Offset from the start of the JIT code where the IC
     // load and call instructions are.
     uint32_t returnOffset_;
@@ -210,12 +213,9 @@ class ICEntry
     // Whether this IC is for a bytecode op.
     uint32_t isForOp_ : 1;
 
-    // A pointer to the baseline IC stub for this instruction.
-    ICStub *firstStub_;
-
   public:
     ICEntry(uint32_t pcOffset, bool isForOp)
-      : returnOffset_(), pcOffset_(pcOffset), isForOp_(isForOp), firstStub_(NULL)
+      : firstStub_(NULL), returnOffset_(), pcOffset_(pcOffset), isForOp_(isForOp)
     {}
 
     CodeOffsetLabel returnOffset() const {
@@ -561,15 +561,6 @@ class ICStub
     void trace(JSTracer *trc);
 
   protected:
-    // The kind of the stub.
-    //  High bit is 'isFallback' flag.
-    //  Second high bit is 'isMonitored' flag.
-    Trait trait_ : 3;
-    Kind kind_ : 13;
-
-    // A 16-bit field usable by subtypes of ICStub for subtype-specific small-info
-    uint16_t extra_;
-
     // The raw jitcode to call for this stub.
     uint8_t *stubCode_;
 
@@ -577,22 +568,31 @@ class ICStub
     // either be a fallback or inert IC stub.
     ICStub *next_;
 
+    // A 16-bit field usable by subtypes of ICStub for subtype-specific small-info
+    uint16_t extra_;
+
+    // The kind of the stub.
+    //  High bit is 'isFallback' flag.
+    //  Second high bit is 'isMonitored' flag.
+    Trait trait_ : 3;
+    Kind kind_ : 13;
+
     inline ICStub(Kind kind, IonCode *stubCode)
-      : trait_(Regular),
-        kind_(kind),
+      : stubCode_(stubCode->raw()),
+        next_(NULL),
         extra_(0),
-        stubCode_(stubCode->raw()),
-        next_(NULL)
+        trait_(Regular),
+        kind_(kind)
     {
         JS_ASSERT(stubCode != NULL);
     }
 
     inline ICStub(Kind kind, Trait trait, IonCode *stubCode)
-      : trait_(trait),
-        kind_(kind),
+      : stubCode_(stubCode->raw()),
+        next_(NULL),
         extra_(0),
-        stubCode_(stubCode->raw()),
-        next_(NULL)
+        trait_(trait),
+        kind_(kind)
     {
         JS_ASSERT(stubCode != NULL);
     }
@@ -743,6 +743,11 @@ class ICStub
           case SetProp_CallScripted:
           case SetProp_CallNative:
           case RetSub_Fallback:
+          // These two fallback stubs don't actually make non-tail calls,
+          // but the fallback code for the bailout path needs to pop the stub frame
+          // pushed during the bailout.
+          case GetProp_Fallback:
+          case SetProp_Fallback:
             return true;
           default:
             return false;
@@ -979,9 +984,9 @@ class ICStubCompiler
     // Prevent GC in the middle of stub compilation.
     js::gc::AutoSuppressGC suppressGC;
 
-    mozilla::DebugOnly<bool> entersStubFrame_;
 
   protected:
+    mozilla::DebugOnly<bool> entersStubFrame_;
     JSContext *cx;
     ICStub::Kind kind;
 
@@ -3748,7 +3753,9 @@ class ICGetProp_Fallback : public ICMonitoredFallbackStub
 
     class Compiler : public ICStubCompiler {
       protected:
+        uint32_t returnOffset_;
         bool generateStubCode(MacroAssembler &masm);
+        bool postGenerateStubCode(MacroAssembler &masm, Handle<IonCode *> code);
 
       public:
         Compiler(JSContext *cx)
@@ -4538,7 +4545,9 @@ class ICSetProp_Fallback : public ICFallbackStub
 
     class Compiler : public ICStubCompiler {
       protected:
+        uint32_t returnOffset_;
         bool generateStubCode(MacroAssembler &masm);
+        bool postGenerateStubCode(MacroAssembler &masm, Handle<IonCode *> code);
 
       public:
         Compiler(JSContext *cx)
@@ -5514,38 +5523,6 @@ class ICTypeOf_Typed : public ICFallbackStub
 
         ICStub *getStub(ICStubSpace *space) {
             return ICTypeOf_Typed::New(space, getStubCode(), type_);
-        }
-    };
-};
-
-// Rest
-//      JSOP_REST
-class ICRest_Fallback : public ICFallbackStub
-{
-    friend class ICStubSpace;
-
-    ICRest_Fallback(IonCode *stubCode)
-      : ICFallbackStub(ICStub::Rest_Fallback, stubCode)
-    { }
-
-  public:
-    static inline ICRest_Fallback *New(ICStubSpace *space, IonCode *code) {
-        if (!code)
-            return NULL;
-        return space->allocate<ICRest_Fallback>(code);
-    }
-
-    class Compiler : public ICStubCompiler {
-      protected:
-        bool generateStubCode(MacroAssembler &masm);
-
-      public:
-        Compiler(JSContext *cx)
-          : ICStubCompiler(cx, ICStub::Rest_Fallback)
-        { }
-
-        ICStub *getStub(ICStubSpace *space) {
-            return ICRest_Fallback::New(space, getStubCode());
         }
     };
 };

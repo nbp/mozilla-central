@@ -7,11 +7,11 @@
 #ifndef ion_x86_MacroAssembler_x86_h
 #define ion_x86_MacroAssembler_x86_h
 
-#include "ion/shared/MacroAssembler-x86-shared.h"
+#include "jscompartment.h"
+
 #include "ion/IonFrames.h"
 #include "ion/MoveResolver.h"
-
-#include "jscompartment.h"
+#include "ion/shared/MacroAssembler-x86-shared.h"
 
 namespace js {
 namespace ion {
@@ -950,8 +950,8 @@ class MacroAssemblerX86 : public MacroAssemblerX86Shared
     // Save an exit frame (which must be aligned to the stack pointer) to
     // ThreadData::ionTop of the main thread.
     void linkExitFrame() {
-        JSCompartment *compartment = GetIonContext()->compartment;
-        movl(StackPointer, Operand(&compartment->rt->mainThread.ionTop));
+        JSRuntime *runtime = GetIonContext()->runtime;
+        movl(StackPointer, Operand(&runtime->mainThread.ionTop));
     }
 
     void callWithExitFrame(IonCode *target, Register dynStack) {
