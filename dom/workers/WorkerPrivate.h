@@ -65,7 +65,7 @@ protected:
   ClearingBehavior mClearingBehavior;
 
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
 
   bool
   Dispatch(JSContext* aCx);
@@ -908,10 +908,6 @@ private:
                 nsCOMPtr<nsIChannel>& aChannel,
                 nsCOMPtr<nsIContentSecurityPolicy>& aCSP, bool aEvalAllowed,
                 bool aReportCSPViolations, bool aXHRParamsAllowed);
-
-  static bool
-  GetContentSecurityPolicy(JSContext *aCx,
-                           nsIContentSecurityPolicy** aCsp);
 
   bool
   Dispatch(WorkerRunnable* aEvent, EventQueue* aQueue);

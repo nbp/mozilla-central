@@ -243,6 +243,12 @@ struct nsStyleImage {
    */
   bool IsComplete() const;
   /**
+   * @return true if this image is loaded without error;
+   * always returns true if |mType| is |eStyleImageType_Gradient| or
+   * |eStyleImageType_Element|.
+   */
+  bool IsLoaded() const;
+  /**
    * @return true if it is 100% confident that this image contains no pixel
    * to draw.
    */
@@ -649,7 +655,7 @@ struct nsCSSShadowItem {
     MOZ_COUNT_DTOR(nsCSSShadowItem);
   }
 
-  bool operator==(const nsCSSShadowItem& aOther) {
+  bool operator==(const nsCSSShadowItem& aOther) const {
     return (mXOffset == aOther.mXOffset &&
             mYOffset == aOther.mYOffset &&
             mRadius == aOther.mRadius &&
@@ -658,7 +664,7 @@ struct nsCSSShadowItem {
             mInset == aOther.mInset &&
             (!mHasColor || mColor == aOther.mColor));
   }
-  bool operator!=(const nsCSSShadowItem& aOther) {
+  bool operator!=(const nsCSSShadowItem& aOther) const {
     return !(*this == aOther);
   }
 };
@@ -708,6 +714,18 @@ class nsCSSShadowArray {
           return true;
       }
       return false;
+    }
+
+    bool operator==(const nsCSSShadowArray& aOther) const {
+      if (mLength != aOther.Length())
+        return false;
+
+      for (uint32_t i = 0; i < mLength; ++i) {
+        if (ShadowAt(i) != aOther.ShadowAt(i))
+          return false;
+      }
+
+      return true;
     }
 
     NS_INLINE_DECL_REFCOUNTING(nsCSSShadowArray)
@@ -1602,6 +1620,7 @@ struct nsStyleDisplay {
   uint8_t mResize;              // [reset] see nsStyleConsts.h
   uint8_t mClipFlags;           // [reset] see nsStyleConsts.h
   uint8_t mOrient;              // [reset] see nsStyleConsts.h
+  uint8_t mMixBlendMode;        // [reset] see nsStyleConsts.h
 
   // mSpecifiedTransform is the list of transform functions as
   // specified, or null to indicate there is no transform.  (inherit or
@@ -2262,6 +2281,55 @@ struct nsStyleSVG {
   }
 };
 
+struct nsStyleFilter {
+  nsStyleFilter();
+  nsStyleFilter(const nsStyleFilter& aSource);
+  ~nsStyleFilter();
+
+  nsStyleFilter& operator=(const nsStyleFilter& aOther);
+
+  bool operator==(const nsStyleFilter& aOther) const;
+
+  int32_t GetType() const {
+    return mType;
+  }
+
+  const nsStyleCoord& GetFilterParameter() const {
+    NS_ASSERTION(mType != NS_STYLE_FILTER_DROP_SHADOW &&
+                 mType != NS_STYLE_FILTER_URL &&
+                 mType != NS_STYLE_FILTER_NONE, "wrong filter type");
+    return mFilterParameter;
+  }
+  void SetFilterParameter(const nsStyleCoord& aFilterParameter,
+                          int32_t aType);
+
+  nsIURI* GetURL() const {
+    NS_ASSERTION(mType == NS_STYLE_FILTER_URL, "wrong filter type");
+    return mURL;
+  }
+  void SetURL(nsIURI* aURL);
+
+  nsCSSShadowArray* GetDropShadow() const {
+    NS_ASSERTION(mType == NS_STYLE_FILTER_DROP_SHADOW, "wrong filter type");
+    return mDropShadow;
+  }
+  void SetDropShadow(nsCSSShadowArray* aDropShadow);
+
+private:
+  void ReleaseRef();
+
+  int32_t mType; // see NS_STYLE_FILTER_* constants in nsStyleConsts.h
+  nsStyleCoord mFilterParameter; // coord, percent, factor, angle
+  union {
+    nsIURI* mURL;
+    nsCSSShadowArray* mDropShadow;
+  };
+};
+
+template<>
+struct nsTArray_CopyElements<nsStyleFilter>
+  : public nsTArray_CopyWithConstructors<nsStyleFilter> {};
+
 struct nsStyleSVGReset {
   nsStyleSVGReset();
   nsStyleSVGReset(const nsStyleSVGReset& aSource);
@@ -2280,8 +2348,17 @@ struct nsStyleSVGReset {
     return NS_CombineHint(nsChangeHint_UpdateEffects, NS_STYLE_HINT_REFLOW);
   }
 
+  // The backend only supports one SVG reference right now.
+  // Eventually, it will support multiple chained SVG reference filters and CSS
+  // filter functions.
+  nsIURI* SingleFilter() const {
+    return (mFilters.Length() == 1 &&
+            mFilters[0].GetType() == NS_STYLE_FILTER_URL) ?
+            mFilters[0].GetURL() : nullptr;
+  }
+
   nsCOMPtr<nsIURI> mClipPath;         // [reset]
-  nsCOMPtr<nsIURI> mFilter;           // [reset]
+  nsTArray<nsStyleFilter> mFilters;   // [reset]
   nsCOMPtr<nsIURI> mMask;             // [reset]
   nscolor          mStopColor;        // [reset]
   nscolor          mFloodColor;       // [reset]

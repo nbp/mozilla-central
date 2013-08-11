@@ -89,8 +89,9 @@
 #define VARIANT_UK   (VARIANT_URL | VARIANT_KEYWORD)
 #define VARIANT_UO   (VARIANT_URL | VARIANT_NONE)
 #define VARIANT_ANGLE_OR_ZERO (VARIANT_ANGLE | VARIANT_ZERO_ANGLE)
-#define VARIANT_LPCALC  (VARIANT_LENGTH | VARIANT_CALC | VARIANT_PERCENT)
-#define VARIANT_LNCALC  (VARIANT_LENGTH | VARIANT_CALC | VARIANT_NUMBER)
+#define VARIANT_LCALC  (VARIANT_LENGTH | VARIANT_CALC)
+#define VARIANT_LPCALC (VARIANT_LCALC | VARIANT_PERCENT)
+#define VARIANT_LNCALC (VARIANT_LCALC | VARIANT_NUMBER)
 #define VARIANT_LPNCALC (VARIANT_LNCALC | VARIANT_PERCENT)
 #define VARIANT_IMAGE   (VARIANT_URL | VARIANT_NONE | VARIANT_GRADIENT | \
                         VARIANT_IMAGE_RECT | VARIANT_ELEMENT)
@@ -158,9 +159,9 @@
 // See CSSParserImpl::ParseSingleValueProperty and comment above
 // CSS_PROPERTY_PARSE_FUNCTION (which is different).
 #define CSS_PROPERTY_VALUE_PARSER_FUNCTION        (1<<12)
-MOZ_STATIC_ASSERT((CSS_PROPERTY_PARSE_PROPERTY_MASK &
-                   CSS_PROPERTY_VALUE_PARSER_FUNCTION) == 0,
-                  "didn't leave enough room for the parse property constants");
+static_assert((CSS_PROPERTY_PARSE_PROPERTY_MASK &
+               CSS_PROPERTY_VALUE_PARSER_FUNCTION) == 0,
+              "didn't leave enough room for the parse property constants");
 
 #define CSS_PROPERTY_VALUE_RESTRICTION_MASK       (3<<13)
 // The parser (in particular, CSSParserImpl::ParseSingleValueProperty)
@@ -436,6 +437,7 @@ public:
   static const int32_t kBackgroundRepeatKTable[];
   static const int32_t kBackgroundRepeatPartKTable[];
   static const int32_t kBackgroundSizeKTable[];
+  static const int32_t kBlendModeKTable[];
   static const int32_t kBorderCollapseKTable[];
   static const int32_t kBorderColorKTable[];
   static const int32_t kBorderImageRepeatKTable[];
@@ -448,6 +450,7 @@ public:
   static const int32_t kBoxPackKTable[];
   static const int32_t kDominantBaselineKTable[];
   static const int32_t kFillRuleKTable[];
+  static const int32_t kFilterFunctionKTable[];
   static const int32_t kImageRenderingKTable[];
   static const int32_t kShapeRenderingKTable[];
   static const int32_t kStrokeLinecapKTable[];
@@ -467,7 +470,8 @@ public:
   static const int32_t kContentKTable[];
   static const int32_t kCursorKTable[];
   static const int32_t kDirectionKTable[];
-  // Not const because we modify its entries when CSS prefs change.
+  // Not const because we modify its entries when the pref
+  // "layout.css.flexbox.enabled" changes:
   static int32_t kDisplayKTable[];
   static const int32_t kElevationKTable[];
   static const int32_t kEmptyCellsKTable[];
@@ -480,6 +484,7 @@ public:
   static const int32_t kFontKTable[];
   static const int32_t kFontKerningKTable[];
   static const int32_t kFontSizeKTable[];
+  static const int32_t kFontSmoothingKTable[];
   static const int32_t kFontStretchKTable[];
   static const int32_t kFontStyleKTable[];
   static const int32_t kFontSynthesisKTable[];
