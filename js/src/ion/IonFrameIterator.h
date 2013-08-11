@@ -512,7 +512,7 @@ class InlineFrameIteratorMaybeGC
 
     // Inline frame number, 0 for the outermost (non-inlined) frame.
     size_t frameNo() const {
-        return start_.frameCount() - framesRead_;
+        return si_.frameCount() - framesRead_;
     }
 
   private:
