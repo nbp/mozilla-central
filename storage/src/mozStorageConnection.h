@@ -40,7 +40,7 @@ class Connection MOZ_FINAL : public mozIStorageConnection
                            , public nsIInterfaceRequestor
 {
 public:
-  NS_DECL_ISUPPORTS
+  NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_MOZISTORAGEASYNCCONNECTION
   NS_DECL_MOZISTORAGECONNECTION
   NS_DECL_NSIINTERFACEREQUESTOR
@@ -183,7 +183,7 @@ private:
    * Sets the database into a closed state so no further actions can be
    * performed.
    *
-   * @note mDBConn is set to NULL in this method.
+   * @note mDBConn is set to nullptr in this method.
    */
   nsresult setClosedState();
 
