@@ -17,5 +17,5 @@
 #
 # Modifying this file will now automatically clobber the buildbot machines \o/
 #
-Bug 889503 - Move Settings API to WebIDL.
-Requires a clobber due to Bug 890744.
+
+Add an WebIDL interface for bug 892978 requires a clobber for Windows.

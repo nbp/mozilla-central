@@ -323,6 +323,8 @@ NS_TrustedNewXULElement(nsIContent** aResult, already_AddRefed<nsINodeInfo> aNod
 //----------------------------------------------------------------------
 // nsISupports interface
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULElement)
+
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(nsXULElement,
                                                   nsStyledElement)
     {
@@ -344,7 +346,7 @@ NS_INTERFACE_TABLE_HEAD_CYCLE_COLLECTION_INHERITED(nsXULElement)
                                    new nsXULElementTearoff(this))
     NS_INTERFACE_MAP_ENTRY_TEAROFF(nsIFrameLoaderOwner,
                                    new nsXULElementTearoff(this))
-NS_ELEMENT_INTERFACE_MAP_END
+NS_INTERFACE_MAP_END_INHERITING(nsStyledElement)
 
 //----------------------------------------------------------------------
 // nsIDOMNode interface
@@ -1929,6 +1931,8 @@ nsXULElement::WrapNode(JSContext *aCx, JS::Handle<JSObject*> aScope)
     return dom::XULElementBinding::Wrap(aCx, aScope, this);
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXULPrototypeNode)
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXULPrototypeNode)
     if (tmp->mType == nsXULPrototypeNode::eType_Element) {
         static_cast<nsXULPrototypeElement*>(tmp)->Unlink();
@@ -2325,6 +2329,7 @@ nsXULPrototypeElement::Unlink()
     mNumAttributes = 0;
     delete[] mAttributes;
     mAttributes = nullptr;
+    mChildren.Clear();
 }
 
 void
@@ -2380,8 +2385,15 @@ nsXULPrototypeScript::Serialize(nsIObjectOutputStream* aStream,
     if (NS_FAILED(rv)) return rv;
     rv = aStream->Write32(mLangVersion);
     if (NS_FAILED(rv)) return rv;
-    // And delegate the writing to the nsIScriptContext
-    rv = context->Serialize(aStream, mScriptObject);
+
+    // And delegate the writing to the nsIScriptContext.
+    //
+    // Calling fromMarkedLocation() is safe because we trace mScriptObject in
+    // TraceScriptObject() and because its value is never changed after it has
+    // been set.
+    JS::Handle<JSScript*> script =
+        JS::Handle<JSScript*>::fromMarkedLocation(mScriptObject.address());
+    rv = context->Serialize(aStream, script);
     if (NS_FAILED(rv)) return rv;
 
     return NS_OK;
@@ -2406,8 +2418,7 @@ nsXULPrototypeScript::SerializeOutOfLine(nsIObjectOutputStream* aStream,
                  "writing to the cache file, but the XUL cache is off?");
     bool exists;
     cache->HasData(mSrcURI, &exists);
-    
-    
+
     /* return will be NS_OK from GetAsciiSpec.
      * that makes no sense.
      * nor does returning NS_OK from HasMuxedDocument.

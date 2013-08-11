@@ -7,6 +7,8 @@
 #ifndef vm_Interpreter_inl_h
 #define vm_Interpreter_inl_h
 
+#include "vm/Interpreter.h"
+
 #include "jsapi.h"
 #include "jsbool.h"
 #include "jscompartment.h"
@@ -14,15 +16,16 @@
 #include "jslibmath.h"
 #include "jsnum.h"
 #include "jsstr.h"
+
 #include "ion/Ion.h"
 #include "ion/IonCompartment.h"
 #include "vm/ForkJoin.h"
-#include "vm/Interpreter.h"
 
 #include "jsatominlines.h"
 #include "jsfuninlines.h"
 #include "jsinferinlines.h"
 #include "jsopcodeinlines.h"
+
 #include "vm/GlobalObject-inl.h"
 #include "vm/Stack-inl.h"
 
@@ -354,20 +357,8 @@ GetObjectElementOperation(JSContext *cx, JSOp op, JSObject *objArg, bool wasObje
                           HandleValue rref, MutableHandleValue res)
 {
     do {
-        // Don't call GetPcScript (needed for analysis) from inside Ion since it's expensive.
-        bool analyze = cx->currentlyRunningInInterpreter();
-
         uint32_t index;
         if (IsDefinitelyIndex(rref, &index)) {
-            if (analyze && !objArg->isNative() && !objArg->is<TypedArrayObject>()) {
-                JSScript *script = NULL;
-                jsbytecode *pc = NULL;
-                types::TypeScript::GetPcScript(cx, &script, &pc);
-
-                if (script->hasAnalysis())
-                    script->analysis()->getCode(pc).nonNativeGetElement = true;
-            }
-
             if (JSObject::getElementNoGC(cx, objArg, objArg, index, res.address()))
                 break;
 
@@ -376,22 +367,6 @@ GetObjectElementOperation(JSContext *cx, JSOp op, JSObject *objArg, bool wasObje
                 return false;
             objArg = obj;
             break;
-        }
-
-        if (analyze) {
-            JSScript *script = NULL;
-            jsbytecode *pc = NULL;
-            types::TypeScript::GetPcScript(cx, &script, &pc);
-
-            if (script->hasAnalysis()) {
-                script->analysis()->getCode(pc).getStringElement = true;
-
-                if (!objArg->is<ArrayObject>() && !objArg->isNative() &&
-                    !objArg->is<TypedArrayObject>())
-                {
-                    script->analysis()->getCode(pc).nonNativeGetElement = true;
-                }
-            }
         }
 
         if (ValueMightBeSpecial(rref)) {

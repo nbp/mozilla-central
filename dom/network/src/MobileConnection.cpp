@@ -48,6 +48,8 @@ NS_IMPL_ISUPPORTS1(MobileConnection::Listener, nsIMobileConnectionListener)
 
 DOMCI_DATA(MozMobileConnection, MobileConnection)
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(MobileConnection)
+
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(MobileConnection,
                                                   nsDOMEventTargetHelper)
   // Don't traverse mListener because it doesn't keep any reference to
@@ -161,17 +163,6 @@ MobileConnection::CheckPermission(const char* type)
 }
 
 NS_IMETHODIMP
-MobileConnection::GetRetryCount(int32_t* retryCount)
-{
-  *retryCount = 0;
-
-  if (!mProvider || !CheckPermission("mobileconnection")) {
-    return NS_OK;
-  }
-  return mProvider->GetRetryCount(retryCount);
-}
-
-NS_IMETHODIMP
 MobileConnection::GetVoice(nsIDOMMozMobileConnectionInfo** voice)
 {
   *voice = nullptr;
@@ -250,6 +241,38 @@ MobileConnection::SelectNetworkAutomatically(nsIDOMDOMRequest** request)
   }
 
   return mProvider->SelectNetworkAutomatically(GetOwner(), request);
+}
+
+NS_IMETHODIMP
+MobileConnection::SetRoamingPreference(const nsAString& aMode, nsIDOMDOMRequest** aDomRequest)
+{
+  *aDomRequest = nullptr;
+
+  if (!CheckPermission("mobileconnection")) {
+    return NS_OK;
+  }
+
+  if (!mProvider) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return mProvider->SetRoamingPreference(GetOwner(), aMode, aDomRequest);
+}
+
+NS_IMETHODIMP
+MobileConnection::GetRoamingPreference(nsIDOMDOMRequest** aDomRequest)
+{
+  *aDomRequest = nullptr;
+
+  if (!CheckPermission("mobileconnection")) {
+    return NS_OK;
+  }
+
+  if (!mProvider) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return mProvider->GetRoamingPreference(GetOwner(), aDomRequest);
 }
 
 NS_IMETHODIMP
@@ -380,6 +403,39 @@ MobileConnection::SetCallWaitingOption(bool aEnabled,
   }
 
   return mProvider->SetCallWaitingOption(GetOwner(), aEnabled, aRequest);
+}
+
+NS_IMETHODIMP
+MobileConnection::GetCallingLineIdRestriction(nsIDOMDOMRequest** aRequest)
+{
+  *aRequest = nullptr;
+
+  if (!CheckPermission("mobileconnection")) {
+    return NS_OK;
+  }
+
+  if (!mProvider) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return mProvider->GetCallingLineIdRestriction(GetOwner(), aRequest);
+}
+
+NS_IMETHODIMP
+MobileConnection::SetCallingLineIdRestriction(unsigned short aClirMode,
+                                              nsIDOMDOMRequest** aRequest)
+{
+  *aRequest = nullptr;
+
+  if (!CheckPermission("mobileconnection")) {
+    return NS_OK;
+  }
+
+  if (!mProvider) {
+    return NS_ERROR_FAILURE;
+  }
+
+  return mProvider->SetCallingLineIdRestriction(GetOwner(), aClirMode, aRequest);
 }
 
 // nsIMobileConnectionListener

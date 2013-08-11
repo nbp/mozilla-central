@@ -175,7 +175,6 @@
 #ifdef MOZ_B2G_FM
 @BINPATH@/components/dom_fm.xpt
 #endif
-@BINPATH@/components/dom_battery.xpt
 #ifdef MOZ_B2G_BT
 @BINPATH@/components/dom_bluetooth.xpt
 #endif
@@ -196,7 +195,6 @@
 @BINPATH@/components/dom_indexeddb.xpt
 @BINPATH@/components/dom_offline.xpt
 @BINPATH@/components/dom_payment.xpt
-@BINPATH@/components/dom_push.xpt
 @BINPATH@/components/dom_json.xpt
 @BINPATH@/components/dom_browserelement.xpt
 @BINPATH@/components/dom_messages.xpt
@@ -528,6 +526,7 @@
 @BINPATH@/components/ActivityMessageConfigurator.js
 
 @BINPATH@/components/TCPSocket.js
+@BINPATH@/components/TCPServerSocket.js
 @BINPATH@/components/TCPSocketParentIntermediary.js
 @BINPATH@/components/TCPSocket.manifest
 
