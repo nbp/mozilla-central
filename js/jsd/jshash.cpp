@@ -7,13 +7,19 @@
 /*
  * PR hash table package.
  */
+
+#include "jshash.h"
+
+#include "mozilla/MathAlgorithms.h"
+
 #include <stdlib.h>
 #include <string.h>
 #include "jstypes.h"
 #include "jsutil.h"
-#include "jshash.h"
 
 using namespace js;
+
+using mozilla::CeilingLog2Size;
 
 /* Compute the number of buckets in ht */
 #define NBUCKETS(ht)    JS_BIT(JS_HASH_BITS - (ht)->shift)
@@ -72,7 +78,7 @@ JS_NewHashTable(uint32_t n, JSHashFunction keyHash,
     if (n <= MINBUCKETS) {
         n = MINBUCKETSLOG2;
     } else {
-        n = JS_CEILING_LOG2W(n);
+        n = CeilingLog2Size(n);
         if (int32_t(n) < 0)
             return NULL;
     }
@@ -173,14 +179,14 @@ Resize(JSHashTable *ht, uint32_t newshift)
 
     /* Integer overflow protection. */
     if (nb > (size_t)-1 / sizeof(JSHashEntry*))
-        return JS_FALSE;
+        return false;
     nb *= sizeof(JSHashEntry*);
 
     oldbuckets = ht->buckets;
     ht->buckets = (JSHashEntry**)ht->allocOps->allocTable(ht->allocPriv, nb);
     if (!ht->buckets) {
         ht->buckets = oldbuckets;
-        return JS_FALSE;
+        return false;
     }
     memset(ht->buckets, 0, nb);
 
@@ -209,7 +215,7 @@ Resize(JSHashTable *ht, uint32_t newshift)
 #endif
     ht->allocOps->freeTable(ht->allocPriv, oldbuckets,
                             nold * sizeof oldbuckets[0]);
-    return JS_TRUE;
+    return true;
 }
 
 JSHashEntry *
@@ -292,11 +298,11 @@ JS_HashTableRemove(JSHashTable *ht, const void *key)
     keyHash = ht->keyHash(key);
     hep = JS_HashTableRawLookup(ht, keyHash, key);
     if ((he = *hep) == NULL)
-        return JS_FALSE;
+        return false;
 
     /* Hit; remove element */
     JS_HashTableRawRemove(ht, hep, he);
-    return JS_TRUE;
+    return true;
 }
 
 void *
@@ -352,7 +358,7 @@ out:
         JS_ASSERT(ht->nentries < nlimit);
         nbuckets = NBUCKETS(ht);
         if (MINBUCKETS < nbuckets && ht->nentries < UNDERLOADED(nbuckets)) {
-            newlog2 = JS_CEILING_LOG2W(ht->nentries);
+            newlog2 = CeilingLog2Size(ht->nentries);
             if (newlog2 < MINBUCKETSLOG2)
                 newlog2 = MINBUCKETSLOG2;
 

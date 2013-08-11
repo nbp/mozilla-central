@@ -9,8 +9,6 @@
 
 #include "jsobj.h"
 
-#include "jswrapper.h"
-
 #include "vm/ArrayObject.h"
 #include "vm/DateObject.h"
 #include "vm/NumberObject.h"
@@ -108,7 +106,7 @@ JSObject::finalize(js::FreeOp *fop)
     JS_ASSERT(isTenured());
     if (!IsBackgroundFinalized(tenuredGetAllocKind())) {
         /* Assert we're on the main thread. */
-        fop->runtime()->assertValidThread();
+        JS_ASSERT(CurrentThreadCanAccessRuntime(fop->runtime()));
     }
 #endif
     js::Class *clasp = getClass();
@@ -280,7 +278,7 @@ inline void
 JSObject::initDenseElements(uint32_t dstStart, const js::Value *src, uint32_t count)
 {
     JS_ASSERT(dstStart + count <= getDenseCapacity());
-    JSRuntime *rt = runtime();
+    JSRuntime *rt = runtimeFromMainThread();
     for (uint32_t i = 0; i < count; ++i)
         elements[dstStart + i].init(rt, this, js::HeapSlot::Element, dstStart + i, src[i]);
 }
@@ -318,7 +316,7 @@ JSObject::moveDenseElements(uint32_t dstStart, uint32_t srcStart, uint32_t count
         }
     } else {
         memmove(elements + dstStart, elements + srcStart, count * sizeof(js::HeapSlot));
-        DenseRangeWriteBarrierPost(runtime(), this, dstStart, count);
+        DenseRangeWriteBarrierPost(runtimeFromMainThread(), this, dstStart, count);
     }
 }
 
@@ -354,7 +352,7 @@ JSObject::ensureDenseInitializedLength(js::ExclusiveContext *cx, uint32_t index,
         markDenseElementsNotPacked(cx);
 
     if (initlen < index + extra) {
-        JSRuntime *rt = runtime();
+        JSRuntime *rt = runtimeFromAnyThread();
         size_t offset = initlen;
         for (js::HeapSlot *sp = elements + initlen;
              sp != elements + (index + extra);
@@ -589,7 +587,7 @@ JSObject::create(js::ExclusiveContext *cx, js::gc::AllocKind kind, js::gc::Initi
     }
 
 #ifdef JSGC_GENERATIONAL
-    if (heap != js::gc::TenuredHeap)
+    if (slots && heap != js::gc::TenuredHeap)
         cx->asJSContext()->runtime()->gcNursery.notifyInitialSlots(obj, slots);
 #endif
 
@@ -760,18 +758,6 @@ JSObject::getElementAttributes(JSContext *cx, js::HandleObject obj,
     if (!js::IndexToId(cx, index, &id))
         return false;
     return getGenericAttributes(cx, obj, id, attrsp);
-}
-
-inline bool
-JSObject::isCrossCompartmentWrapper() const
-{
-    return js::IsCrossCompartmentWrapper(const_cast<JSObject*>(this));
-}
-
-inline bool
-JSObject::isWrapper() const
-{
-    return js::IsWrapper(const_cast<JSObject*>(this));
 }
 
 inline js::GlobalObject &
@@ -1207,11 +1193,12 @@ static JS_ALWAYS_INLINE bool
 NewObjectMetadata(ExclusiveContext *cxArg, JSObject **pmetadata)
 {
     // The metadata callback is invoked before each created object, except when
-    // analysis is active as the callback may reenter JS.
+    // analysis/compilation/parsing is active as the callback may reenter JS.
     JS_ASSERT(!*pmetadata);
     if (JSContext *cx = cxArg->maybeJSContext()) {
         if (JS_UNLIKELY((size_t)cx->compartment()->objectMetadataCallback) &&
-            !cx->compartment()->activeAnalysis)
+            !cx->compartment()->activeAnalysis &&
+            !cx->runtime()->mainThread.activeCompilations)
         {
             gc::AutoSuppressGC suppress(cx);
             return cx->compartment()->objectMetadataCallback(cx, pmetadata);

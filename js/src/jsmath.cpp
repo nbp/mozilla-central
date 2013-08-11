@@ -15,8 +15,6 @@
 
 #include "jsmath.h"
 
-#include "jslibmath.h"
-
 #include "mozilla/Constants.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/MathAlgorithms.h"
@@ -29,12 +27,13 @@
 # include <unistd.h>
 #endif
 
-#include "jstypes.h"
-#include "prmjtime.h"
 #include "jsapi.h"
 #include "jsatom.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
+#include "jslibmath.h"
+#include "jstypes.h"
+#include "prmjtime.h"
 
 #include "jsobjinlines.h"
 
@@ -114,7 +113,7 @@ Class js::MathClass = {
     JS_ConvertStub
 };
 
-JSBool
+bool
 js_math_abs(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -125,7 +124,7 @@ js_math_abs(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     double z = Abs(x);
@@ -143,7 +142,7 @@ js::math_acos_impl(MathCache *cache, double x)
     return cache->lookup(acos, x);
 }
 
-JSBool
+bool
 js::math_acos(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -154,7 +153,7 @@ js::math_acos(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -176,7 +175,7 @@ js::math_asin_impl(MathCache *cache, double x)
     return cache->lookup(asin, x);
 }
 
-JSBool
+bool
 js::math_asin(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -187,7 +186,7 @@ js::math_asin(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -205,7 +204,7 @@ js::math_atan_impl(MathCache *cache, double x)
     return cache->lookup(atan, x);
 }
 
-JSBool
+bool
 js::math_atan(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -216,7 +215,7 @@ js::math_atan(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -258,7 +257,7 @@ js::ecmaAtan2(double y, double x)
     return atan2(y, x);
 }
 
-JSBool
+bool
 js::math_atan2(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -269,7 +268,7 @@ js::math_atan2(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x, y;
-    if (!ToNumber(cx, args.handleAt(0), &x) || !ToNumber(cx, args.handleAt(1), &y))
+    if (!ToNumber(cx, args[0], &x) || !ToNumber(cx, args[1], &y))
         return false;
 
     double z = ecmaAtan2(x, y);
@@ -287,7 +286,7 @@ js_math_ceil_impl(double x)
     return ceil(x);
 }
 
-JSBool
+bool
 js_math_ceil(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -298,7 +297,7 @@ js_math_ceil(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     double z = js_math_ceil_impl(x);
@@ -312,7 +311,7 @@ js::math_cos_impl(MathCache *cache, double x)
     return cache->lookup(cos, x);
 }
 
-JSBool
+bool
 js::math_cos(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -323,7 +322,7 @@ js::math_cos(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -349,7 +348,7 @@ js::math_exp_impl(MathCache *cache, double x)
     return cache->lookup(exp, x);
 }
 
-JSBool
+bool
 js::math_exp(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -360,7 +359,7 @@ js::math_exp(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -378,7 +377,7 @@ js_math_floor_impl(double x)
     return floor(x);
 }
 
-JSBool
+bool
 js_math_floor(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -389,7 +388,7 @@ js_math_floor(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     double z = js_math_floor_impl(x);
@@ -397,7 +396,7 @@ js_math_floor(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js::math_imul(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -425,7 +424,7 @@ js::math_log_impl(MathCache *cache, double x)
     return cache->lookup(log, x);
 }
 
-JSBool
+bool
 js::math_log(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -436,7 +435,7 @@ js::math_log(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -448,7 +447,7 @@ js::math_log(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js_math_max(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -456,7 +455,7 @@ js_math_max(JSContext *cx, unsigned argc, Value *vp)
     double maxval = NegativeInfinity();
     for (unsigned i = 0; i < args.length(); i++) {
         double x;
-        if (!ToNumber(cx, args.handleAt(i), &x))
+        if (!ToNumber(cx, args[i], &x))
             return false;
         // Math.max(num, NaN) => NaN, Math.max(-0, +0) => +0
         if (x > maxval || IsNaN(x) || (x == maxval && IsNegative(maxval)))
@@ -466,7 +465,7 @@ js_math_max(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js_math_min(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -474,7 +473,7 @@ js_math_min(JSContext *cx, unsigned argc, Value *vp)
     double minval = PositiveInfinity();
     for (unsigned i = 0; i < args.length(); i++) {
         double x;
-        if (!ToNumber(cx, args.handleAt(i), &x))
+        if (!ToNumber(cx, args[i], &x))
             return false;
         // Math.min(num, NaN) => NaN, Math.min(-0, +0) => -0
         if (x < minval || IsNaN(x) || (x == minval && IsNegativeZero(x)))
@@ -552,7 +551,7 @@ js::ecmaPow(double x, double y)
 #if defined(_MSC_VER)
 # pragma optimize("g", off)
 #endif
-JSBool
+bool
 js_math_pow(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -563,7 +562,7 @@ js_math_pow(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x, y;
-    if (!ToNumber(cx, args.handleAt(0), &x) || !ToNumber(cx, args.handleAt(1), &y))
+    if (!ToNumber(cx, args[0], &x) || !ToNumber(cx, args[1], &y))
         return false;
 
     /*
@@ -680,7 +679,7 @@ math_random_no_outparam(JSContext *cx)
     return random_nextDouble(cx);
 }
 
-JSBool
+bool
 js_math_random(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -689,7 +688,7 @@ js_math_random(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool /* ES5 15.8.2.15. */
+bool /* ES5 15.8.2.15. */
 js_math_round(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -700,7 +699,7 @@ js_math_round(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     int32_t i;
@@ -725,7 +724,7 @@ js::math_sin_impl(MathCache *cache, double x)
     return cache->lookup(sin, x);
 }
 
-JSBool
+bool
 js::math_sin(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -736,7 +735,7 @@ js::math_sin(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -748,7 +747,7 @@ js::math_sin(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-JSBool
+bool
 js_math_sqrt(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -759,7 +758,7 @@ js_math_sqrt(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -777,7 +776,7 @@ js::math_tan_impl(MathCache *cache, double x)
     return cache->lookup(tan, x);
 }
 
-JSBool
+bool
 js::math_tan(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -788,7 +787,7 @@ js::math_tan(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -813,7 +812,7 @@ JSBool math_function(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
     MathCache *mathCache = cx->runtime()->getMathCache(cx);
@@ -833,7 +832,7 @@ js::math_log10_impl(MathCache *cache, double x)
     return cache->lookup(log10, x);
 }
 
-JSBool
+bool
 js::math_log10(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_log10_impl>(cx, argc, vp);
@@ -852,7 +851,7 @@ js::math_log2_impl(MathCache *cache, double x)
     return cache->lookup(log2, x);
 }
 
-JSBool
+bool
 js::math_log2(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_log2_impl>(cx, argc, vp);
@@ -887,7 +886,7 @@ js::math_log1p_impl(MathCache *cache, double x)
     return cache->lookup(log1p, x);
 }
 
-JSBool
+bool
 js::math_log1p(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_log1p_impl>(cx, argc, vp);
@@ -920,7 +919,7 @@ js::math_expm1_impl(MathCache *cache, double x)
     return cache->lookup(expm1, x);
 }
 
-JSBool
+bool
 js::math_expm1(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_expm1_impl>(cx, argc, vp);
@@ -944,7 +943,7 @@ js::math_cosh_impl(MathCache *cache, double x)
     return cache->lookup(cosh, x);
 }
 
-JSBool
+bool
 js::math_cosh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_cosh_impl>(cx, argc, vp);
@@ -956,7 +955,7 @@ js::math_sinh_impl(MathCache *cache, double x)
     return cache->lookup(sinh, x);
 }
 
-JSBool
+bool
 js::math_sinh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_sinh_impl>(cx, argc, vp);
@@ -968,7 +967,7 @@ js::math_tanh_impl(MathCache *cache, double x)
     return cache->lookup(tanh, x);
 }
 
-JSBool
+bool
 js::math_tanh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_tanh_impl>(cx, argc, vp);
@@ -1011,7 +1010,7 @@ js::math_acosh_impl(MathCache *cache, double x)
     return cache->lookup(acosh, x);
 }
 
-JSBool
+bool
 js::math_acosh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_acosh_impl>(cx, argc, vp);
@@ -1056,7 +1055,7 @@ js::math_asinh_impl(MathCache *cache, double x)
     return cache->lookup(asinh, x);
 }
 
-JSBool
+bool
 js::math_asinh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_asinh_impl>(cx, argc, vp);
@@ -1096,7 +1095,7 @@ js::math_atanh_impl(MathCache *cache, double x)
     return cache->lookup(atanh, x);
 }
 
-JSBool
+bool
 js::math_atanh(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_atanh_impl>(cx, argc, vp);
@@ -1137,7 +1136,7 @@ js::math_hypot_impl(double x, double y)
     return hypot(x, y);
 }
 
-JSBool
+bool
 js::math_hypot(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -1147,10 +1146,10 @@ js::math_hypot(JSContext *cx, unsigned argc, Value *vp)
     }
 
     double x, y;
-    if (!ToNumber(cx, args.handleAt(0), &x))
+    if (!ToNumber(cx, args[0], &x))
         return false;
 
-    if (!ToNumber(cx, args.handleAt(1), &y))
+    if (!ToNumber(cx, args[1], &y))
         return false;
 
     if (args.length() == 2) {
@@ -1160,7 +1159,7 @@ js::math_hypot(JSContext *cx, unsigned argc, Value *vp)
 
     /* args.length() > 2 */
     double z;
-    if (!ToNumber(cx, args.handleAt(2), &z)) {
+    if (!ToNumber(cx, args[2], &z)) {
         return false;
     }
 
@@ -1181,7 +1180,7 @@ js::math_trunc_impl(MathCache *cache, double x)
     return cache->lookup(trunc, x);
 }
 
-JSBool
+bool
 js::math_trunc(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_trunc_impl>(cx, argc, vp);
@@ -1201,7 +1200,7 @@ js::math_sign_impl(MathCache *cache, double x)
     return cache->lookup(sign, x);
 }
 
-JSBool
+bool
 js::math_sign(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_sign_impl>(cx, argc, vp);
@@ -1226,14 +1225,14 @@ js::math_cbrt_impl(MathCache *cache, double x)
     return cache->lookup(cbrt, x);
 }
 
-JSBool
+bool
 js::math_cbrt(JSContext *cx, unsigned argc, Value *vp)
 {
     return math_function<math_cbrt_impl>(cx, argc, vp);
 }
 
 #if JS_HAS_TOSOURCE
-static JSBool
+static bool
 math_toSource(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
