@@ -5,10 +5,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ion/x86/MacroAssembler-x86.h"
-#include "ion/BaselineFrame.h"
-#include "ion/MoveEmitter.h"
-#include "ion/IonFrames.h"
+
 #include "mozilla/Casting.h"
+
+#include "ion/Bailouts.h"
+#include "ion/BaselineFrame.h"
+#include "ion/IonFrames.h"
+#include "ion/MoveEmitter.h"
 
 #include "jsscriptinlines.h"
 
@@ -212,7 +215,7 @@ MacroAssemblerX86::handleFailureWithHandler(void *handler)
     passABIArg(eax);
     callWithABI(handler);
 
-    IonCode *excTail = GetIonContext()->compartment->ionCompartment()->getExceptionTail();
+    IonCode *excTail = GetIonContext()->runtime->ionRuntime()->getExceptionTail();
     jmp(excTail);
 }
 
@@ -223,12 +226,14 @@ MacroAssemblerX86::handleFailureWithHandlerTail()
     Label catch_;
     Label finally;
     Label return_;
+    Label bailout;
 
     loadPtr(Address(esp, offsetof(ResumeFromException, kind)), eax);
     branch32(Assembler::Equal, eax, Imm32(ResumeFromException::RESUME_ENTRY_FRAME), &entryFrame);
     branch32(Assembler::Equal, eax, Imm32(ResumeFromException::RESUME_CATCH), &catch_);
     branch32(Assembler::Equal, eax, Imm32(ResumeFromException::RESUME_FINALLY), &finally);
     branch32(Assembler::Equal, eax, Imm32(ResumeFromException::RESUME_FORCED_RETURN), &return_);
+    branch32(Assembler::Equal, eax, Imm32(ResumeFromException::RESUME_BAILOUT), &bailout);
 
     breakpoint(); // Invalid kind.
 
@@ -270,6 +275,13 @@ MacroAssemblerX86::handleFailureWithHandlerTail()
     movl(ebp, esp);
     pop(ebp);
     ret();
+
+    // If we are bailing out to baseline to handle an exception, jump to
+    // the bailout tail stub.
+    bind(&bailout);
+    movl(Operand(esp, offsetof(ResumeFromException, bailoutInfo)), ecx);
+    movl(Imm32(BAILOUT_RETURN_OK), eax);
+    jmp(Operand(esp, offsetof(ResumeFromException, target)));
 }
 
 void

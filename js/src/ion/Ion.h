@@ -13,10 +13,10 @@
 
 #include "jscntxt.h"
 #include "jscompartment.h"
-#include "ion/IonCode.h"
-#include "ion/CompileInfo.h"
 #include "jsinfer.h"
 
+#include "ion/CompileInfo.h"
+#include "ion/IonCode.h"
 #include "vm/Interpreter.h"
 
 namespace js {
@@ -124,6 +124,15 @@ struct IonOptions
     // Default: 10
     uint32_t frequentBailoutThreshold;
 
+    // Number of exception bailouts (resuming into catch/finally block) before
+    // we invalidate and forbid Ion compilation.
+    //
+    // Default: 10
+    uint32_t exceptionBailoutThreshold;
+
+    // Whether Ion should compile try-catch statements.
+    bool compileTryCatch;
+
     // How many actual arguments are accepted on the C stack.
     //
     // Default: 4,096
@@ -177,7 +186,7 @@ struct IonOptions
     // How many uses of a parallel kernel before we attempt compilation.
     //
     // Default: 1
-    uint32_t usesBeforeCompileParallel;
+    uint32_t usesBeforeCompilePar;
 
     void setEagerCompilation() {
         eagerCompilation = true;
@@ -205,6 +214,8 @@ struct IonOptions
         usesBeforeInliningFactor(.125),
         osrPcMismatchesBeforeRecompile(6000),
         frequentBailoutThreshold(10),
+        exceptionBailoutThreshold(10),
+        compileTryCatch(false),
         maxStackArgs(4096),
         maxInlineDepth(3),
         smallFunctionMaxInlineDepth(10),
@@ -213,7 +224,7 @@ struct IonOptions
         inlineMaxTotalBytecodeLength(1000),
         inlineUseCountRatio(128),
         eagerCompilation(false),
-        usesBeforeCompileParallel(1)
+        usesBeforeCompilePar(1)
     {
     }
 
@@ -246,7 +257,7 @@ class IonContext
 {
   public:
     IonContext(JSContext *cx, TempAllocator *temp);
-    IonContext(JSCompartment *comp, TempAllocator *temp);
+    IonContext(JSRuntime *rt, JSCompartment *comp, TempAllocator *temp);
     IonContext(JSRuntime *rt);
     ~IonContext();
 
@@ -344,6 +355,14 @@ IsEnabled(JSContext *cx)
     return cx->hasOption(JSOPTION_ION) &&
         cx->hasOption(JSOPTION_BASELINE) &&
         cx->typeInferenceEnabled();
+}
+
+inline bool
+IsIonInlinablePC(jsbytecode *pc) {
+    // CALL, FUNCALL, FUNAPPLY, EVAL, NEW (Normal Callsites)
+    // GETPROP, CALLPROP, and LENGTH. (Inlined Getters)
+    // SETPROP, SETNAME, SETGNAME (Inlined Setters)
+    return IsCallPC(pc) || IsGetterPC(pc) || IsSetterPC(pc);
 }
 
 void ForbidCompilation(JSContext *cx, JSScript *script);

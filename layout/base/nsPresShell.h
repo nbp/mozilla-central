@@ -251,6 +251,7 @@ public:
   NS_DECL_NSIDOCUMENTOBSERVER_STYLERULEREMOVED
 
   // nsIMutationObserver
+  NS_DECL_NSIMUTATIONOBSERVER_CHARACTERDATAWILLCHANGE
   NS_DECL_NSIMUTATIONOBSERVER_CHARACTERDATACHANGED
   NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTEWILLCHANGE
   NS_DECL_NSIMUTATIONOBSERVER_ATTRIBUTECHANGED
@@ -689,7 +690,7 @@ protected:
   // document's root view for element, first ensuring the element is onscreen
   void GetCurrentItemAndPositionForElement(nsIDOMElement *aCurrentEl,
                                            nsIContent **aTargetToUse,
-                                           nsIntPoint& aTargetPt,
+                                           mozilla::LayoutDeviceIntPoint& aTargetPt,
                                            nsIWidget *aRootWidget);
 
   void FireResizeEvent();

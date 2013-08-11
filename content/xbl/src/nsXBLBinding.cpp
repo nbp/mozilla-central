@@ -160,6 +160,8 @@ nsXBLBinding::~nsXBLBinding(void)
   NS_RELEASE(info);
 }
 
+NS_IMPL_CYCLE_COLLECTION_CLASS(nsXBLBinding)
+
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsXBLBinding)
   // XXX Probably can't unlink mPrototypeBinding->XBLDocumentInfo(), because
   //     mPrototypeBinding is weak.
@@ -323,8 +325,6 @@ nsXBLBinding::GenerateAnonymousContent()
   bool hasContent = (contentCount > 0);
   if (hasContent) {
     nsIDocument* doc = mBoundElement->OwnerDoc();
-    
-    nsBindingManager *bindingManager = doc->BindingManager();
 
     nsCOMPtr<nsINode> clonedNode;
     nsCOMArray<nsINode> nodesWithProperties;
@@ -355,22 +355,22 @@ nsXBLBinding::GenerateAnonymousContent()
     if (mDefaultInsertionPoint && mInsertionPoints.IsEmpty()) {
       ExplicitChildIterator iter(mBoundElement);
       for (nsIContent* child = iter.GetNextChild(); child; child = iter.GetNextChild()) {
-        mDefaultInsertionPoint->AppendInsertedChild(child, bindingManager);
+        mDefaultInsertionPoint->AppendInsertedChild(child);
       }
     } else {
       // It is odd to come into this code if mInsertionPoints is not empty, but
       // we need to make sure to do the compatibility hack below if the bound
-      // node has any non <xul:template> or <xul:observer> children.
+      // node has any non <xul:template> or <xul:observes> children.
       ExplicitChildIterator iter(mBoundElement);
       for (nsIContent* child = iter.GetNextChild(); child; child = iter.GetNextChild()) {
         XBLChildrenElement* point = FindInsertionPointForInternal(child);
         if (point) {
-          point->AppendInsertedChild(child, bindingManager);
+          point->AppendInsertedChild(child);
         } else {
           nsINodeInfo *ni = child->NodeInfo();
           if (ni->NamespaceID() != kNameSpaceID_XUL ||
               (!ni->Equals(nsGkAtoms::_template) &&
-               !ni->Equals(nsGkAtoms::observer))) {
+               !ni->Equals(nsGkAtoms::observes))) {
             // Compatibility hack. For some reason the original XBL
             // implementation dropped the content of a binding if any child of
             // the bound element didn't match any of the <children> in the
@@ -392,10 +392,10 @@ nsXBLBinding::GenerateAnonymousContent()
 
     // Set binding parent on default content if need
     if (mDefaultInsertionPoint) {
-      mDefaultInsertionPoint->MaybeSetupDefaultContent(bindingManager);
+      mDefaultInsertionPoint->MaybeSetupDefaultContent();
     }
     for (uint32_t i = 0; i < mInsertionPoints.Length(); ++i) {
-      mInsertionPoints[i]->MaybeSetupDefaultContent(bindingManager);
+      mInsertionPoints[i]->MaybeSetupDefaultContent();
     }
 
     mPrototypeBinding->SetInitialAttributes(mBoundElement, mContent);
@@ -702,8 +702,7 @@ nsXBLBinding::UnhookEventHandlers()
 }
 
 static void
-UpdateInsertionParent(nsBindingManager* aBindingManager,
-                      XBLChildrenElement* aPoint,
+UpdateInsertionParent(XBLChildrenElement* aPoint,
                       nsIContent* aOldBoundElement)
 {
   if (aPoint->IsDefaultInsertion()) {
@@ -723,9 +722,9 @@ UpdateInsertionParent(nsBindingManager* aBindingManager,
     // latter case, the child is now inserted into |aOldBoundElement| from some
     // binding above us, so we set its insertion parent to aOldBoundElement.
     if (child->GetParentNode() == aOldBoundElement) {
-      aBindingManager->SetInsertionParent(child, nullptr);
+      child->SetXBLInsertionParent(nullptr);
     } else {
-      aBindingManager->SetInsertionParent(child, aOldBoundElement);
+      child->SetXBLInsertionParent(aOldBoundElement);
     }
   }
 }
@@ -768,7 +767,7 @@ nsXBLBinding::ChangeDocument(nsIDocument* aOldDocument, nsIDocument* aNewDocumen
           JS::Rooted<JSObject*> base(cx, scriptObject);
           JS::Rooted<JSObject*> proto(cx);
           for ( ; true; base = proto) { // Will break out on null proto
-            if (!JS_GetPrototype(cx, base, proto.address())) {
+            if (!JS_GetPrototype(cx, base, &proto)) {
               return;
             }
             if (!proto) {
@@ -802,7 +801,7 @@ nsXBLBinding::ChangeDocument(nsIDocument* aOldDocument, nsIDocument* aNewDocumen
             // Alright!  This is the right prototype.  Pull it out of the
             // proto chain.
             JS::Rooted<JSObject*> grandProto(cx);
-            if (!JS_GetPrototype(cx, proto, grandProto.address())) {
+            if (!JS_GetPrototype(cx, proto, &grandProto)) {
               return;
             }
             ::JS_SetPrototype(cx, base, grandProto);
@@ -837,19 +836,15 @@ nsXBLBinding::ChangeDocument(nsIDocument* aOldDocument, nsIDocument* aNewDocumen
       nsXBLBinding::UninstallAnonymousContent(aOldDocument, mContent);
     }
 
-    nsBindingManager* bindingManager = aOldDocument->BindingManager();
-
     // Now that we've unbound our anonymous content from the tree and updated
     // its binding parent, update the insertion parent for content inserted
     // into our <children> elements.
     if (mDefaultInsertionPoint) {
-      UpdateInsertionParent(bindingManager, mDefaultInsertionPoint,
-                            mBoundElement);
+      UpdateInsertionParent(mDefaultInsertionPoint, mBoundElement);
     }
 
     for (size_t i = 0; i < mInsertionPoints.Length(); ++i) {
-      UpdateInsertionParent(bindingManager, mInsertionPoints[i],
-                            mBoundElement);
+      UpdateInsertionParent(mInsertionPoints[i], mBoundElement);
     }
 
     // Now that our inserted children no longer think they're inserted
@@ -906,7 +901,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
   nsXBLJSClass* c = nullptr;
   if (obj) {
     // Retrieve the current prototype of obj.
-    if (!JS_GetPrototype(cx, obj, parent_proto.address())) {
+    if (!JS_GetPrototype(cx, obj, &parent_proto)) {
       return NS_ERROR_FAILURE;
     }
     if (parent_proto) {
@@ -948,7 +943,7 @@ nsXBLBinding::DoInitJSClass(JSContext *cx, JS::Handle<JSObject*> global,
   JS::Rooted<JSObject*> proto(cx);
   JS::Rooted<JS::Value> val(cx);
 
-  if (!::JS_LookupPropertyWithFlags(cx, global, className.get(), 0, val.address()))
+  if (!::JS_LookupPropertyWithFlags(cx, global, className.get(), 0, &val))
     return NS_ERROR_OUT_OF_MEMORY;
 
   if (val.isObject()) {
@@ -1170,9 +1165,18 @@ nsXBLBinding::LookupMemberInternal(JSContext* aCx, nsString& aName,
   // Find our class object. It's in a protected scope and permanent just in case,
   // so should be there no matter what.
   JS::RootedValue classObject(aCx);
-  if (!JS_GetProperty(aCx, aXBLScope, mJSClass->name, classObject.address())) {
+  if (!JS_GetProperty(aCx, aXBLScope, mJSClass->name, &classObject)) {
     return false;
   }
+
+  // The bound element may have been adoped by a document and have a different
+  // wrapper (and different xbl scope) than when the binding was applied, in
+  // this case getting the class object will fail. Behave as if the class
+  // object did not exist.
+  if (classObject.isUndefined()) {
+    return true;
+  }
+
   MOZ_ASSERT(classObject.isObject());
 
   // Look for the property on this binding. If it's not there, try the next

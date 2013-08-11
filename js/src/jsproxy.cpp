@@ -13,8 +13,10 @@
 #include "jsfun.h"
 #include "jsgc.h"
 #include "jsprvtd.h"
+#include "jswrapper.h"
 
 #include "gc/Marking.h"
+#include "vm/WrapperObject.h"
 
 #include "jsatominlines.h"
 #include "jsinferinlines.h"
@@ -421,14 +423,7 @@ DirectProxyHandler::delete_(JSContext *cx, HandleObject proxy, HandleId id, bool
 {
     assertEnteredPolicy(cx, proxy, id);
     RootedObject target(cx, proxy->as<ProxyObject>().target());
-    RootedValue v(cx);
-    if (!JS_DeletePropertyById2(cx, target, id, v.address()))
-        return false;
-    JSBool b;
-    if (!JS_ValueToBoolean(cx, v, &b))
-        return false;
-    *bp = !!b;
-    return true;
+    return JS_DeletePropertyById2(cx, target, id, bp);
 }
 
 bool
@@ -2417,7 +2412,7 @@ js::AppendUnique(JSContext *cx, AutoIdVector &base, AutoIdVector &others)
         if (unique)
             uniqueOthers.append(others[i]);
     }
-    return base.append(uniqueOthers);
+    return base.appendAll(uniqueOthers);
 }
 
 bool
@@ -2683,7 +2678,12 @@ Proxy::objectClassIs(HandleObject proxy, ESClassValue classValue, JSContext *cx)
 const char *
 Proxy::className(JSContext *cx, HandleObject proxy)
 {
-    JS_CHECK_RECURSION(cx, return NULL);
+    // Check for unbounded recursion, but don't signal an error; className
+    // needs to be infallible.
+    int stackDummy;
+    if (!JS_CHECK_STACK_SIZE(cx->mainThread().nativeStackLimit, &stackDummy))
+        return "too much recursion";
+
     BaseProxyHandler *handler = proxy->as<ProxyObject>().handler();
     AutoEnterPolicy policy(cx, handler, proxy, JS::JSID_VOIDHANDLE,
                            BaseProxyHandler::GET, /* mayThrow = */ false);
@@ -3003,7 +3003,7 @@ ProxyObject::trace(JSTracer *trc, JSObject *obj)
     ProxyObject *proxy = &obj->as<ProxyObject>();
 
 #ifdef DEBUG
-    if (!trc->runtime->gcDisableStrictProxyCheckingCount && proxy->isWrapper()) {
+    if (!trc->runtime->gcDisableStrictProxyCheckingCount && proxy->is<WrapperObject>()) {
         JSObject *referent = &proxy->private_().toObject();
         if (referent->compartment() != proxy->compartment()) {
             /*
@@ -3026,7 +3026,7 @@ ProxyObject::trace(JSTracer *trc, JSObject *obj)
      * The GC can use the second reserved slot to link the cross compartment
      * wrappers into a linked list, in which case we don't want to trace it.
      */
-    if (!IsCrossCompartmentWrapper(proxy))
+    if (!proxy->is<CrossCompartmentWrapperObject>())
         MarkSlot(trc, proxy->slotOfExtra(1), "extra1");
 }
 
@@ -3133,7 +3133,7 @@ Class js::ObjectProxyObject::class_ = {
     }
 };
 
-JS_FRIEND_DATA(Class*) js::ObjectProxyClassPtr = &ObjectProxyObject::class_;
+Class* const js::ObjectProxyClassPtr = &ObjectProxyObject::class_;
 
 Class js::OuterWindowProxyObject::class_ = {
     "Proxy",
@@ -3192,9 +3192,9 @@ Class js::OuterWindowProxyObject::class_ = {
     }
 };
 
-JS_FRIEND_DATA(Class*) js::OuterWindowProxyClassPtr = &OuterWindowProxyObject::class_;
+Class* const js::OuterWindowProxyClassPtr = &OuterWindowProxyObject::class_;
 
-static JSBool
+static bool
 proxy_Call(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -3203,7 +3203,7 @@ proxy_Call(JSContext *cx, unsigned argc, Value *vp)
     return Proxy::call(cx, proxy, args);
 }
 
-static JSBool
+static bool
 proxy_Construct(JSContext *cx, unsigned argc, Value *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -3263,7 +3263,7 @@ Class js::FunctionProxyObject::class_ = {
     }
 };
 
-JS_FRIEND_DATA(Class*) js::FunctionProxyClassPtr = &FunctionProxyObject::class_;
+Class* const js::FunctionProxyClassPtr = &FunctionProxyObject::class_;
 
 /* static */ ProxyObject *
 ProxyObject::New(JSContext *cx, BaseProxyHandler *handler, HandleValue priv, TaggedProto proto_,
@@ -3373,7 +3373,7 @@ ProxyObject::renew(JSContext *cx, BaseProxyHandler *handler, Value priv)
     setSlot(EXTRA_SLOT + 1, UndefinedValue());
 }
 
-static JSBool
+static bool
 proxy(JSContext *cx, unsigned argc, jsval *vp)
 {
     CallArgs args = CallArgsFromVp(argc, vp);
@@ -3402,7 +3402,7 @@ proxy(JSContext *cx, unsigned argc, jsval *vp)
     return true;
 }
 
-static JSBool
+static bool
 proxy_create(JSContext *cx, unsigned argc, Value *vp)
 {
     if (argc < 1) {
@@ -3433,7 +3433,7 @@ proxy_create(JSContext *cx, unsigned argc, Value *vp)
     return true;
 }
 
-static JSBool
+static bool
 proxy_createFunction(JSContext *cx, unsigned argc, Value *vp)
 {
     if (argc < 2) {

@@ -11,30 +11,31 @@
 
 namespace js {
 
+struct CompileOptions;
+
 class TraceLogging
 {
   public:
     enum Type {
+        SCRIPT_START,
+        SCRIPT_STOP,
         ION_COMPILE_START,
         ION_COMPILE_STOP,
-        ION_CANNON_START,
-        ION_CANNON_STOP,
-        ION_CANNON_BAIL,
-        ION_SIDE_CANNON_START,
-        ION_SIDE_CANNON_STOP,
-        ION_SIDE_CANNON_BAIL,
         YARR_JIT_START,
         YARR_JIT_STOP,
-        JM_SAFEPOINT_START,
-        JM_SAFEPOINT_STOP,
-        JM_START,
-        JM_STOP,
-        JM_COMPILE_START,
-        JM_COMPILE_STOP,
         GC_START,
         GC_STOP,
-        INTERPRETER_START,
-        INTERPRETER_STOP,
+        MINOR_GC_START,
+        MINOR_GC_STOP,
+        PARSER_COMPILE_SCRIPT_START,
+        PARSER_COMPILE_SCRIPT_STOP,
+        PARSER_COMPILE_LAZY_START,
+        PARSER_COMPILE_LAZY_STOP,
+        PARSER_COMPILE_FUNCTION_START,
+        PARSER_COMPILE_FUNCTION_STOP,
+        INFO_ENGINE_INTERPRETER,
+        INFO_ENGINE_BASELINE,
+        INFO_ENGINE_IONMONKEY,
         INFO
     };
 
@@ -68,6 +69,7 @@ class TraceLogging
     ~TraceLogging();
 
     void log(Type type, const char* filename, unsigned int line);
+    void log(Type type, const CompileOptions &options);
     void log(Type type, JSScript* script);
     void log(const char* log);
     void log(Type type);
@@ -91,6 +93,13 @@ class AutoTraceLog {
     TraceLogging::Type stop;
 
   public:
+    AutoTraceLog(TraceLogging* logger, TraceLogging::Type start, TraceLogging::Type stop, const CompileOptions &options)
+      : logger(logger),
+        stop(stop)
+    {
+        logger->log(start, options);
+    }
+
     AutoTraceLog(TraceLogging* logger, TraceLogging::Type start, TraceLogging::Type stop, JSScript* script)
       : logger(logger),
         stop(stop)
