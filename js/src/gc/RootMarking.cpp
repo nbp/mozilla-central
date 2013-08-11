@@ -7,6 +7,10 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Util.h"
 
+#ifdef MOZ_VALGRIND
+# include <valgrind/memcheck.h>
+#endif
+
 #include "jsapi.h"
 #include "jscntxt.h"
 #include "jsgc.h"
@@ -19,18 +23,14 @@
 #include "gc/GCInternals.h"
 #include "gc/Marking.h"
 #ifdef JS_ION
-# include "ion/IonMacroAssembler.h"
 # include "ion/IonFrameIterator.h"
+# include "ion/IonMacroAssembler.h"
 #endif
 #include "js/HashTable.h"
 #include "vm/Debugger.h"
 
 #include "jsgcinlines.h"
 #include "jsobjinlines.h"
-
-#ifdef MOZ_VALGRIND
-# include <valgrind/memcheck.h>
-#endif
 
 using namespace js;
 using namespace js::gc;
@@ -482,10 +482,12 @@ AutoGCRooter::trace(JSTracer *trc)
       case OBJOBJHASHMAP: {
         AutoObjectObjectHashMap::HashMapImpl &map = static_cast<AutoObjectObjectHashMap *>(this)->map;
         for (AutoObjectObjectHashMap::Enum e(map); !e.empty(); e.popFront()) {
-            mozilla::DebugOnly<JSObject *> key = e.front().key;
-            MarkObjectRoot(trc, const_cast<JSObject **>(&e.front().key), "AutoObjectObjectHashMap key");
-            JS_ASSERT(key == e.front().key);  // Needs rewriting for moving GC, see bug 726687.
             MarkObjectRoot(trc, &e.front().value, "AutoObjectObjectHashMap value");
+            JS_SET_TRACING_LOCATION(trc, (void *)&e.front().key);
+            JSObject *key = e.front().key;
+            MarkObjectRoot(trc, &key, "AutoObjectObjectHashMap key");
+            if (key != e.front().key)
+                e.rekeyFront(key);
         }
         return;
       }
@@ -771,7 +773,7 @@ js::gc::MarkRuntime(JSTracer *trc, bool useSavedRoots)
 
     /* During GC, we don't mark gray roots at this stage. */
     if (JSTraceDataOp op = rt->gcGrayRootTracer.op) {
-        if (!IS_GC_MARKING_TRACER(trc))
+        if (!IS_GC_MARKING_TRACER(trc) && !trc->runtime->isHeapMinorCollecting())
             (*op)(trc, rt->gcGrayRootTracer.data);
     }
 }

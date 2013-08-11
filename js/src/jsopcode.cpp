@@ -8,7 +8,7 @@
  * JS bytecode descriptors, disassemblers, and (expression) decompilers.
  */
 
-#include "jsopcode.h"
+#include "jsopcodeinlines.h"
 
 #include "mozilla/Util.h"
 
@@ -16,34 +16,32 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "jstypes.h"
-#include "jsutil.h"
-#include "jsprf.h"
 #include "jsanalyze.h"
 #include "jsapi.h"
 #include "jsatom.h"
+#include "jsautooplen.h"
 #include "jscntxt.h"
 #include "jscompartment.h"
 #include "jsfun.h"
 #include "jsnum.h"
 #include "jsobj.h"
+#include "jsprf.h"
 #include "jsscript.h"
 #include "jsstr.h"
+#include "jstypes.h"
+#include "jsutil.h"
 
 #include "frontend/BytecodeCompiler.h"
 #include "frontend/SourceNotes.h"
 #include "js/CharacterEncoding.h"
-#include "vm/Shape.h"
 #include "vm/ScopeObject.h"
+#include "vm/Shape.h"
 #include "vm/StringBuffer.h"
 
 #include "jscntxtinlines.h"
 #include "jscompartmentinlines.h"
 #include "jsinferinlines.h"
-#include "jsopcodeinlines.h"
 #include "jsscriptinlines.h"
-
-#include "jsautooplen.h"
 
 using namespace js;
 using namespace js::gc;
@@ -390,10 +388,10 @@ js_DisassembleAtPC(JSContext *cx, JSScript *scriptArg, JSBool lines,
         }
         len = js_Disassemble1(cx, script, next, next - script->code, lines, sp);
         if (!len)
-            return JS_FALSE;
+            return false;
         next += len;
     }
-    return JS_TRUE;
+    return true;
 }
 
 JSBool
@@ -408,7 +406,7 @@ js_DumpPC(JSContext *cx)
     js::gc::AutoSuppressGC suppressGC(cx);
     Sprinter sprinter(cx);
     if (!sprinter.init())
-        return JS_FALSE;
+        return false;
     ScriptFrameIter iter(cx);
     RootedScript script(cx, iter.script());
     JSBool ok = js_DisassembleAtPC(cx, script, true, iter.pc(), false, &sprinter);
@@ -422,7 +420,7 @@ js_DumpScript(JSContext *cx, JSScript *scriptArg)
     js::gc::AutoSuppressGC suppressGC(cx);
     Sprinter sprinter(cx);
     if (!sprinter.init())
-        return JS_FALSE;
+        return false;
     RootedScript script(cx, scriptArg);
     JSBool ok = js_Disassemble(cx, script, true, &sprinter);
     fprintf(stdout, "%s", sprinter.string());
@@ -438,7 +436,7 @@ js_DumpScriptDepth(JSContext *cx, JSScript *scriptArg, jsbytecode *pc)
     js::gc::AutoSuppressGC suppressGC(cx);
     Sprinter sprinter(cx);
     if (!sprinter.init())
-        return JS_FALSE;
+        return false;
     RootedScript script(cx, scriptArg);
     JSBool ok = js_DisassembleAtPC(cx, script, true, pc, true, &sprinter);
     fprintf(stdout, "%s", sprinter.string());

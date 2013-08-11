@@ -10,7 +10,7 @@
 #endif
  
 #include "mozilla/DebugOnly.h"
-#include "mozilla/StandardInteger.h"
+#include <stdint.h>
 #include "mozilla/Util.h"
 
 #include "MediaDecoderStateMachine.h"
@@ -618,6 +618,10 @@ void MediaDecoderStateMachine::SendStreamData()
 
   if (mState == DECODER_STATE_DECODING_METADATA)
     return;
+
+  if (!mDecoder->IsSameOriginMedia()) {
+    return;
+  }
 
   // If there's still an audio thread alive, then we can't send any stream
   // data yet since both SendStreamData and the audio thread want to be in
@@ -2540,10 +2544,10 @@ void MediaDecoderStateMachine::AdvanceFrame()
     }
     MediaDecoder::FrameStatistics& frameStats = mDecoder->GetFrameStatistics();
     frameStats.NotifyPresentedFrame();
+    double frameDelay = double(clock_time - currentFrame->mTime) / USECS_PER_S;
+    NS_ASSERTION(frameDelay >= 0.0, "Frame should never be displayed early.");
+    frameStats.NotifyFrameDelay(frameDelay);
     remainingTime = currentFrame->mEndTime - clock_time;
-    int64_t frameDuration = currentFrame->mEndTime - currentFrame->mTime;
-    double displayError = fabs(double(frameDuration - remainingTime) / USECS_PER_S);
-    frameStats.NotifyPlaybackJitter(displayError);
     currentFrame = nullptr;
   }
 
