@@ -18,6 +18,7 @@
 #include "jsinfer.h"
 #include "jslibmath.h"
 
+#include "ion/AliasSets.h"
 #include "ion/Bailouts.h"
 #include "ion/CompilerRoot.h"
 #include "ion/FixedList.h"
@@ -218,65 +219,6 @@ class MNode : public TempObject
 
     // Gets the MUse corresponding to given operand.
     virtual MUse *getUseFor(size_t index) = 0;
-};
-
-class AliasSet {
-  private:
-    uint32_t flags_;
-
-  public:
-    enum Flag {
-        None_             = 0,
-        ObjectFields      = 1 << 0, // shape, class, slots, length etc.
-        Element           = 1 << 1, // A member of obj->elements.
-        DynamicSlot       = 1 << 2, // A member of obj->slots.
-        FixedSlot         = 1 << 3, // A member of obj->fixedSlots().
-        TypedArrayElement = 1 << 4, // A typed array element.
-        DOMProperty       = 1 << 5, // A DOM property
-        Last              = DOMProperty,
-        Any               = Last | (Last - 1),
-
-        NumCategories     = 6,
-
-        // Indicates load or store.
-        Store_            = 1 << 31
-    };
-    AliasSet(uint32_t flags)
-      : flags_(flags)
-    {
-        JS_STATIC_ASSERT((1 << NumCategories) - 1 == Any);
-    }
-
-  public:
-    inline bool isNone() const {
-        return flags_ == None_;
-    }
-    uint32_t flags() const {
-        return flags_ & Any;
-    }
-    inline bool isStore() const {
-        return !!(flags_ & Store_);
-    }
-    inline bool isLoad() const {
-        return !isStore() && !isNone();
-    }
-    inline AliasSet operator |(const AliasSet &other) const {
-        return AliasSet(flags_ | other.flags_);
-    }
-    inline AliasSet operator &(const AliasSet &other) const {
-        return AliasSet(flags_ & other.flags_);
-    }
-    static AliasSet None() {
-        return AliasSet(None_);
-    }
-    static AliasSet Load(uint32_t flags) {
-        JS_ASSERT(flags && !(flags & Store_));
-        return AliasSet(flags);
-    }
-    static AliasSet Store(uint32_t flags) {
-        JS_ASSERT(flags && !(flags & Store_));
-        return AliasSet(flags | Store_);
-    }
 };
 
 // An MDefinition is an SSA name.
