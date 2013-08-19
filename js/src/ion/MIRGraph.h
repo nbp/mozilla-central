@@ -21,6 +21,7 @@ namespace ion {
 class MBasicBlock;
 class MIRGraph;
 class MStart;
+class MemoryOperandList;
 
 class MDefinitionIterator;
 
@@ -145,9 +146,8 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     void setArgumentsObject(MDefinition *ins);
 
     // Manipulate the list of alias set.
-    bool initNumAliasSets(uint32_t num, MDefinition *store);
-    MDefinition *getAliasSetStore(uint32_t aliasSetId);
-    void setAliasSetStore(uint32_t aliasSetId, MDefinition *store);
+    MemoryOperandList *getEntryMemoryOperands();
+    void setEntryMemoryOperands(MemoryOperandList *);
     void addAliasSetPhi(MPhi *phi);
 
     // Returns the top of the stack, then decrements the virtual stack pointer.
@@ -542,6 +542,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     InlineForwardList<MPhi> phis_;
     InlineForwardList<MResumePoint> resumePoints_;
     FixedList<MDefinition *> slots_;
+    MemoryOperandList *memOperands_;
     uint32_t stackPosition_;
     uint32_t id_;
     uint32_t pid_;

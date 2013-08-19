@@ -239,9 +239,10 @@ MBasicBlock::NewAbortPar(MIRGraph &graph, CompileInfo &info,
 }
 
 MBasicBlock::MBasicBlock(MIRGraph &graph, CompileInfo &info, jsbytecode *pc, Kind kind)
-    : earlyAbort_(false),
+  : earlyAbort_(false),
     graph_(graph),
     info_(info),
+    memOperands_(NULL),
     stackPosition_(info_.firstStackSlot()),
     lastIns_(NULL),
     pc_(pc),

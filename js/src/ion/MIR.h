@@ -507,7 +507,7 @@ class MDefinition : public MNode
     // by this instruction.
     bool setAliasSetDependency(uint32_t aliasSetId, MDefinition *mutator);
     MDefinition *getAliasSetDependency(uint32_t aliasSetId);
-    MUseIterator replaceAliasSetDependency(MUseIterator use, MDefinition *def);
+    // MUseIterator replaceAliasSetDependency(MUseIterator use, MDefinition *def);
 
     // Legacy interface used by GVN and LICM to determine the nearest aliasing
     // definition.
@@ -3801,10 +3801,17 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
     js::Vector<MUse, 2, IonAllocPolicy> inputs_;
 
     uint32_t slot_;
-    bool hasBackedgeType_;
-    bool triedToSpecialize_;
-    bool isIterator_;
-    bool isMemory_;
+    bool hasBackedgeType_ : 1;
+    bool triedToSpecialize_ : 1;
+    bool isIterator_ : 1;
+
+    // Flag this phi has being a memory Phi, which means that it would not have
+    // any allocations unless it is transformed to remove loads.
+    bool isMemory_ : 1;
+
+    // When computing alias analysis, we might have to duplicate Phi which have
+    // already been mutated with another operand.
+    bool isMutated_ : 1;
 
 #if DEBUG
     bool specialized_;
@@ -3816,7 +3823,8 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
         hasBackedgeType_(false),
         triedToSpecialize_(false),
         isIterator_(false),
-        isMemory_(false)
+        isMemory_(false),
+        isMutated_(false)
 #if DEBUG
         , specialized_(false)
         , capacity_(0)
@@ -3901,6 +3909,13 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
     }
     void setMemory() {
         isMemory_ = true;
+    }
+
+    bool isMutated() const {
+        return isMutated_;
+    }
+    void setMutated() {
+        isMutated_ = true;
     }
 
     AliasSet getAliasSet() const {

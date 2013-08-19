@@ -294,6 +294,11 @@ class InlineList : protected InlineListNode<T>
         static_cast<Node *>(at->next)->prev = item;
         at->next = item;
     }
+    void moveListInto(InlineList<T> &list) {
+        list->prev->next = this->next;
+        list->prev = this->prev;
+        clear();
+    }
     void remove(Node *t) {
         t->prev->next = t->next;
         static_cast<Node *>(t->next)->prev = t->prev;

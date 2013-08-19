@@ -14,6 +14,8 @@ namespace ion {
 
 // Pre-declaration used by MemoryUse.
 class MDefinition;
+class MemoryOperandList;
+class MemoryUseList;
 
 // Each memory group is given an AliasId, each alias identifer is used to
 // distinguish a set of memory manipulation than the others.  To each MIR
@@ -132,6 +134,11 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
         JS_ASSERT(intersect_ != AliasSet::None());
     }
 
+    void setIntersect(const AliasSet &intersect) {
+        intersect_ = intersect;
+        JS_ASSERT(intersect_ != AliasSet::None());
+    }
+
     // Accessors
   public:
     MDefinition *producer() const {
@@ -161,70 +168,18 @@ class MemoryUse : public MemoryOperand, public InlineListNode<MemoryUse>
     }
 
   public:
-    static inline MemoryUse *New(MDefinition *producer, MDefinition *consumer,
-                                     const AliasSet &intersect) {
-        return new MemoryUse(producer, consumer, intersect);
-    }
+    static MemoryUse *
+    New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
+        MemoryUseList *freeList = NULL);
 };
 
 // Note: Most of the operations which are dealing with memory uses are splitting
 // and merging memory uses in function of their alias sets. To prevent
 // allocating too much temporary memory, most functions have an optional last
 // argument which serve as a free-list of memory uses.
-class MemoryOperandList : protected InlineList<MemoryOperand>
-{
-  public:
-    typedef InlineList<MemoryOperand> Parent;
-    using Parent::begin;
-    using Parent::end;
-    using Parent::rbegin;
-    using Parent::rend;
-    using Parent::empty;
-
-    // When we are building the list of dependencies in the alias analysis, we
-    // keep a list of operands for all alias sets. This function copy the memory
-    // operand list by filtering intersecting alias sets. It initialiaze the
-    // consumer inside the resulting operand list.
-    void extractDependenciesSubset(const MemoryOperandList &operands, const AliasSet &intersect,
-                                   MDefinition *consumer, MemoryOperandList *freeList = NULL)
-    {
-        // static?
-        // TODO
-    }
-
-    // Copy unconditionally an operand list such as mutation are not visible on
-    // the copied list.
-    void copyDependencies(const MemoryOperandList &operands, MemoryOperandList *freeList = NULL)
-    {
-        extractDependenciesSubset(operands, AliasSet::Store(AliasSet::Any), NULL, freeList);
-    }
-
-    // When we are walking instructions during the alias analysis, we want to
-    // update the last producer for the specified alias set. This operation
-    // might cause the allocation or fusion of MemoryUse classes.
-    void setMutator(const AliasSet &set, MDefinition *mutator,
-                    MemoryOperandList *freeList = NULL)
-    {
-        // TODO: Add an extra argument to serve as a pool of reusable MemoryUse which
-        // have been previously allocated.
-
-        // TODO
-    }
-
-    // Replace a mutator by another mutator within the list of operands. This
-    // implies that the memory uses would be removed from the previous mutator
-    // and attached to the new one. After this operation we need to merge/split
-    // the memory uses with the current one in the list to maintain the
-    // invariants.
-    void replaceMutator(const AliasSet &set, MDefinition *mutator,
-                        MemoryOperandList *freeList = NULL)
-    {
-        // TODO
-    }
-};
-
 class MemoryUseList : protected InlineList<MemoryUse>
 {
+    friend class MemoryUse;
     friend class MemoryOperandList;
 
   public:
@@ -234,6 +189,78 @@ class MemoryUseList : protected InlineList<MemoryUse>
     using Parent::rbegin;
     using Parent::rend;
     using Parent::empty;
+    using Parent::iterator;
+
+    MemoryUseList();
+
+    iterator removeAliasingMemoryUse(const AliasSet &set, iterator it,
+                                     MemoryUseList *freeList = NULL);
+};
+
+class MemoryOperandList : protected InlineList<MemoryOperand>
+{
+  public:
+    typedef InlineList<MemoryOperand> Parent;
+    using Parent::begin;
+    using Parent::end;
+    using Parent::rbegin;
+    using Parent::rend;
+    using Parent::empty;
+    using Parent::iterator;
+
+    MemoryOperandList();
+
+    // When we are building the list of dependencies in the alias analysis, we
+    // keep a list of operands for all alias sets. This function copy the memory
+    // operand list by filtering intersecting alias sets. It initialiaze the
+    // consumer inside the resulting operand list.
+    void extractDependenciesSubset(const MemoryOperandList &operands, const AliasSet &set,
+                                   MDefinition *consumer, MemoryUseList *freeList = NULL);
+
+    // Copy unconditionally an operand list such as mutation are not visible on
+    // the copied list.
+    void copyDependencies(const MemoryOperandList &operands, MemoryUseList *freeList = NULL)
+    {
+        extractDependenciesSubset(operands, AliasSet::Store(AliasSet::Any), NULL, freeList);
+    }
+
+    // Replace a producer by another producer within the list of operands of the
+    // consumer instruction. This is the analog of replaceOperand.
+    void replaceProducer(const AliasSet &set, MDefinition *producer,
+                         MDefinition *consumer, MemoryUseList *freeList = NULL);
+
+    MemoryUseList::iterator
+    replaceProducer(const AliasSet &set, MDefinition *producer,
+                    MemoryUseList::iterator it, MemoryUseList *freeList = NULL);
+
+    void replaceMatchingProducer(const AliasSet &set, MDefinition *match,
+                                 MDefinition *producer, MemoryUseList *freeList = NULL);
+
+
+    // When we are walking instructions during the alias analysis, we want to
+    // update the last producer for the specified alias set.
+    void setProducer(const AliasSet &set, MDefinition *producer,
+                     MemoryUseList *freeList = NULL)
+    {
+        replaceProducer(set, producer, NULL, freeList);
+    }
+
+    // Extract the uniq producer corresponding to an Alias set.  If there is
+    // more than one producer or if there is an unknown producer in the alias
+    // set, then this function fails with an assertion.
+    MDefinition *getUniqProducer(const AliasSet &set);
+
+  private:
+    // Insert a a newly created memory use which does not intersect any of the
+    // existing alias set, and which does not use the same couple of producer &
+    // consumer as another alias set.
+    void insertMemoryUse(MemoryUse *use);
+
+    // Remove all MemoryUse which are matching a specific alias set.  This will
+    // substract the original alias set of all intersecting MemoryUse and remove
+    // the remaining MemoryUse which have an empty alias set.  All removed
+    // MemoryUse would be added to the freeList.
+    void removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *freeList = NULL);
 };
 
 }
