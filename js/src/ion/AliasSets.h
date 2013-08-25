@@ -287,6 +287,21 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     void removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *freeList = NULL);
 };
 
+// Track memory mutations and their uses/overwrite within the control-flow
+// graph. A separated list of uses is made to avoid coliding with the data-flow,
+// and to track memory mutations within an alias set. As we refine the alias
+// set with smaller set of definitions, we want to have a sparse use of the
+// number of operands where the index of each operand represent the alias set.
+struct MemoryDefinition : public TempObject
+{
+    // Uses of the mutated memory.
+    MemoryUseList uses;
+
+    // Definitions which are potentially mutating the memory used by this
+    // instruction.
+    MemoryOperandList operands;
+};
+
 }
 }
 

@@ -245,16 +245,7 @@ class MDefinition : public MNode
     uint32_t flags_;                // Bit flags.
     uint32_t virtualRegister_;      // Used by lowering to map definitions to virtual registers.
 
-    // Track memory mutations and their uses/overwrite within the control-flow
-    // graph. A separated list of uses is made to avoid coliding with the
-    // data-flow, and to track memory mutations within an alias set.  As we
-    // refine the alias set with smaller set of definitions, we want to have a
-    // sparse use of the number of operands where the index of each operand
-    // represent the alias set.
-    MemoryUseList memUses_;         // Uses of the mutated memory.
-    MemoryOperandList memOperands_; // Definitions which are
-                                    // potentially mutating the memory used by
-                                    // this instruction.
+    MemoryDefinition *mem_;
 
     // Track bailouts by storing the current pc in MIR instruction. Also used
     // for profiling and keeping track of what the last known pc was.
@@ -291,8 +282,7 @@ class MDefinition : public MNode
         resultTypeSet_(NULL),
         flags_(0),
         virtualRegister_(0),
-        memUses_(),
-        memOperands_(),
+        mem_(NULL),
         trackedPc_(NULL)
     { }
 
@@ -506,20 +496,27 @@ class MDefinition : public MNode
     // Legacy interface used by GVN and LICM to determine the nearest aliasing
     // definition.
     MDefinition *dependency() const;
+    void setMemoryDefinition(MemoryDefinition *mem) {
+        JS_ASSERT(!mem_);
+        mem_ = mem;
+    }
+    MemoryDefinition *getMemoryDefinition() {
+        return mem_;
+    }
 
     // Returns the beginning of this definition's memory use chain.
     MemoryUseList &memUses() {
-        return memUses_;
+        return mem_->uses;
     }
     const MemoryUseList &memUses() const {
-        return memUses_;
+        return mem_->uses;
     }
 
     MemoryOperandList &memOperands() {
-        return memOperands_;
+        return mem_->operands;
     }
     const MemoryOperandList &memOperands() const {
-        return memOperands_;
+        return mem_->operands;
     }
 
     virtual AliasSet getAliasSet() const {

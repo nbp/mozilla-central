@@ -385,8 +385,8 @@ MBasicBlock::addAliasSetPhi(MPhi *phi)
 MDefinition *
 MDefinition::dependency() const {
     MDefinition *def = NULL;
-    for (MemoryOperandList::iterator it = memOperands_.begin(); it != memOperands_.end(); it++) {
-        JS_ASSERT(it->ownerOList == &memOperands_);
+    for (MemoryOperandList::iterator it = memOperands().begin(); it != memOperands().end(); it++) {
+        JS_ASSERT(it->ownerOList == &memOperands());
         MDefinition *candidate = it->producer();
 
         if (def) {
@@ -709,6 +709,9 @@ AliasAnalysis::analyze()
             AliasSet set = def->getAliasSet();
             if (set.isNone())
                 continue;
+
+            if (!def->getMemoryDefinition())
+                def->setMemoryDefinition(new MemoryDefinition());
 
             bool isStore = set.isStore();
 
