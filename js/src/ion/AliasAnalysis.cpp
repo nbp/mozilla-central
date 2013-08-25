@@ -385,6 +385,9 @@ MBasicBlock::addAliasSetPhi(MPhi *phi)
 MDefinition *
 MDefinition::dependency() const {
     MDefinition *def = NULL;
+    if (!mem_)
+        return def;
+
     for (MemoryOperandList::iterator it = memOperands().begin(); it != memOperands().end(); it++) {
         JS_ASSERT(it->ownerOList == &memOperands());
         MDefinition *candidate = it->producer();
@@ -459,6 +462,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                 phi->setResultType(MIRType_None);
                 phi->setMemory();
                 phi->reserveLength(succ->numPredecessors());
+                phi->setMemoryDefinition(new MemoryDefinition());
 
                 // Initialize the new Phi with either the data of the previously
                 // mutated Phi or with the value which was present before the
@@ -696,7 +700,11 @@ AliasAnalysis::analyze()
             // Thus we take the first instruction of this block as assume it
             // alias all inputs.
             MDefinition *firstIns = block->begin()->toDefinition();
+            if (!firstIns->getMemoryDefinition())
+                firstIns->setMemoryDefinition(new MemoryDefinition());
+
             AliasSet allInputs = AliasSet::Load(AliasSet::Any);
+
             entry->setProducer(allInputs, firstIns, &freeList);
         }
         stores.copyDependencies(*entry);

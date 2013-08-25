@@ -243,9 +243,14 @@ class MDefinition : public MNode
     MIRType resultType_;           // Representation of result type.
     types::StackTypeSet *resultTypeSet_; // Optional refinement of the result type.
     uint32_t flags_;                // Bit flags.
-    uint32_t virtualRegister_;      // Used by lowering to map definitions to virtual registers.
-
-    MemoryDefinition *mem_;
+    union {
+        MemoryDefinition *mem_;     // Implicit dependencies induced by memmory
+                                    // manipulations (store, call, etc.) of this
+                                    // instruction. Computed by the alias
+                                    // analysis and used by GVN and LICM.
+        uint32_t virtualRegister_;  // Used by lowering to map definitions to
+                                    // virtual registers.
+    };
 
     // Track bailouts by storing the current pc in MIR instruction. Also used
     // for profiling and keeping track of what the last known pc was.
@@ -281,7 +286,6 @@ class MDefinition : public MNode
         resultType_(MIRType_None),
         resultTypeSet_(NULL),
         flags_(0),
-        virtualRegister_(0),
         mem_(NULL),
         trackedPc_(NULL)
     { }
