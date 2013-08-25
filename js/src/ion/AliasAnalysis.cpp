@@ -62,6 +62,14 @@ AliasAnalysis::AliasAnalysis(MIRGenerator *mir, MIRGraph &graph)
 {
 }
 
+MemoryUsePool &
+MIRGraph::memUsesFreeList()
+{
+    if (!memUsesFreeList_)
+        memUsesFreeList_ = new MemoryUsePool();
+    return *memUsesFreeList_;
+}
+
 static void
 IonSpewDependency(MDefinition *load, MDefinition *store, const char *verb, const char *reason)
 {
@@ -77,12 +85,9 @@ IonSpewDependency(MDefinition *load, MDefinition *store, const char *verb, const
 
 MemoryUse *
 MemoryUse::New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
-               MemoryUseList *freeList)
+               MemoryUsePool &freeList)
 {
-    if (!freeList || freeList->empty())
-        return new MemoryUse(producer, consumer, intersect);
-
-    MemoryUse *use = freeList->popFront();
+    MemoryUse *use = freeList.allocate();
     use->set(producer, consumer, intersect);
     return use;
 }
@@ -130,7 +135,7 @@ MemoryOperandList::insertMemoryUse(MemoryUse *use)
 // This function sounds more like unlink MemoryUse.
 MemoryUseList::iterator
 MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::iterator it,
-                                       MemoryUseList *freeList)
+                                       MemoryUsePool &freeList)
 {
     // Substract the given alias set from the memory use alias set.
     AliasSet newIntersect = it->intersect().exclude(set);
@@ -146,19 +151,17 @@ MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::itera
     use->consumer()->memOperands().remove(use);
 
     // Add it to the freeList.
-    if (freeList) {
 #ifdef CRAZY_DEBUG
-        use->ownerOList = NULL;
-        use->ownerUList = NULL;
+    use->ownerOList = NULL;
+    use->ownerUList = NULL;
 #endif
-        freeList->pushFront(use);
-    }
+    freeList.free(use);
 
     return it;
 }
 
 void
-MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *freeList)
+MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUsePool &freeList)
 {
     for (MemoryOperandList::iterator it = begin(); it != end(); ) {
         JS_ASSERT(it->ownerOList == this);
@@ -178,13 +181,11 @@ MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *f
             use->producer()->memUses().remove(use);
 
         // Add it to the freeList.
-        if (freeList) {
 #ifdef CRAZY_DEBUG
-            use->ownerOList = NULL;
-            use->ownerUList = NULL;
+        use->ownerOList = NULL;
+        use->ownerUList = NULL;
 #endif
-            freeList->pushFront(use);
-        }
+        freeList.free(use);
     }
 }
 
@@ -192,7 +193,7 @@ void
 MemoryOperandList::extractDependenciesSubset(const MemoryOperandList &operands,
                                              const AliasSet &set,
                                              MDefinition *consumer,
-                                             MemoryUseList *freeList)
+                                             MemoryUsePool &freeList)
 {
     for (MemoryOperandList::iterator it = operands.begin(); it != operands.end(); it++) {
         JS_ASSERT(it->ownerOList == &operands);
@@ -208,7 +209,7 @@ MemoryOperandList::extractDependenciesSubset(const MemoryOperandList &operands,
 
 MemoryUseList::iterator
 MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
-                                   MemoryUseList::iterator it, MemoryUseList *freeList)
+                                   MemoryUseList::iterator it, MemoryUsePool &freeList)
 {
     JS_ASSERT(!set.isNone());
 
@@ -235,7 +236,7 @@ MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
 
 void
 MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
-                                   MDefinition *consumer, MemoryUseList *freeList)
+                                   MDefinition *consumer, MemoryUsePool &freeList)
 {
     JS_ASSERT(!set.isNone());
 
@@ -288,14 +289,14 @@ MemoryOperandList::getUniqProducer(const AliasSet &set)
 }
 
 void
-MemoryOperandList::clear(MemoryUseList &freeList)
+MemoryOperandList::clear(MemoryUsePool &freeList)
 {
     while (!empty()) {
         MemoryUse *use = static_cast<MemoryUse *>(popFront());
         JS_ASSERT(use->ownerOList == this);
         if (use->hasConsumer())
             use->producer()->memUses().remove(use);
-        freeList.pushBack(use);
+        freeList.free(use);
     }
 }
 
@@ -315,7 +316,7 @@ IsDominatedUse(MBasicBlock *block, MUse *use)
 static void
 ReplaceDominatedMemoryUses(const AliasSet &set, MDefinition *orig,
                            MDefinition *dom, MBasicBlock *block,
-                           MemoryUseList *freeList)
+                           MemoryUsePool &freeList)
 {
     JS_ASSERT(orig != dom);
 
@@ -413,14 +414,14 @@ MDefinition::dependency() const {
 static bool
 MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                MBasicBlock *current, MBasicBlock *succ,
-               MemoryUseList *freeList)
+               MemoryUsePool &freeList)
 {
     MemoryOperandList *succStores = succ->getEntryMemoryOperands();
 
     // The successor has not been visited yet.  Just copy the current alias
     // set into the block entry.
     if (succStores->empty()) {
-        succStores->copyDependencies(stores);
+        succStores->copyDependencies(stores, freeList);
         return true;
     }
 
@@ -610,7 +611,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
     }
 
     // Collect the previous memory use entries and add them to the free list.
-    previous.clear(*freeList);
+    previous.clear(freeList);
 
     return true;
 }
@@ -618,8 +619,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
 bool
 AliasAnalysis::clear()
 {
-    // TODO: share the freelist between the multiple runs of the alias analysis.
-    MemoryUseList freeList;
+    MemoryUsePool &freeList = graph_.memUsesFreeList();
 
     for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
         if (mir->shouldCancel("Alias Analysis (clean)"))
@@ -660,8 +660,7 @@ AliasAnalysis::clear()
 bool
 AliasAnalysis::analyze()
 {
-    // TODO: share the freelist between the multiple runs of the alias analysis.
-    MemoryUseList freeList;
+    MemoryUsePool &freeList = graph_.memUsesFreeList();
 
     // Allocate the sentinel of the list for the entry of each basic
     // blocks. These behaves as the basic block stacks slots except that they
@@ -705,9 +704,9 @@ AliasAnalysis::analyze()
 
             AliasSet allInputs = AliasSet::Load(AliasSet::Any);
 
-            entry->setProducer(allInputs, firstIns, &freeList);
+            entry->setProducer(allInputs, firstIns, freeList);
         }
-        stores.copyDependencies(*entry);
+        stores.copyDependencies(*entry, freeList);
 
         // Iterate over the definitions of the block and update the array with
         // the latest store for each alias set.
@@ -729,12 +728,12 @@ AliasAnalysis::analyze()
             // Mark loads & stores dependent on the previous stores.  All the
             // stores on the same alias set would form a chain.
             JS_ASSERT(def->memOperands().empty());
-            def->memOperands().extractDependenciesSubset(stores, set, *def, &freeList);
+            def->memOperands().extractDependenciesSubset(stores, set, *def, freeList);
 
             if (isStore) {
 
                 // Update the working list of operands with the current store.
-                stores.setProducer(set, *def, &freeList);
+                stores.setProducer(set, *def, freeList);
 
                 if (IonSpewEnabled(IonSpew_Alias)) {
                     fprintf(IonSpewFile, "Processing store ");
@@ -750,7 +749,7 @@ AliasAnalysis::analyze()
         // different branches.
         for (size_t s = 0; s < block->numSuccessors(); s++) {
             MBasicBlock *succ = block->getSuccessor(s);
-            MergeProducers(graph_, stores, *block, succ, &freeList);
+            MergeProducers(graph_, stores, *block, succ, freeList);
         }
 
         stores.clear(freeList);

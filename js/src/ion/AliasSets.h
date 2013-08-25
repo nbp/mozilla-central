@@ -21,6 +21,7 @@ namespace ion {
 class MDefinition;
 class MemoryOperandList;
 class MemoryUseList;
+class MemoryUsePool;
 
 // Each memory group is given an AliasId, each alias identifer is used to
 // distinguish a set of memory manipulation than the others.  To each MIR
@@ -129,13 +130,11 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
 #endif
 
   protected:
-    MemoryOperand(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect)
-      : producer_(producer),
-        consumer_(consumer),
-        intersect_(intersect)
-    {
-        JS_ASSERT(!intersect_.isNone());
-    }
+    MemoryOperand()
+      : producer_(NULL),
+        consumer_(NULL),
+        intersect_(AliasSet::None_)
+    { }
 
   public:
     // Set data inside the Memory use.
@@ -173,15 +172,16 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
 // Interface manipulated during the addition of a new memory use.
 class MemoryUse : public MemoryOperand, public InlineListNode<MemoryUse>
 {
-    MemoryUse(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect)
-      : MemoryOperand(producer, consumer, intersect)
-    {
-    }
+  protected:
+    friend class TempObjectPool<MemoryUse>;
+    MemoryUse()
+      : MemoryOperand()
+    { }
 
   public:
     static MemoryUse *
     New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
-        MemoryUseList *freeList = NULL);
+        MemoryUsePool &freeList);
 };
 
 // Note: Most of the operations which are dealing with memory uses are splitting
@@ -203,7 +203,7 @@ class MemoryUseList : protected InlineList<MemoryUse>
     using Parent::iterator;
 
     iterator removeAliasingMemoryUse(const AliasSet &set, iterator it,
-                                     MemoryUseList *freeList = NULL);
+                                     MemoryUsePool &freeList);
 };
 
 class MemoryOperandList : protected InlineList<MemoryOperand>
@@ -235,11 +235,11 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     // operand list by filtering intersecting alias sets. It initialiaze the
     // consumer inside the resulting operand list.
     void extractDependenciesSubset(const MemoryOperandList &operands, const AliasSet &set,
-                                   MDefinition *consumer, MemoryUseList *freeList = NULL);
+                                   MDefinition *consumer, MemoryUsePool &freeList);
 
     // Copy unconditionally an operand list such as mutation are not visible on
     // the copied list.
-    void copyDependencies(const MemoryOperandList &operands, MemoryUseList *freeList = NULL)
+    void copyDependencies(const MemoryOperandList &operands, MemoryUsePool &freeList)
     {
         extractDependenciesSubset(operands, AliasSet::Store(AliasSet::Any), NULL, freeList);
     }
@@ -247,19 +247,18 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     // Replace a producer by another producer within the list of operands of the
     // consumer instruction. This is the analog of replaceOperand.
     void replaceProducer(const AliasSet &set, MDefinition *producer,
-                         MDefinition *consumer, MemoryUseList *freeList = NULL);
+                         MDefinition *consumer, MemoryUsePool &freeList);
 
     MemoryUseList::iterator
     replaceProducer(const AliasSet &set, MDefinition *producer,
-                    MemoryUseList::iterator it, MemoryUseList *freeList = NULL);
+                    MemoryUseList::iterator it, MemoryUsePool &freeList);
 
     AliasSet findMatchingSubset(const AliasSet &set, MDefinition *producer);
 
 
     // When we are walking instructions during the alias analysis, we want to
     // update the last producer for the specified alias set.
-    void setProducer(const AliasSet &set, MDefinition *producer,
-                     MemoryUseList *freeList = NULL)
+    void setProducer(const AliasSet &set, MDefinition *producer, MemoryUsePool &freeList)
     {
         MDefinition *consumer = NULL;
         replaceProducer(set, producer, consumer, freeList);
@@ -272,7 +271,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
 
     // This function clear all the dependencies of one instruction and move the
     // memory uses into the free list.
-    void clear(MemoryUseList &freeList);
+    void clear(MemoryUsePool &freeList);
 
   private:
     // Insert a a newly created memory use which does not intersect any of the
@@ -284,7 +283,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     // substract the original alias set of all intersecting MemoryUse and remove
     // the remaining MemoryUse which have an empty alias set.  All removed
     // MemoryUse would be added to the freeList.
-    void removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *freeList = NULL);
+    void removeAliasingMemoryUse(const AliasSet &set, MemoryUsePool &freeList);
 };
 
 // Track memory mutations and their uses/overwrite within the control-flow
@@ -301,6 +300,10 @@ struct MemoryDefinition : public TempObject
     // instruction.
     MemoryOperandList operands;
 };
+
+// Pool of removed MemoryUse.
+class MemoryUsePool : public TempObject, public TempObjectPool<MemoryUse>
+{ };
 
 }
 }
