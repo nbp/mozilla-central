@@ -19,42 +19,6 @@ using namespace js::ion;
 
 using mozilla::Array;
 
-namespace {
-
-// Iterates over the flags in an AliasSet.
-class AliasSetIterator
-{
-  private:
-    uint32_t flags;
-    unsigned pos;
-
-  public:
-    AliasSetIterator(AliasSet set)
-      : flags(set.flags()), pos(0)
-    {
-        while (flags && (flags & 1) == 0) {
-            flags >>= 1;
-            pos++;
-        }
-    }
-    AliasSetIterator& operator ++(int) {
-        do {
-            flags >>= 1;
-            pos++;
-        } while (flags && (flags & 1) == 0);
-        return *this;
-    }
-    operator bool() const {
-        return !!flags;
-    }
-    unsigned operator *() const {
-        JS_ASSERT(pos < AliasSet::NumCategories);
-        return pos;
-    }
-};
-
-} /* anonymous namespace */
-
 AliasAnalysis::AliasAnalysis(MIRGenerator *mir, MIRGraph &graph)
   : mir(mir),
     graph_(graph),
