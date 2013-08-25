@@ -251,8 +251,8 @@ class MDefinition : public MNode
     // refine the alias set with smaller set of definitions, we want to have a
     // sparse use of the number of operands where the index of each operand
     // represent the alias set.
-    InlineList<MUse> memUses_;      // Uses of the mutated memory.
-    Vector<MUse, 1, IonAllocPolicy> memOperands_; // Definitions which are
+    MemoryUseList memUses_;         // Uses of the mutated memory.
+    MemoryOperandList memOperands_; // Definitions which are
                                     // potentially mutating the memory used by
                                     // this instruction.
 
@@ -503,29 +503,23 @@ class MDefinition : public MNode
         resultTypeSet_ = types;
     }
 
-    // Register an MDefinition as being a potential mutator of the memory read
-    // by this instruction.
-    bool setAliasSetDependency(uint32_t aliasSetId, MDefinition *mutator);
-    MDefinition *getAliasSetDependency(uint32_t aliasSetId);
-    // MUseIterator replaceAliasSetDependency(MUseIterator use, MDefinition *def);
-
     // Legacy interface used by GVN and LICM to determine the nearest aliasing
     // definition.
     MDefinition *dependency() const;
 
     // Returns the beginning of this definition's memory use chain.
-    MUseIterator memUsesBegin() const {
-        return memUses_.begin();
+    MemoryUseList &memUses() {
+        return memUses_;
     }
-    MUseIterator memUsesEnd() const {
-        return memUses_.end();
+    const MemoryUseList &memUses() const {
+        return memUses_;
     }
 
-    const MUse *memOperandsBegin() const {
-        return memOperands_.begin();
+    MemoryOperandList &memOperands() {
+        return memOperands_;
     }
-    const MUse *memOperandsEnd() const {
-        return memOperands_.end();
+    const MemoryOperandList &memOperands() const {
+        return memOperands_;
     }
 
     virtual AliasSet getAliasSet() const {
@@ -3915,7 +3909,12 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
         return isMutated_;
     }
     void setMutated() {
+        JS_ASSERT(isMemory_ && !isMutated_);
         isMutated_ = true;
+    }
+    void setNotMutated() {
+        JS_ASSERT(isMemory_ && isMutated_);
+        isMutated_ = false;
     }
 
     AliasSet getAliasSet() const {

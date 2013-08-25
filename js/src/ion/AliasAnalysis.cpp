@@ -75,36 +75,7 @@ IonSpewDependency(MDefinition *load, MDefinition *store, const char *verb, const
     fprintf(IonSpewFile, " (%s)\n", reason);
 }
 
-static void
-IonSpewAliasInfo(const char *pre, MDefinition *ins, const char *post)
-{
-    if (!IonSpewEnabled(IonSpew_Alias))
-        return;
-
-    fprintf(IonSpewFile, "%s ", pre);
-    ins->printName(IonSpewFile);
-    fprintf(IonSpewFile, " %s\n", post);
-}
-
-/*
-bool
-MBasicBlock::initNumAliasSets(uint32_t num, MDefinition *store)
-{
-    if (slots_.length() < num) {
-        if (!slots_.growBy(num - slots_.length()))
-            return false;
-    } else if (slots_.length() > num) {
-        slots_.shrink(slots_.length() - num);
-    }
-
-    for (size_t i = 0; i < num; i++)
-        slots_[i] = store;
-
-    return true;
-}
-*/
-
-static MemoryUse *
+MemoryUse *
 MemoryUse::New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
                MemoryUseList *freeList)
 {
@@ -116,23 +87,42 @@ MemoryUse::New(MDefinition *producer, MDefinition *consumer, const AliasSet &int
     return use;
 }
 
-MemoryOperandList::MemoryOperandList()
-{
-}
-
 void
 MemoryOperandList::insertMemoryUse(MemoryUse *use)
 {
     pushBack(use);
+#ifdef CRAZY_DEBUG
+    use->ownerOList = this;
+    use->ownerUList = NULL;
+
+    // Assert that after this operation both the producer and the consumer has
+    // only one use/operand with this alias set, and that no other alias set use
+    // the same couple (producer, consumer), in which case this means that we
+    // have a merge issue.
+    for (MemoryOperandList::iterator i = begin(); i != end(); i++) {
+        MemoryOperandList::iterator j = begin(*i);
+        j++;
+        for (; j != end(); j++) {
+            JS_ASSERT(i->producer() != j->producer());
+            JS_ASSERT((i->intersect() & j->intersect()).isNone());
+        }
+    }
+#endif
 
     // If this memory use is the operand of an instruction then attach at among
     // the memory use list of the producer.
-    if (use->consumer()) {
-        use->producer()->memUses()->pushBack(use);
-        // TODO: Assert that after this operation both the producer and the
-        // consumer has only one use/operand with this alias set, and that no other
-        // alias set use the same couple (producer, consumer), in which case
-        // this means that we have a merge issue.
+    if (use->hasConsumer()) {
+        use->producer()->memUses().pushBack(use);
+#ifdef CRAZY_DEBUG
+        use->ownerUList = &use->producer()->memUses();
+
+        for (MemoryUseList::iterator i = use->ownerUList->begin(); i != use->ownerUList->end(); i++) {
+            MemoryUseList::iterator j = use->ownerUList->begin(*i);
+            j++;
+            for (; j != use->ownerUList->end(); j++)
+                JS_ASSERT(i->consumer() != j->consumer());
+        }
+#endif
     }
 }
 
@@ -144,7 +134,7 @@ MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::itera
 {
     // Substract the given alias set from the memory use alias set.
     AliasSet newIntersect = it->intersect().exclude(set);
-    if (newIntersect != AliasSet::None()) {
+    if (!newIntersect.isNone()) {
         it->setIntersect(newIntersect);
         it++;
         return it;
@@ -152,13 +142,17 @@ MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::itera
 
     // Remove it from both the list of operands and the list of uses.
     MemoryUse *use = static_cast<MemoryUse *>(*it);
-    remove(use);
-    JS_ASSERT(use->consumer());
-    it = use->producer()->memUses()->removeAt(it);
+    it = removeAt(it);
+    use->consumer()->memOperands().remove(use);
 
     // Add it to the freeList.
-    if (freeList)
+    if (freeList) {
+#ifdef CRAZY_DEBUG
+        use->ownerOList = NULL;
+        use->ownerUList = NULL;
+#endif
         freeList->pushFront(use);
+    }
 
     return it;
 }
@@ -166,10 +160,12 @@ MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::itera
 void
 MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *freeList)
 {
-    for (MemoryOperandList::iterator it = operands.begin(); it != operands.end(); ) {
+    for (MemoryOperandList::iterator it = begin(); it != end(); ) {
+        JS_ASSERT(it->ownerOList == this);
+
         // Substract the given alias set from the memory use alias set.
         AliasSet newIntersect = it->intersect().exclude(set);
-        if (newIntersect != AliasSet::None()) {
+        if (!newIntersect.isNone()) {
             it->setIntersect(newIntersect);
             it++;
             continue;
@@ -178,12 +174,17 @@ MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList *f
         // Remove it from both the list of operands and the list of uses.
         MemoryUse *use = static_cast<MemoryUse *>(*it);
         it = removeAt(it);
-        if (use->consumer())
-            use->producer()->memUses()->remove(use);
+        if (use->hasConsumer())
+            use->producer()->memUses().remove(use);
 
         // Add it to the freeList.
-        if (freeList)
+        if (freeList) {
+#ifdef CRAZY_DEBUG
+            use->ownerOList = NULL;
+            use->ownerUList = NULL;
+#endif
             freeList->pushFront(use);
+        }
     }
 }
 
@@ -194,30 +195,58 @@ MemoryOperandList::extractDependenciesSubset(const MemoryOperandList &operands,
                                              MemoryUseList *freeList)
 {
     for (MemoryOperandList::iterator it = operands.begin(); it != operands.end(); it++) {
-        AliasSet intersect = it->intersect() & aliasSet;
-        if (intersect == AliasSet::None())
+        JS_ASSERT(it->ownerOList == &operands);
+        AliasSet intersect = it->intersect() & set;
+        if (intersect.isNone())
             continue;
 
-        IonSpewDependency(consumer, it->producer, "depends", "");
-        MemoryUse *use = MemoryUse::New(it->producer, consumer, intersect, freeList);
+        IonSpewDependency(consumer, it->producer(), "depends", "");
+        MemoryUse *use = MemoryUse::New(it->producer(), consumer, intersect, freeList);
         insertMemoryUse(use);
     }
 }
 
 MemoryUseList::iterator
 MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
-                                   MemoryOperandList::iterator it, MemoryUseList *freeList)
+                                   MemoryUseList::iterator it, MemoryUseList *freeList)
 {
+    JS_ASSERT(!set.isNone());
+
     // 1. Remove all included sets.
     MemoryUse *use = static_cast<MemoryUse *>(*it);
     MDefinition *consumer = use->consumer();
-    it = removeAliasingMemoryUse(set, it, freeList);
+    it = use->producer()->memUses().removeAliasingMemoryUse(set, it, freeList);
 
     // 2. Try to extend a memory use which has the same producer.
-    MemoryUseList *uses = consumer->memOperands();
-    for (MemoryUseList::iterator it = uses->begin(); it != uses->end(); it++) {
-        if (it->producer() == producer) {
-            it->setIntersect(it->intersect() | set);
+    JS_ASSERT(&consumer->memOperands() == this);
+    for (MemoryOperandList::iterator op = begin(); op != end(); op++) {
+        JS_ASSERT(op->ownerOList == this);
+        if (op->producer() == producer) {
+            op->setIntersect(op->intersect() | set);
+            return it;
+        }
+    }
+
+    // 3. Cannot extend any, then create a new memory use.
+    use = MemoryUse::New(producer, consumer, set, freeList);
+    insertMemoryUse(use);
+    return it;
+}
+
+void
+MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
+                                   MDefinition *consumer, MemoryUseList *freeList)
+{
+    JS_ASSERT(!set.isNone());
+
+    // 1. Remove all included sets.
+    removeAliasingMemoryUse(set, freeList);
+
+    // 2. Try to extend a memory use which has the same producer.
+    for (MemoryOperandList::iterator op = begin(); op != end(); op++) {
+        JS_ASSERT(op->ownerOList == this);
+        if (op->producer() == producer) {
+            op->setIntersect(op->intersect() | set);
             return;
         }
     }
@@ -231,6 +260,7 @@ AliasSet
 MemoryOperandList::findMatchingSubset(const AliasSet &set, MDefinition *producer)
 {
     for (MemoryOperandList::iterator it = begin(); it != end(); it++) {
+        JS_ASSERT(it->ownerOList == this);
         if (it->producer() == producer)
             return set & it->intersect();
     }
@@ -241,19 +271,32 @@ MemoryOperandList::findMatchingSubset(const AliasSet &set, MDefinition *producer
 MDefinition *
 MemoryOperandList::getUniqProducer(const AliasSet &set)
 {
-    for (MemoryOperandList::iterator it = operands.begin(); it != operands.end(); it++) {
-        AliasSet intersect = it->intersect() | set;
-        if (intersect == AliasSet::None())
+    for (MemoryOperandList::iterator it = begin(); it != end(); it++) {
+        JS_ASSERT(it->ownerOList == this);
+        AliasSet intersect = it->intersect() & set;
+        if (intersect.isNone())
             continue;
 
         // The set must be fully covered by the MemoryOperand alias
         // set. Otherwise we will have multiple producers for the given alias
         // set.
-        JS_ASSERT(set.exclude(it->intersect()) == AliasSet::None());
+        JS_ASSERT(set.exclude(it->intersect()).isNone());
         return it->producer();
     }
 
     return NULL;
+}
+
+void
+MemoryOperandList::clear(MemoryUseList &freeList)
+{
+    while (!empty()) {
+        MemoryUse *use = static_cast<MemoryUse *>(popFront());
+        JS_ASSERT(use->ownerOList == this);
+        if (use->hasConsumer())
+            use->producer()->memUses().remove(use);
+        freeList.pushBack(use);
+    }
 }
 
 // Copied from Range Analysis.cpp
@@ -269,54 +312,42 @@ IsDominatedUse(MBasicBlock *block, MUse *use)
     return block->dominates(n->block());
 }
 
-// Copied & Modified from Range Analysis.cpp
-/*
 static void
-ReplaceDominatedMemoryUsesWith(uint32_t aliasSetId, MDefinition *orig,
-                               MDefinition *dom, MBasicBlock *block)
-{
-    for (MUseIterator i(orig->memUsesBegin()); i != orig->memUsesEnd(); ) {
-        if (i->index() != aliasSetId) {
-            i++;
-            continue;
-        }
-
-        if (i->consumer() != dom && IsDominatedUse(block, *i))
-            i = i->consumer()->toDefinition()->replaceAliasSetDependency(i, dom);
-        else
-            i++;
-    }
-}
-*/
-
-static void
-ReplaceDominatedMemoryUses(AliasSet &set, MDefinition *orig,
+ReplaceDominatedMemoryUses(const AliasSet &set, MDefinition *orig,
                            MDefinition *dom, MBasicBlock *block,
                            MemoryUseList *freeList)
 {
     JS_ASSERT(orig != dom);
 
     // Replace any memory use.
-    MemoryUseList *uses = orig->memUses();
-    for (MemoryUseList it = uses->begin(); it != uses->end(); ) {
+    MemoryUseList &uses = orig->memUses();
+    for (MemoryUseList::iterator it = uses.begin(); it != uses.end(); ) {
+        JS_ASSERT(it->ownerUList == &uses);
         JS_ASSERT(it->producer() == orig);
         AliasSet intersect = it->intersect() & set;
         MDefinition *consumer = it->consumer();
-        if (intersect == AliasSet::None() || consumer != dom ||
-            !IsDominatedUse(block, consumer))
+        JS_ASSERT(!consumer->isPhi());
+        if (intersect.isNone() || consumer == dom ||
+            !block->dominates(consumer->block()))
         {
             it++;
             continue;
         }
 
-        it = it->consumer()->memOperands()->replaceProducer(intersect, dom, it, freeList);
+        it = consumer->memOperands().replaceProducer(intersect, dom, it, freeList);
     }
 
     // Replace any use from a memory Phi.
     for (MUseIterator it(orig->usesBegin()); it != orig->usesEnd(); ) {
-        MDefinition *consumer = it->consumer();
-        if (consumer != dom || !consumer->isPhi() || consumer->toPhi()->isMemory() ||
-            !IsDominatedUse(block, consumer))
+        // The instruction might 
+        if (!it->consumer()->isDefinition()) {
+            it++;
+            continue;
+        }
+
+        MDefinition *consumer = it->consumer()->toDefinition();
+        if (!consumer->isPhi() || !consumer->toPhi()->isMemory() || consumer == dom ||
+            !IsDominatedUse(block, *it))
         {
             it++;
             continue;
@@ -351,35 +382,23 @@ MBasicBlock::addAliasSetPhi(MPhi *phi)
         getPredecessor(i)->setSuccessorWithPhis(this, i);
 }
 
-/*
-void
-MBasicBlock::setAliasSetStore(uint32_t aliasSetId, MDefinition *store)
-{
-    slots_[aliasSetId] = store;
-}
-
-MDefinition *
-MBasicBlock::getAliasSetStore(uint32_t aliasSetId)
-{
-    return slots_[aliasSetId];
-}
-*/
-
 MDefinition *
 MDefinition::dependency() const {
     MDefinition *def = NULL;
-    for (const MUse *it = memOperands_.begin(); it < memOperands_.end(); it++) {
+    for (MemoryOperandList::iterator it = memOperands_.begin(); it != memOperands_.end(); it++) {
+        JS_ASSERT(it->ownerOList == &memOperands_);
+        MDefinition *candidate = it->producer();
 
         if (def) {
             // As we do not renumber the inserted phi, we work around that by
             // checking if the producers are phis.
-            if (it->producer()->isPhi() && !def->isPhi() &&
-                it->producer()->block()->id() == def->block()->id())
+            if (candidate->isPhi() && !def->isPhi() &&
+                candidate->block()->id() == def->block()->id())
             {
                 continue;
             }
 
-            if (it->producer()->id() < def->id())
+            if (candidate->id() < def->id())
                 continue;
         }
 
@@ -388,212 +407,39 @@ MDefinition::dependency() const {
     return def;
 }
 
-/*
-MUseIterator
-MDefinition::replaceAliasSetDependency(MUseIterator use, MDefinition *def)
-{
-    JS_ASSERT(def != NULL);
-
-    uint32_t aliasSetId = use->index();
-    MDefinition *prev = use->producer();
-
-    JS_ASSERT(prev == getAliasSetDependency(aliasSetId));
-    JS_ASSERT(use->consumer() == this);
-
-    if (prev == def)
-        return use;
-
-    MUseIterator result(prev->memUses_.removeAt(use));
-
-    // Set the operand by reusing the current index in the list of memory
-    // operands.
-    MUse *it = memOperands_.begin();
-    for (; ; it++) {
-        JS_ASSERT(it != memOperands_.end());
-        if (it->index() == aliasSetId)
-            break;
-    }
-    it->set(def, this, aliasSetId);
-    def->memUses_.pushFront(it);
-
-    return result;
-}
-*/
-
-bool
-MDefinition::setAliasSetDependency(uint32_t aliasSetId, MDefinition *mutator)
-{
-    MDefinition *prev = getAliasSetDependency(aliasSetId);
-    if (prev != NULL) {
-        if (prev == mutator)
-            return true;
-
-        // Set the operand by reusing the current index in the list of memory
-        // operands.
-        MUse *it = memOperands_.begin();
-        for (; ; it++) {
-            JS_ASSERT(it != memOperands_.end());
-            if (it->index() == aliasSetId)
-                break;
-        }
-        JS_ASSERT(it->producer() == prev);
-        it->set(mutator, this, aliasSetId);
-        mutator->memUses_.pushFront(it);
-
-        return true;
-    }
-
-    // We need to be careful with vector of MUse as resizing them implies that
-    // we need to remove them from their original location and add them back
-    // after they are copied into a larger array.
-    uint32_t index = memOperands_.length();
-    bool performingRealloc = !memOperands_.canAppendWithoutRealloc(1);
-
-    // Remove all MUses from all use lists, in case realloc() moves.
-    if (performingRealloc) {
-        for (uint32_t i = 0; i < index; i++) {
-            MUse *use = &memOperands_[i];
-            use->producer()->memUses_.remove(use);
-        }
-    }
-
-    // Create the last MUse.
-    if (!memOperands_.append(MUse(mutator, this, aliasSetId)))
-        return false;
-
-    // Add the back in case of realloc
-    if (performingRealloc) {
-        for (uint32_t i = 0; i < index; i++) {
-            MUse *use = &memOperands_[i];
-            use->producer()->memUses_.pushFront(use);
-        }
-    }
-
-    // Add the last MUse in the list of uses of the mutator.
-    mutator->memUses_.pushFront(&memOperands_[index]);
-
-    return true;
-}
-
-MDefinition *
-MDefinition::getAliasSetDependency(uint32_t aliasSetId)
-{
-    for (MUse *it = memOperands_.begin(); it != memOperands_.end(); it++) {
-        if (it->index() == aliasSetId)
-            return it->producer();
-    }
-
-    return NULL;
-}
-
-// Add the result of the current block into the destination block. Add Phi if
-// another block already added a different input to the destination block.
-static bool
-InheritEntryAliasSet(MIRGraph &graph, AliasSet set, /*uint32_t aliasSetId,*/
-                     MBasicBlock *current, MBasicBlock *dest,
-                     MDefinition *initial, MDefinition *added,
-                     MemoryUseList *freeList)
-{
-    MDefinition *last = dest->getAliasSetStore(aliasSetId);
-    size_t currentId = current->id();
-
-    size_t predIndex = 0;
-    size_t visitedPred = 0;
-    for (size_t p = 0; p < dest->numPredecessors(); p++) {
-        MBasicBlock *pred = dest->getPredecessor(p);
-        if (pred == current) {
-            predIndex = p;
-            continue;
-        }
-
-        visitedPred += pred->id() < currentId;
-    }
-
-    if (!visitedPred) {
-        // dest->setAliasSetStore(aliasSetId, added);
-        dest->getEntryMemoryOperands()->setProducer(aliasSetId, added, freeList);
-        return true;
-    }
-
-    if (added == last)
-        return true;
-
-    if (!last->isPhi() || last->block() != dest) {
-        MPhi *phi = MPhi::New(aliasSetId);
-        if (!phi)
-            return false;
-        phi->setResultType(MIRType_None);
-        phi->setMemory();
-        phi->reserveLength(dest->numPredecessors());
-        for (size_t p = 0; p < dest->numPredecessors(); p++) {
-            MBasicBlock *pred = dest->getPredecessor(p);
-            if (pred->id() < currentId)
-                phi->addInput(last);
-            else if (pred == current)
-                phi->addInput(added);
-            else
-                phi->addInput(initial);
-        }
-        dest->addAliasSetPhi(phi);
-        dest->setAliasSetStore(aliasSetId, phi);
-
-        // If the block has already been visited, then we need to replace all
-        // dominated uses by the phi.  This case happen for loop back-edges.  We
-        // also need to update the inherited entries of the successors of
-        // dominated blocks to handle outer loops.
-        if (current->id() >= dest->id()) {
-            ReplaceDominatedMemoryUsesWith(aliasSetId, last, phi, dest);
-
-            for (ReversePostorderIterator block(graph.rpoBegin(dest)); *block != current; block++) {
-                if (!dest->dominates(*block))
-                    continue;
-
-                for (size_t s = 0; s < block->numSuccessors(); s++) {
-                    MBasicBlock *succ = block->getSuccessor(s);
-                    InheritEntryAliasSet(graph, aliasSetId, *block, succ, initial, phi);
-                }
-            }
-        }
-
-        return true;
-    }
-
-    MPhi *phi = last->toPhi();
-    phi->replaceOperand(predIndex, added);
-    return true;
-}
-
 static bool
 MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                MBasicBlock *current, MBasicBlock *succ,
                MemoryUseList *freeList)
 {
-    MemoryOperandList *sStores = succ->getEntryMemoryOperands();
+    MemoryOperandList *succStores = succ->getEntryMemoryOperands();
 
     // The successor has not been visited yet.  Just copy the current alias
     // set into the block entry.
-    if (sStores->empty()) {
-        sStores->copyDependencies(stores);
-        return;
+    if (succStores->empty()) {
+        succStores->copyDependencies(stores);
+        return true;
     }
 
     // Store the result of the merge between the successor entry and the
     // current predecessor.
     MemoryOperandList result;
+    size_t nbMutatedPhi = 0;
     bool hasNewPhi = false;
 
-    size_t currentId = current->id();
-    for (MemoryOperandList::iterator i = stores.begin; i != stores.end(); i++) {
+    for (MemoryOperandList::iterator i = stores.begin(); i != stores.end(); i++) {
+        JS_ASSERT(i->ownerOList == &stores);
         MDefinition *added = i->producer();
 
-        for (MemoryOperand *j = sStores.begin; j != sStores.end(); j++) {
+        for (MemoryOperandList::iterator j = succStores->begin(); j != succStores->end(); j++) {
+            JS_ASSERT(j->ownerOList == succStores);
             AliasSet intersect = i->intersect() & j->intersect();
-            if (intersect == AliasSet::None())
+            if (intersect.isNone())
                 continue;
 
             MDefinition *curr = j->producer();
             if (curr == added) {
-                result.setProducer(curr, intersect, freeList);
+                result.setProducer(intersect, curr, freeList);
                 continue;
             }
 
@@ -606,7 +452,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
             // alias set can span on multiple memory area, We need this remember
             // if a phi has been mutated, such as we can duplicate the phi if we
             // need to split its alias set.
-            if (!curr->isPhi() || curr->block() != succ || curr->toPhi()->isMutated()) {
+            if (curr->block() != succ || !curr->isPhi() || curr->toPhi()->isMutated()) {
                 MPhi *phi = MPhi::New(uint32_t(-1));
                 if (!phi)
                     return false;
@@ -617,8 +463,8 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                 // Initialize the new Phi with either the data of the previously
                 // mutated Phi or with the value which was present before the
                 // phi node.
-                if (curr->isMutated()) {
-                    JS_ASSERT(curr->isPhi() && curr->block() == succ);
+                if (curr->isPhi() && curr->toPhi()->isMutated()) {
+                    JS_ASSERT(curr->block() == succ);
                     for (size_t p = 0; p < succ->numPredecessors(); p++)
                         phi->addInput(curr->getOperand(p));
                 } else {
@@ -649,76 +495,151 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
 
             phi->replaceOperand(predIndex, added);
             phi->setMutated();
-            result.setProducer(phi, intersect, freeList);
-
-            MDefinition *merge = phi;
+            nbMutatedPhi++;
+            result.setProducer(intersect, phi, freeList);
         }
     }
 
+    // The result is complete, remove all temporary Mutated flags added on Phi
+    // nodes as they are only used to prevent the reuse of a Phi which has
+    // already been reused.
+    if (nbMutatedPhi) {
+        mozilla::DebugOnly<size_t> nbResetedPhi = 0;
+        for (MemoryOperandList::iterator op = result.begin(); op != result.end(); op++) {
+            JS_ASSERT(op->ownerOList == &result);
+            MDefinition *producer = op->producer();
+            if (!producer->isPhi())
+                continue;
+
+            MPhi *phi = producer->toPhi();
+            if (phi->isMutated()) {
+                phi->setNotMutated();
+#ifdef DEBUG
+                nbResetedPhi += 1;
+#endif
+            }
+        }
+
+        JS_ASSERT(nbResetedPhi == nbMutatedPhi);
+    }
+
+
     // Replace the current list by the computed results.
     MemoryOperandList previous;
-    sStores->moveListInto(previous);
-    result.moveListInto(*sStores);
+    succStores->moveListInto(previous);
+    result.moveListInto(*succStores);
 
     // If we have introduced new Phi instructions in blocks which have already
-    // been processed, then we need update all dominated instructions, as well
-    // as all successors of dominated blocks.
-    if (!hasNewPhi || succ->id() > current->id()) {
+    // processed, then we need update all dominated instructions, as well as all
+    // entries of any successors of dominated blocks.
+    if (!hasNewPhi || succ->id() <= current->id()) {
 
         // Iterate over the result, as the result is necessary more fragmented
         // than the original one. We have no way to remove fragmentation while
         // merging, as we necessary have to introduce Phi nodes to account for
         // the origin.
-        for (MemoryOperandList::iterator op = sStores->begin(); op != sStores->end(); op++) {
+        for (MemoryOperandList::iterator op = succStores->begin(); op != succStores->end(); op++) {
+            JS_ASSERT(op->ownerOList == succStores);
             MDefinition *prev = previous.getUniqProducer(op->intersect());
             JS_ASSERT(prev != NULL);
             if (prev == op->producer())
                 continue;
-            ReplaceDominatedMemoryUses(op->intersect(), prev, op->producer(), succ);
+            ReplaceDominatedMemoryUses(op->intersect(), prev, op->producer(), succ, freeList);
         }
-
-        // TODO: do some alpha renaming.
 
         // Update references of the original value inside the successors of the
         // visited blocks.  Such as we do not leave a reference which does not
         // take the newly created phis into account.
-        for (ReversePostorderIterator block2(graph.rpoBegin(dest)); *block2 != current; block2++) {
-            if (!dest->dominates(*block2))
+        ReversePostorderIterator domBlock(graph.rpoBegin(succ));
+        for (; *domBlock != current; domBlock++) {
+
+            // All blocks might not be dominated if the origin of the backedge
+            // is coming from a branch within the loop.
+            if (!succ->dominates(*domBlock))
                 continue;
 
-            for (size_t s = 0; s < block2->numSuccessors(); s++) {
-                MBasicBlock *succ2 = block2->getSuccessor(s);
-                MemoryOperandList *sStores2 = succ2->getEntryMemoryOperands();
+            for (size_t s = 0; s < domBlock->numSuccessors(); s++) {
+                MBasicBlock *domSucc = domBlock->getSuccessor(s);
+                MemoryOperandList *domSuccStores = domSucc->getEntryMemoryOperands();
 
                 // For each differences, try to update the entry information if
                 // it has not changed.
-                //
-                // Note: This assume that there is no way for a dominated block
-                // to get the same producer back if it has been changed in the
-                // middle. This property hold has long as we do not move a value
-                // from one alias set to another. If we start doing so, then we
-                // might want to create a fake MIR instruction to hold the entry
-                // memory operand of each basic block, in which case this
-                // operation would be implicitly handled by
-                // ReplaceDominatedMemoryUses done before these loops.
-                MemoryOperandList::iterator op;
-                for (op = sStores->begin(); op != sStores->end(); op++) {
+                MemoryOperandList::iterator op = succStores->begin();
+                for (; op != succStores->end(); op++) {
+                    JS_ASSERT(op->ownerOList == succStores);
+
+                    // We can always find a unique producer in the previous list
+                    // because the merged process can only add more
+                    // fragmentation by adding Phis with a smaller intersection
+                    // subsets.
                     MDefinition *prev = previous.getUniqProducer(op->intersect());
                     JS_ASSERT(prev != NULL);
+
+                    // If there is no modification, then skip the update
+                    // process.
                     if (prev == op->producer())
                         continue;
 
-                    AliasSet intersect = sStores2->findMatchingSubset(op->intersect(), prev);
-                    sStores2->setProducer(intersect, op->producer(), freeList);
+                    // Look for some inherited mutators in the list of producers
+                    // of one the successor of the dominated block.  If we find
+                    // some inherited property for the updated subset, we will
+                    // substiture it by the new value.
+                    //
+                    // Note: This assume that there is no way for a dominated
+                    // block to get the same producer back if it has been
+                    // changed in the middle. This property hold has long as we
+                    // do not move a value from one alias set to another.
+                    //
+                    // Side note: If we start doing so, then we might want to
+                    // create a fake MIR instruction to hold the entry memory
+                    // operand of each basic block, in which case this operation
+                    // would be implicitly handled by ReplaceDominatedMemoryUses
+                    // done before these loops.
+                    AliasSet intersect = domSuccStores->findMatchingSubset(op->intersect(), prev);
+                    if (intersect.isNone())
+                        continue;
+
+                    domSuccStores->setProducer(intersect, op->producer(), freeList);
                 }
             }
         }
     }
 
-    // TODO: Collect the previous memory use entries and add them to the free list.
+    // Collect the previous memory use entries and add them to the free list.
+    previous.clear(*freeList);
+
+    return true;
 }
 
-// This pass annotates every load instruction with the last store instruction
+bool
+AliasAnalysis::clear()
+{
+    // TODO: share the freelist between the multiple runs of the alias analysis.
+    MemoryUseList freeList;
+
+    for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
+        if (mir->shouldCancel("Alias Analysis (clean)"))
+            return false;
+
+        for (MPhiIterator phi = block->phisBegin(); phi != block->phisEnd(); ) {
+            if (!phi->isMemory()) {
+                phi++;
+                continue;
+            }
+
+            phi = block->discardPhiAt(phi);
+        }
+
+        for (MDefinitionIterator def(*block); def; def++) {
+            if (!def->memOperands().empty())
+                def->memOperands().clear(freeList);
+        }
+    }
+
+    return true;
+}
+
+// This pass annotates every load instruction with the last store instructions
 // on which it depends. The algorithm is optimistic in that it ignores explicit
 // dependencies and only considers loads and stores.
 //
@@ -735,12 +656,16 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
 bool
 AliasAnalysis::analyze()
 {
+    // TODO: share the freelist between the multiple runs of the alias analysis.
     MemoryUseList freeList;
-    Vector<MemoryOperandList, SystemAllocPolicy> blocksOperands;
-    if (!blocksOperands.reserve(graph_.numBlocks()))
-        return false;
 
-    const size_t numAliasSets = AliasSet::NumCategories;
+    // Allocate the sentinel of the list for the entry of each basic
+    // blocks. These behaves as the basic block stacks slots except that they
+    // are used to represent the state of the memory at the entry of every basic
+    // block.
+    Vector<MemoryOperandList, 0, SystemAllocPolicy> blocksOperands;
+    if (!blocksOperands.growBy(graph_.numBlocks()))
+        return false;
 
     // This vector is copied from the basic block alias sets at the beginning of
     // the block visit and merged into the successors of the basic block once we
@@ -766,12 +691,13 @@ AliasAnalysis::analyze()
         MemoryOperandList *entry = block->getEntryMemoryOperands();
         if (entry->empty()) {
             // This block has not been initialized, so this is an entry block.
-            JS_ASSERT(block->numPredecessors())
+            JS_ASSERT(block->numPredecessors() == 0);
 
-            // Thus we should take the first instruction of this block as assume
-            // it alias everything.
-            MDefinition *firstIns = block->begin();
-            entry->setProducer(AliasSet::Store(AliasSet::Any), firstIns, freeList);
+            // Thus we take the first instruction of this block as assume it
+            // alias all inputs.
+            MDefinition *firstIns = block->begin()->toDefinition();
+            AliasSet allInputs = AliasSet::Load(AliasSet::Any);
+            entry->setProducer(allInputs, firstIns, &freeList);
         }
         stores.copyDependencies(*entry);
 
@@ -784,13 +710,20 @@ AliasAnalysis::analyze()
             if (set.isNone())
                 continue;
 
+            bool isStore = set.isStore();
+
+            // The store bit is not part of the alias set.
+            set = set & AliasSet::Load(AliasSet::Any);
+
             // Mark loads & stores dependent on the previous stores.  All the
             // stores on the same alias set would form a chain.
-            def->memOperands()->extractDependenciesSubset(stores, set, def, freeList);
+            JS_ASSERT(def->memOperands().empty());
+            def->memOperands().extractDependenciesSubset(stores, set, *def, &freeList);
 
-            if (set.isStore()) {
+            if (isStore) {
+
                 // Update the working list of operands with the current store.
-                stores.setProducer(set, def, freeList);
+                stores.setProducer(set, *def, &freeList);
 
                 if (IonSpewEnabled(IonSpew_Alias)) {
                     fprintf(IonSpewFile, "Processing store ");
@@ -806,13 +739,15 @@ AliasAnalysis::analyze()
         // different branches.
         for (size_t s = 0; s < block->numSuccessors(); s++) {
             MBasicBlock *succ = block->getSuccessor(s);
-            MergeProducers(graph_, stores, *block, succ, firstIns);
-            /*
-            for (size_t i = 0; i < numAliasSets; i++)
-                InheritEntryAliasSet(graph_, i, *block, succ, firstIns, stores[i]);
-            */
+            MergeProducers(graph_, stores, *block, succ, &freeList);
         }
+
+        stores.clear(freeList);
     }
+
+    // Remove all the entry blocks, as the vector would be freed.
+    for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++)
+        block->setEntryMemoryOperands(NULL);
 
     return true;
 }

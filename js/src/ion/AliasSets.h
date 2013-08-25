@@ -8,6 +8,11 @@
 #define ion_AliasSets_h
 
 #include "ion/InlineList.h"
+#include "ion/IonAllocPolicy.h"
+
+#ifdef DEBUG
+# define CRAZY_DEBUG 1
+#endif
 
 namespace js {
 namespace ion {
@@ -117,12 +122,19 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
     MDefinition *consumer_; // The node that is using this operand.
     AliasSet intersect_;    // Largest common alias set.
 
+#ifdef CRAZY_DEBUG
+  public:
+    const MemoryOperandList *ownerOList;
+    const MemoryUseList *ownerUList;
+#endif
+
+  protected:
     MemoryOperand(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect)
       : producer_(producer),
         consumer_(consumer),
         intersect_(intersect)
     {
-        JS_ASSERT(intersect_ != AliasSet::None());
+        JS_ASSERT(!intersect_.isNone());
     }
 
   public:
@@ -131,12 +143,12 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
         producer_ = producer;
         consumer_ = consumer;
         intersect_ = intersect;
-        JS_ASSERT(intersect_ != AliasSet::None());
+        JS_ASSERT(!intersect_.isNone());
     }
 
     void setIntersect(const AliasSet &intersect) {
         intersect_ = intersect;
-        JS_ASSERT(intersect_ != AliasSet::None());
+        JS_ASSERT(!intersect_.isNone());
     }
 
     // Accessors
@@ -145,16 +157,15 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
         JS_ASSERT(producer_ != NULL);
         return producer_;
     }
-    // TODO: is this function needed ?
-    bool hasProducer() const {
-        return producer_ != NULL;
+    bool hasConsumer() const {
+        return consumer_ != NULL;
     }
     MDefinition *consumer() const {
         JS_ASSERT(consumer_ != NULL);
         return consumer_;
     }
     const AliasSet &intersect() const {
-        JS_ASSERT(intersect_ != AliasSet::None());
+        JS_ASSERT(!intersect_.isNone());
         return intersect_;
     }
 };
@@ -191,14 +202,15 @@ class MemoryUseList : protected InlineList<MemoryUse>
     using Parent::empty;
     using Parent::iterator;
 
-    MemoryUseList();
-
     iterator removeAliasingMemoryUse(const AliasSet &set, iterator it,
                                      MemoryUseList *freeList = NULL);
 };
 
 class MemoryOperandList : protected InlineList<MemoryOperand>
 {
+    friend class MemoryUse;
+    friend class MemoryUseList;
+
   public:
     typedef InlineList<MemoryOperand> Parent;
     using Parent::begin;
@@ -208,7 +220,15 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     using Parent::empty;
     using Parent::iterator;
 
-    MemoryOperandList();
+    // Used by Alias analysis when merging entry list of aliasing stores.
+    void moveListInto(MemoryOperandList &list) {
+        JS_ASSERT_IF(!empty(), !begin()->hasConsumer());
+#ifdef CRAZY_DEBUG
+        for (MemoryOperandList::iterator it = begin(); it != end(); it++)
+            it->ownerOList = &list;
+#endif
+        Parent::moveListInto(list);
+    }
 
     // When we are building the list of dependencies in the alias analysis, we
     // keep a list of operands for all alias sets. This function copy the memory
@@ -233,8 +253,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     replaceProducer(const AliasSet &set, MDefinition *producer,
                     MemoryUseList::iterator it, MemoryUseList *freeList = NULL);
 
-    void replaceMatchingProducer(const AliasSet &set, MDefinition *match,
-                                 MDefinition *producer, MemoryUseList *freeList = NULL);
+    AliasSet findMatchingSubset(const AliasSet &set, MDefinition *producer);
 
 
     // When we are walking instructions during the alias analysis, we want to
@@ -242,13 +261,18 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     void setProducer(const AliasSet &set, MDefinition *producer,
                      MemoryUseList *freeList = NULL)
     {
-        replaceProducer(set, producer, NULL, freeList);
+        MDefinition *consumer = NULL;
+        replaceProducer(set, producer, consumer, freeList);
     }
 
     // Extract the uniq producer corresponding to an Alias set.  If there is
     // more than one producer or if there is an unknown producer in the alias
     // set, then this function fails with an assertion.
     MDefinition *getUniqProducer(const AliasSet &set);
+
+    // This function clear all the dependencies of one instruction and move the
+    // memory uses into the free list.
+    void clear(MemoryUseList &freeList);
 
   private:
     // Insert a a newly created memory use which does not intersect any of the

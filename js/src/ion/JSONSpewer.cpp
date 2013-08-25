@@ -258,8 +258,11 @@ JSONSpewer::spewMDef(MDefinition *def)
     endList();
 
     beginListProperty("memInputs");
-    for (const MUse *i = def->memOperandsBegin(), *e = def->memOperandsEnd(); i < e; i++)
-        integerValue(i->producer()->id());
+    for (MemoryOperandList::iterator op = def->memOperands().begin();
+         op != def->memOperands().end(); op++)
+    {
+        integerValue(op->producer()->id());
+    }
     endList();
 
     beginListProperty("uses");
@@ -268,7 +271,7 @@ JSONSpewer::spewMDef(MDefinition *def)
     endList();
 
     beginListProperty("memUses");
-    for (MUseIterator use = def->memUsesBegin(); use != def->memUsesEnd(); use++)
+    for (MemoryUseList::iterator use = def->memUses().begin(); use != def->memUses().end(); use++)
         integerValue(use->consumer()->toDefinition()->id());
     endList();
 

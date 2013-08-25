@@ -75,7 +75,7 @@ UnreachableCodeElimination::removeUnmarkedBlocksAndCleanup()
     // Pass 4: Rerun alias analysis
     if (rerunAliasAnalysis_) {
         AliasAnalysis analysis(mir_, graph_);
-        if (!analysis.analyze())
+        if (!analysis.clear() || !analysis.analyze())
             return false;
     }
 

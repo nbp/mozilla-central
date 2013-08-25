@@ -53,6 +53,7 @@ class AliasAnalysis
 
   public:
     AliasAnalysis(MIRGenerator *mir, MIRGraph &graph);
+    bool clear();
     bool analyze();
 };
 
