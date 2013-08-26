@@ -497,9 +497,7 @@ class MDefinition : public MNode
         resultTypeSet_ = types;
     }
 
-    // Legacy interface used by GVN and LICM to determine the nearest aliasing
-    // definition.
-    MDefinition *dependency() const;
+    MDefinition *nearestMutator() const;
     void setMemoryDefinition(MemoryDefinition *mem) {
         JS_ASSERT(!mem_);
         mem_ = mem;

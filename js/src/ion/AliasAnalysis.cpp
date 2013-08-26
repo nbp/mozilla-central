@@ -348,7 +348,7 @@ MBasicBlock::addAliasSetPhi(MPhi *phi)
 }
 
 MDefinition *
-MDefinition::dependency() const {
+MDefinition::nearestMutator() const {
     MDefinition *def = NULL;
     if (!mem_)
         return def;

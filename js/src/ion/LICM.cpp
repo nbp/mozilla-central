@@ -326,10 +326,10 @@ Loop::isLoopInvariant(MInstruction *ins)
     // Note: "after the loop" can sound strange, but Alias Analysis doesn't look
     // at the control flow. Therefore it doesn't match the definition here, that a block
     // is in the loop when there is a (directed) path from the block to the loop header.
-    if (ins->dependency() && !isBeforeLoop(ins->dependency())) {
+    if (ins->nearestMutator() && !isBeforeLoop(ins->nearestMutator())) {
         if (IonSpewEnabled(IonSpew_LICM)) {
             fprintf(IonSpewFile, "depends on store inside or after loop: ");
-            ins->dependency()->printName(IonSpewFile);
+            ins->nearestMutator()->printName(IonSpewFile);
             fprintf(IonSpewFile, "\n");
         }
         return false;

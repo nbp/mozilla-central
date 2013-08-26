@@ -29,7 +29,7 @@ class ValueNumberer
             // If one of the instructions depends on a store, and the
             // other instruction does not depend on the same store,
             // the instructions are not congruent.
-            if (k->dependency() != l->dependency())
+            if (k->nearestMutator() != l->nearestMutator())
                 return false;
             return k->congruentTo(l);
         }

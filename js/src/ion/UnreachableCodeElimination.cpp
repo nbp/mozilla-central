@@ -204,7 +204,7 @@ UnreachableCodeElimination::checkDependencyAndRemoveUsesFromUnmarkedBlocks(MDefi
 {
     // When the instruction depends on removed block,
     // alias analysis needs to get rerun to have the right dependency.
-    if (instr->dependency() && !instr->dependency()->block()->isMarked())
+    if (instr->nearestMutator() && !instr->nearestMutator()->block()->isMarked())
         rerunAliasAnalysis_ = true;
 
     for (MUseIterator iter(instr->usesBegin()); iter != instr->usesEnd(); ) {
