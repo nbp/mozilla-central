@@ -1,3 +1,2 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 897606 - Rename dependency to its actual meaning.
-
+Subject: Bug 897606 - Generalized the AliasSet.
