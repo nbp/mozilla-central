@@ -521,12 +521,19 @@ class MDefinition : public MNode
         return mem_->operands;
     }
 
-    virtual AliasSet getAliasSet() const {
-        // Instructions are effectful by default.
-        return AliasSet::Store(AliasSet::Any);
+    virtual bool pure() {
+        return false;
     }
+    virtual void registerAliasIds(AliasSetCache &sc) const { }
+    virtual bool mightStore() const {
+        return pure() ? false : true;
+    }
+    virtual AliasSet getAliasSet(AliasSetCache &sc) const {
+        return pure() ? AliasSet::None() : AliasSet::Any(sc);
+    }
+
     bool isEffectful() const {
-        return getAliasSet().isStore();
+        return mightStore();
     }
     virtual bool mightAlias(MDefinition *store);
 };
@@ -878,8 +885,8 @@ class MNop : public MNullaryInstruction
         return new MNop();
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -907,8 +914,8 @@ class MConstant : public MNullaryInstruction
     HashNumber valueHash() const;
     bool congruentTo(MDefinition *ins) const;
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     void computeRange();
@@ -961,8 +968,8 @@ class MCallee : public MNullaryInstruction
     static MCallee *New() {
         return new MCallee();
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -989,8 +996,8 @@ class MForceUse : public MUnaryInstruction
     static MForceUse *New(MDefinition *input) {
         return new MForceUse(input);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -1175,8 +1182,8 @@ class MGoto : public MAryControlInstruction<0, 1>
     MBasicBlock *target() {
         return getSuccessor(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -1225,8 +1232,8 @@ class MTest
         return this;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void infer(JSContext *cx);
     MDefinition *foldsTo(bool useValueNumbers);
@@ -1260,8 +1267,8 @@ class MReturn
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -1282,8 +1289,8 @@ class MThrow
     TypePolicy *typePolicy() {
         return this;
     }
-    virtual AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -1307,8 +1314,8 @@ class MNewParallelArray : public MNullaryInstruction
         return new MNewParallelArray(templateObject);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     JSObject *templateObject() const {
@@ -1374,8 +1381,8 @@ class MNewArray : public MNullaryInstruction
     // notations.  So we might have to allocate the array twice if we bail
     // during the computation of the first element of the square braket
     // notation.
-    virtual AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -1604,8 +1611,8 @@ class MPrepareCall : public MNullaryInstruction
     // Get the vector size for the upcoming call by looking at the call.
     uint32_t argc() const;
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -1738,8 +1745,8 @@ class MCall
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Any);
+    bool pure() const {
+        return false;
     }
 
     bool possiblyCalls() const {
@@ -2036,14 +2043,14 @@ class MCompare
     bool operandMightEmulateUndefined() const {
         return operandMightEmulateUndefined_;
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         // Strict equality is never effectful.
         if (jsop_ == JSOP_STRICTEQ || jsop_ == JSOP_STRICTNE)
-            return AliasSet::None();
+            return true;
         if (compareType_ == Compare_Unknown)
-            return AliasSet::Store(AliasSet::Any);
+            return false;
         JS_ASSERT(compareType_ <= Compare_Value);
-        return AliasSet::None();
+        return true;
     }
 
     void printOpcode(FILE *fp) const;
@@ -2088,8 +2095,8 @@ class MBox : public MUnaryInstruction
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -2169,8 +2176,8 @@ class MUnbox : public MUnaryInstruction, public BoxInputsPolicy
             return false;
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void printOpcode(FILE *fp) const;
 };
@@ -2195,8 +2202,8 @@ class MGuardObject : public MUnaryInstruction, public SingleObjectPolicy
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -2222,8 +2229,8 @@ class MGuardString
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -2253,8 +2260,8 @@ class MCreateThisWithTemplate
     }
 
     // Although creation of |this| modifies global state, it is safely repeatable.
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -2285,8 +2292,8 @@ class MCreateThisWithProto
     }
 
     // Although creation of |this| modifies global state, it is safely repeatable.
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -2320,8 +2327,8 @@ class MCreateThis
     }
 
     // Although creation of |this| modifies global state, it is safely repeatable.
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -2353,8 +2360,8 @@ class MCreateArgumentsObject
         return getOperand(0);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     TypePolicy *typePolicy() {
@@ -2393,8 +2400,11 @@ class MGetArgumentsObjectArg
         return argno_;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::Any);
+    bool mightStore() const {
+        return false;
+    }
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet::Any(sc);
     }
 
     TypePolicy *typePolicy() {
@@ -2433,8 +2443,8 @@ class MSetArgumentsObjectArg
         return getOperand(1);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Any);
+    bool pure() const {
+        return false;
     }
 
     TypePolicy *typePolicy() {
@@ -2490,8 +2500,8 @@ class MReturnFromCtor
         return getOperand(1);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -2534,8 +2544,8 @@ class MPassArg : public MUnaryInstruction
         JS_ASSERT(argnum_ >= 0);
         return (uint32_t)argnum_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void printOpcode(FILE *fp) const;
 };
@@ -2587,8 +2597,8 @@ class MToDouble
             return false;
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     void computeRange();
@@ -2617,8 +2627,8 @@ class MAsmJSUnsignedToDouble
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -2660,8 +2670,8 @@ class MToInt32 : public MUnaryInstruction
         return congruentIfOperandsEqual(ins);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void computeRange();
 };
@@ -2691,8 +2701,8 @@ class MTruncateToInt32 : public MUnaryInstruction
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     void computeRange();
@@ -2721,9 +2731,9 @@ class MToString : public MUnaryInstruction
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         JS_ASSERT(input()->type() < MIRType_Object);
-        return AliasSet::None();
+        return true;
     }
 };
 
@@ -2754,10 +2764,10 @@ class MBitNot
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         if (specialization_ == MIRType_None)
-            return AliasSet::Store(AliasSet::Any);
-        return AliasSet::None();
+            return false;
+        return true;
     }
     void computeRange();
 };
@@ -2790,12 +2800,12 @@ class MTypeOf
     }
     MDefinition *foldsTo(bool useValueNumbers);
 
-    AliasSet getAliasSet() const {
+    bool pure() const {
         if (inputType_ <= MIRType_String)
-            return AliasSet::None();
+            return true;
 
         // For objects, typeof may invoke an effectful typeof hook.
-        return AliasSet::Store(AliasSet::Any);
+        return false;
     }
 };
 
@@ -2850,10 +2860,10 @@ class MBinaryBitwiseInstruction
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         if (specialization_ >= MIRType_Object)
-            return AliasSet::Store(AliasSet::Any);
-        return AliasSet::None();
+            return false;
+        return true;
     }
 
     bool isOperandTruncated(size_t index) const;
@@ -3064,10 +3074,10 @@ class MBinaryArithInstruction
     bool congruentTo(MDefinition *ins) const {
         return MBinaryInstruction::congruentTo(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         if (specialization_ >= MIRType_Object)
-            return AliasSet::Store(AliasSet::Any);
-        return AliasSet::None();
+            return false;
+        return true;
     }
 
     bool isTruncated() const {
@@ -3118,8 +3128,8 @@ class MMinMax
         return congruentIfOperandsEqual(ins);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void computeRange();
 };
@@ -3162,8 +3172,8 @@ class MAbs
     }
     bool fallible() const;
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void computeRange();
 };
@@ -3199,8 +3209,8 @@ class MSqrt
         return congruentIfOperandsEqual(ins);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -3238,8 +3248,8 @@ class MAtan2
         return congruentIfOperandsEqual(ins);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     bool possiblyCalls() const {
@@ -3278,8 +3288,8 @@ class MPow
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -3309,8 +3319,8 @@ class MPowHalf
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -3328,8 +3338,8 @@ class MRandom : public MNullaryInstruction
         return new MRandom;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     bool possiblyCalls() const {
@@ -3399,8 +3409,8 @@ class MMathFunction
         return congruentIfOperandsEqual(ins);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     bool possiblyCalls() const {
@@ -3688,8 +3698,8 @@ class MConcat
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -3731,8 +3741,8 @@ class MConcatPar
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -3758,9 +3768,9 @@ class MCharCodeAt
         return this;
     }
 
-    virtual AliasSet getAliasSet() const {
+    bool pure() const {
         // Strings are immutable, so there is no implicit dependency.
-        return AliasSet::None();
+        return true;
     }
 
     void computeRange();
@@ -3784,8 +3794,8 @@ class MFromCharCode
         return new MFromCharCode(code);
     }
 
-    virtual AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -3916,8 +3926,8 @@ class MPhi MOZ_FINAL : public MDefinition, public InlineForwardListNode<MPhi>
         isMutated_ = false;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void computeRange();
 
@@ -3958,8 +3968,8 @@ class MBeta : public MUnaryInstruction
         return new MBeta(val, comp);
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 
     void computeRange();
@@ -3993,8 +4003,8 @@ class MOsrValue : public MUnaryInstruction
         return getOperand(0)->toOsrEntry();
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -4079,8 +4089,8 @@ class MInterruptCheck : public MNullaryInstruction
     static MInterruptCheck *New() {
         return new MInterruptCheck();
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -4175,8 +4185,8 @@ class MRegExp : public MNullaryInstruction
     JSObject *getRegExpPrototype() const {
         return prototype_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -4313,8 +4323,8 @@ class MImplicitThis
     MDefinition *callee() const {
         return getOperand(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -4346,8 +4356,12 @@ class MSlots
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+
+    bool mightStore() const {
+        return false;
+    }
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4379,8 +4393,12 @@ class MElements
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4417,8 +4435,8 @@ class MConstantElements : public MNullaryInstruction
         return ins->isConstantElements() && ins->toConstantElements()->value() == value();
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -4447,7 +4465,8 @@ class MConvertElementsToDoubles
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+
+    bool pure() const {
         // This instruction can read and write to the elements' contents.
         // However, it is alright to hoist this from loops which explicitly
         // read or write to the elements: such reads and writes will use double
@@ -4455,7 +4474,7 @@ class MConvertElementsToDoubles
         // definite double loads must follow the conversion. The latter
         // property is ensured by chaining this instruction with the elements
         // themselves, in the same manner as MBoundsCheck.
-        return AliasSet::None();
+        return true;
     }
 };
 
@@ -4493,8 +4512,12 @@ class MMaybeToDoubleElement
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4522,8 +4545,12 @@ class MInitializedLength
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4550,8 +4577,12 @@ class MSetInitializedLength
     MDefinition *index() const {
         return getOperand(1);
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4575,8 +4606,12 @@ class MArrayLength
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4608,10 +4643,11 @@ class MTypedArrayLength
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+
+    bool pure() const {
         // The typed array |length| property is immutable, so there is no
         // implicit dependency.
-        return AliasSet::None();
+        return true;
     }
 };
 
@@ -4643,8 +4679,12 @@ class MTypedArrayElements
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -4689,8 +4729,8 @@ class MNot
         return getOperand(0);
     }
 
-    virtual AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -4751,8 +4791,8 @@ class MBoundsCheck
             return false;
         return congruentIfOperandsEqual(other);
     }
-    virtual AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -4786,8 +4826,8 @@ class MBoundsCheckLower
     void setMinimum(int32_t n) {
         minimum_ = n;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool fallible();
 };
@@ -4838,8 +4878,12 @@ class MLoadElement
     bool fallible() const {
         return needsHoleCheck();
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::Element);
+        return AliasSet(sc, AliasSet::Element);
     }
 };
 
@@ -4886,8 +4930,12 @@ class MLoadElementHole
     bool needsHoleCheck() const {
         return needsHoleCheck_;
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::Element);
+        return AliasSet(sc, AliasSet::Element);
     }
 };
 
@@ -4962,9 +5010,14 @@ class MStoreElement
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Element);
+
+    bool mightStore() const {
+        return true;
     }
+    AliasSet getAliasSet() const {
+        return AliasSet(sc, AliasSet::Element);
+    }
+
     bool needsHoleCheck() const {
         return needsHoleCheck_;
     }
@@ -5015,10 +5068,14 @@ class MStoreElementHole
     TypePolicy *typePolicy() {
         return this;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
         // StoreElementHole can update the initialized length, the array length
         // or reallocate obj->elements.
-        return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
     }
 };
 
@@ -5066,8 +5123,12 @@ class MArrayPopShift
     TypePolicy *typePolicy() {
         return this;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
     }
 };
 
@@ -5098,8 +5159,12 @@ class MArrayPush
     TypePolicy *typePolicy() {
         return this;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
     }
 };
 
@@ -5131,8 +5196,12 @@ class MArrayConcat
     TypePolicy *typePolicy() {
         return this;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::Element | AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
     }
     bool possiblyCalls() const {
         return true;
@@ -5174,8 +5243,12 @@ class MLoadTypedArrayElement
     MDefinition *index() const {
         return getOperand(1);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
 
     void computeRange();
@@ -5224,8 +5297,12 @@ class MLoadTypedArrayElementHole
     MDefinition *index() const {
         return getOperand(1);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
 };
 
@@ -5259,8 +5336,12 @@ class MLoadTypedArrayElementStatic
     size_t length() const;
 
     MDefinition *ptr() const { return getOperand(0); }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
 
     bool fallible() const {
@@ -5330,8 +5411,12 @@ class MStoreTypedArrayElement
     MDefinition *value() const {
         return getOperand(2);
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
     bool racy() const {
         return racy_;
@@ -5399,8 +5484,12 @@ class MStoreTypedArrayElementHole
     MDefinition *value() const {
         return getOperand(3);
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
     bool isOperandTruncated(size_t index) const;
 };
@@ -5440,8 +5529,12 @@ class MStoreTypedArrayElementStatic :
 
     MDefinition *ptr() const { return getOperand(0); }
     MDefinition *value() const { return getOperand(1); }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::TypedArrayElement);
+        return AliasSet(sc, AliasSet::TypedArrayElement);
     }
     bool isOperandTruncated(size_t index) const;
 };
@@ -5509,8 +5602,8 @@ class MClampToUint8
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     void computeRange();
 };
@@ -5554,8 +5647,11 @@ class MLoadFixedSlot
         return congruentIfOperandsEqual(ins);
     }
 
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::FixedSlot);
+        return AliasSet(sc, AliasSet::FixedSlot);
     }
 
     bool mightAlias(MDefinition *store);
@@ -5598,8 +5694,11 @@ class MStoreFixedSlot
         return slot_;
     }
 
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::FixedSlot);
+        return AliasSet(sc, AliasSet::FixedSlot);
     }
     bool needsBarrier() const {
         return needsBarrier_;
@@ -5747,13 +5846,16 @@ class MGetPropertyCache
         return congruentIfOperandsEqual(ins);
     }
 
+    bool mightStore() const {
+        return !idempotent_;
+    }
     AliasSet getAliasSet() const {
         if (idempotent_) {
-            return AliasSet::Load(AliasSet::ObjectFields |
-                                  AliasSet::FixedSlot |
-                                  AliasSet::DynamicSlot);
+            return AliasSet(sc, AliasSet::ObjectFields |
+                                AliasSet::FixedSlot |
+                                AliasSet::DynamicSlot);
         }
-        return AliasSet::Store(AliasSet::Any);
+        return AliasSet::Any(sc);
     }
 
 };
@@ -5823,8 +5925,12 @@ class MGetPropertyPolymorphic
     MDefinition *obj() const {
         return getOperand(0);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
+        return AliasSet(sc, AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
     }
 
     bool mightAlias(MDefinition *store);
@@ -5890,8 +5996,12 @@ class MSetPropertyPolymorphic
     void setNeedsBarrier() {
         needsBarrier_ = true;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
+        return AliasSet(sc, AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
     }
 };
 
@@ -6319,8 +6429,12 @@ class MGuardShape
             return false;
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -6371,8 +6485,12 @@ class MGuardObjectType
             return false;
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -6414,8 +6532,12 @@ class MGuardClass
             return false;
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::ObjectFields);
+        return AliasSet(sc, AliasSet::ObjectFields);
     }
 };
 
@@ -6459,9 +6581,13 @@ class MLoadSlot
             return false;
         return congruentIfOperandsEqual(ins);
     }
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
         JS_ASSERT(slots()->type() == MIRType_Slots);
-        return AliasSet::Load(AliasSet::DynamicSlot);
+        return AliasSet(sc, AliasSet::DynamicSlot);
     }
     bool mightAlias(MDefinition *store);
 };
@@ -6494,8 +6620,8 @@ class MFunctionEnvironment
     }
 
     // A function's environment is fixed.
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -6513,10 +6639,10 @@ class MForkJoinSlice
 
     INSTRUCTION_HEADER(ForkJoinSlice);
 
-    AliasSet getAliasSet() const {
+    bool pure() const {
         // Indicate that this instruction reads nothing, stores nothing.
         // (For all intents and purposes)
-        return AliasSet::None();
+        return true;
     }
 
     bool possiblyCalls() const {
@@ -6577,8 +6703,12 @@ class MStoreSlot
     void setNeedsBarrier() {
         needsBarrier_ = true;
     }
+
+    bool mightStore() const {
+        return true;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Store(AliasSet::DynamicSlot);
+        return AliasSet(sc, AliasSet::DynamicSlot);
     }
 };
 
@@ -6643,8 +6773,8 @@ class MCallGetIntrinsicValue : public MNullaryInstruction
     PropertyName *name() const {
         return name_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -6681,8 +6811,8 @@ class MCallsiteCloneCache
     }
 
     // Callsite cloning is idempotent.
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -6884,9 +7014,13 @@ class MCallGetProperty
     void setIdempotent() {
         idempotent_ = true;
     }
+
+    bool mightStore() const {
+        return !idempotent_;
+    }
     AliasSet getAliasSet() const {
         if (!idempotent_)
-            return AliasSet::Store(AliasSet::Any);
+            return AliasSet::Any(sc);
         return AliasSet::None();
     }
     bool possiblyCalls() const {
@@ -7099,6 +7233,9 @@ class MGetDOMProperty
         return congruentIfOperandsEqual(ins);
     }
 
+    bool mightStore() const {
+        return !(isDomConstant() || isDomPure());
+    }
     AliasSet getAliasSet() const {
         // The whole point of constancy is that it's non-effectful and doesn't
         // conflict with anything
@@ -7107,8 +7244,8 @@ class MGetDOMProperty
         // Pure DOM attributes can only alias things that alias the world or
         // explicitly alias DOM properties.
         if (isDomPure())
-            return AliasSet::Load(AliasSet::DOMProperty);
-        return AliasSet::Store(AliasSet::Any);
+            return AliasSet(sc, AliasSet::DOMProperty);
+        return AliasSet::Any(sc);
     }
 
     bool possiblyCalls() const {
@@ -7145,10 +7282,10 @@ class MStringLength
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         // The string |length| property is immutable, so there is no
         // implicit dependency.
-        return AliasSet::None();
+        return true;
     }
 };
 
@@ -7170,8 +7307,8 @@ class MFloor
     MDefinition *num() const {
         return getOperand(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -7196,8 +7333,8 @@ class MRound
     MDefinition *num() const {
         return getOperand(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     TypePolicy *typePolicy() {
         return this;
@@ -7381,8 +7518,12 @@ class MInArray
         return needsNegativeIntCheck_;
     }
     void collectRangeInfo();
+
+    bool mightStore() const {
+        return false;
+    }
     AliasSet getAliasSet() const {
-        return AliasSet::Load(AliasSet::Element);
+        return AliasSet(sc, AliasSet::Element);
     }
     TypePolicy *typePolicy() {
         return this;
@@ -7453,9 +7594,9 @@ class MArgumentsLength : public MNullaryInstruction
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
+    bool pure() const {
         // Arguments |length| cannot be mutated by Ion Code.
-        return AliasSet::None();
+        return true;
    }
 };
 
@@ -7488,8 +7629,8 @@ class MGetArgument
     bool congruentTo(MDefinition *ins) const {
         return congruentIfOperandsEqual(ins);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7540,8 +7681,8 @@ class MRest
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -7584,8 +7725,8 @@ class MRestPar
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -7620,8 +7761,8 @@ class MGuardThreadLocalObject
     BailoutKind bailoutKind() const {
         return Bailout_Normal;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -7671,8 +7812,8 @@ class MTypeBarrier
     BailoutKind bailoutKind() const {
         return bailoutKind_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     virtual bool neverHoist() const {
         return resultTypeSet()->empty();
@@ -7708,8 +7849,8 @@ class MMonitorTypes : public MUnaryInstruction, public BoxInputsPolicy
     const types::StackTypeSet *typeSet() const {
         return typeSet_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7763,8 +7904,8 @@ class MNewSlots : public MNullaryInstruction
     unsigned nslots() const {
         return nslots_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
     bool possiblyCalls() const {
         return true;
@@ -7792,8 +7933,8 @@ class MNewDeclEnvObject : public MNullaryInstruction
     JSObject *templateObj() {
         return templateObj_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7826,8 +7967,8 @@ class MNewCallObject : public MUnaryInstruction
     bool needsSingletonType() {
         return needsSingletonType_;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7867,8 +8008,8 @@ class MNewCallObjectPar : public MBinaryInstruction
         return templateObj_;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7948,8 +8089,8 @@ class MFunctionBoundary : public MNullaryInstruction
         return inlineLevel_;
     }
 
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -7967,9 +8108,9 @@ class MEnclosingScope : public MLoadFixedSlot
         return new MEnclosingScope(obj);
     }
 
-    AliasSet getAliasSet() const {
+    bool pure() const {
         // ScopeObject reserved slots are immutable.
-        return AliasSet::None();
+        return true;
     }
 };
 
@@ -8157,8 +8298,8 @@ class MIsCallable
     MDefinition *object() const {
         return getOperand(0);
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 
@@ -8183,8 +8324,8 @@ class MHaveSameClass
     TypePolicy *typePolicy() {
         return this;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet::None();
+    bool pure() const {
+        return true;
     }
 };
 

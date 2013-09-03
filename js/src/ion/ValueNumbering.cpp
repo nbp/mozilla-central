@@ -24,7 +24,6 @@ ValueNumberer::ValueNumberer(MIRGenerator *mir, MIRGraph &graph, bool optimistic
 uint32_t
 ValueNumberer::lookupValue(MDefinition *ins)
 {
-
     ValueMap::AddPtr p = values.lookupForAdd(ins);
 
     if (p) {
