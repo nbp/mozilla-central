@@ -7,6 +7,9 @@
 #ifndef ion_AliasSets_h
 #define ion_AliasSets_h
 
+#include "js/HashTable.h"
+
+#include "ion/BitSet.h"
 #include "ion/InlineList.h"
 #include "ion/IonAllocPolicy.h"
 
@@ -21,22 +24,18 @@ namespace ion {
 class MDefinition;
 class MemoryOperandList;
 class MemoryUseList;
-class MemoryUsePool;
+class AliasAnalysisCache;
 
-// Each memory group is given an AliasId, each alias identifer is used to
-// distinguish a set of memory manipulation than the others.  To each MIR
-// Instruction, we have an alias set which describe the action of the intruction
-// in terms of memory manipulation.  A MIR instruction can load/store any data
-// into the memory described by an AliasId.  Each AliasId is then used by the
-// alias analysis to reconstruct the graph of memory dependencies and adding Phi
-// nodes to present the memory dependencies.
-class AliasSet {
-  private:
-    uint32_t flags_;
-
+// An alias identifier is a unique identifier which can be compared with any
+// other and which must produce a unique valueHash to identify it. It represents
+// one indistinguishable kind of memory.
+//
+// As soon as all alias identifiers are registered, any alias identifier can be
+// used in an alias set.
+class AliasId
+{
   public:
-    enum AliasId {
-        None_             = 0,
+    enum Category {
         ObjectFields      = 1 << 0, // shape, class, slots, length etc.
         Element           = 1 << 1, // A member of obj->elements.
         DynamicSlot       = 1 << 2, // A member of obj->slots.
@@ -48,67 +47,265 @@ class AliasSet {
 
         NumCategories     = 6,
 
-        // Indicates load or store.
+        // Indicates load or store. This is not a category
         Store_            = 1 << 31
     };
 
-    // Constructors.
   public:
-    AliasSet(uint32_t flags)
+    AliasId(Category cat)
+      : cat_(cat)
+    {
+    }
+
+    virtual HashNumber valueHash() const {
+        return HashNumber(cat_);
+    }
+
+    virtual bool operator==(const AliasId &other) const {
+        return cat_ == other.cat_;
+    }
+
+    Category categories() const {
+        return cat_;
+    }
+
+  private:
+    // Category under which this alias identifier is mapped. This is used to
+    // alias a category at once, without having a list of all elements in it.
+    Category cat_;
+};
+
+// Map every alias id to its corresponding alias set.
+class AliasSetCache
+{
+  protected:
+    struct ValueHasher
+    {
+        typedef AliasId Lookup;
+        typedef AliasId Key;
+        static HashNumber hash(const Lookup &ins) {
+            return ins.valueHash();
+        }
+
+        static bool match(const Key &k, const Lookup &l) {
+            return k == l;
+        }
+    };
+
+    typedef HashMap<AliasId, BitSet *, ValueHasher, IonAllocPolicy> AliasIdMap;
+
+  public:
+    AliasSetCache()
+      : oom_(false),
+        nbIndexes_(AliasId::NumCategories),
+        any_(NULL),
+        temp_(NULL)
+    {
+    }
+
+    bool oom() {
+        return oom_;
+    }
+    void reportOOM() {
+        oom_ = true;
+    }
+
+    // Count the number of unique alias ids.
+    bool registerId(const AliasId &id);
+
+    // Allocate and fill bit sets of categories and alias ids.
+    bool fillCache();
+
+    const BitSet *bitSetOf(const AliasId &id) const {
+        AliasIdMap::Ptr p = idMap_.lookup(id);
+        JS_ASSERT(p.found());
+        return p->value;
+    }
+
+    const BitSet *bitSetOf(AliasId::Category c) const {
+        JS_ASSERT(c);
+        size_t catIndex = mozilla::CountTrailingZeroes32(c);
+        JS_ASSERT((1 << catIndex) == c);
+        return categories_[catIndex];
+    }
+
+    const BitSet *any() const {
+        JS_ASSERT(any_);
+        return any_;
+    }
+
+    BitSet *temp() {
+        if (!temp_) {
+            temp_ = BitSet::New(nbIndexes_);
+            if (!temp_)
+                reportOOM();
+        }
+        return temp_;
+    }
+    void resetTemp() {
+        temp_ = NULL;
+    }
+
+    bool init() {
+        return idMap_.init();
+    }
+
+  private:
+    // remember if an allocation of an alias set failed.
+    bool oom_;
+
+    // Last registered index.
+    size_t nbIndexes_;
+
+    // Map alias Ids to bit sets.
+    AliasIdMap idMap_;
+    BitSet *categories_[AliasId::NumCategories];
+
+    // Bit mask used to cover every alias ids.
+    BitSet *any_;
+    BitSet *temp_;
+};
+
+// Each memory group is given an AliasId, each alias identifer is used to
+// distinguish a set of memory manipulation than the others.  To each MIR
+// Instruction, we have an alias set which describe the action of the intruction
+// in terms of memory manipulation.  A MIR instruction can load/store any data
+// into the memory described by an AliasId.  Each AliasId is then used by the
+// alias analysis to reconstruct the graph of memory dependencies and adding Phi
+// nodes to present the memory dependencies.
+class AliasSet
+{
+  private:
+    const BitSet *flags_;
+
+    // Constructors.
+  private:
+    AliasSet(const BitSet *flags)
       : flags_(flags)
     {
-        JS_STATIC_ASSERT((1 << NumCategories) - 1 == Any);
+    }
+
+  public:
+    AliasSet(const AliasSetCache &sc, const AliasId &id)
+      : flags_(sc.bitSetOf(id))
+    {
+    }
+
+    AliasSet(const AliasSetCache &sc, AliasId::Category cat)
+      : flags_(sc.bitSetOf(cat))
+    {
     }
 
     static AliasSet None() {
-        return AliasSet(None_);
+        return AliasSet(NULL);
     }
-    static AliasSet Load(uint32_t flags) {
-        JS_ASSERT(flags && !(flags & Store_));
-        return AliasSet(flags);
-    }
-    static AliasSet Store(uint32_t flags) {
-        JS_ASSERT(flags && !(flags & Store_));
-        return AliasSet(flags | Store_);
+    static AliasSet Any(AliasSetCache &sc) {
+        return AliasSet(sc.any());
     }
 
     // Predicates.
   public:
     inline bool isNone() const {
-        return flags_ == None_;
-    }
-    inline bool isStore() const {
-        return !!(flags_ & Store_);
-    }
-    inline bool isLoad() const {
-        return !isStore() && !isNone();
+        if (!flags_)
+            return true;
+
+        uint32_t *i = flags_->raw();
+        uint32_t *e = i + flags_->rawLength();
+        uint32_t res = 0;
+        for (; i != e; i++)
+            res |= *i;
+        return res == 0;
     }
 
-  public:
-    // used by the AliasSetIterator.
-    uint32_t flags() const {
-        return flags_ & Any;
+    bool isEmptyIntersect(const AliasSet &rhs) const {
+        if (!flags_ || !rhs.flags_)
+            return true;
+
+        uint32_t *l = flags_->raw();
+        uint32_t *r = rhs.flags_->raw();
+        uint32_t *e = l + flags_->rawLength();
+        uint32_t res = 0;
+        for (; !res && l != e; l++, r++)
+            res = *l & *r;
+        return res == 0;
+    }
+
+    bool isSubsetOf(const AliasSet &rhs) const {
+        if (!flags_ || !rhs.flags_)
+            return isNone();
+
+        uint32_t *l = flags_->raw();
+        uint32_t *r = rhs.flags_->raw();
+        uint32_t *e = l + flags_->rawLength();
+        uint32_t res = 0;
+        for (; !res && l != e; l++, r++)
+            res = *l &~ *r;
+        return res == 0;
     }
 
   public:
     // Combine 2 alias sets.
-    inline AliasSet operator |(const AliasSet &other) const {
-        return AliasSet(flags_ | other.flags_);
+    inline AliasSet add(AliasSetCache &sc, const AliasSet &other) const {
+        if (!flags_)
+            return AliasSet(other.flags_);
+        if (!other.flags_)
+            return AliasSet(flags_);
+
+        BitSet *b = sc.temp();
+        if (!b)
+            return None();
+
+        uint32_t *dest = b->raw();
+        uint32_t *src1 = flags_->raw();
+        uint32_t *src2 = other.flags_->raw();
+        uint32_t *end = dest + b->rawLength();
+        for (; dest != end; src1++, src2++, dest++)
+            *dest = *src1 | *src2;
+        sc.resetTemp();
+        return AliasSet(b);
     }
 
     // Intersect 2 alias sets.
-    inline AliasSet operator &(const AliasSet &other) const {
-        return AliasSet(flags_ & other.flags_);
+    inline AliasSet intersect(AliasSetCache &sc, const AliasSet &other) const {
+        if (!flags_ || !other.flags_)
+            return AliasSet(NULL);
+
+        BitSet *b = sc.temp();
+        if (!b)
+            return None();
+
+        uint32_t *dest = b->raw();
+        uint32_t *src1 = flags_->raw();
+        uint32_t *src2 = other.flags_->raw();
+        uint32_t *end = dest + b->rawLength();
+        for (; dest != end; src1++, src2++, dest++)
+            *dest = *src1 & *src2;
+        sc.resetTemp();
+        return AliasSet(b);
     }
 
     // Exclude the other alias set from the current one.
-    inline AliasSet exclude(const AliasSet &other) const {
-        return AliasSet(flags_ & ~other.flags_);
-    }
-};
+    inline AliasSet exclude(AliasSetCache &sc, const AliasSet &other) const {
+        if (!flags_ || !other.flags_)
+            return AliasSet(flags_);
 
-// Iterator used to iterates over the list of alias ids.
-class AliasSetIterator;
+        BitSet *b = sc.temp();
+        if (!b)
+            return None();
+
+        uint32_t *dest = b->raw();
+        uint32_t *src1 = flags_->raw();
+        uint32_t *src2 = other.flags_->raw();
+        uint32_t *end = dest + b->rawLength();
+        for (; dest != end; src1++, src2++, dest++)
+            *dest = *src1 &~ *src2;
+        sc.resetTemp();
+        return AliasSet(b);
+    }
+
+  public:
+    void printFlags(FILE *fp) const;
+};
 
 // A MemoryUse links a producer with its consumer.  This link must at least been
 // shared by one AliasId.  As the same producer-consumer link might frequently
@@ -121,7 +318,7 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
 {
     MDefinition *producer_; // MDefinition that is being used.
     MDefinition *consumer_; // The node that is using this operand.
-    AliasSet intersect_;    // Largest common alias set.
+    AliasSet set_;          // Largest common alias set.
 
 #ifdef CRAZY_DEBUG
   public:
@@ -133,21 +330,21 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
     MemoryOperand()
       : producer_(NULL),
         consumer_(NULL),
-        intersect_(AliasSet::None_)
+        set_(AliasSet::None())
     { }
 
   public:
     // Set data inside the Memory use.
-    void set(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect) {
+    void set(MDefinition *producer, MDefinition *consumer, const AliasSet &set) {
         producer_ = producer;
         consumer_ = consumer;
-        intersect_ = intersect;
-        JS_ASSERT(!intersect_.isNone());
+        set_ = set;
+        JS_ASSERT(!set_.isNone());
     }
 
-    void setIntersect(const AliasSet &intersect) {
-        intersect_ = intersect;
-        JS_ASSERT(!intersect_.isNone());
+    void setSet(const AliasSet &set) {
+        set_ = set;
+        JS_ASSERT(!set_.isNone());
     }
 
     // Accessors
@@ -163,9 +360,9 @@ class MemoryOperand : public TempObject, public InlineListNode<MemoryOperand>
         JS_ASSERT(consumer_ != NULL);
         return consumer_;
     }
-    const AliasSet &intersect() const {
-        JS_ASSERT(!intersect_.isNone());
-        return intersect_;
+    const AliasSet &set() const {
+        JS_ASSERT(!set_.isNone());
+        return set_;
     }
 };
 
@@ -180,8 +377,8 @@ class MemoryUse : public MemoryOperand, public InlineListNode<MemoryUse>
 
   public:
     static MemoryUse *
-    New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
-        MemoryUsePool &freeList);
+    New(MDefinition *producer, MDefinition *consumer, const AliasSet &set,
+        AliasAnalysisCache &aac);
 };
 
 // Note: Most of the operations which are dealing with memory uses are splitting
@@ -203,7 +400,7 @@ class MemoryUseList : protected InlineList<MemoryUse>
     using Parent::iterator;
 
     iterator removeAliasingMemoryUse(const AliasSet &set, iterator it,
-                                     MemoryUsePool &freeList);
+                                     AliasAnalysisCache &aac);
 };
 
 class MemoryOperandList : protected InlineList<MemoryOperand>
@@ -235,43 +432,41 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     // operand list by filtering intersecting alias sets. It initialiaze the
     // consumer inside the resulting operand list.
     void extractDependenciesSubset(const MemoryOperandList &operands, const AliasSet &set,
-                                   MDefinition *consumer, MemoryUsePool &freeList);
+                                   MDefinition *consumer, AliasAnalysisCache &aac);
 
     // Copy unconditionally an operand list such as mutation are not visible on
     // the copied list.
-    void copyDependencies(const MemoryOperandList &operands, MemoryUsePool &freeList)
-    {
-        extractDependenciesSubset(operands, AliasSet::Store(AliasSet::Any), NULL, freeList);
-    }
+    void copyDependencies(const MemoryOperandList &operands, AliasAnalysisCache &aac);
 
     // Replace a producer by another producer within the list of operands of the
     // consumer instruction. This is the analog of replaceOperand.
     void replaceProducer(const AliasSet &set, MDefinition *producer,
-                         MDefinition *consumer, MemoryUsePool &freeList);
+                         MDefinition *consumer, AliasAnalysisCache &aac);
 
     MemoryUseList::iterator
     replaceProducer(const AliasSet &set, MDefinition *producer,
-                    MemoryUseList::iterator it, MemoryUsePool &freeList);
+                    MemoryUseList::iterator it, AliasAnalysisCache &aac);
 
-    AliasSet findMatchingSubset(const AliasSet &set, MDefinition *producer);
+    AliasSet findMatchingSubset(const AliasSet &set, MDefinition *producer,
+                                AliasAnalysisCache &aac);
 
 
     // When we are walking instructions during the alias analysis, we want to
     // update the last producer for the specified alias set.
-    void setProducer(const AliasSet &set, MDefinition *producer, MemoryUsePool &freeList)
+    void setProducer(const AliasSet &set, MDefinition *producer, AliasAnalysisCache &aac)
     {
         MDefinition *consumer = NULL;
-        replaceProducer(set, producer, consumer, freeList);
+        replaceProducer(set, producer, consumer, aac);
     }
 
     // Extract the uniq producer corresponding to an Alias set.  If there is
     // more than one producer or if there is an unknown producer in the alias
     // set, then this function fails with an assertion.
-    MDefinition *getUniqProducer(const AliasSet &set);
+    MDefinition *getUniqProducer(const AliasSet &set, AliasAnalysisCache &aac);
 
     // This function clear all the dependencies of one instruction and move the
     // memory uses into the free list.
-    void clear(MemoryUsePool &freeList);
+    void clear(AliasAnalysisCache &aac);
 
   private:
     // Insert a a newly created memory use which does not intersect any of the
@@ -283,7 +478,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     // substract the original alias set of all intersecting MemoryUse and remove
     // the remaining MemoryUse which have an empty alias set.  All removed
     // MemoryUse would be added to the freeList.
-    void removeAliasingMemoryUse(const AliasSet &set, MemoryUsePool &freeList);
+    void removeAliasingMemoryUse(const AliasSet &set, AliasAnalysisCache &aac);
 };
 
 // Track memory mutations and their uses/overwrite within the control-flow
@@ -301,9 +496,24 @@ struct MemoryDefinition : public TempObject
     MemoryOperandList operands;
 };
 
-// Pool of removed MemoryUse.
-class MemoryUsePool : public TempObject, public TempObjectPool<MemoryUse>
-{ };
+// Per-Compilation cache.
+class AliasAnalysisCache : public TempObject
+{
+    TempObjectPool<MemoryUse> freeList_;
+    AliasSetCache setCache_;
+
+  public:
+    MemoryUse *allocate() {
+        return freeList_.allocate();
+    }
+    void free(MemoryUse *use) {
+        freeList_.free(use);
+    }
+
+    AliasSetCache &sc() {
+        return setCache_;
+    }
+};
 
 }
 }

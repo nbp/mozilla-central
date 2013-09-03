@@ -22,7 +22,7 @@ class MBasicBlock;
 class MIRGraph;
 class MStart;
 class MemoryOperandList;
-class MemoryUsePool;
+class AliasAnalysisCache;
 
 class MDefinitionIterator;
 
@@ -607,7 +607,7 @@ class MIRGraph
     size_t numBlocks_;
     bool hasTryBlock_;
 
-    MemoryUsePool *memUsesFreeList_;
+    AliasAnalysisCache *aaCache_;
 
   public:
     MIRGraph(TempAllocator *alloc)
@@ -619,7 +619,7 @@ class MIRGraph
         osrStart_(NULL),
         numBlocks_(0),
         hasTryBlock_(false),
-        memUsesFreeList_(NULL)
+        aaCache_(NULL)
     { }
 
     template <typename T>
@@ -749,7 +749,7 @@ class MIRGraph
         hasTryBlock_ = true;
     }
 
-    MemoryUsePool &memUsesFreeList();
+    AliasAnalysisCache &aliasAnalysisCache();
 
     // The per-thread context. So as not to modify the calling convention for
     // parallel code, we obtain the current slice from thread-local storage.

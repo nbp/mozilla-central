@@ -1052,6 +1052,12 @@ OptimizeMIR(MIRGenerator *mir)
     // loads across stores.
     if (js_IonOptions.licm || js_IonOptions.gvn) {
         AliasAnalysis analysis(mir, graph);
+
+        // register all alias identifer to correctly allocate space in the
+        // future.
+        if (!analysis.registerIds())
+            return false;
+
         if (!analysis.analyze())
             return false;
         IonSpewPass("Alias analysis");

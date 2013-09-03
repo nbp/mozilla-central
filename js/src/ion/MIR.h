@@ -521,7 +521,7 @@ class MDefinition : public MNode
         return mem_->operands;
     }
 
-    virtual bool pure() {
+    virtual bool pure() const {
         return false;
     }
     virtual void registerAliasIds(AliasSetCache &sc) const { }

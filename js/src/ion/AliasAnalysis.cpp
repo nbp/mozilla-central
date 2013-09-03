@@ -26,12 +26,23 @@ AliasAnalysis::AliasAnalysis(MIRGenerator *mir, MIRGraph &graph)
 {
 }
 
-MemoryUsePool &
-MIRGraph::memUsesFreeList()
+AliasAnalysisCache &
+MIRGraph::aliasAnalysisCache()
 {
-    if (!memUsesFreeList_)
-        memUsesFreeList_ = new MemoryUsePool();
-    return *memUsesFreeList_;
+    if (!aaCache_)
+        aaCache_ = new AliasAnalysisCache();
+    return *aaCache_;
+}
+
+void
+AliasSet::printFlags(FILE *fp) const
+{
+    fprintf(fp, " (flags ");
+    uint32_t *l = flags_->raw();
+    uint32_t *e = l + flags_->rawLength();
+    for (; l != e; l++)
+        fprintf(fp, "%x", *l);
+    fprintf(fp, ")");
 }
 
 static void
@@ -49,9 +60,9 @@ IonSpewDependency(MDefinition *load, MDefinition *store, const char *verb, const
 
 MemoryUse *
 MemoryUse::New(MDefinition *producer, MDefinition *consumer, const AliasSet &intersect,
-               MemoryUsePool &freeList)
+               AliasAnalysisCache &aac)
 {
-    MemoryUse *use = freeList.allocate();
+    MemoryUse *use = aac.allocate();
     use->set(producer, consumer, intersect);
     return use;
 }
@@ -73,7 +84,7 @@ MemoryOperandList::insertMemoryUse(MemoryUse *use)
         j++;
         for (; j != end(); j++) {
             JS_ASSERT(i->producer() != j->producer());
-            JS_ASSERT((i->intersect() & j->intersect()).isNone());
+            JS_ASSERT(i->set().isEmptyIntersect(j->set()));
         }
     }
 #endif
@@ -99,12 +110,12 @@ MemoryOperandList::insertMemoryUse(MemoryUse *use)
 // This function sounds more like unlink MemoryUse.
 MemoryUseList::iterator
 MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::iterator it,
-                                       MemoryUsePool &freeList)
+                                       AliasAnalysisCache &aac)
 {
     // Substract the given alias set from the memory use alias set.
-    AliasSet newIntersect = it->intersect().exclude(set);
+    AliasSet newIntersect = it->set().exclude(aac.sc(), set);
     if (!newIntersect.isNone()) {
-        it->setIntersect(newIntersect);
+        it->setSet(newIntersect);
         it++;
         return it;
     }
@@ -119,21 +130,21 @@ MemoryUseList::removeAliasingMemoryUse(const AliasSet &set, MemoryUseList::itera
     use->ownerOList = NULL;
     use->ownerUList = NULL;
 #endif
-    freeList.free(use);
+    aac.free(use);
 
     return it;
 }
 
 void
-MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUsePool &freeList)
+MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, AliasAnalysisCache &aac)
 {
     for (MemoryOperandList::iterator it = begin(); it != end(); ) {
         JS_ASSERT(it->ownerOList == this);
 
         // Substract the given alias set from the memory use alias set.
-        AliasSet newIntersect = it->intersect().exclude(set);
+        AliasSet newIntersect = it->set().exclude(aac.sc(), set);
         if (!newIntersect.isNone()) {
-            it->setIntersect(newIntersect);
+            it->setSet(newIntersect);
             it++;
             continue;
         }
@@ -149,7 +160,7 @@ MemoryOperandList::removeAliasingMemoryUse(const AliasSet &set, MemoryUsePool &f
         use->ownerOList = NULL;
         use->ownerUList = NULL;
 #endif
-        freeList.free(use);
+        aac.free(use);
     }
 }
 
@@ -157,95 +168,102 @@ void
 MemoryOperandList::extractDependenciesSubset(const MemoryOperandList &operands,
                                              const AliasSet &set,
                                              MDefinition *consumer,
-                                             MemoryUsePool &freeList)
+                                             AliasAnalysisCache &aac)
 {
     for (MemoryOperandList::iterator it = operands.begin(); it != operands.end(); it++) {
         JS_ASSERT(it->ownerOList == &operands);
-        AliasSet intersect = it->intersect() & set;
+        AliasSet intersect = it->set().intersect(aac.sc(), set);
         if (intersect.isNone())
             continue;
 
         IonSpewDependency(consumer, it->producer(), "depends", "");
-        MemoryUse *use = MemoryUse::New(it->producer(), consumer, intersect, freeList);
+        MemoryUse *use = MemoryUse::New(it->producer(), consumer, intersect, aac);
         insertMemoryUse(use);
     }
 }
 
+void
+MemoryOperandList::copyDependencies(const MemoryOperandList &operands,
+                                    AliasAnalysisCache &aac)
+{
+    extractDependenciesSubset(operands, AliasSet::Any(aac.sc()), NULL, aac);
+}
+
 MemoryUseList::iterator
 MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
-                                   MemoryUseList::iterator it, MemoryUsePool &freeList)
+                                   MemoryUseList::iterator it, AliasAnalysisCache &aac)
 {
     JS_ASSERT(!set.isNone());
 
     // 1. Remove all included sets.
     MemoryUse *use = static_cast<MemoryUse *>(*it);
     MDefinition *consumer = use->consumer();
-    it = use->producer()->memUses().removeAliasingMemoryUse(set, it, freeList);
+    it = use->producer()->memUses().removeAliasingMemoryUse(set, it, aac);
 
     // 2. Try to extend a memory use which has the same producer.
     JS_ASSERT(&consumer->memOperands() == this);
     for (MemoryOperandList::iterator op = begin(); op != end(); op++) {
         JS_ASSERT(op->ownerOList == this);
         if (op->producer() == producer) {
-            op->setIntersect(op->intersect() | set);
+            op->setSet(op->set().add(aac.sc(), set));
             return it;
         }
     }
 
     // 3. Cannot extend any, then create a new memory use.
-    use = MemoryUse::New(producer, consumer, set, freeList);
+    use = MemoryUse::New(producer, consumer, set, aac);
     insertMemoryUse(use);
     return it;
 }
 
 void
 MemoryOperandList::replaceProducer(const AliasSet &set, MDefinition *producer,
-                                   MDefinition *consumer, MemoryUsePool &freeList)
+                                   MDefinition *consumer, AliasAnalysisCache &aac)
 {
     JS_ASSERT(!set.isNone());
 
     // 1. Remove all included sets.
-    removeAliasingMemoryUse(set, freeList);
+    removeAliasingMemoryUse(set, aac);
 
     // 2. Try to extend a memory use which has the same producer.
     for (MemoryOperandList::iterator op = begin(); op != end(); op++) {
         JS_ASSERT(op->ownerOList == this);
         if (op->producer() == producer) {
-            op->setIntersect(op->intersect() | set);
+            op->setSet(op->set().add(aac.sc(), set));
             return;
         }
     }
 
     // 3. Cannot extend any, then create a new memory use.
-    MemoryUse *use = MemoryUse::New(producer, consumer, set, freeList);
+    MemoryUse *use = MemoryUse::New(producer, consumer, set, aac);
     insertMemoryUse(use);
 }
 
 AliasSet
-MemoryOperandList::findMatchingSubset(const AliasSet &set, MDefinition *producer)
+MemoryOperandList::findMatchingSubset(const AliasSet &set, MDefinition *producer,
+                                      AliasAnalysisCache &aac)
 {
     for (MemoryOperandList::iterator it = begin(); it != end(); it++) {
         JS_ASSERT(it->ownerOList == this);
         if (it->producer() == producer)
-            return set & it->intersect();
+            return it->set().intersect(aac.sc(), set);
     }
 
     return AliasSet::None();
 }
 
 MDefinition *
-MemoryOperandList::getUniqProducer(const AliasSet &set)
+MemoryOperandList::getUniqProducer(const AliasSet &set, AliasAnalysisCache &aac)
 {
     for (MemoryOperandList::iterator it = begin(); it != end(); it++) {
         JS_ASSERT(it->ownerOList == this);
-        AliasSet intersect = it->intersect() & set;
-        if (intersect.isNone())
+        if (it->set().isEmptyIntersect(set))
             continue;
 
         // The set must be fully covered by the MemoryOperand alias
         // set. Otherwise we will have multiple producers for the given alias
         // set.
-        JS_ASSERT(set.exclude(it->intersect()).isNone());
+        JS_ASSERT(set.isSubsetOf(it->set()));
         return it->producer();
     }
 
@@ -253,14 +271,14 @@ MemoryOperandList::getUniqProducer(const AliasSet &set)
 }
 
 void
-MemoryOperandList::clear(MemoryUsePool &freeList)
+MemoryOperandList::clear(AliasAnalysisCache &aac)
 {
     while (!empty()) {
         MemoryUse *use = static_cast<MemoryUse *>(popFront());
         JS_ASSERT(use->ownerOList == this);
         if (use->hasConsumer())
             use->producer()->memUses().remove(use);
-        freeList.free(use);
+        aac.free(use);
     }
 }
 
@@ -280,7 +298,7 @@ IsDominatedUse(MBasicBlock *block, MUse *use)
 static void
 ReplaceDominatedMemoryUses(const AliasSet &set, MDefinition *orig,
                            MDefinition *dom, MBasicBlock *block,
-                           MemoryUsePool &freeList)
+                           AliasAnalysisCache &aac)
 {
     JS_ASSERT(orig != dom);
 
@@ -289,7 +307,7 @@ ReplaceDominatedMemoryUses(const AliasSet &set, MDefinition *orig,
     for (MemoryUseList::iterator it = uses.begin(); it != uses.end(); ) {
         JS_ASSERT(it->ownerUList == &uses);
         JS_ASSERT(it->producer() == orig);
-        AliasSet intersect = it->intersect() & set;
+        AliasSet intersect = it->set().intersect(aac.sc(), set);
         MDefinition *consumer = it->consumer();
         JS_ASSERT(!consumer->isPhi());
         if (intersect.isNone() || consumer == dom ||
@@ -299,7 +317,7 @@ ReplaceDominatedMemoryUses(const AliasSet &set, MDefinition *orig,
             continue;
         }
 
-        it = consumer->memOperands().replaceProducer(intersect, dom, it, freeList);
+        it = consumer->memOperands().replaceProducer(intersect, dom, it, aac);
     }
 
     // Replace any use from a memory Phi.
@@ -378,14 +396,14 @@ MDefinition::nearestMutator() const {
 static bool
 MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                MBasicBlock *current, MBasicBlock *succ,
-               MemoryUsePool &freeList)
+               AliasAnalysisCache &aac)
 {
     MemoryOperandList *succStores = succ->getEntryMemoryOperands();
 
     // The successor has not been visited yet.  Just copy the current alias
     // set into the block entry.
     if (succStores->empty()) {
-        succStores->copyDependencies(stores, freeList);
+        succStores->copyDependencies(stores, aac);
         return true;
     }
 
@@ -401,13 +419,13 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
 
         for (MemoryOperandList::iterator j = succStores->begin(); j != succStores->end(); j++) {
             JS_ASSERT(j->ownerOList == succStores);
-            AliasSet intersect = i->intersect() & j->intersect();
+            AliasSet intersect = i->set().intersect(aac.sc(), j->set());
             if (intersect.isNone())
                 continue;
 
             MDefinition *curr = j->producer();
             if (curr == added) {
-                result.setProducer(intersect, curr, freeList);
+                result.setProducer(intersect, curr, aac);
                 continue;
             }
 
@@ -465,7 +483,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
             phi->replaceOperand(predIndex, added);
             phi->setMutated();
             nbMutatedPhi++;
-            result.setProducer(intersect, phi, freeList);
+            result.setProducer(intersect, phi, aac);
         }
     }
 
@@ -509,11 +527,11 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
         // the origin.
         for (MemoryOperandList::iterator op = succStores->begin(); op != succStores->end(); op++) {
             JS_ASSERT(op->ownerOList == succStores);
-            MDefinition *prev = previous.getUniqProducer(op->intersect());
+            MDefinition *prev = previous.getUniqProducer(op->set(), aac);
             JS_ASSERT(prev != NULL);
             if (prev == op->producer())
                 continue;
-            ReplaceDominatedMemoryUses(op->intersect(), prev, op->producer(), succ, freeList);
+            ReplaceDominatedMemoryUses(op->set(), prev, op->producer(), succ, aac);
         }
 
         // Update references of the original value inside the successors of the
@@ -541,7 +559,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                     // because the merged process can only add more
                     // fragmentation by adding Phis with a smaller intersection
                     // subsets.
-                    MDefinition *prev = previous.getUniqProducer(op->intersect());
+                    MDefinition *prev = previous.getUniqProducer(op->set(), aac);
                     JS_ASSERT(prev != NULL);
 
                     // If there is no modification, then skip the update
@@ -564,18 +582,18 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
                     // operand of each basic block, in which case this operation
                     // would be implicitly handled by ReplaceDominatedMemoryUses
                     // done before these loops.
-                    AliasSet intersect = domSuccStores->findMatchingSubset(op->intersect(), prev);
+                    AliasSet intersect = domSuccStores->findMatchingSubset(op->set(), prev, aac);
                     if (intersect.isNone())
                         continue;
 
-                    domSuccStores->setProducer(intersect, op->producer(), freeList);
+                    domSuccStores->setProducer(intersect, op->producer(), aac);
                 }
             }
         }
     }
 
     // Collect the previous memory use entries and add them to the free list.
-    previous.clear(freeList);
+    previous.clear(aac);
 
     return true;
 }
@@ -583,7 +601,7 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
 bool
 AliasAnalysis::clear()
 {
-    MemoryUsePool &freeList = graph_.memUsesFreeList();
+    AliasAnalysisCache &aac = graph_.aliasAnalysisCache();
 
     for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
         if (mir->shouldCancel("Alias Analysis (clean)"))
@@ -600,9 +618,89 @@ AliasAnalysis::clear()
 
         for (MDefinitionIterator def(*block); def; def++) {
             if (!def->memOperands().empty())
-                def->memOperands().clear(freeList);
+                def->memOperands().clear(aac);
         }
     }
+
+    return true;
+}
+
+bool
+AliasSetCache::registerId(const AliasId &id)
+{
+    JS_ASSERT(!any_);
+    AliasIdMap::AddPtr p = idMap_.lookupForAdd(id);
+
+    // A similar Alias Id has already been registered.
+    if (p)
+        return true;
+
+    // Do not allocate a nit set right now, as we do not yet know the total
+    // number of indexes we should expect.
+    if (!idMap_.add(p, id, reinterpret_cast<BitSet *>(nbIndexes_ << 1 | 1)))
+        return false;
+    nbIndexes_++;
+    return true;
+}
+
+bool
+AliasSetCache::fillCache()
+{
+    any_ = BitSet::New(nbIndexes_);
+    if (!any_)
+        return false;
+    any_->complement();
+
+    for (size_t i = 0; i < AliasId::NumCategories; i++) {
+        BitSet *b = BitSet::New(nbIndexes_);
+        b->insert(i);
+        categories_[i] = b;
+    }
+
+    for (AliasIdMap::Range r = idMap_.all(); !r.empty(); r.popFront()) {
+        size_t mask = reinterpret_cast<size_t>(r.front().value);
+        size_t index = mask >> 1;
+        JS_ASSERT(mask & 1);
+        BitSet *b = BitSet::New(nbIndexes_);
+        if (!b)
+            return false;
+        b->insert(index);
+        r.front().value = b;
+
+        // for each category, register this alias id in the corresponding
+        // category.
+        size_t c = r.front().key.categories();
+        JS_ASSERT(c);
+        do {
+            size_t catIndex = mozilla::CountTrailingZeroes32(c);
+            c = c & (1 << catIndex);
+            categories_[catIndex]->insert(index);
+        } while (c);
+    }
+
+    return true;
+}
+
+bool
+AliasAnalysis::registerIds()
+{
+    AliasAnalysisCache &aac = graph_.aliasAnalysisCache();
+    AliasSetCache &sc = aac.sc();
+    sc.init();
+
+    for (ReversePostorderIterator block(graph_.rpoBegin()); block != graph_.rpoEnd(); block++) {
+        if (mir->shouldCancel("Register Alias Ids"))
+            return false;
+
+        for (MDefinitionIterator def(*block); def; def++)
+            def->registerAliasIds(sc);
+    }
+
+    if (sc.oom())
+        return false;
+
+    if (!sc.fillCache())
+        return false;
 
     return true;
 }
@@ -624,7 +722,7 @@ AliasAnalysis::clear()
 bool
 AliasAnalysis::analyze()
 {
-    MemoryUsePool &freeList = graph_.memUsesFreeList();
+    AliasAnalysisCache &aac = graph_.aliasAnalysisCache();
 
     // Allocate the sentinel of the list for the entry of each basic
     // blocks. These behaves as the basic block stacks slots except that they
@@ -666,43 +764,39 @@ AliasAnalysis::analyze()
             if (!firstIns->getMemoryDefinition())
                 firstIns->setMemoryDefinition(new MemoryDefinition());
 
-            AliasSet allInputs = AliasSet::Load(AliasSet::Any);
+            AliasSet allInputs = AliasSet::Any(aac.sc());
 
-            entry->setProducer(allInputs, firstIns, freeList);
+            entry->setProducer(allInputs, firstIns, aac);
         }
-        stores.copyDependencies(*entry, freeList);
+        stores.copyDependencies(*entry, aac);
 
         // Iterate over the definitions of the block and update the array with
         // the latest store for each alias set.
         for (MDefinitionIterator def(*block); def; def++) {
             def->setId(newId++);
 
-            AliasSet set = def->getAliasSet();
+            AliasSet set = def->getAliasSet(aac.sc());
             if (set.isNone())
                 continue;
 
             if (!def->getMemoryDefinition())
                 def->setMemoryDefinition(new MemoryDefinition());
 
-            bool isStore = set.isStore();
-
-            // The store bit is not part of the alias set.
-            set = set & AliasSet::Load(AliasSet::Any);
-
             // Mark loads & stores dependent on the previous stores.  All the
             // stores on the same alias set would form a chain.
             JS_ASSERT(def->memOperands().empty());
-            def->memOperands().extractDependenciesSubset(stores, set, *def, freeList);
+            def->memOperands().extractDependenciesSubset(stores, set, *def, aac);
 
-            if (isStore) {
+            if (def->mightStore()) {
 
                 // Update the working list of operands with the current store.
-                stores.setProducer(set, *def, freeList);
+                stores.setProducer(set, *def, aac);
 
                 if (IonSpewEnabled(IonSpew_Alias)) {
                     fprintf(IonSpewFile, "Processing store ");
                     def->printName(IonSpewFile);
-                    fprintf(IonSpewFile, " (flags %x)\n", set.flags());
+                    set.printFlags(IonSpewFile);
+                    fprintf(IonSpewFile, "\n");
                 }
             }
         }
@@ -713,10 +807,10 @@ AliasAnalysis::analyze()
         // different branches.
         for (size_t s = 0; s < block->numSuccessors(); s++) {
             MBasicBlock *succ = block->getSuccessor(s);
-            MergeProducers(graph_, stores, *block, succ, freeList);
+            MergeProducers(graph_, stores, *block, succ, aac);
         }
 
-        stores.clear(freeList);
+        stores.clear(aac);
     }
 
     // Remove all the entry blocks, as the vector would be freed.
@@ -750,7 +844,6 @@ MDefinition::mightAlias(MDefinition *store)
     // that the alias sets intersect. This may be refined to exclude
     // possible aliasing in cases where alias set flags are too imprecise.
     JS_ASSERT(!isEffectful() && store->isEffectful());
-    JS_ASSERT(getAliasSet().flags() & store->getAliasSet().flags());
     return true;
 }
 
