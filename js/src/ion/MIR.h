@@ -4361,7 +4361,7 @@ class MSlots
         return false;
     }
     AliasSet getAliasSet(AliasSetCache &sc) const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4397,8 +4397,8 @@ class MElements
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4516,8 +4516,8 @@ class MMaybeToDoubleElement
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4549,8 +4549,8 @@ class MInitializedLength
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4581,8 +4581,8 @@ class MSetInitializedLength
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4610,8 +4610,8 @@ class MArrayLength
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4683,8 +4683,8 @@ class MTypedArrayElements
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -4882,8 +4882,8 @@ class MLoadElement
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::Element);
     }
 };
 
@@ -4934,8 +4934,8 @@ class MLoadElementHole
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::Element);
     }
 };
 
@@ -5014,8 +5014,8 @@ class MStoreElement
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::Element);
     }
 
     bool needsHoleCheck() const {
@@ -5072,10 +5072,12 @@ class MStoreElementHole
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
+    AliasSet getAliasSet(AliasSetCache &sc) const {
         // StoreElementHole can update the initialized length, the array length
         // or reallocate obj->elements.
-        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
+        AliasSet elem(sc, AliasId::Element);
+        AliasSet obj(sc, AliasId::ObjectFields);
+        return elem.add(sc, obj);
     }
 };
 
@@ -5127,8 +5129,10 @@ class MArrayPopShift
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        AliasSet elem(sc, AliasId::Element);
+        AliasSet obj(sc, AliasId::ObjectFields);
+        return elem.add(sc, obj);
     }
 };
 
@@ -5163,8 +5167,10 @@ class MArrayPush
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        AliasSet elem(sc, AliasId::Element);
+        AliasSet obj(sc, AliasId::ObjectFields);
+        return elem.add(sc, obj);
     }
 };
 
@@ -5200,8 +5206,10 @@ class MArrayConcat
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element | AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        AliasSet elem(sc, AliasId::Element);
+        AliasSet obj(sc, AliasId::ObjectFields);
+        return elem.add(sc, obj);
     }
     bool possiblyCalls() const {
         return true;
@@ -5247,8 +5255,8 @@ class MLoadTypedArrayElement
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
 
     void computeRange();
@@ -5301,8 +5309,8 @@ class MLoadTypedArrayElementHole
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
 };
 
@@ -5340,8 +5348,8 @@ class MLoadTypedArrayElementStatic
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
 
     bool fallible() const {
@@ -5415,8 +5423,8 @@ class MStoreTypedArrayElement
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
     bool racy() const {
         return racy_;
@@ -5488,8 +5496,8 @@ class MStoreTypedArrayElementHole
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
     bool isOperandTruncated(size_t index) const;
 };
@@ -5533,8 +5541,8 @@ class MStoreTypedArrayElementStatic :
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::TypedArrayElement);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::TypedArrayElement);
     }
     bool isOperandTruncated(size_t index) const;
 };
@@ -5650,8 +5658,8 @@ class MLoadFixedSlot
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::FixedSlot);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::FixedSlot);
     }
 
     bool mightAlias(MDefinition *store);
@@ -5697,8 +5705,8 @@ class MStoreFixedSlot
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::FixedSlot);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::FixedSlot);
     }
     bool needsBarrier() const {
         return needsBarrier_;
@@ -5849,11 +5857,12 @@ class MGetPropertyCache
     bool mightStore() const {
         return !idempotent_;
     }
-    AliasSet getAliasSet() const {
+    AliasSet getAliasSet(AliasSetCache &sc) const {
         if (idempotent_) {
-            return AliasSet(sc, AliasSet::ObjectFields |
-                                AliasSet::FixedSlot |
-                                AliasSet::DynamicSlot);
+            AliasSet obj(sc, AliasId::ObjectFields);
+            AliasSet fixed(sc, AliasId::FixedSlot);
+            AliasSet dyn(sc, AliasId::DynamicSlot);
+            return obj.add(sc, fixed.add(sc, dyn));
         }
         return AliasSet::Any(sc);
     }
@@ -5929,8 +5938,11 @@ class MGetPropertyPolymorphic
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        AliasSet obj(sc, AliasId::ObjectFields);
+        AliasSet fixed(sc, AliasId::FixedSlot);
+        AliasSet dyn(sc, AliasId::DynamicSlot);
+        return obj.add(sc, fixed.add(sc, dyn));
     }
 
     bool mightAlias(MDefinition *store);
@@ -6000,8 +6012,11 @@ class MSetPropertyPolymorphic
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields | AliasSet::FixedSlot | AliasSet::DynamicSlot);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        AliasSet obj(sc, AliasId::ObjectFields);
+        AliasSet fixed(sc, AliasId::FixedSlot);
+        AliasSet dyn(sc, AliasId::DynamicSlot);
+        return obj.add(sc, fixed.add(sc, dyn));
     }
 };
 
@@ -6433,8 +6448,8 @@ class MGuardShape
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -6489,8 +6504,8 @@ class MGuardObjectType
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -6536,8 +6551,8 @@ class MGuardClass
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::ObjectFields);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::ObjectFields);
     }
 };
 
@@ -6585,9 +6600,9 @@ class MLoadSlot
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
+    AliasSet getAliasSet(AliasSetCache &sc) const {
         JS_ASSERT(slots()->type() == MIRType_Slots);
-        return AliasSet(sc, AliasSet::DynamicSlot);
+        return AliasSet(sc, AliasId::DynamicSlot);
     }
     bool mightAlias(MDefinition *store);
 };
@@ -6707,8 +6722,8 @@ class MStoreSlot
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::DynamicSlot);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::DynamicSlot);
     }
 };
 
@@ -7018,7 +7033,7 @@ class MCallGetProperty
     bool mightStore() const {
         return !idempotent_;
     }
-    AliasSet getAliasSet() const {
+    AliasSet getAliasSet(AliasSetCache &sc) const {
         if (!idempotent_)
             return AliasSet::Any(sc);
         return AliasSet::None();
@@ -7236,7 +7251,7 @@ class MGetDOMProperty
     bool mightStore() const {
         return !(isDomConstant() || isDomPure());
     }
-    AliasSet getAliasSet() const {
+    AliasSet getAliasSet(AliasSetCache &sc) const {
         // The whole point of constancy is that it's non-effectful and doesn't
         // conflict with anything
         if (isDomConstant())
@@ -7244,7 +7259,7 @@ class MGetDOMProperty
         // Pure DOM attributes can only alias things that alias the world or
         // explicitly alias DOM properties.
         if (isDomPure())
-            return AliasSet(sc, AliasSet::DOMProperty);
+            return AliasSet(sc, AliasId::DOMProperty);
         return AliasSet::Any(sc);
     }
 
@@ -7522,8 +7537,8 @@ class MInArray
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet() const {
-        return AliasSet(sc, AliasSet::Element);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::Element);
     }
     TypePolicy *typePolicy() {
         return this;
