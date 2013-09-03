@@ -524,7 +524,9 @@ class MDefinition : public MNode
     virtual bool pure() const {
         return false;
     }
-    virtual void registerAliasIds(AliasSetCache &sc) const { }
+    virtual bool registerAliasIds(AliasSetCache &sc) const {
+        return true;
+    }
     virtual bool mightStore() const {
         return pure() ? false : true;
     }
@@ -535,7 +537,6 @@ class MDefinition : public MNode
     bool isEffectful() const {
         return mightStore();
     }
-    virtual bool mightAlias(MDefinition *store);
 };
 
 // An MUseDefIterator walks over uses in a definition, skipping any use that is
@@ -5658,11 +5659,12 @@ class MLoadFixedSlot
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet(AliasSetCache &sc) const {
-        return AliasSet(sc, AliasId::FixedSlot);
+    bool registerAliasIds(AliasSetCache &sc) const {
+        return sc.registerId(AliasId::FixedSlot(slot_));
     }
-
-    bool mightAlias(MDefinition *store);
+    AliasSet getAliasSet(AliasSetCache &sc) const {
+        return AliasSet(sc, AliasId::FixedSlot(slot_));
+    }
 };
 
 class MStoreFixedSlot
@@ -5705,8 +5707,11 @@ class MStoreFixedSlot
     bool mightStore() const {
         return true;
     }
+    bool registerAliasIds(AliasSetCache &sc) const {
+        return sc.registerId(AliasId::FixedSlot(slot_));
+    }
     AliasSet getAliasSet(AliasSetCache &sc) const {
-        return AliasSet(sc, AliasId::FixedSlot);
+        return AliasSet(sc, AliasId::FixedSlot(slot_));
     }
     bool needsBarrier() const {
         return needsBarrier_;
@@ -5860,13 +5865,12 @@ class MGetPropertyCache
     AliasSet getAliasSet(AliasSetCache &sc) const {
         if (idempotent_) {
             AliasSet obj(sc, AliasId::ObjectFields);
-            AliasSet fixed(sc, AliasId::FixedSlot);
-            AliasSet dyn(sc, AliasId::DynamicSlot);
+            AliasSet fixed(sc, AliasId::FixedSlot());
+            AliasSet dyn(sc, AliasId::DynamicSlot());
             return obj.add(sc, fixed.add(sc, dyn));
         }
         return AliasSet::Any(sc);
     }
-
 };
 
 // Emit code to load a value from an object's slots if its shape matches
@@ -5879,7 +5883,7 @@ class MGetPropertyPolymorphic
         // The shape to guard against.
         Shape *objShape;
 
-        // The property to laod.
+        // The property to load.
         Shape *shape;
     };
 
@@ -5938,14 +5942,8 @@ class MGetPropertyPolymorphic
     bool mightStore() const {
         return false;
     }
-    AliasSet getAliasSet(AliasSetCache &sc) const {
-        AliasSet obj(sc, AliasId::ObjectFields);
-        AliasSet fixed(sc, AliasId::FixedSlot);
-        AliasSet dyn(sc, AliasId::DynamicSlot);
-        return obj.add(sc, fixed.add(sc, dyn));
-    }
-
-    bool mightAlias(MDefinition *store);
+    bool registerAliasIds(AliasSetCache &sc) const;
+    AliasSet getAliasSet(AliasSetCache &sc) const;
 };
 
 // Emit code to store a value to an object's slots if its shape matches
@@ -5958,7 +5956,7 @@ class MSetPropertyPolymorphic
         // The shape to guard against.
         Shape *objShape;
 
-        // The property to laod.
+        // The property to load.
         Shape *shape;
     };
 
@@ -6012,12 +6010,8 @@ class MSetPropertyPolymorphic
     bool mightStore() const {
         return true;
     }
-    AliasSet getAliasSet(AliasSetCache &sc) const {
-        AliasSet obj(sc, AliasId::ObjectFields);
-        AliasSet fixed(sc, AliasId::FixedSlot);
-        AliasSet dyn(sc, AliasId::DynamicSlot);
-        return obj.add(sc, fixed.add(sc, dyn));
-    }
+    bool registerAliasIds(AliasSetCache &sc) const;
+    AliasSet getAliasSet(AliasSetCache &sc) const;
 };
 
 class MDispatchInstruction
@@ -6600,11 +6594,13 @@ class MLoadSlot
     bool mightStore() const {
         return false;
     }
+    bool registerAliasIds(AliasSetCache &sc) const {
+        return sc.registerId(AliasId::DynamicSlot(slot_));
+    }
     AliasSet getAliasSet(AliasSetCache &sc) const {
         JS_ASSERT(slots()->type() == MIRType_Slots);
-        return AliasSet(sc, AliasId::DynamicSlot);
+        return AliasSet(sc, AliasId::DynamicSlot(slot_));
     }
-    bool mightAlias(MDefinition *store);
 };
 
 // Inline call to access a function's environment (scope chain).
@@ -6722,8 +6718,11 @@ class MStoreSlot
     bool mightStore() const {
         return true;
     }
+    bool registerAliasIds(AliasSetCache &sc) const {
+        return sc.registerId(AliasId::DynamicSlot(slot_));
+    }
     AliasSet getAliasSet(AliasSetCache &sc) const {
-        return AliasSet(sc, AliasId::DynamicSlot);
+        return AliasSet(sc, AliasId::DynamicSlot(slot_));
     }
 };
 

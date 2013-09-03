@@ -38,8 +38,8 @@ class AliasId
     enum Category {
         ObjectFields      = 1 << 0, // shape, class, slots, length etc.
         Element           = 1 << 1, // A member of obj->elements.
-        DynamicSlot       = 1 << 2, // A member of obj->slots.
-        FixedSlot         = 1 << 3, // A member of obj->fixedSlots().
+        DynamicSlot_      = 1 << 2, // A member of obj->slots.
+        FixedSlot_        = 1 << 3, // A member of obj->fixedSlots().
         TypedArrayElement = 1 << 4, // A typed array element.
         DOMProperty       = 1 << 5, // A DOM property
         Last              = DOMProperty,
@@ -48,31 +48,62 @@ class AliasId
         NumCategories     = 6,
 
         // Indicates load or store. This is not a category
-        Store_            = 1 << 31
+        HasSlot_          = 1 << 31
     };
 
-  public:
-    AliasId(Category cat)
-      : cat_(cat)
+  private:
+    AliasId(Category cat, size_t slot)
+      : cat_(cat | HasSlot_),
+        slot_(slot)
     {
     }
 
+  public:
+    AliasId(Category cat)
+      : cat_(cat),
+        slot_(0)
+    {
+    }
+
+    static AliasId FixedSlot() {
+        return AliasId(FixedSlot_);
+    }
+    static AliasId FixedSlot(size_t slot) {
+        return AliasId(FixedSlot_, slot);
+    }
+
+    static AliasId DynamicSlot() {
+        return AliasId(DynamicSlot_);
+    }
+    static AliasId DynamicSlot(size_t slot) {
+        return AliasId(DynamicSlot_, slot);
+    }
+
+  public:
     virtual HashNumber valueHash() const {
-        return HashNumber(cat_);
+        HashNumber h = cat_;
+        h += slot_ << NumCategories;
+        return h;
     }
 
     virtual bool operator==(const AliasId &other) const {
         return cat_ == other.cat_;
     }
 
+    bool isCategory() const {
+        return (cat_ & Any) == cat_;
+    }
     Category categories() const {
-        return cat_;
+        return Category(cat_ & Any);
     }
 
   private:
     // Category under which this alias identifier is mapped. This is used to
     // alias a category at once, without having a list of all elements in it.
-    Category cat_;
+    size_t cat_;
+
+    // Index of the fixed / dynamic slot.
+    size_t slot_;
 };
 
 // Map every alias id to its corresponding alias set.
@@ -117,6 +148,8 @@ class AliasSetCache
     bool fillCache();
 
     const BitSet *bitSetOf(const AliasId &id) const {
+        if (id.isCategory())
+            return bitSetOf(id.categories());
         AliasIdMap::Ptr p = idMap_.lookup(id);
         JS_ASSERT(p.found());
         return p->value;

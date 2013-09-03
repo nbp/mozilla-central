@@ -646,6 +646,8 @@ AliasSetCache::registerId(const AliasId &id)
 bool
 AliasSetCache::fillCache()
 {
+    IonSpew(IonSpew_Alias, "Create alias sets with %d flags", nbIndexes_);
+
     any_ = BitSet::New(nbIndexes_);
     if (!any_)
         return false;
@@ -673,7 +675,7 @@ AliasSetCache::fillCache()
         JS_ASSERT(c);
         do {
             size_t catIndex = mozilla::CountTrailingZeroes32(c);
-            c = c & (1 << catIndex);
+            c = c ^ (1 << catIndex);
             categories_[catIndex]->insert(index);
         } while (c);
     }
@@ -692,8 +694,10 @@ AliasAnalysis::registerIds()
         if (mir->shouldCancel("Register Alias Ids"))
             return false;
 
-        for (MDefinitionIterator def(*block); def; def++)
-            def->registerAliasIds(sc);
+        for (MDefinitionIterator def(*block); def; def++) {
+            if (!def->registerAliasIds(sc))
+                return false;
+        }
     }
 
     if (sc.oom())
@@ -838,60 +842,73 @@ ion::RemoveMemoryPhis(MIRGraph &graph)
 ///////////////////////////////////////////////////////////////////////////////
 
 bool
-MDefinition::mightAlias(MDefinition *store)
+MGetPropertyPolymorphic::registerAliasIds(AliasSetCache &sc) const
 {
-    // Return whether this load may depend on the specified store, given
-    // that the alias sets intersect. This may be refined to exclude
-    // possible aliasing in cases where alias set flags are too imprecise.
-    JS_ASSERT(!isEffectful() && store->isEffectful());
-    return true;
-}
-
-bool
-MLoadFixedSlot::mightAlias(MDefinition *store)
-{
-    if (store->isStoreFixedSlot() && store->toStoreFixedSlot()->slot() != slot())
-        return false;
-    return true;
-}
-
-bool
-MLoadSlot::mightAlias(MDefinition *store)
-{
-    if (store->isStoreSlot() && store->toStoreSlot()->slot() != slot())
-        return false;
-    return true;
-}
-
-bool
-MGetPropertyPolymorphic::mightAlias(MDefinition *store)
-{
-    // Allow hoisting this instruction if the store does not write to a
-    // slot read by this instruction.
-
-    if (!store->isStoreFixedSlot() && !store->isStoreSlot())
-        return true;
-
     for (size_t i = 0; i < numShapes(); i++) {
         Shape *shape = this->shape(i);
-        if (shape->slot() < shape->numFixedSlots()) {
-            // Fixed slot.
-            uint32_t slot = shape->slot();
-            if (store->isStoreFixedSlot() && store->toStoreFixedSlot()->slot() != slot)
-                continue;
-            if (store->isStoreSlot())
-                continue;
+        size_t slot = shape->slot();
+        if (slot < shape->numFixedSlots()) {
+            if (!sc.registerId(AliasId::FixedSlot(slot)))
+                return false;
         } else {
-            // Dynamic slot.
-            uint32_t slot = shape->slot() - shape->numFixedSlots();
-            if (store->isStoreSlot() && store->toStoreSlot()->slot() != slot)
-                continue;
-            if (store->isStoreFixedSlot())
-                continue;
+            slot -= shape->numFixedSlots();
+            if (!sc.registerId(AliasId::DynamicSlot(slot)))
+                return false;
         }
+    }
+    return true;
+}
 
-        return true;
+AliasSet
+MGetPropertyPolymorphic::getAliasSet(AliasSetCache &sc) const
+{
+    AliasSet tmp(sc, AliasId::ObjectFields);
+    for (size_t i = 0; i < numShapes(); i++) {
+        Shape *shape = this->shape(i);
+        size_t slot = shape->slot();
+        if (slot < shape->numFixedSlots()) {
+            tmp = tmp.add(sc, AliasSet(sc, AliasId::FixedSlot(slot)));
+        } else {
+            slot -= shape->numFixedSlots();
+            tmp = tmp.add(sc, AliasSet(sc, AliasId::DynamicSlot(slot)));
+        }
     }
 
-    return false;
+    return tmp;
+}
+
+bool
+MSetPropertyPolymorphic::registerAliasIds(AliasSetCache &sc) const
+{
+    for (size_t i = 0; i < numShapes(); i++) {
+        Shape *shape = this->shape(i);
+        size_t slot = shape->slot();
+        if (slot < shape->numFixedSlots()) {
+            if (!sc.registerId(AliasId::FixedSlot(slot)))
+                return false;
+        } else {
+            slot -= shape->numFixedSlots();
+            if (!sc.registerId(AliasId::DynamicSlot(slot)))
+                return false;
+        }
+    }
+    return true;
+}
+
+AliasSet
+MSetPropertyPolymorphic::getAliasSet(AliasSetCache &sc) const
+{
+    AliasSet tmp(sc, AliasId::ObjectFields);
+    for (size_t i = 0; i < numShapes(); i++) {
+        Shape *shape = this->shape(i);
+        size_t slot = shape->slot();
+        if (slot < shape->numFixedSlots()) {
+            tmp = tmp.add(sc, AliasSet(sc, AliasId::FixedSlot(slot)));
+        } else {
+            slot -= shape->numFixedSlots();
+            tmp = tmp.add(sc, AliasSet(sc, AliasId::DynamicSlot(slot)));
+        }
+    }
+
+    return tmp;
 }
