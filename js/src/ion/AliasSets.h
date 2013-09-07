@@ -109,8 +109,21 @@ class AliasId
 // Map every alias id to its corresponding alias set.
 class AliasSetCache
 {
+  public:
+    struct AliasSetOp {
+        enum Operation {
+            ALIASSET_INTERSECT,
+            ALIASSET_UNION,
+            ALIASSET_SUBSET
+        };
+
+        Operation op;
+        BitSet *lhs;
+        BitSet *rhs;
+    };
+
   protected:
-    struct ValueHasher
+    struct AliasIdHasher
     {
         typedef AliasId Lookup;
         typedef AliasId Key;
@@ -123,7 +136,36 @@ class AliasSetCache
         }
     };
 
-    typedef HashMap<AliasId, BitSet *, ValueHasher, IonAllocPolicy> AliasIdMap;
+    struct AliasSetHasher
+    {
+        typedef BitSet *Lookup;
+        typedef BitSet *Key;
+        static HashNumber hash(const Lookup &ins) {
+            return reinterpret_cast<HashNumber>(ins);
+        }
+
+        static bool match(const Key &k, const Lookup &l) {
+            return k == l;
+        }
+    };
+
+    struct AliasSetOpHasher
+    {
+        typedef AliasSetOp Lookup;
+        typedef AliasSetOp Key;
+        static HashNumber hash(const Lookup &ins) {
+            return ins.op ^ reinterpret_cast<HashNumber>(ins.lhs) ^
+                (reinterpret_cast<HashNumber>(ins.rhs) << 1);
+        }
+
+        static bool match(const Key &k, const Lookup &l) {
+            return k == l;
+        }
+    };
+
+    typedef HashMap<AliasId, BitSet *, AliasIdHasher, IonAllocPolicy> AliasIdMap;
+    typedef HashMap<AliasId, BitSet *, AliasSetHasher, IonAllocPolicy> AliasSetMap;
+    typedef HashMap<AliasId, BitSet *, AliasSetOpHasher, IonAllocPolicy> AliasSetOpMap;
 
   public:
     AliasSetCache()
