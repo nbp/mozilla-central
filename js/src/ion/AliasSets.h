@@ -114,12 +114,16 @@ class AliasSetCache
         enum Operation {
             ALIASSET_INTERSECT,
             ALIASSET_UNION,
-            ALIASSET_SUBSET
+            ALIASSET_EXCLUDE
         };
 
         Operation op;
         BitSet *lhs;
         BitSet *rhs;
+
+        AliasSetOp(Operation op, BitSet *lhs, BitSet *rhs)
+          : op(op), lhs(lhs), rhs(rhs)
+        { }
     };
 
   protected:
@@ -141,11 +145,45 @@ class AliasSetCache
         typedef BitSet *Lookup;
         typedef BitSet *Key;
         static HashNumber hash(const Lookup &ins) {
-            return reinterpret_cast<HashNumber>(ins);
+            if (!ins)
+                return HashNumber(0);
+
+            uint32_t *i = ins->raw();
+            uint32_t *e = i + ins->rawLength();
+            HashNumber hash = 0;
+            uint32_t leadingZero = 0;
+            for (; i != e; i++) {
+                // This is not exactly leading zero, but it when there are only
+                // a few bit sets, and it allow to disntinguish between bit set
+                // with only one bit set.
+                if (!hash)
+                    leadingZero++;
+                hash = hash ^ *i;
+            }
+
+            // Conditionally add the leading zero such as we can easily identify
+            // the empty set to a zero-hash.
+            if (hash)
+                hash += leadingZero;
+
+            return hash;
         }
 
         static bool match(const Key &k, const Lookup &l) {
-            return k == l;
+            if (k == l)
+                return true;
+            if ((!k && l) || (k && !l))
+                return false;
+
+            uint32_t *i = k->raw();
+            uint32_t *j = l->raw();
+            uint32_t *e = i + ins->rawLength();
+            for (; i != e; i++, j++) {
+                if (*i != *j)
+                    return false;
+            }
+
+            return true;
         }
     };
 
@@ -164,8 +202,8 @@ class AliasSetCache
     };
 
     typedef HashMap<AliasId, BitSet *, AliasIdHasher, IonAllocPolicy> AliasIdMap;
-    typedef HashMap<AliasId, BitSet *, AliasSetHasher, IonAllocPolicy> AliasSetMap;
-    typedef HashMap<AliasId, BitSet *, AliasSetOpHasher, IonAllocPolicy> AliasSetOpMap;
+    typedef HashMap<BitSet *, BitSet *, AliasSetHasher, IonAllocPolicy> AliasSetMap;
+    typedef HashMap<AliasSetOp, BitSet *, AliasSetOpHasher, IonAllocPolicy> AliasSetOpMap;
 
   public:
     AliasSetCache()
@@ -217,12 +255,34 @@ class AliasSetCache
         }
         return temp_;
     }
-    void resetTemp() {
+
+    typedef typename AliasSetOpMap::AddPtr AliasSetOpCache;
+    AliasSetOpCache opCache(const AliasSetOp &op) {
+        return opMap_.lookupForAdd(op);
+    }
+    BitSet *aliasTempResult(const AliasSetOp &op, AliasSetOpCache opPtr) {
+        AliasSetMap::AddPtr p = setMap_.lookupForAdd(temp_);
+        if (p)
+            return p.value();
+
+        BitSet *res = temp_;
+        if (!setMap_.add(p, res, res)) {
+            reportOOM();
+            return NULL;
+        }
+
+        JS_ASSERT(!opPtr);
+        if (!opMap_.add(opPtr, op, res)) {
+            reportOOM();
+            return NULL;
+        }
+
         temp_ = NULL;
+        return res;
     }
 
     bool init() {
-        return idMap_.init();
+        return idMap_.init() && setMap_.init() && opMap_.init();
     }
 
   private:
@@ -234,6 +294,8 @@ class AliasSetCache
 
     // Map alias Ids to bit sets.
     AliasIdMap idMap_;
+    AliasSetMap setMap_;
+    AliasSetOpMap opMap_;
     BitSet *categories_[AliasId::NumCategories];
 
     // Bit mask used to cover every alias ids.
@@ -326,6 +388,11 @@ class AliasSet
         if (!other.flags_)
             return AliasSet(flags_);
 
+        AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_UNION, flags_, other.flags_);
+        AliasSetOpCache cache = sc.opCache(op);
+        if (cache)
+            return AliasSet(cache.value);
+
         BitSet *b = sc.temp();
         if (!b)
             return None();
@@ -336,7 +403,7 @@ class AliasSet
         uint32_t *end = dest + b->rawLength();
         for (; dest != end; src1++, src2++, dest++)
             *dest = *src1 | *src2;
-        sc.resetTemp();
+        b = sc.aliasTempResult(op, cache);
         return AliasSet(b);
     }
 
@@ -344,6 +411,11 @@ class AliasSet
     inline AliasSet intersect(AliasSetCache &sc, const AliasSet &other) const {
         if (!flags_ || !other.flags_)
             return AliasSet(NULL);
+
+        AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_INTERSECT, flags_, other.flags_);
+        AliasSetOpCache cache = sc.opCache(op);
+        if (cache)
+            return AliasSet(cache.value);
 
         BitSet *b = sc.temp();
         if (!b)
@@ -355,7 +427,7 @@ class AliasSet
         uint32_t *end = dest + b->rawLength();
         for (; dest != end; src1++, src2++, dest++)
             *dest = *src1 & *src2;
-        sc.resetTemp();
+        b = sc.aliasTempResult(op, cache);
         return AliasSet(b);
     }
 
@@ -363,6 +435,11 @@ class AliasSet
     inline AliasSet exclude(AliasSetCache &sc, const AliasSet &other) const {
         if (!flags_ || !other.flags_)
             return AliasSet(flags_);
+
+        AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_EXCLUDE, flags_, other.flags_);
+        AliasSetOpCache cache = sc.opCache(op);
+        if (cache)
+            return AliasSet(cache.value);
 
         BitSet *b = sc.temp();
         if (!b)
@@ -374,7 +451,7 @@ class AliasSet
         uint32_t *end = dest + b->rawLength();
         for (; dest != end; src1++, src2++, dest++)
             *dest = *src1 &~ *src2;
-        sc.resetTemp();
+        b = sc.aliasTempResult(op, cache);
         return AliasSet(b);
     }
 

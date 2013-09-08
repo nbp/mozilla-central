@@ -639,6 +639,7 @@ AliasSetCache::registerId(const AliasId &id)
     // number of indexes we should expect.
     if (!idMap_.add(p, id, reinterpret_cast<BitSet *>(nbIndexes_ << 1 | 1)))
         return false;
+
     nbIndexes_++;
     return true;
 }
@@ -669,6 +670,10 @@ AliasSetCache::fillCache()
         b->insert(index);
         r.front().value = b;
 
+        // Add the newly allocated bitset as part of the cached bit sets.
+        if (!setMap_.add(b, b))
+            return false;
+
         // for each category, register this alias id in the corresponding
         // category.
         size_t c = r.front().key.categories();
@@ -678,6 +683,13 @@ AliasSetCache::fillCache()
             c = c ^ (1 << catIndex);
             categories_[catIndex]->insert(index);
         } while (c);
+    }
+
+    // Add categories as part of the cached bit sets.
+    for (size_t i = 0; i < AliasId::NumCategories; i++) {
+        BitSet *b = categories_[i];
+        if (!setMap_.add(b, b))
+            return false;
     }
 
     return true;
