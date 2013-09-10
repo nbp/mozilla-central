@@ -671,7 +671,9 @@ AliasSetCache::fillCache()
         r.front().value = b;
 
         // Add the newly allocated bitset as part of the cached bit sets.
-        if (!setMap_.add(b, b))
+        AliasSetMap::AddPtr setPtr = setMap_.lookupForAdd(b);
+        JS_ASSERT(!setPtr);
+        if (!setMap_.add(setPtr, b, b))
             return false;
 
         // for each category, register this alias id in the corresponding
@@ -688,7 +690,8 @@ AliasSetCache::fillCache()
     // Add categories as part of the cached bit sets.
     for (size_t i = 0; i < AliasId::NumCategories; i++) {
         BitSet *b = categories_[i];
-        if (!setMap_.add(b, b))
+        AliasSetMap::AddPtr setPtr = setMap_.lookupForAdd(b);
+        if (!setPtr && !setMap_.add(setPtr, b, b))
             return false;
     }
 

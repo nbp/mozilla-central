@@ -118,10 +118,10 @@ class AliasSetCache
         };
 
         Operation op;
-        BitSet *lhs;
-        BitSet *rhs;
+        const BitSet *lhs;
+        const BitSet *rhs;
 
-        AliasSetOp(Operation op, BitSet *lhs, BitSet *rhs)
+        AliasSetOp(Operation op, const BitSet *lhs, const BitSet *rhs)
           : op(op), lhs(lhs), rhs(rhs)
         { }
     };
@@ -177,7 +177,7 @@ class AliasSetCache
 
             uint32_t *i = k->raw();
             uint32_t *j = l->raw();
-            uint32_t *e = i + ins->rawLength();
+            uint32_t *e = i + k->rawLength();
             for (; i != e; i++, j++) {
                 if (*i != *j)
                     return false;
@@ -192,12 +192,12 @@ class AliasSetCache
         typedef AliasSetOp Lookup;
         typedef AliasSetOp Key;
         static HashNumber hash(const Lookup &ins) {
-            return ins.op ^ reinterpret_cast<HashNumber>(ins.lhs) ^
-                (reinterpret_cast<HashNumber>(ins.rhs) << 1);
+            return ins.op ^ reinterpret_cast<size_t>(ins.lhs) ^
+                (reinterpret_cast<size_t>(ins.rhs) << 1);
         }
 
         static bool match(const Key &k, const Lookup &l) {
-            return k == l;
+            return k.op == l.op && k.lhs == l.lhs && k.rhs == l.rhs;
         }
     };
 
@@ -263,7 +263,7 @@ class AliasSetCache
     BitSet *aliasTempResult(const AliasSetOp &op, AliasSetOpCache opPtr) {
         AliasSetMap::AddPtr p = setMap_.lookupForAdd(temp_);
         if (p)
-            return p.value();
+            return p->value;
 
         BitSet *res = temp_;
         if (!setMap_.add(p, res, res)) {
@@ -389,9 +389,9 @@ class AliasSet
             return AliasSet(flags_);
 
         AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_UNION, flags_, other.flags_);
-        AliasSetOpCache cache = sc.opCache(op);
+        AliasSetCache::AliasSetOpCache cache = sc.opCache(op);
         if (cache)
-            return AliasSet(cache.value);
+            return AliasSet(cache->value);
 
         BitSet *b = sc.temp();
         if (!b)
@@ -413,9 +413,9 @@ class AliasSet
             return AliasSet(NULL);
 
         AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_INTERSECT, flags_, other.flags_);
-        AliasSetOpCache cache = sc.opCache(op);
+        AliasSetCache::AliasSetOpCache cache = sc.opCache(op);
         if (cache)
-            return AliasSet(cache.value);
+            return AliasSet(cache->value);
 
         BitSet *b = sc.temp();
         if (!b)
@@ -437,9 +437,9 @@ class AliasSet
             return AliasSet(flags_);
 
         AliasSetCache::AliasSetOp op(AliasSetCache::AliasSetOp::ALIASSET_EXCLUDE, flags_, other.flags_);
-        AliasSetOpCache cache = sc.opCache(op);
+        AliasSetCache::AliasSetOpCache cache = sc.opCache(op);
         if (cache)
-            return AliasSet(cache.value);
+            return AliasSet(cache->value);
 
         BitSet *b = sc.temp();
         if (!b)
