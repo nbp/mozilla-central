@@ -124,6 +124,28 @@ Bindings::initWithTemporaryStorage(ExclusiveContext *cx, InternalBindingsHandle 
             return false;
 #endif
 
+        unsigned relSlot = slot - CallObject::RESERVED_SLOTS;
+        if (relSlot % 32 == 0) {
+            StackBaseShape base(cx, &CallObject::class_, cx->global(), NULL,
+                                BaseShape::VAROBJ | BaseShape::DELEGATE);
+
+            UnownedBaseShape *nbase = BaseShape::getUnowned(cx, base);
+            if (!nbase)
+                return false;
+
+            RootedId id(cx, INT_TO_JSID(relSlot / 32));
+            unsigned attrs = JSPROP_PERMANENT | JSPROP_ENUMERATE |
+                             (bi->kind() == CONSTANT ? JSPROP_READONLY : 0);
+            unsigned frameIndex = bi.frameIndex();
+            StackShape child(nbase, id, slot++, 0, attrs, Shape::HAS_SHORTID, frameIndex);
+
+            Shape *shape = self->callObjShape_->getChildBinding(cx, child);
+            if (!shape)
+                return false;
+
+            self->callObjShape_ = shape;
+        }
+
         StackBaseShape base(cx, &CallObject::class_, cx->global(), NULL,
                             BaseShape::VAROBJ | BaseShape::DELEGATE);
 

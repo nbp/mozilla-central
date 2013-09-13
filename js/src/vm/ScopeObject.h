@@ -616,6 +616,10 @@ class DebugScopeObject : public ObjectProxyObject
 
     /* Currently, the 'declarative' scopes are Call and Block. */
     bool isForDeclarative() const;
+
+    static size_t offsetOfEnclosingScope() {
+        return getFixedSlotOffset(ENCLOSING_EXTRA);
+    }
 };
 
 /* Maintains per-compartment debug scope bookkeeping information. */

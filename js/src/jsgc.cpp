@@ -282,6 +282,158 @@ Arena::staticAsserts()
     JS_STATIC_ASSERT(JS_ARRAY_LENGTH(FirstThingOffsets) == FINALIZE_LIMIT);
 }
 
+inline void
+ReportLogicalLeak(JSObject *obj)
+{
+    if (obj->isMarked())
+        return;
+
+    if (!obj->is<JSFunction>())
+        return;
+
+    JSFunction *fun = &obj->as<JSFunction>();
+    if (!fun->isInterpreted())
+        return;
+
+    // Walk the scope chain and report on all live scope chain that we have un captured
+    JSObject *env = fun->environment();
+    while (env) {
+        if (env->isMarked() && env->is<js::ScopeObject>()) {
+            Shape *base = env->lastProperty();
+            size_t maxSlot = base->slot();
+            for (size_t i = CallObject::RESERVED_SLOTS; i < maxSlot; i += 32) {
+                uint32_t mask = ~env->getSlot(i).toInt32();
+                while (mask) {
+                    size_t j = mozilla::CountTrailingZeroes32(mask);
+                    mask &= ~(1 << j);
+                    size_t slot = i + j;
+
+                    if (j >= maxSlot)
+                        continue;
+
+                    // Check if the value is a primitive type which does not
+                    // hold memory.
+                    Value v = env->getSlot(slot);
+                    if (v.isNumber() || v.isNull() || v.isUndefined())
+                        continue;
+
+                    // TODO: print a message with the property name.
+                    Shape *prop = Shape::searchBySlot(base, slot);
+
+                    const EncapsulatedId &id = prop->propidRef();
+                    // Assert ?!
+                    if (!JSID_IS_STRING(id))
+                        continue;
+
+                    fprintf(stderr, "Property ");
+#ifdef DEBUG
+                    JSString *propName = JSID_TO_STRING(id);
+                    JSString::dumpChars(propName->pureChars(), propName->length());
+#endif
+                    const char *filename = "unknown";
+                    size_t lineno = 0;
+                    if (fun->isInterpreted()) {
+                        if (fun->hasScript()) {
+                            filename = fun->nonLazyScript()->filename();
+                            lineno = fun->nonLazyScript()->lineno;
+                        } else if (fun->isInterpretedLazy()) {
+                            filename = fun->lazyScript()->filename();
+                            lineno = fun->lazyScript()->lineno();
+                        }
+                    }
+
+                    fprintf(stderr, " logically leaked after the release of %s:%d\n",
+                            filename, lineno);
+                }
+            }
+        }
+
+        env = env->enclosingScope();
+    }
+}
+
+inline void
+Arena::reportLogicalLeak(AllocKind thingKind, size_t thingSize)
+{
+    /* Enforce requirements on size of T. */
+    JS_ASSERT(thingSize % CellSize == 0);
+    JS_ASSERT(thingSize <= 255);
+
+    JS_ASSERT(aheader.allocated());
+    JS_ASSERT(thingKind == aheader.getAllocKind());
+    JS_ASSERT(thingSize == aheader.getThingSize());
+    JS_ASSERT(!aheader.hasDelayedMarking);
+    JS_ASSERT(!aheader.markOverflow);
+    JS_ASSERT(!aheader.allocatedDuringIncremental);
+
+    uintptr_t thing = thingsStart(thingKind);
+    uintptr_t lastByte = thingsEnd() - 1;
+
+    FreeSpan nextFree(aheader.getFirstFreeSpan());
+    nextFree.checkSpan();
+
+    FreeSpan newListHead;
+    FreeSpan *newListTail = &newListHead;
+    uintptr_t newFreeSpanStart = 0;
+    bool allClear = true;
+    DebugOnly<size_t> nmarked = 0;
+    for (;; thing += thingSize) {
+        JS_ASSERT(thing <= lastByte + 1);
+        if (thing == nextFree.first) {
+            JS_ASSERT(nextFree.last <= lastByte);
+            if (nextFree.last == lastByte)
+                break;
+            JS_ASSERT(Arena::isAligned(nextFree.last, thingSize));
+            if (!newFreeSpanStart)
+                newFreeSpanStart = thing;
+            thing = nextFree.last;
+            nextFree = *nextFree.nextSpan();
+            nextFree.checkSpan();
+        } else {
+            JSObject *t = reinterpret_cast<JSObject *>(thing);
+            ReportLogicalLeak(t);
+        }
+    }
+}
+
+void
+ArenaLists::reportLeaksNow(AllocKind thingKind)
+{
+    ArenaHeader *arenas = arenaLists[thingKind].head;
+    size_t thingSize = Arena::thingSize(thingKind);
+
+    // SliceBudget budget;
+    switch(thingKind) {
+      case FINALIZE_OBJECT0:
+      case FINALIZE_OBJECT0_BACKGROUND:
+      case FINALIZE_OBJECT2:
+      case FINALIZE_OBJECT2_BACKGROUND:
+      case FINALIZE_OBJECT4:
+      case FINALIZE_OBJECT4_BACKGROUND:
+      case FINALIZE_OBJECT8:
+      case FINALIZE_OBJECT8_BACKGROUND:
+      case FINALIZE_OBJECT12:
+      case FINALIZE_OBJECT12_BACKGROUND:
+      case FINALIZE_OBJECT16:
+      case FINALIZE_OBJECT16_BACKGROUND:
+
+        while (ArenaHeader *cur = arenas) {
+            arenas = arenas->next;
+            cur->getArena()->reportLogicalLeak(thingKind, thingSize);
+            /*
+            budget.step(Arena::thingsPerArena(thingSize));
+            if (budget.isOverBudget())
+                return false;
+            */
+        }
+        break;
+
+      default:
+        MOZ_ASSUME_UNREACHABLE("Invalid alloc kind");
+    }
+    JS_ASSERT(!arenas);
+}
+
 template<typename T>
 inline bool
 Arena::finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize)
@@ -3657,6 +3809,25 @@ BeginSweepingZoneGroup(JSRuntime *rt)
 
         if (rt->isAtomsZone(zone))
             sweepingAtoms = true;
+    }
+
+    // Iterate on all non-marked JSFunction scope chains, and report all
+    // properties which are not marked on a marked scope chain.
+    for (GCZoneGroupIter zone(rt); !zone.done(); zone.next()) {
+        gcstats::AutoSCC scc(rt->gcStats, rt->gcZoneGroupIndex);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT0);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT2);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT4);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT8);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT12);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT16);
+
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT0_BACKGROUND);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT2_BACKGROUND);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT4_BACKGROUND);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT8_BACKGROUND);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT12_BACKGROUND);
+        zone->allocator.arenas.reportLeaksNow(FINALIZE_OBJECT16_BACKGROUND);
     }
 
     ValidateIncrementalMarking(rt);

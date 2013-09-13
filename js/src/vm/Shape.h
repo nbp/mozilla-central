@@ -326,6 +326,7 @@ class BaseShape : public js::gc::Cell
     inline void setOwned(UnownedBaseShape *unowned);
 
     JSObject *getObjectParent() const { return parent; }
+    JSObject **getObjectParentRef() { return parent.unsafeGet(); }
     JSObject *getObjectMetadata() const { return metadata; }
     uint32_t getObjectFlags() const { return flags & OBJECT_FLAG_MASK; }
 
@@ -603,6 +604,7 @@ class Shape : public js::gc::Cell
 
     Class *getObjectClass() const { return base()->clasp; }
     JSObject *getObjectParent() const { return base()->parent; }
+    JSObject **getObjectParentRef() { return base()->parent.unsafeGet(); }
     JSObject *getObjectMetadata() const { return base()->metadata; }
 
     static Shape *setObjectParent(ExclusiveContext *cx,
@@ -617,6 +619,8 @@ class Shape : public js::gc::Cell
         JS_ASSERT(!(flag & ~BaseShape::OBJECT_FLAG_MASK));
         return !!(base()->flags & flag);
     }
+
+    static inline Shape *searchBySlot(Shape *start, size_t slot);
 
   protected:
     /*
@@ -1168,6 +1172,36 @@ Shape::searchNoHashify(Shape *start, jsid id)
 
     for (Shape *shape = start; shape; shape = shape->parent) {
         if (shape->propidRef() == id)
+            return shape;
+    }
+
+    return NULL;
+}
+
+/*
+ * This function find the shape which is using a slot index. It neither
+ * hashifies the start shape nor increments linear search count.
+ */
+inline Shape *
+Shape::searchBySlot(Shape *start, size_t slot)
+{
+    /*
+     * If we have a table, search in the shape table, else do a linear
+     * search. We never hashify into a table in parallel.
+     */
+    if (start->hasTable()) {
+        Shape **it = start->table().entries;
+        Shape **end = it + start->table().entryCount;
+        for (; it != end; it++) {
+            if (*it && (*it)->slot() == slot)
+                return *it;
+        }
+
+        return NULL;
+    }
+
+    for (Shape *shape = start; shape; shape = shape->parent) {
+        if (shape->slot() == slot)
             return shape;
     }
 

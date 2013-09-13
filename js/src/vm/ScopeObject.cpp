@@ -2372,3 +2372,22 @@ js::AnalyzeEntrainedVariables(JSContext *cx, HandleScript script)
 }
 
 #endif
+
+JSObject *
+JSObject::markAndGetEnclosingScopeRef(JSTracer *trc, bool *wasMarked)
+{
+    if (is<js::ScopeObject>()) {
+        Value *v = reinterpret_cast<Value*>(js::ScopeObject::offsetOfEnclosingScope() + reinterpret_cast<size_t>(this));
+        js::gc::MarkValueUnbarriered(trc, v, "scope_chain");
+        return &v->toObject();
+    } else if (is<js::DebugScopeObject>()) {
+        Value *v = reinterpret_cast<Value*>(js::DebugScopeObject::offsetOfEnclosingScope() + reinterpret_cast<size_t>(this));
+        js::gc::MarkValueUnbarriered(trc, v, "scope_chain");
+        return &v->toObject();
+    } else {
+        JSObject **objptr = getParentRef();
+        if (*objptr)
+            MarkObjectUnbarriered(trc, objptr, "parent");
+        return *objptr;
+    }
+}

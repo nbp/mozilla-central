@@ -1310,6 +1310,9 @@ class LazyScript : public js::gc::Cell
     uint32_t column() const {
         return column_;
     }
+    const char *filename() const {
+        return scriptSource()->filename();
+    }
 
     uint32_t staticLevel(JSContext *cx) const;
 

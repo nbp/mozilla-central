@@ -512,8 +512,92 @@ JSFunction::trace(JSTracer *trc)
             MarkScriptUnbarriered(trc, &u.i.s.script_, "script");
         else if (isInterpretedLazy() && u.i.s.lazy_)
             MarkLazyScriptUnbarriered(trc, &u.i.s.lazy_, "lazyScript");
-        if (u.i.env_)
+        if (u.i.env_) {
+            // MarkObjectUnbarriered(trc, &u.i.env_, "fun_callscope");
+
+            // If we are marking the scope chain, we need to reset the mark bits
+            // of all properties if we are visiting the scope chain for the
+            // first time.
+            JSObject *scopeChain = u.i.env_;
+            bool wasMarked = u.i.env_->isMarked();
             MarkObjectUnbarriered(trc, &u.i.env_, "fun_callscope");
+
+            while (!wasMarked && scopeChain) {
+                if (scopeChain->is<js::ScopeObject>()) {
+                    size_t maxSlot = scopeChain->lastProperty()->slot();
+                    for (size_t i = CallObject::RESERVED_SLOTS; i < maxSlot; i += 32)
+                        scopeChain->setSlot(i, Int32Value(0));
+                }
+                scopeChain = scopeChain->markAndGetEnclosingScopeRef(trc, &wasMarked);
+            }
+
+            if (isInterpretedLazy() && u.i.s.lazy_) {
+                // Look for names in the scope chain, and mark them.
+                js::LazyScript *lzScript = lazyScript();
+                HeapPtrAtom *i = lzScript->freeVariables();
+                HeapPtrAtom *e = i + lzScript->numFreeVariables();
+
+                for (; i != e; i++) {
+                    JSObject *scope = u.i.env_;
+                    Shape *shape = NULL;
+                    while (scope) {
+                        shape = scope->nativeLookupPure(AtomToId(*i));
+                        if (shape)
+                            break;
+                        scope = scope->enclosingScope();
+                    }
+
+                    if (!shape)
+                        continue;
+                    if (!scope->is<js::ScopeObject>())
+                        continue;
+
+                    // Now that we have found a slot on the scope chain, mark
+                    // the slot as being used.
+                    size_t slot = shape->slot();
+                    JS_ASSERT(slot > CallObject::RESERVED_SLOTS);
+                    size_t slotIndex = (slot - CallObject::RESERVED_SLOTS) % 32;
+                    size_t maskSlot = slot - slotIndex;
+                    Value bitMask = scope->getSlot(maskSlot);
+                    int32_t mask = bitMask.toInt32();
+                    mask |= 1 << slotIndex;
+                    scope->setSlot(maskSlot, Int32Value(mask));
+                }
+            } else if (hasScript()) {
+                // Iterate the bindings and look for aliased one, and mark them
+                // if they are aliased.
+                HandleScript script = HandleScript::fromMarkedLocation(&u.i.s.script_);
+                for (BindingIter bi(script); bi; bi++) {
+                    if (!bi->aliased())
+                        continue;
+
+                    JSObject *scope = u.i.env_;
+                    Shape *shape = NULL;
+                    while (scope) {
+                        shape = scope->nativeLookupPure(NameToId(bi->name()));
+                        if (shape)
+                            break;
+                        scope = scope->enclosingScope();
+                    }
+
+                    if (!shape)
+                        continue;
+                    if (!scope->is<js::ScopeObject>())
+                        continue;
+
+                    // Now that we have found a slot on the scope chain, mark
+                    // the slot as being used.
+                    size_t slot = shape->slot();
+                    JS_ASSERT(slot > CallObject::RESERVED_SLOTS);
+                    size_t slotIndex = (slot - CallObject::RESERVED_SLOTS) % 32;
+                    size_t maskSlot = slot - slotIndex;
+                    Value bitMask = scope->getSlot(maskSlot);
+                    int32_t mask = bitMask.toInt32();
+                    mask |= 1 << slotIndex;
+                    scope->setSlot(maskSlot, Int32Value(mask));
+                }
+            }
+        }
     }
 }
 

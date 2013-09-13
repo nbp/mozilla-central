@@ -495,6 +495,9 @@ class JSObject : public js::ObjectImpl
         return lastProperty()->getObjectParent();
     }
     static bool setParent(JSContext *cx, js::HandleObject obj, js::HandleObject newParent);
+    JSObject **getParentRef() const {
+        return lastProperty()->getObjectParentRef();
+    }
 
     /*
      * Get the enclosing scope of an object. When called on non-scope object,
@@ -502,6 +505,7 @@ class JSObject : public js::ObjectImpl
      * in this situation because non-scope objects can be on the scope chain).
      */
     inline JSObject *enclosingScope();
+    JSObject *markAndGetEnclosingScopeRef(JSTracer *trc, bool *wasMarked);
 
     /* Access the metadata on an object. */
     inline JSObject *getMetadata() const {

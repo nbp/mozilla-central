@@ -588,6 +588,8 @@ struct Arena
 
     template <typename T>
     bool finalize(FreeOp *fop, AllocKind thingKind, size_t thingSize);
+
+    void reportLogicalLeak(AllocKind thingKind, size_t thingSize);
 };
 
 inline size_t
