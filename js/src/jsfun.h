@@ -262,6 +262,10 @@ class JSFunction : public JSObject
         JS_ASSERT(hasScript());
         return u.i.s.script_;
     }
+    JSScript **nonLazyScriptRef() {
+        JS_ASSERT(hasScript());
+        return &u.i.s.script_;
+    }
 
     js::HeapPtrScript &mutableScript() {
         JS_ASSERT(isInterpreted());

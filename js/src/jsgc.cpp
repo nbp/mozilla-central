@@ -285,9 +285,6 @@ Arena::staticAsserts()
 inline void
 ReportLogicalLeak(JSObject *obj)
 {
-    if (obj->isMarked())
-        return;
-
     if (!obj->is<JSFunction>())
         return;
 
@@ -295,8 +292,141 @@ ReportLogicalLeak(JSObject *obj)
     if (!fun->isInterpreted())
         return;
 
+    // If the function is marked, then we do not care as the function is still
+    // considered alive.
+    if (obj->isMarked())
+        return;
+
+    const char *filename = "unknown";
+    size_t lineno = 0;
+    if (fun->isInterpreted()) {
+        if (fun->hasScript()) {
+            filename = fun->nonLazyScript()->filename();
+            lineno = fun->nonLazyScript()->lineno;
+        } else if (fun->isInterpretedLazy() && fun->lazyScriptOrNull()) {
+            filename = fun->lazyScript()->filename();
+            lineno = fun->lazyScript()->lineno();
+        }
+    }
+
+    fprintf(stderr, "Inspect function %s:%d\n", filename, lineno);
+
     // Walk the scope chain and report on all live scope chain that we have un captured
     JSObject *env = fun->environment();
+    if (env) {
+        // If we are marking the scope chain, we need to reset the mark bits
+        // of all properties if we are visiting the scope chain for the
+        // first time.
+        JSObject *scopeChain = env;
+        //bool wasMarked = env->isMarked();
+
+        if (fun->isInterpretedLazy() && fun->lazyScriptOrNull()) {
+            // Look for names in the scope chain, and mark them.
+            js::LazyScript *lzScript = fun->lazyScript();
+            HeapPtrAtom *i = lzScript->freeVariables();
+            HeapPtrAtom *e = i + lzScript->numFreeVariables();
+
+            for (; i != e; i++) {
+                JSObject *scope = scopeChain;
+                Shape *shape = NULL;
+                while (scope) {
+                    shape = scope->nativeLookupPure(AtomToId(*i));
+                    if (shape)
+                        break;
+                    scope = scope->enclosingScope();
+                }
+
+                if (!shape)
+                    continue;
+                if (!scope->is<js::ScopeObject>())
+                    continue;
+
+                // if the scope is not alive, then this means we cannot leak
+                // anything from it, we can just look for the next variable.
+                if (!scope->isMarked())
+                    continue;
+
+                // Now that we have found a slot on the scope chain, mark
+                // the slot as being used.
+                size_t slot = shape->slot();
+                JS_ASSERT(slot > CallObject::RESERVED_SLOTS);
+                size_t slotIndex = (slot - CallObject::RESERVED_SLOTS) % 32;
+                size_t maskSlot = slot - slotIndex;
+                Value bitMask = scope->getSlot(maskSlot);
+                int32_t mask = bitMask.toInt32();
+                if (mask & (1 << slotIndex)) {
+                    const EncapsulatedId &id = shape->propidRef();
+                    // Assert ?!
+                    if (!JSID_IS_STRING(id))
+                        continue;
+
+                    fprintf(stderr, "Property ");
+#ifdef DEBUG
+                    JSString *propName = JSID_TO_STRING(id);
+                    JSString::dumpChars(propName->pureChars(), propName->length());
+#endif
+                    fprintf(stderr, " logically leaked after the release of %s:%d\n",
+                            fun->lazyScript()->filename(),
+                            fun->lazyScript()->lineno());
+                }
+                scope->setSlot(maskSlot, Int32Value(mask & ~(1 << slotIndex)));
+            }
+        } else if (fun->hasScript()) {
+            // Iterate the bindings and look for aliased one, and mark them
+            // if they are aliased.
+            HandleScript script = HandleScript::fromMarkedLocation(fun->nonLazyScriptRef());
+            for (BindingIter bi(script); bi; bi++) {
+                if (!bi->aliased())
+                    continue;
+
+                JSObject *scope = scopeChain;
+                Shape *shape = NULL;
+                while (scope) {
+                    shape = scope->nativeLookupPure(NameToId(bi->name()));
+                    if (shape)
+                        break;
+                    scope = scope->enclosingScope();
+                }
+
+                if (!shape)
+                    continue;
+                if (!scope->is<js::ScopeObject>())
+                    continue;
+
+                // if the scope is not alive, then this means we cannot leak
+                // anything from it, we can just look for the next variable.
+                if (!scope->isMarked())
+                    continue;
+
+                // Now that we have found a slot on the scope chain, mark
+                // the slot as being used.
+                size_t slot = shape->slot();
+                JS_ASSERT(slot > CallObject::RESERVED_SLOTS);
+                size_t slotIndex = (slot - CallObject::RESERVED_SLOTS) % 32;
+                size_t maskSlot = slot - slotIndex;
+                Value bitMask = scope->getSlot(maskSlot);
+                int32_t mask = bitMask.toInt32();
+                if (mask & (1 << slotIndex)) {
+                    const EncapsulatedId &id = shape->propidRef();
+                    // Assert ?!
+                    if (!JSID_IS_STRING(id))
+                        continue;
+
+                    fprintf(stderr, "Property ");
+#ifdef DEBUG
+                    JSString *propName = JSID_TO_STRING(id);
+                    JSString::dumpChars(propName->pureChars(), propName->length());
+#endif
+                    fprintf(stderr, " logically leaked after the release of %s:%d\n",
+                            fun->nonLazyScript()->filename(),
+                            fun->nonLazyScript()->lineno);
+                }
+                scope->setSlot(maskSlot, Int32Value(mask & ~(1 << slotIndex)));
+            }
+        }
+    }
+
+/*
     while (env) {
         if (env->isMarked() && env->is<js::ScopeObject>()) {
             Shape *base = env->lastProperty();
@@ -350,6 +480,7 @@ ReportLogicalLeak(JSObject *obj)
 
         env = env->enclosingScope();
     }
+*/
 }
 
 inline void
