@@ -1,2 +1,3 @@
 From: Nicolas B. Pierron <nicolas.b.pierron@mozilla.com>
-Subject: Bug 897606 - Generalized the AliasSet.
+Subject: Bug 897606 - Fold load & writes.
+
