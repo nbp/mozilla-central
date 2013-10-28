@@ -435,9 +435,9 @@ MergeProducers(MIRGraph &graph, MemoryOperandList &stores,
             //
             // If the current value is already a Phi node, then we can reuse it
             // once. When we reuse a Phi, we mutate one of its operand. As an
-            // alias set can span on multiple memory area, We need this remember
+            // alias set can span on multiple memory area, We need to remember
             // if a phi has been mutated, such as we can duplicate the phi if we
-            // need to split its alias set.
+            // need to split its alias set again.
             if (curr->block() != succ || !curr->isPhi() || curr->toPhi()->isMutated()) {
                 MPhi *phi = MPhi::New(uint32_t(-1));
                 if (!phi)
