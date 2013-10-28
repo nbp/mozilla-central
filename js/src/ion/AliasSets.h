@@ -646,6 +646,22 @@ struct MemoryDefinition : public TempObject
     // Definitions which are potentially mutating the memory used by this
     // instruction.
     MemoryOperandList operands;
+
+    // To be able to fold read & writes, we need to identify if they statically
+    // alias (property name, shape, slot, type ...) by checking the alias set
+    // and if we can prove that they are manipulating the same object. To do so,
+    // we store a unique pointer to the value context (object & index)
+    //
+    // Note that a non-matching alias set will not reset the commonObject and
+    // comminIndex.
+    static const MDefinition *unknownValue = nullptr;
+    static const MDefinition *multipleValue = reinterpret_cast<MDefinition *>(1);
+    MDefinition *commonObject;
+    MDefinition *commonIndex;
+
+    // Before moving any memory operation, we need to make sure that the sum of
+    // all the modifications would be more efficient. Each operation taken
+    // locally add more cost, but combined they can remove the overall cost.
 };
 
 // Per-Compilation cache.
