@@ -1883,7 +1883,7 @@ bool
 MResumePoint::addSideEffect(MDefinition *def, MResumePoint *previous)
 {
     if (previous) {
-        // The previous resumption necessary contains the definition at the top
+        // The previous resume point necessary contains the definition at the top
         // of its list of side effects.
         JS_ASSERT(previous->sideEffects_);
         JS_ASSERT(previous->sideEffects_->definition == def);
@@ -1907,7 +1907,7 @@ MResumePoint::addSideEffect(MDefinition *def, MResumePoint *previous)
 bool
 MResumePoint::addSideEffectUntil(MDefinition *def, MResumePoint *until)
 {
-    MResumePoint *prev = NULL;
+    MResumePoint *prev = nullptr;
     MResumePoint *rp = this;
 
     while (rp != until) {

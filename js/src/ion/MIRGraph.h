@@ -535,6 +535,14 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
         return trackedPc_;
     }
 
+    void setLikelyhood(double likelyhood) {
+        likelyhood_ = likelyhood;
+    }
+
+    double getLikelyhood() {
+        return likelyhood_;
+    }
+
   private:
     MIRGraph &graph_;
     CompileInfo &info_; // Each block originates from a particular script.
@@ -572,6 +580,9 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     MBasicBlock *loopHeader_;
 
     jsbytecode *trackedPc_;
+
+    // Likelyhood to visit this block.
+    double likelyhood_;
 
 #if defined (JS_ION_PERF)
     unsigned lineno_;

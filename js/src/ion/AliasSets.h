@@ -553,6 +553,20 @@ class MemoryUseList : protected InlineList<MemoryUse>
 
     iterator removeAliasingMemoryUse(const AliasSet &set, iterator it,
                                      AliasAnalysisCache &aac);
+
+    // Used by scalar replacement when replacing a load by the memory content
+    // introduced by a store. This is used to move the list of uses of a load to
+    // the list of uses of the store.
+    void moveListInto(MemoryUseList &list, MDefinition *newProducer) {
+        JS_ASSERT_IF(!empty(), !begin()->producer());
+        for (MemoryUseList::iterator it = begin(); it != end(); it++) {
+#ifdef CRAZY_DEBUG
+            it->ownerUList = &list;
+#endif
+            it->set(newProducer, it->consumer(), it->set());
+        }
+        Parent::moveListInto(list);
+    }
 };
 
 class MemoryOperandList : protected InlineList<MemoryOperand>
@@ -581,7 +595,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
 
     // When we are building the list of dependencies in the alias analysis, we
     // keep a list of operands for all alias sets. This function copy the memory
-    // operand list by filtering intersecting alias sets. It initialiaze the
+    // operand list by filtering intersecting alias sets. It initialiazes the
     // consumer inside the resulting operand list.
     void extractDependenciesSubset(const MemoryOperandList &operands, const AliasSet &set,
                                    MDefinition *consumer, AliasAnalysisCache &aac);
@@ -647,21 +661,29 @@ struct MemoryDefinition : public TempObject
     // instruction.
     MemoryOperandList operands;
 
-    // To be able to fold read & writes, we need to identify if they statically
+    // To be able to fold load & stores, we need to identify if they statically
     // alias (property name, shape, slot, type ...) by checking the alias set
     // and if we can prove that they are manipulating the same object. To do so,
-    // we store a unique pointer to the value context (object & index)
+    // we compare the value context (object & index) with a representant.
     //
-    // Note that a non-matching alias set will not reset the commonObject and
-    // comminIndex.
-    static const MDefinition *unknownValue = nullptr;
-    static const MDefinition *multipleValue = reinterpret_cast<MDefinition *>(1);
-    MDefinition *commonObject;
-    MDefinition *commonIndex;
+    // An escaping alias set is not considered as a new representant, only
+    // precise alias sets are. If multiple precise alias sets are present, then
+    // we do not optimize any in case the object might alias each others.
+    MDefinition *context;
 
     // Before moving any memory operation, we need to make sure that the sum of
     // all the modifications would be more efficient. Each operation taken
-    // locally add more cost, but combined they can remove the overall cost.
+    // individualy add more cost, but combined they can remove the overall cost.
+    //
+    // To find if it is worth optimizing or not, we store an estimate of the
+    // relative expected cost.
+    //
+    // This cost corresponds to sum of all acceses which are added minus all
+    // accesses which are removed.  It only deals with the local cost of each
+    // operations.  A store is assumed to be removed, but will count as added to
+    // every escape call which is following.  If a load is removed, then we will
+    // need to count every escape call which is preceding.
+    double expectation;
 };
 
 // Per-Compilation cache.

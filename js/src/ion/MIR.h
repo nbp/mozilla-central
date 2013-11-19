@@ -497,6 +497,10 @@ class MDefinition : public MNode
         resultTypeSet_ = types;
     }
 
+    /////////////////////////////////////////
+    // Memory related methods
+    /////////////////////////////////////////
+
     MDefinition *nearestMutator() const;
     void setMemoryDefinition(MemoryDefinition *mem) {
         JS_ASSERT(!mem_);
@@ -524,18 +528,52 @@ class MDefinition : public MNode
     virtual bool pure() const {
         return false;
     }
-    virtual bool registerAliasIds(AliasSetCache &sc) const {
-        return true;
-    }
     virtual bool mightStore() const {
         return pure() ? false : true;
+    }
+
+    bool isEffectful() const {
+        return mightStore();
+    }
+
+    // Register & compute the static Alias Set of a definition.
+    virtual bool registerAliasIds(AliasSetCache &sc) const {
+        return true;
     }
     virtual AliasSet getAliasSet(AliasSetCache &sc) const {
         return pure() ? AliasSet::None() : AliasSet::Any(sc);
     }
 
-    bool isEffectful() const {
-        return mightStore();
+    // Forward the dynamic context of a definition. Escaping instructions have
+    // no context.
+    virtual bool hasValueContext() const {
+        return false;
+    }
+    virtual MDefinition *objectContext() const {
+        JS_ASSERT(!hasValueContext());
+        return nullptr;
+    }
+    virtual MDefinition *indexContext() const {
+        JS_ASSERT(!hasValueContext());
+        return nullptr;
+    }
+    virtual MDefinition *memoryContent() {
+        JS_ASSERT(!hasValueContext());
+        // If this is not a store, then the memory content after a load is the
+        // result of the read, which means it-self.  Otherwise it is safe to
+        // expect that a store will provide a memoryContent function.
+        JS_ASSERT(!mightStore());
+        return this;
+    }
+
+    // When there is an aliasing instruction with a different value context, we
+    // need to store all scalar into memory by cloning the store instruction
+    // before the aliasing instruction.
+    virtual MDefinition *cloneLoadAt(MInstruction *at) const {
+        MOZ_ASSUME_UNREACHABLE("cloneLoadAt is not defined.");
+    }
+    virtual MDefinition *cloneStoreAt(MInstruction *at) const {
+        MOZ_ASSUME_UNREACHABLE("cloneStoreAt is not defined.");
     }
 };
 
@@ -5713,6 +5751,20 @@ class MStoreFixedSlot
     AliasSet getAliasSet(AliasSetCache &sc) const {
         return AliasSet(sc, AliasId::FixedSlot(slot_));
     }
+
+    bool hasValueContext() const {
+        return true;
+    }
+    MDefinition *objectContext() const {
+        return object();
+    }
+    MDefinition *memoryContent() const {
+        return value();
+    }
+
+    MDefinition *cloneLoadAt(MInstruction *at) const;
+    MDefinition *cloneStoreAt(MInstruction *at) const;
+
     bool needsBarrier() const {
         return needsBarrier_;
     }
