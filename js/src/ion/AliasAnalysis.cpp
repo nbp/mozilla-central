@@ -724,6 +724,36 @@ AliasAnalysis::registerIds()
     return true;
 }
 
+void
+AliasAnalysis::analyzeDefinition(MemoryOperandList &stores, MDefinition *def,
+                                 AliasAnalysisCache &aac)
+{
+    AliasSet set = def->getAliasSet(aac.sc());
+    if (set.isNone())
+        return;
+
+    if (!def->getMemoryDefinition())
+        def->setMemoryDefinition(new MemoryDefinition());
+
+    // Mark loads & stores dependent on the previous stores.  All the
+    // stores on the same alias set would form a chain.
+    JS_ASSERT(def->memOperands().empty());
+    def->memOperands().extractDependenciesSubset(stores, set, def, aac);
+
+    if (def->mightStore()) {
+
+        // Update the working list of operands with the current store.
+        stores.setProducer(set, def, aac);
+
+        if (IonSpewEnabled(IonSpew_Alias)) {
+            fprintf(IonSpewFile, "Processing store ");
+            def->printName(IonSpewFile);
+            set.printFlags(IonSpewFile);
+            fprintf(IonSpewFile, "\n");
+        }
+    }
+}
+
 // This pass annotates every load instruction with the last store instructions
 // on which it depends. The algorithm is optimistic in that it ignores explicit
 // dependencies and only considers loads and stores.
@@ -794,31 +824,12 @@ AliasAnalysis::analyze()
         for (MDefinitionIterator def(*block); def; def++) {
             def->setId(newId++);
 
-            AliasSet set = def->getAliasSet(aac.sc());
-            if (set.isNone())
-                continue;
-
-            if (!def->getMemoryDefinition())
-                def->setMemoryDefinition(new MemoryDefinition());
-
-            // Mark loads & stores dependent on the previous stores.  All the
-            // stores on the same alias set would form a chain.
-            JS_ASSERT(def->memOperands().empty());
-            def->memOperands().extractDependenciesSubset(stores, set, *def, aac);
-
-            if (def->mightStore()) {
-
-                // Update the working list of operands with the current store.
-                stores.setProducer(set, *def, aac);
-
-                if (IonSpewEnabled(IonSpew_Alias)) {
-                    fprintf(IonSpewFile, "Processing store ");
-                    def->printName(IonSpewFile);
-                    set.printFlags(IonSpewFile);
-                    fprintf(IonSpewFile, "\n");
-                }
-            }
+            analyzeDefinition(stores, *def, aac);
         }
+
+        // The last instruction is not traversed by the MDefinitionIterator as
+        // opposed to the block->begin() and block->end().
+        analyzeDefinition(stores, block->lastIns(), aac);
 
         // Write the current memory status back into the succesors of the
         // current basic blocks.  If needed, we will add a memory Phi node to

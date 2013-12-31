@@ -51,6 +51,9 @@ class AliasAnalysis
     MIRGraph &graph_;
     LoopAliasInfo *loop_;
 
+    void analyzeDefinition(MemoryOperandList &operands, MDefinition *def,
+                           AliasAnalysisCache &aac);
+
   public:
     AliasAnalysis(MIRGenerator *mir, MIRGraph &graph);
     bool clear();
