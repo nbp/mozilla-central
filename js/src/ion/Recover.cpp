@@ -7,12 +7,17 @@
 #include "ion/Recover.h"
 
 #include "jsfun.h"
+#include "jsobj.h"
+
+#include "vm/ObjectImpl.h"
 
 #include "ion/CompactBuffer.h"
 #include "ion/MIR.h"
 #include "ion/MIRGraph.h"
 #include "ion/SnapshotWriter.h"
 #include "ion/IonFrameIterator.h"
+
+#include "vm/ObjectImpl-inl.h"
 
 using namespace js;
 using namespace js::ion;
@@ -106,7 +111,33 @@ RResumePoint::readSlots(SnapshotIterator &si, JSScript *script, JSFunction *fun)
 }
 
 bool
-RResumePoint::resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const
+RResumePoint::resume(JSContext *cx, SnapshotIterator &si, HandleScript script) const
 {
     MOZ_ASSUME_UNREACHABLE("Resume points are not operations.");
+}
+
+void
+MStoreFixedSlot::writeRecover(CompactBufferWriter &writer) const
+{
+    writer.writeUnsigned(RInstruction::Recover_StoreFixedSlot);
+
+    writer.writeUnsigned(slot());
+}
+
+RStoreFixedSlot::RStoreFixedSlot(CompactBufferReader &reader)
+{
+    JS_ASSERT(sizeof(*this) <= RInstructionMaxSize);
+    slot_ = reader.readUnsigned();
+
+    IonSpew(IonSpew_Snapshots, "RStoreFixedSlot: slot %u", slot_);
+}
+
+bool
+RStoreFixedSlot::resume(JSContext *cx, SnapshotIterator &si, HandleScript script) const
+{
+    Value object_ = si.slotValue(si.readSlot());
+    Value value_ = si.slotValue(si.readSlot());
+
+    object_.toObject().setFixedSlot(slot_, value_);
+    return true;
 }

@@ -40,7 +40,8 @@ class SlotVector
 };
 
 #define RECOVER_KIND_LIST(_)                    \
-    _(ResumePoint)
+    _(ResumePoint)                              \
+    _(StoreFixedSlot)
 
 // Forward declarations of Cache kinds.
 #define FORWARD_DECLARE(kind) class R##kind;
@@ -72,7 +73,7 @@ class RInstruction
 
     // A resume an instruction and store the result of this operation back on
     // the snapshot iterator by using the function setRecoveredValue.
-    virtual bool resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const = 0;
+    virtual bool resume(JSContext *cx, SnapshotIterator &si, HandleScript script) const = 0;
 
     enum Kind {
 #   define DEFINE_RECOVER_KIND(op) Recover_##op,
@@ -110,7 +111,7 @@ class RResumePoint : public RInstruction
   public:
     RECOVER_HEADER(ResumePoint)
     void readSlots(SnapshotIterator &it, JSScript *script, JSFunction *fun);
-    bool resume(JSContext *cx, SnapshotIterator &it, HandleScript script) const;
+    bool resume(JSContext *cx, SnapshotIterator &si, HandleScript script) const;
 
     uint32_t pcOffset() const {
         return pcOffset_;
@@ -178,6 +179,20 @@ class RResumePoint : public RInstruction
     uint32_t startFixedSlots_; // Index at which fixed slots are starting.
     uint32_t startStackSlots_; // Index at which stack slots are starting.
     SlotVector slots_;
+};
+
+struct RStoreFixedSlot : public RInstruction
+{
+    RECOVER_HEADER(StoreFixedSlot)
+
+    bool resume(JSContext *cx, SnapshotIterator &si, HandleScript script) const;
+
+    size_t numOperands() const {
+        return 2;
+    }
+
+  private:
+    uint32_t slot_;
 };
 
 #undef RECOVER_HEADER

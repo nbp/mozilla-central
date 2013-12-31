@@ -5777,6 +5777,8 @@ class MStoreFixedSlot
     void setNeedsBarrier() {
         needsBarrier_ = true;
     }
+
+    void writeRecover(CompactBufferWriter &writer) const;
 };
 
 class InlinePropertyTable : public TempObject
