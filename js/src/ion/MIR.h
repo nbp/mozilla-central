@@ -1306,8 +1306,11 @@ class MReturn
     TypePolicy *typePolicy() {
         return this;
     }
+
+    // Control instructions which are exiting a block need to be marked as
+    // effectful to alias all stores on objects.
     bool pure() const {
-        return true;
+        return false;
     }
 };
 
@@ -1328,11 +1331,14 @@ class MThrow
     TypePolicy *typePolicy() {
         return this;
     }
-    bool pure() const {
-        return true;
-    }
     bool possiblyCalls() const {
         return true;
+    }
+
+    // Control instructions which are exiting a block need to be marked as
+    // effectful to alias all stores on objects.
+    bool pure() const {
+        return false;
     }
 };
 
