@@ -62,9 +62,9 @@ class JSONSpewer
     bool init(const char *path);
     void beginFunction(JSScript *script);
     void beginPass(const char * pass);
-    void spewMDef(MDefinition *def);
+    void spewMDef(MDefinition *def, bool isMemory = true);
     void spewMResumePoint(MResumePoint *rp);
-    void spewMIR(MIRGraph *mir);
+    void spewMIR(MIRGraph *mir, bool isMemory = true);
     void spewLIns(LInstruction *ins);
     void spewLIR(MIRGraph *mir);
     void spewIntervals(LinearScanAllocator *regalloc);

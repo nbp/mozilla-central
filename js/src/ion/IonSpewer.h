@@ -83,6 +83,10 @@ enum IonSpewChannel {
     IonSpew_Terminator
 };
 
+enum IonSpewKind {
+    IonSpewKind_MIR,
+    IonSpewKind_LIR
+};
 
 // The IonSpewer is only available on debug builds.
 // None of the global functions have effect on non-debug builds.
@@ -110,13 +114,13 @@ class IonSpewer
     bool init();
     void beginFunction(MIRGraph *graph, HandleScript);
     bool isSpewingFunction() const;
-    void spewPass(const char *pass);
+    void spewPass(const char *pass, IonSpewKind kind = IonSpewKind_MIR);
     void spewPass(const char *pass, LinearScanAllocator *ra);
     void endFunction();
 };
 
 void IonSpewNewFunction(MIRGraph *graph, HandleScript function);
-void IonSpewPass(const char *pass);
+void IonSpewPass(const char *pass, IonSpewKind kind = IonSpewKind_MIR);
 void IonSpewPass(const char *pass, LinearScanAllocator *ra);
 void IonSpewEndFunction();
 
@@ -140,7 +144,7 @@ void EnableIonDebugLogging();
 
 static inline void IonSpewNewFunction(MIRGraph *graph, HandleScript function)
 { }
-static inline void IonSpewPass(const char *pass)
+static inline void IonSpewPass(const char *pass, IonSpewKind kind = IonSpewKind_MIR)
 { }
 static inline void IonSpewPass(const char *pass, LinearScanAllocator *ra)
 { }

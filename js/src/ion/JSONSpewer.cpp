@@ -235,7 +235,7 @@ JSONSpewer::spewMResumePoint(MResumePoint *rp)
 }
 
 void
-JSONSpewer::spewMDef(MDefinition *def)
+JSONSpewer::spewMDef(MDefinition *def, bool isMemory)
 {
     beginObject();
 
@@ -258,10 +258,12 @@ JSONSpewer::spewMDef(MDefinition *def)
     endList();
 
     beginListProperty("memInputs");
-    for (MemoryOperandList::iterator op = def->memOperands().begin();
-         op != def->memOperands().end(); op++)
-    {
-        integerValue(op->producer()->id());
+    if (isMemory && def->getMemoryDefinition()) {
+        for (MemoryOperandList::iterator op = def->memOperands().begin();
+             op != def->memOperands().end(); op++)
+        {
+            integerValue(op->producer()->id());
+        }
     }
     endList();
 
@@ -271,9 +273,19 @@ JSONSpewer::spewMDef(MDefinition *def)
     endList();
 
     beginListProperty("memUses");
-    for (MemoryUseList::iterator use = def->memUses().begin(); use != def->memUses().end(); use++)
-        integerValue(use->consumer()->toDefinition()->id());
+    if (isMemory && def->getMemoryDefinition()) {
+        for (MemoryUseList::iterator use = def->memUses().begin();
+             use != def->memUses().end(); use++)
+        {
+            integerValue(use->consumer()->toDefinition()->id());
+        }
+    }
     endList();
+
+    uint32_t contextId = 0;
+    if (isMemory && def->getMemoryDefinition() && def->getMemoryDefinition()->context)
+        contextId = def->getMemoryDefinition()->context->id();
+    integerProperty("memContextId", contextId);
 
     bool isTruncated = false;
     if (def->isAdd() || def->isSub() || def->isMod() || def->isMul() || def->isDiv())
@@ -297,7 +309,7 @@ JSONSpewer::spewMDef(MDefinition *def)
 }
 
 void
-JSONSpewer::spewMIR(MIRGraph *mir)
+JSONSpewer::spewMIR(MIRGraph *mir, bool isMemory)
 {
     if (!fp_)
         return;
@@ -335,9 +347,9 @@ JSONSpewer::spewMIR(MIRGraph *mir)
 
         beginListProperty("instructions");
         for (MPhiIterator phi(block->phisBegin()); phi != block->phisEnd(); phi++)
-            spewMDef(*phi);
+            spewMDef(*phi, isMemory);
         for (MInstructionIterator i(block->begin()); i != block->end(); i++)
-            spewMDef(*i);
+            spewMDef(*i, isMemory);
         endList();
 
         spewMResumePoint(block->entryResumePoint());

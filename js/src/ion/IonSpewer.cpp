@@ -94,10 +94,10 @@ ion::IonSpewNewFunction(MIRGraph *graph, HandleScript func)
 }
 
 void
-ion::IonSpewPass(const char *pass)
+ion::IonSpewPass(const char *pass, IonSpewKind kind)
 {
     if (!js_IonOptions.parallelCompilation)
-        ionspewer.spewPass(pass);
+        ionspewer.spewPass(pass, kind);
 }
 
 void
@@ -166,14 +166,14 @@ IonSpewer::beginFunction(MIRGraph *graph, HandleScript function)
 }
 
 void
-IonSpewer::spewPass(const char *pass)
+IonSpewer::spewPass(const char *pass, IonSpewKind kind)
 {
     if (!isSpewingFunction())
         return;
 
     c1Spewer.spewPass(pass);
     jsonSpewer.beginPass(pass);
-    jsonSpewer.spewMIR(graph);
+    jsonSpewer.spewMIR(graph, kind == IonSpewKind_MIR);
     jsonSpewer.spewLIR(graph);
     jsonSpewer.endPass();
 }
@@ -187,7 +187,7 @@ IonSpewer::spewPass(const char *pass, LinearScanAllocator *ra)
     c1Spewer.spewPass(pass);
     c1Spewer.spewIntervals(pass, ra);
     jsonSpewer.beginPass(pass);
-    jsonSpewer.spewMIR(graph);
+    jsonSpewer.spewMIR(graph, false);
     jsonSpewer.spewLIR(graph);
     jsonSpewer.spewIntervals(ra);
     jsonSpewer.endPass();

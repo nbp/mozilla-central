@@ -1213,7 +1213,7 @@ GenerateLIR(MIRGenerator *mir)
     LIRGenerator lirgen(mir, graph, *lir);
     if (!lirgen.generate())
         return NULL;
-    IonSpewPass("Generate LIR");
+    IonSpewPass("Generate LIR", IonSpewKind_LIR);
 
     if (mir->shouldCancel("Generate LIR"))
         return NULL;
@@ -1251,7 +1251,7 @@ GenerateLIR(MIRGenerator *mir)
         integrity.check(false);
 #endif
 
-        IonSpewPass("Allocate Registers [Backtracking]");
+        IonSpewPass("Allocate Registers [Backtracking]", IonSpewKind_LIR);
         break;
       }
 
@@ -1265,7 +1265,7 @@ GenerateLIR(MIRGenerator *mir)
             return NULL;
         if (!integrity.check(true))
             return NULL;
-        IonSpewPass("Allocate Registers [Stupid]");
+        IonSpewPass("Allocate Registers [Stupid]", IonSpewKind_LIR);
         break;
       }
 
@@ -1280,7 +1280,7 @@ GenerateLIR(MIRGenerator *mir)
     // critical edges to avoid unnecessary jumps.
     if (!UnsplitEdges(lir))
         return NULL;
-    IonSpewPass("Unsplit Critical Edges");
+    IonSpewPass("Unsplit Critical Edges", IonSpewKind_LIR);
     AssertBasicGraphCoherency(graph);
 
     return lir;
