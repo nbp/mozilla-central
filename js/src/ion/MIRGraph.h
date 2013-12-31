@@ -536,6 +536,7 @@ class MBasicBlock : public TempObject, public InlineListNode<MBasicBlock>
     }
 
     void setLikelyhood(double likelyhood) {
+        JS_ASSERT(!mozilla::IsNaN(likelyhood));
         likelyhood_ = likelyhood;
     }
 

@@ -216,6 +216,7 @@ if CONFIG['ENABLE_ION']:
         'CodeGenerator.cpp',
         'EdgeCaseAnalysis.cpp',
         'EffectiveAddressAnalysis.cpp',
+        'FoldMemory.cpp',
         'Ion.cpp',
         'IonAnalysis.cpp',
         'IonBuilder.cpp',

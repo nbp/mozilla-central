@@ -557,8 +557,8 @@ class MemoryUseList : protected InlineList<MemoryUse>
     // Used by scalar replacement when replacing a load by the memory content
     // introduced by a store. This is used to move the list of uses of a load to
     // the list of uses of the store.
-    void moveListInto(MemoryUseList &list, MDefinition *newProducer) {
-        JS_ASSERT_IF(!empty(), !begin()->producer());
+    void moveListInto(MemoryUseList &list, MDefinition *newProducer, MDefinition *oldProducer) {
+        JS_ASSERT_IF(!empty(), begin()->producer() == oldProducer);
         for (MemoryUseList::iterator it = begin(); it != end(); it++) {
 #ifdef CRAZY_DEBUG
             it->ownerUList = &list;
@@ -567,6 +567,9 @@ class MemoryUseList : protected InlineList<MemoryUse>
         }
         Parent::moveListInto(list);
     }
+
+    void moveDominatedUsesInto(MemoryUseList &list, MDefinition *newProducer,
+                               MDefinition *oldProducer);
 };
 
 class MemoryOperandList : protected InlineList<MemoryOperand>

@@ -554,11 +554,10 @@ class MDefinition : public MNode
         return nullptr;
     }
     virtual MDefinition *indexContext() const {
-        JS_ASSERT(!hasValueContext());
+        // Slots have no index value.
         return nullptr;
     }
     virtual MDefinition *memoryContent() {
-        JS_ASSERT(!hasValueContext());
         // If this is not a store, then the memory content after a load is the
         // result of the read, which means it-self.  Otherwise it is safe to
         // expect that a store will provide a memoryContent function.
@@ -569,10 +568,10 @@ class MDefinition : public MNode
     // When there is an aliasing instruction with a different value context, we
     // need to store all scalar into memory by cloning the store instruction
     // before the aliasing instruction.
-    virtual MDefinition *cloneLoadAt(MInstruction *at) const {
+    virtual MInstruction *cloneLoadAt(MInstruction *at) const {
         MOZ_ASSUME_UNREACHABLE("cloneLoadAt is not defined.");
     }
-    virtual MDefinition *cloneStoreAt(MInstruction *at) const {
+    virtual MInstruction *cloneStoreAt(MInstruction *at, MDefinition *content = nullptr) const {
         MOZ_ASSUME_UNREACHABLE("cloneStoreAt is not defined.");
     }
 };
@@ -5764,12 +5763,12 @@ class MStoreFixedSlot
     MDefinition *objectContext() const {
         return object();
     }
-    MDefinition *memoryContent() const {
+    MDefinition *memoryContent() {
         return value();
     }
 
-    MDefinition *cloneLoadAt(MInstruction *at) const;
-    MDefinition *cloneStoreAt(MInstruction *at) const;
+    MInstruction *cloneLoadAt(MInstruction *at) const;
+    MInstruction *cloneStoreAt(MInstruction *at, MDefinition *content = nullptr) const;
 
     bool needsBarrier() const {
         return needsBarrier_;
@@ -8267,6 +8266,7 @@ class MResumePoint : public MNode, public InlineForwardListNode<MResumePoint>
     MResumePoint(MBasicBlock *block, jsbytecode *pc, MResumePoint *parent, Mode mode);
     void inherit(MBasicBlock *state);
 
+  public:
     // Add a side effect definition in the list of side effects and optimize the
     // number of allocation by reusing the list of existing side effects of the
     // previous resume point.

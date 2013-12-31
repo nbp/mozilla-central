@@ -1883,14 +1883,11 @@ bool
 MResumePoint::addSideEffect(MDefinition *def, MResumePoint *previous)
 {
     if (previous) {
-        // The previous resume point necessary contains the definition at the top
-        // of its list of side effects.
-        JS_ASSERT(previous->sideEffects_);
-        JS_ASSERT(previous->sideEffects_->definition == def);
-
         // If we did the same operation on the previous resume point, then we
         // can share the same list of side effect.
-        if (previous->sideEffects_->next == sideEffects_) {
+        if (previous->sideEffects_->definition == def &&
+            previous->sideEffects_->next == sideEffects_)
+        {
             sideEffects_ = previous->sideEffects_;
             return true;
         }

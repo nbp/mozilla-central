@@ -21,17 +21,8 @@ class ScalarReplacement
     MIRGraph &graph_;
     AliasAnalysisCache &aac_;
 
-    // A lift location indicates the definition which we need to look at and the
-    // closest block in which we need to insert a copy of the instruction such
-    // as we do not add extra overhead in other paths.
-    struct LiftLocation
-    {
-        MDefinition *def;
-        MBlock *dest;
-    };
-
   public:
-    ScalarReplacement(MIRGenerator *mir, MIRGraph &graph, AliasAnalysisCache &aac);
+    ScalarReplacement(MIRGenerator *mir, MIRGraph &graph);
 
   private:
     ///////////////////////////////////////////////////////////////////////////
@@ -40,36 +31,43 @@ class ScalarReplacement
 
     // Check if 2 definitions have the same value context (object & index).
     bool contextAreIndentical(MDefinition *lhs, MDefinition *rhs) const;
+    bool linkValueContext(MDefinition *memOperand, MDefinition **context) const;
+    void updateValueContext(MDefinition *memOperand, MDefinition *context) const;
+
+    // Find the definition which represent a value context, in order to simplify
+    // comparisons.
+    MDefinition *repContext(MDefinition *def) const;
 
     // To be able to fold memory accesses across Phi nodes, we need to annotate
     // Phi nodes with the object & index used at run-time.  If there is a unique
     // common object & index definition, then we can garantee that there is at
     // least one optimizable path.
     void computeValueContext(MDefinition *def);
-
-    // Find the definition which represent a value context, in order to simplify
-    // comparisons.
-    MDefinition *repContext(MDefinition *def) const;
+    bool computeValueContext();
 
     // Annotate each basic block with the likelyhood of visiting this basic
     // block.
-    bool computeBlocksLikelyhood(MIRGraph &graph) const;
+    bool computeBlocksLikelyhood() const;
 
     // Before doing any transformation, we need to ensure that it might be
     // faster if we have good profiling informations.
-    void approxExpectation(MDefinition *def) const;
+    void computeExpectations(MDefinition *def) const;
 
-    bool analyzeExpectations(MIRGraph &graph) const;
+    bool analyzeExpectations();
 
   private:
     ///////////////////////////////////////////////////////////////////////////
     // Scalar Replacement
     ///////////////////////////////////////////////////////////////////////////
 
-    // Move a store to the end of its basic block or until the next operation
-    // which might observe the state of the store.
-    bool sinkStore(MDefinition *store);    
+    // Move a store instruction closer to any of the escaping calls are
+    // reads. While moving this instruction down, it is also registered as a
+    // side-effect in all resume points which are crossed.  If a join block is
+    // encountered loads are added in other incoming branches.
+    bool sinkStore(MInstruction *store);
 
+  public:
+    bool sinkAllStores();
 };
 
 } // namespace ion

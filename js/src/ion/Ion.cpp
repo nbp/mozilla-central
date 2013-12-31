@@ -26,6 +26,7 @@
 #include "ion/EdgeCaseAnalysis.h"
 #include "ion/EffectiveAddressAnalysis.h"
 #include "ion/ExecutionModeInlines.h"
+#include "ion/FoldMemory.h"
 #include "ion/IonAnalysis.h"
 #include "ion/IonBuilder.h"
 #include "ion/IonCompartment.h"
@@ -1074,6 +1075,14 @@ OptimizeMIR(MIRGenerator *mir)
 
         if (mir->shouldCancel("Eliminate dead resume point operands"))
             return false;
+
+        // Replace stores and loads by virtual registers.
+        ScalarReplacement sc(mir, graph);
+        if (!sc.sinkAllStores())
+            return false;
+        if (mir->shouldCancel("Sink Stores"))
+            return false;
+        IonSpewPass("Sink stores");
     }
 
     if (js_IonOptions.gvn) {
