@@ -1268,7 +1268,9 @@ ion::BailoutIonToBaseline(JSContext *cx, JitActivation *activation, IonBailoutIt
     RootedScript scr(cx, iter.script());
     AutoValueVector startFrameFormals(cx);
     AutoValueVector recoveredValues(cx);
-    snapIter.initRecoveredResults(&recoveredValues);
+
+    if (!snapIter.initRecoveredResults(&recoveredValues))
+        return BAILOUT_RETURN_FATAL_ERROR;
 
     while (true) {
         if (snapIter.isFrame()) {
