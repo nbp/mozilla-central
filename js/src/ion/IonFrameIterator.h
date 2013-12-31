@@ -287,7 +287,7 @@ class SnapshotIterator
     // operations. SetRecoveredValue will fill this vector with each computed
     // value, and slotValue will read out-of it to provide operation arguments
     // and frame content.
-    void initRecoveredResults(AutoValueVector *);
+    bool initRecoveredResults(AutoValueVector *);
 
     // Set the recovered value of the current operation.
     void setRecoveredValue(Value v);

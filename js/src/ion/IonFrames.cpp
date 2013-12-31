@@ -1218,14 +1218,18 @@ SnapshotIterator::resetOn(const IonFrameIterator &iter)
         recovered_->clear();
 }
 
-void
+bool
 SnapshotIterator::initRecoveredResults(AutoValueVector *recovered)
 {
     size_t reserve = recover_.numInstructions() - recover_.numFrames();
     if (!reserve)
-        return;
-    recovered_->reserve(reserve);
+        return true;
+
+    if (!recovered->reserve(reserve))
+        return false;
+
     recovered_ = recovered;
+    return true;
 }
 
 
