@@ -635,7 +635,7 @@ class MemoryOperandList : protected InlineList<MemoryOperand>
     void clear(AliasAnalysisCache &aac);
 
   private:
-    // Insert a a newly created memory use which does not intersect any of the
+    // Insert a newly created memory use which does not intersect any of the
     // existing alias set, and which does not use the same couple of producer &
     // consumer as another alias set.
     void insertMemoryUse(MemoryUse *use);
